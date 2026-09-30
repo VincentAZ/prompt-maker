@@ -1,92 +1,405 @@
-# Prompt Maker
+<div align="center">
 
-Writes prompts for image and video generation models, tuned to each model's prompting style. It runs 100% offline: a local LLM in **LM Studio** does the writing, and the app never contacts the internet.
+# ✦ Prompt Maker
 
-## Start
+**Write the perfect prompt for any image or video model, from a theme, an image, or both.**
+Runs 100% offline on your own machine, powered by a local LLM in [LM Studio](https://lmstudio.ai).
 
-```bash
-./start.sh        # starts LM Studio's server if needed and opens the app
-# or
-npm start         # just the app → http://127.0.0.1:5317
+![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
+![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+![100% offline](https://img.shields.io/badge/runs-100%25%20offline-8b5cf6)
+![Powered by LM Studio](https://img.shields.io/badge/LLM-LM%20Studio-ff4d8d)
+
+<img src="docs/screenshots/create.png" alt="Prompt Maker writing two takes of a Krea 2 RAW prompt" width="900">
+
+</div>
+
+---
+
+Every image and video model wants its prompts written differently:
+
+- **Krea 2 RAW** likes dense, literal captions with skin-texture cues.
+- **LTX 2.3** wants one flowing paragraph, with camera moves and sound written in.
+- **MiniMax H3** expects a structured "shooting script" with timed shots and dialogue tags.
+
+Prompt Maker keeps a **playbook for each model** and has a local LLM write the prompt in exactly that style. You describe the idea, and it handles the dialect.
+
+## Contents
+
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Using Prompt Maker](#using-prompt-maker)
+- [Target models](#target-models)
+- [Choosing a brain (LLM)](#choosing-a-brain-llm)
+- [Settings](#settings)
+- [Privacy & offline](#privacy--offline)
+- [Your data](#your-data)
+- [Troubleshooting](#troubleshooting)
+- [Platform support](#platform-support)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
+## Features
+
+- **Theme → prompt.** Type an idea ("a woman at the beach with a soda in her hand"), pick a model, and get a finished prompt.
+- **Image → prompt.** Drop in an image and use it three ways:
+  - 🎯 **Reference**: borrow its look and blend it with your theme.
+  - 🪞 **Recreate**: describe it so the model can reproduce it.
+  - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
+- **Image alone.** Leave the theme empty and it suggests a prompt from the image.
+- **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length.
+  - Uploading an image **matches the aspect ratio to it** automatically.
+  - Each model remembers your last choices.
+- **Takes.** Generate 1–4 variations at once. Each take deliberately goes a different way (angle, lighting, setting, moment).
+- **Refine.** Tell a take what to change ("golden hour", "add a dog", "shorter") or tap a quick chip. Every version is kept and you can page through them, and hand edits are saved as versions too.
+- **Live output.** Text streams in as it's written.
+  - Word count against the model's ideal length (✓ when it's on target).
+  - Timing for each take, plus a status while the model loads or thinks.
+  - Progress shown in the browser tab title.
+- **History.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, star favorites, and reopen any entry to keep refining.
+- **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let the local LLM draft the playbook. Import and export models as `.json`.
+- **Zero install fuss.** Plain Node.js with no dependencies: no `npm install`, no build step.
+- **Private by design.** Nothing leaves your machine (see [Privacy & offline](#privacy--offline)).
+
+## How it works
+
+```
+ You (browser) ──▶ Prompt Maker (localhost:5317) ──▶ LM Studio (localhost:1234)
+                    • the target model's playbook      • your local LLM ("the brain")
+                    • your theme / image / settings    • writes the prompt, streamed back
 ```
 
-It needs Node 20.11+ and LM Studio with its local server on (Developer tab, or `lms server start`). There is nothing to install: the app has no dependencies.
+Prompt Maker builds a request out of three parts and sends it to LM Studio: its shared master rules, the target model's playbook and example prompts, and your theme, image and settings. The LLM's reply streams back into the page as your prompt.
 
-Pick the LLM in the top bar. For image input it must be a vision model (marked 👁), e.g. Qwen3-VL 8B, Gemma 3/4 or Qwen 3.5/3.6.
+## Requirements
 
-## What it does
-
-The Create page is a four-step flow: pick the model, describe the shot, add an image, and dial in the settings.
-
-- **Theme → prompt**: type a theme (or hit 🎲 *Surprise me*), pick a target model, then hit *Generate* (or press Ctrl+Enter).
-- **Image + theme → prompt**: drop, paste or browse an image, then choose how it's used:
-  - 🎯 **Reference**: borrow its look (subject, light, palette, mood) and blend it with the theme.
-  - 🪞 **Recreate**: describe the image so the target model can reproduce it. The theme, if any, is applied as changes.
-  - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
-- **Image only**: leave the theme empty and the AI suggests a prompt from the image.
-- **Settings for each model**: aspect ratio, resolution, duration (video) and prompt length. Each model remembers your last choices.
-- **Temperature** (precise → wild) and **1–4 takes**. Each take deliberately goes a different way.
-- **Live output**: streaming text and a word count against the model's target length. It also shows model-loading and thinking status, and progress in the browser tab title.
-- **Stop** (■ or Esc): keeps any takes that already finished.
-- **Refine**: type what to change ("golden hour", "add a dog") or tap a quick chip. Every version is kept, and you can page through them with ‹ ›. Hand edits are saved as versions too, never silently dropped.
-- **History**: saved automatically and grouped by day. You can search, filter by model, favorite, copy, or open an entry to keep refining it.
-
-## Models (the part you'll update)
-
-Each target model is one JSON file in `data/models/`, edited in the **Models** tab:
-
-| Field | Purpose |
+| What | Details |
 |---|---|
-| Instructions | The prompting guide the LLM follows for this model (markdown). |
-| Example prompts | Gold-standard prompts the LLM imitates in style. |
-| Aspect ratios / resolutions / durations | Options shown on the Create page. |
-| Defaults | Starting aspect, resolution, duration, length and temperature. |
-| Length guide | What short, medium and long mean for this model. |
+| **Node.js 20.11+** | [nodejs.org](https://nodejs.org). Check with `node --version`. |
+| **LM Studio** | [lmstudio.ai](https://lmstudio.ai), free for macOS (Apple Silicon), Windows and Linux. |
+| **A local LLM** | Any chat model works. Use a **vision** model (tagged "Vision" in LM Studio) if you want to use images. See [Choosing a brain](#choosing-a-brain-llm). |
+| **Hardware** | Enough memory to run that model. A small 4–8B vision model needs roughly 4–8 GB of GPU VRAM or Mac unified memory. CPU-only works, just slowly. |
+| **A modern browser** | Chrome/Edge 111+, Firefox 121+, Safari 16.2+ |
 
-- **New model**: **+ New model**, or **Duplicate** an existing one.
-- **Draft with AI**: paste a model's official prompting docs, and your local LLM turns them into instructions in the standard format.
-- **Import / Export**: share or back up models as `.json`. Importing a file with an existing ID updates that model.
+## Installation
 
-The shared rules sent before every model's instructions live in **Settings → Master instructions**.
+### 1. Install Node.js
 
-## LM Studio connection
+- **macOS / Windows:** download the LTS installer from [nodejs.org](https://nodejs.org).
+- **Linux:** use your package manager, or [nvm](https://github.com/nvm-sh/nvm): `nvm install --lts`.
 
-Prompt Maker talks to whatever serves LM Studio's API at `127.0.0.1:1234`. It isn't tied to the LM Studio desktop app or to Bionic, LM Studio's makers' newer app. Keep in mind:
+### 2. Install LM Studio and get a model
 
-- **Opening the LM Studio app doesn't turn its server on**, unless "start server on launch" is enabled in its Developer tab.
-- **Quitting the app turns the server off.**
-- **If the server is off**, the app shows a banner with **▶ Start it**. That runs `lms server start`, which works whether the desktop app is open or not; without the app, LM Studio runs as a background service.
-- **It reconnects automatically** once the server is back.
+1. Install [LM Studio](https://lmstudio.ai) and open it once. This also installs its `lms` command-line tool.
+2. Go to the **Discover** tab (🔍) and download a vision model, for example **Qwen3-VL 8B**.
+3. Turn on the local server. Any of these works:
+   - In LM Studio: **Developer** tab → **Start server** (it runs on port `1234`).
+   - In a terminal: `lms server start`
+   - Or skip this step: Prompt Maker shows a **▶ Start it** button when the server is off.
+
+> **Tip:** LM Studio loads a model automatically the first time it's used, so you don't have to load one by hand. The first prompt just takes a few extra seconds.
+
+### 3. Get Prompt Maker
+
+```bash
+git clone https://github.com/VincentAZ/prompt-maker.git
+cd prompt-maker
+```
+
+No git? Click **Code → Download ZIP** on GitHub and unzip it.
+
+There's nothing to install. Prompt Maker has no dependencies.
+
+### 4. Start it
+
+```bash
+npm start
+```
+
+Then open **http://127.0.0.1:5317** in your browser.
+
+On **Linux** you can use the launcher instead. It starts LM Studio's server if needed, starts the app and opens your browser, and if the app is already running it just opens it:
+
+```bash
+./start.sh
+```
+
+To stop Prompt Maker, press `Ctrl+C` in the terminal.
+
+## Quick start
+
+1. **Pick a brain.** Use the **Brain** menu at the top right: models marked 👁 can see images, and "loaded" means it's ready right now.
+2. **Pick a target model**, for example *Krea 2 RAW*.
+3. **Describe the shot.** Type a theme, or hit **🎲 Surprise me**.
+4. Click **Generate**, or press `Ctrl+Enter`.
+5. **Copy** the prompt, or tweak it: type *"make it night time"* in the box under the take and press Enter.
+
+## Using Prompt Maker
+
+### Create
+
+| Step | What it does |
+|---|---|
+| **① Pick your model** | The generator you're writing for. Its color follows you across the app. |
+| **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
+| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Then choose how to use it (below). |
+| **④ Dial it in** | Aspect ratio, resolution, duration (video), prompt length, number of takes, temperature. |
+
+**Image modes**
+
+| Mode | Use it when… | What the prompt does |
+|---|---|---|
+| 🎯 **Reference** | You like the image's vibe | Carries its subject, palette, lighting and mood into *your* theme. |
+| 🪞 **Recreate** | You want *that* image | Describes it faithfully so the target model can reproduce it. Your theme becomes changes. |
+| 🎬 **Animate** | Image-to-video (video models only) | Treats the image as the first frame and describes the motion, camera and sound from there. |
+
+**Temperature** runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
+
+**Prompt length** (*short / medium / long*) means something different for each model. For example, "medium" is about 70–120 words for Krea and about 160–260 for MiniMax. Every take shows its word count against that target.
+
+### Refine and versions
+
+- Type a change in **Tweak it…** and press Enter, or tap a chip like ✂️ *Shorter*, 🎞️ *More cinematic* or ⚡ *More dynamic motion*.
+- Every refine adds a version. Page through them with **‹ ›**.
+- You can edit a prompt by hand. Click **💾 Save edit**, or page away and it's saved automatically.
+- **Stop** (■ or `Esc`) cancels a run but keeps any takes that already finished.
+
+### History
+
+<img src="docs/screenshots/history.png" alt="History page" width="900">
+
+Everything you generate is saved automatically:
+
+- **Find things:** search themes and prompts, filter by model, or show only ★ favorites.
+- **Pick up where you left off:** click a card to reopen it with its image and settings, and keep refining.
+
+### Keyboard shortcuts
+
+| Keys | Action |
+|---|---|
+| `Ctrl` / `⌘` + `Enter` | Generate |
+| `Esc` | Stop the current run |
+| `Enter` (in *Tweak it…*) | Refine that take |
+| `Ctrl` / `⌘` + `V` | Paste an image |
+
+## Target models
+
+Three models come with ready-made playbooks, researched from their official prompting guides (September 2026):
+
+| Model | Type | Prompt style |
+|---|---|---|
+| **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. |
+| **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
+| **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
+
+> **Good to know**
+> - Krea recommends *Krea 2 Turbo* for everyday generation. RAW is the undistilled base model, mainly meant for training.
+> - If you run MiniMax H3 through a host that rewrites prompts (for example fal.ai's prompt expansion), turn that off so the structured format arrives intact.
+> - Each model's sources are listed in its editor.
+
+### Adding or updating a model
+
+<img src="docs/screenshots/models.png" alt="Models editor" width="900">
+
+New models come out constantly. Open the **Models** tab and:
+
+- **＋ New model** (or **Duplicate** a similar one), then fill in:
+
+  | Field | What it's for |
+  |---|---|
+  | **Instructions** | The playbook: prompt structure, vocabulary that works, things to avoid, how to use an attached image. Markdown. |
+  | **Example prompts** | 2–4 gold-standard prompts. The LLM copies their *style*, never their content. |
+  | **Aspect ratios / resolutions / durations** | The options shown on the Create page. |
+  | **Defaults** | Starting aspect, resolution, duration, length and temperature. |
+  | **Length guide** | What *short / medium / long* mean for this model, e.g. `≈70–120 words`. |
+  | **Color** | Its accent color in the app. |
+
+- **✨ Draft the instructions from pasted docs:** paste the model's official prompting guide (or a good community write-up) and your local LLM turns it into a playbook in the standard format. Review it, then click **Use this draft**.
+- **Import / Export:** share models as `.json`. Importing a model with an existing ID updates it, which is handy when someone publishes an improved playbook.
+
+Each model is a single file in `data/models/<id>.json`:
+
+```jsonc
+{
+  "id": "ltx-2-3",
+  "name": "LTX 2.3",
+  "kind": "video",                       // "image" or "video"
+  "description": "One line shown under the model picker",
+  "color": "#22d3ee",
+  "instructions": "## Prompt format\n- Write ONE flowing paragraph…",
+  "examples": ["A complete example prompt…"],
+  "aspectRatios": ["16:9", "9:16", "1:1"],
+  "resolutions": ["1920×1080", "1080×1920", "1024×1024"],
+  "durations": ["6s", "8s", "10s"],
+  "defaults": { "aspectRatio": "16:9", "resolution": "1920×1080", "duration": "6s", "temperature": 0.7, "length": "medium" },
+  "lengthGuide": { "short": "≈50–90 words", "medium": "≈100–170 words", "long": "≈170–250 words" },
+  "sources": ["https://…"]
+}
+```
+
+## Choosing a brain (LLM)
+
+The "brain" is the LM Studio model that writes your prompts. Pick it from the **Brain** menu at the top right:
+
+- **👁 vision** models can see images. Text-only models still work for themes, and the app tells you if you try to use an image with one.
+- **Bigger follows the playbooks better,** especially exact length and structured formats like MiniMax's. Smaller is faster.
+
+| Your hardware | Good starting point |
+|---|---|
+| 6–8 GB VRAM, or a 16 GB Mac | Qwen3-VL 4B–8B |
+| 12–24 GB VRAM, or a 32 GB+ Mac | Qwen3-VL 8B, Gemma 3/4 12B–27B, Qwen 3.5/3.6 (vision variants) |
+| 24 GB+ VRAM | 27B–35B vision models for the best playbook-following |
+
+> **Reasoning ("thinking") models** such as Qwen 3.5/3.6 can spend thousands of tokens thinking before they write. Prompt Maker turns thinking **off** by default (**Settings → Thinking**), which makes them answer in seconds instead of minutes.
 
 ## Settings
 
-- **Thinking**: *Off* by default. Reasoning models such as Qwen 3.5/3.6 otherwise think for thousands of tokens before writing a single word.
-- **Top P / Max tokens**: standard sampling controls.
-- **LM Studio URL**: only localhost or local-network addresses are accepted.
+| Setting | Default | What it does |
+|---|---|---|
+| **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
+| **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. |
+| **Top P** | 0.95 | Nucleus sampling. Temperature is set for each run on the Create page. |
+| **Max tokens** | 4096 | The cap on each answer. Raise it if you turn thinking on. |
+| **Master instructions** | built-in | Shared rules sent before every model's playbook (output format, faithfulness to your theme…). There's a **Reset to default** button. |
 
-## Tests
+**Environment variables** (optional):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `5317` | Port for the web app. |
+| `HOST` | `127.0.0.1` | Interface to bind. ⚠️ There's no login, so don't expose it to a network you don't trust. |
+| `PROMPT_MAKER_DATA` | `./data` | Where models, history, images and settings are stored. |
+| `LMS_BIN` | `~/.lmstudio/bin/lms` | Path to LM Studio's `lms` tool, used by the **▶ Start it** button. |
+
+## Privacy & offline
+
+- **Everything runs on your machine.** The app talks only to your own LM Studio.
+- **It refuses anything else.** The LM Studio URL must be this computer or a local-network address; internet URLs are rejected.
+- **Nothing external loads.** The page's Content-Security-Policy blocks external scripts, fonts and trackers, and the fonts are bundled.
+- **Nothing is sent anywhere.** No accounts, no telemetry, no analytics.
+- **Localhost only by default.** The web server binds to `127.0.0.1`, so other devices can't reach it.
+
+## Your data
+
+Everything lives in the `data/` folder (or `PROMPT_MAKER_DATA`):
+
+```
+data/
+├── models/         # model playbooks (.json), versioned in git
+├── history.json    # every generation and all its versions
+├── images/         # images you've used (deduplicated)
+└── settings.json   # your settings
+```
+
+- **Back up `data/`** to keep everything.
+- **Only `data/models/` is committed to git.** Your history, images and settings are in `.gitignore`.
+
+## Troubleshooting
+
+<details>
+<summary><b>"LM Studio's server is off" banner</b></summary>
+
+Nothing is answering on the LM Studio URL. Click **▶ Start it** in the banner; it runs `lms server start`, which works whether the LM Studio app is open or not. The app reconnects on its own as soon as the server is back.
+
+Keep in mind that **opening** the LM Studio app doesn't turn its server on, unless "start server on launch" is enabled in its Developer tab. **Quitting** the app turns the server off.
+</details>
+
+<details>
+<summary><b>"This brain can't see images"</b></summary>
+
+The selected LLM is text-only. Pick a model marked 👁 in the **Brain** menu, or remove the image.
+</details>
+
+<details>
+<summary><b>"The brain ran out of room" / empty prompt</b></summary>
+
+The model used up all its tokens, usually by thinking. Set **Settings → Thinking** to *Off*, or raise **Max tokens**.
+</details>
+
+<details>
+<summary><b>The Brain menu is empty right after starting LM Studio</b></summary>
+
+LM Studio takes a few seconds to index your models after its server starts. Prompt Maker keeps checking and fills the menu in on its own.
+</details>
+
+<details>
+<summary><b>Prompts come out too long or too short</b></summary>
+
+Small models often overshoot "short". Try a bigger brain, or adjust that model's **length guide** in the Models tab. The word counter on each take shows how close you are.
+</details>
+
+<details>
+<summary><b>The first prompt is slow</b></summary>
+
+LM Studio is loading the model into memory; the take shows "Loading … into memory". After that, runs are fast. With an 8B model on a GPU, expect a few seconds per take.
+</details>
+
+<details>
+<summary><b>Port 5317 is already in use</b></summary>
+
+Another copy is probably running. Open http://127.0.0.1:5317, or start on another port with `PORT=5400 npm start` (Windows PowerShell: `$env:PORT=5400; npm start`).
+</details>
+
+## Platform support
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| The app (`npm start`) | ✅ tested | ✅ should work | ✅ should work |
+| `./start.sh` launcher | ✅ | ⚠️ needs `open` instead of `xdg-open` | ❌ use `npm start` |
+| **▶ Start it** (LM Studio server) | ✅ | ✅ should work | ⚠️ start the server from LM Studio instead |
+| Test suite | ✅ | ⚠️ expects Chrome as `google-chrome` | ⚠️ same |
+
+Developed and tested on Linux with Chrome. Reports from macOS, Windows, Firefox and Safari are welcome.
+
+## Development
+
+No build step: edit a file and refresh the browser (restart the server after changing `server.js` or `lib/`).
+
+```
+prompt-maker/
+├── server.js               # HTTP server: API, streaming, static files
+├── lib/
+│   ├── lmstudio.js         # LM Studio client: model list, streaming chat, start server
+│   ├── prompt.js           # builds the messages sent to the LLM (master rules + playbook + request)
+│   └── store.js            # file storage: models, settings, history, images
+├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts)
+├── data/models/            # model playbooks
+├── tests/
+│   ├── mock-lmstudio.mjs   # fake LM Studio for tests
+│   └── ui.test.mjs         # end-to-end suite (headless Chrome)
+└── start.sh                # Linux launcher
+```
+
+### Tests
 
 ```bash
 npm run test:ui
 ```
 
-This runs an end-to-end suite against the real app server, a mock LM Studio (`tests/mock-lmstudio.mjs`) and headless Chrome. It clicks through every screen with real mouse events and fails on any console error. It also checks for sideways scrolling at phone, tablet, laptop and desktop widths. Screenshots land in `/tmp/prompt-maker-ui/`, or in `$SHOTS` if set. The suite uses a temporary data folder, so your models and history are never touched.
+The suite runs the real app against a mock LM Studio in headless Chrome, and uses a temporary data folder so your models and history are never touched:
 
-## Data
+- **Real clicks:** it uses real mouse events, so a button hidden under something else fails.
+- **Coverage:** generating, refining, versions, images, errors, stopping, History, Models, Settings and keyboard use.
+- **Strict:** it fails on any console error.
+- **Layout:** it checks for sideways scrolling at six screen sizes, from 360px phones to 1920px desktops.
 
-Everything lives in `data/`:
+Screenshots go to `/tmp/prompt-maker-ui/` (or `$SHOTS`). The suite needs Node 22+ and Chrome installed as `google-chrome`.
 
-- `models/`: target model definitions
-- `history.json`: every generation and its versions
-- `images/`: uploaded images, deduplicated
-- `settings.json`
+## Contributing
 
-Back up that folder to keep everything.
+Issues and pull requests are welcome. The most valuable contributions are **model playbooks**: if you've dialed in prompting for a model, export its `.json` and share it. Please keep the app dependency-free and offline-only, and run `npm run test:ui` before opening a PR.
 
-## Included models (researched September 2026)
+## Acknowledgements
 
-- **Krea 2 RAW** (image): dense natural-language captions, texture cues against the RAW checkpoint's airbrushed look.
-- **LTX 2.3** (video + audio): one chronological paragraph, explicit camera, sound and dialogue woven in.
-- **MiniMax H3 / Hailuo 03** (video + audio): MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`), with `[Shot N]` cuts and `(S1)` dialogue tags.
+- [LM Studio](https://lmstudio.ai), for making local LLMs easy.
+- The prompting guides from **Krea**, **Lightricks (LTX)** and **MiniMax** that the bundled playbooks are built on (sources are in each model's editor).
+- Fonts: [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), both under the SIL Open Font License (`public/fonts/OFL.txt`).
 
-Sources for each are listed in the model's editor.
+## License
+
+*Not chosen yet.* A license needs to be added before this repository goes public.
