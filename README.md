@@ -9,6 +9,7 @@ Runs 100% offline on your own machine, powered by a local LLM in [LM Studio](htt
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![100% offline](https://img.shields.io/badge/runs-100%25%20offline-8b5cf6)
 ![Powered by LM Studio](https://img.shields.io/badge/LLM-LM%20Studio-ff4d8d)
+![MIT license](https://img.shields.io/badge/license-MIT-blue)
 
 <img src="docs/screenshots/create.png" alt="Prompt Maker writing two takes of a Krea 2 RAW prompt" width="900">
 
@@ -402,4 +403,4 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 
 ## License
 
-*Not chosen yet.* A license needs to be added before this repository goes public.
+[MIT](LICENSE) © 2026 VincentAZ. Bundled fonts are under the SIL Open Font License (`public/fonts/OFL.txt`).
