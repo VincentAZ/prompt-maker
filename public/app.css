@@ -291,8 +291,8 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 
 .generate-bar {
   position: sticky; bottom: 0; z-index: 2; display: flex; gap: 8px;
-  margin: 0 -22px; padding: 16px 22px 20px;
-  background: linear-gradient(to top, var(--panel-solid) 70%, transparent);
+  margin: 0 -22px; padding: 34px 22px 20px;
+  background: linear-gradient(to top, var(--panel-solid) 62%, rgb(22 19 34 / 0%));
   border-radius: 0 0 26px 26px;
 }
 .btn-generate {
@@ -369,8 +369,7 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .refine button { width: 38px; height: 38px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--m); color: #0a0910; font-size: 18px; font-weight: 900; flex: none; }
 .refine button:hover:not(:disabled) { filter: brightness(1.1); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.takes:has(.take + .take) .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 88%, transparent); padding-right: 40px; }
-.takes:has(.take + .take) .chips::-webkit-scrollbar { display: none; }
+
 .take.interrupted .status { color: var(--warn); background: rgb(255 196 77 / 12%); }
 
 .error-card { display: flex; gap: 14px; padding: 16px 18px; border-radius: var(--radius); background: rgb(255 90 110 / 10%); border: 1px solid rgb(255 90 110 / 45%); animation: rise 0.3s ease both; }

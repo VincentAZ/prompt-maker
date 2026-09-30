@@ -1829,7 +1829,7 @@ function renderZone(card) {
       <div class="rb-settings" aria-label="Current sampler settings"></div>
     </div>`;
   } else if (model && !saved.get('hideRenderHint', false)) {
-    bar = `<div class="render-hint"><span>🎨 Want the ${model.kind === 'video' ? 'video' : 'image'} too? Attach a ComfyUI workflow to <b>${esc(model.name)}</b> and render takes on your own GPU.</span><span class="spacer"></span><button type="button" class="btn small rh-add">＋ Add a workflow</button><button type="button" class="icon-btn rh-x" aria-label="Hide this tip">✕</button></div>`;
+    bar = `<div class="render-hint"><span>🎨 Want the ${model.kind === 'video' ? 'video' : 'image'} too? Render it with ComfyUI on your own GPU.</span><span class="spacer"></span><button type="button" class="btn small rh-add">＋ Add a workflow</button><button type="button" class="icon-btn rh-x" aria-label="Hide this tip">✕</button></div>`;
   }
   zone.innerHTML = `${bar}<div class="renders" aria-label="Renders"></div>`;
   const bar$ = $('.render-bar', zone);
