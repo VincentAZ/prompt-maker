@@ -2,16 +2,20 @@
 // DevTools protocol. Clicks are real mouse events, so a button hidden under something else fails.
 // Usage: node tests/ui.test.mjs [name-filter]   Screenshots go to $SHOTS (default: /tmp/prompt-maker-ui).
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import zlib from 'node:zlib';
 import { startMock } from './mock-lmstudio.mjs';
+import { startMockComfy, SAVED_WORKFLOW, OBJECT_INFO } from './mock-comfyui.mjs';
+import { convertUiWorkflow, pruneToOutputs } from '../lib/comfy-convert.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const APP_PORT = Number(process.env.APP_PORT) || 5399;
 const MOCK_PORT = Number(process.env.MOCK_PORT) || 12399;
 const CDP_PORT = Number(process.env.CDP_PORT) || 9333;
+const COMFY_PORT = Number(process.env.COMFY_PORT) || 12488;
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const OUT = process.env.SHOTS || path.join(os.tmpdir(), 'prompt-maker-ui');
 const FILTER = process.argv[2] || '';
@@ -235,7 +239,7 @@ async function main() {
   for (const f of await fs.readdir(path.join(ROOT, 'data/models'))) {
     await fs.copyFile(path.join(ROOT, 'data/models', f), path.join(dataDir, 'models', f));
   }
-  await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, llmModel: 'mock/vision-8b' }));
+  await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, comfyUrl: `http://127.0.0.1:${COMFY_PORT}`, llmModel: 'mock/vision-8b' }));
   const lmsMarker = path.join(tmp, 'lms-called');
   const fakeLms = path.join(tmp, 'fake-lms');
   await fs.writeFile(fakeLms, `#!/bin/sh\necho "$@" > ${JSON.stringify(lmsMarker)}\n`, { mode: 0o755 });
@@ -246,6 +250,12 @@ async function main() {
 
   const mock = startMock(MOCK_PORT);
   await mock.start();
+  const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96) });
+  await comfy.start();
+  const apiWorkflowFile = path.join(tmp, 'mock-api.json');
+  const turbo = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
+  turbo['3'].inputs.cfg = 1; // a distilled/turbo-style workflow: CFG must stay 1
+  await fs.writeFile(apiWorkflowFile, JSON.stringify(turbo));
 
   const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
@@ -740,6 +750,246 @@ async function main() {
     await shot('10-settings', { full: true });
   });
 
+  // ---------------- ComfyUI renders ----------------
+
+  await test('converter: saved workflow → API format', async () => {
+    const api = convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO);
+    eq(Object.keys(api).sort().join(','), '3,4,5,6,7,8,9', 'runnable nodes (note dropped)');
+    eq(JSON.stringify(api['3'].inputs), JSON.stringify({ seed: 42, steps: 20, cfg: 7, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] }), 'KSampler inputs (control value skipped)');
+    eq(api['6']._meta.title, 'Positive Prompt', 'titles kept');
+  });
+
+  await test('settings: ComfyUI connection', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await click('#sComfyTest');
+    await waitFor('document.querySelector("#sComfyResult").textContent.includes("Connected to ComfyUI 0.38.0-mock")', 'ComfyUI connected');
+    assert((await text('#sComfyResult')).includes('Mock GPU (8 GB)'), 'GPU shown');
+  });
+
+  await test('workflows: add from the ComfyUI library (auto setup)', async () => {
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    assert((await text('#wfList')).includes('No workflows yet'), 'empty state');
+    await click('#addWorkflowBtn');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await waitFor('!!document.querySelector(\'#wfSaved button[data-path="Mock T2I.json"]\')', 'saved workflows listed');
+    eq(await count('#wfSaved button'), 1, 'hidden files skipped');
+    await shot('20-wf-pick');
+    await click('#wfSaved button[data-path="Mock T2I.json"]');
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapPrompt select'), '6|text', 'prompt → positive encoder, not the negative');
+    eq(await value('#mapWidth'), '5|width', 'width');
+    eq(await value('#mapHeight'), '5|height', 'height');
+    assert((await text('#optSeedLabel')).includes('1 seed input'), 'seed found');
+    await shot('21-wf-setup');
+    await click('#wfSave');
+    await toastText('is ready');
+    assert(!(await js('document.querySelector("#wfDialog").open')), 'dialog closed');
+    eq(await count('#wfList .wf-row'), 1, 'listed');
+    eq(await js('[...document.querySelectorAll("#wfList .wf-maps span.on")].map(s => s.textContent.trim()).join(",")'), '✍️ Prompt,📐 Size,🎲 Seed', 'mapping chips');
+    assert((await text('#modelList button[data-id="krea2-raw"]')).includes('🎨 1'), 'count in model list');
+  });
+
+  let renderedText = '';
+  await test('render: a take becomes an image, live', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a lighthouse at dusk');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .render-bar .rb-go")', 'render bar');
+    renderedText = await value('.take .prompt-text');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'running tile');
+    await waitFor('/\\d+%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'live progress %');
+    await shot('22-rendering');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'finished image', 10000);
+    await toastText('render ready');
+    eq(comfy.prompts.length, before + 1, 'one prompt queued');
+    const sent = comfy.prompts.at(-1).prompt;
+    eq(sent['6'].inputs.text, renderedText, 'take text injected');
+    eq(sent['7'].inputs.text, 'blurry, low quality, watermark', 'negative untouched');
+    assert(sent['5'].inputs.width % 16 === 0 && sent['5'].inputs.height % 16 === 0 && sent['5'].inputs.width >= 512, 'size set from the take');
+    assert(Number.isInteger(sent['3'].inputs.seed) && sent['3'].inputs.seed !== 42, 'fresh seed');
+    await shot('23-rendered', { full: true });
+  });
+
+  await test('render: lightbox', async () => {
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox open');
+    assert((await text('#lbInfo')).includes('Mock T2I'), 'workflow shown');
+    assert((await text('#lbInfo .lb-prompt')) === renderedText, 'prompt shown');
+    assert(await visible('#lbStage img'), 'image shown');
+    await shot('24-lightbox');
+    await press('Escape');
+    assert(await js('document.querySelector("#lightbox").hidden'), 'Esc closes');
+  });
+
+  await test('render: ×2 in one go, and a locked seed', async () => {
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-seed');
+    assert((await text('.take .rb-seed')).startsWith('🔒 Seed'), 'seed locked');
+    const locked = comfy.prompts.at(-1).prompt['3'].inputs.seed;
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 3 && !document.querySelector(".take .rtile.running")', 'three renders', 12000);
+    eq(comfy.prompts.at(-2).prompt['3'].inputs.seed, locked, 'first reuses the locked seed');
+    eq(comfy.prompts.at(-1).prompt['3'].inputs.seed, locked + 1, 'second steps it by one');
+  });
+
+  await test('workflow sampler settings: see them, change them, lock CFG 1', async () => {
+    assert((await text('.take .rb-settings')).includes('euler · normal'), 'render bar shows the sampler');
+    assert((await text('.take .rb-settings')).includes('20 steps') && (await text('.take .rb-settings')).includes('CFG 7'), 'steps and CFG shown');
+    await click('.take .rb-tune');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'settings open from Create');
+    const field = k => `#samplerCtl .sp-field[data-key="3|${k}"]`;
+    eq(await value(`${field('steps')} input`), '20', 'steps shown');
+    eq(await value(`${field('cfg')} input`), '7', 'cfg shown');
+    eq(await value(`${field('sampler_name')} select`), 'euler', 'sampler shown');
+    eq(await value(`${field('scheduler')} select`), 'normal', 'scheduler shown');
+    assert(await js(`document.querySelector('${field('seed')} input').disabled`), 'seed field idle while randomized');
+    await type(`${field('cfg')} input`, '5');
+    await type(`${field('steps')} input`, '12');
+    await choose(`${field('sampler_name')} select`, 'dpmpp_2m');
+    assert(await js(`document.querySelector('${field('cfg')}').classList.contains('edited')`), 'edited fields are marked');
+    await shot('26-sampler-settings');
+    await click('#wfSave');
+    await toastText('Workflow updated');
+    await waitFor('document.querySelector(".take .rb-settings").textContent.includes("dpmpp_2m")', 'summary updated');
+    assert((await text('.take .rb-settings')).includes('12 steps') && (await text('.take .rb-settings')).includes('CFG 5'), 'new values in summary');
+    await click('.take .rb-seed'); // back to a fresh seed each render
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    const ks = comfy.prompts.at(-1).prompt['3'].inputs;
+    eq(`${ks.cfg}/${ks.steps}/${ks.sampler_name}/${ks.scheduler}`, '5/12/dpmpp_2m/normal', 'ComfyUI got the new settings');
+  });
+
+  await test('render: cancel mid-render', async () => {
+    await type('#theme', 'SLOWRENDER harbor at night');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-go")', 'render bar');
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    await click('.take .rtile.running .rt-cancel');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'tile gone', 8000);
+    await toastText('Render stopped');
+  });
+
+  await test('render: ComfyUI error is explained', async () => {
+    await type('#theme', 'COMFYFAIL scene');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-go")', 'render bar');
+    await click('.take .rb-go');
+    await waitFor('document.querySelector("#stageError") && !document.querySelector("#stageError").hidden', 'error card', 8000);
+    assert((await text('#stageError')).includes('Mock sampler exploded'), 'ComfyUI error surfaced');
+    assert(await visible('.take .rtile.failed'), 'failed tile');
+  });
+
+  await test('render: ComfyUI offline → clear message, reconnects', async () => {
+    await comfy.stop();
+    await click('.take .rb-go');
+    await waitFor('document.querySelector("#stageError") && document.querySelector("#stageError").textContent.includes("reach ComfyUI")', 'offline error', 8000);
+    await waitFor('document.querySelector(".take .rb-status")?.textContent.includes("offline")', 'offline badge');
+    await comfy.start();
+    await waitFor('!document.querySelector(".take .rb-status")?.textContent.includes("offline")', 'reconnected on its own', 9000);
+    await toastText('ComfyUI is connected');
+  });
+
+  await test('gallery: every render, opens back into Create', async () => {
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('document.querySelectorAll(".gtile").length >= 3', 'gallery tiles');
+    eq(await text('#galleryCount'), String(await count('.gtile')), 'count');
+    await shot('25-gallery', { full: true });
+    await click('.gtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="open"]');
+    await waitFor('document.querySelector("#view-create").classList.contains("active")', 'back on Create');
+    eq(await value('#theme'), 'a lighthouse at dusk', 'entry restored');
+    await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
+  });
+
+  await test('render: delete from the lightbox', async () => {
+    const before = await count('.take .rtile img');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
+    await toastText('Render deleted');
+    await press('Escape');
+    eq(await count('.take .rtile img'), before - 1, 'one fewer');
+  });
+
+  await test('lightbox: use a render as the next input image', async () => {
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="use"]');
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'render became the input image');
+    await toastText('Render set as your image');
+    assert(await visible('#roleBlock'), 'image modes offered');
+    await click('#imageClear');
+  });
+
+  await test('render all takes at once', async () => {
+    await click('#varSeg button[data-value="2"]');
+    await type('#theme', 'twin lighthouses');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector("#renderAllBtn")', 'render-all button');
+    const before = comfy.prompts.length;
+    await click('#renderAllBtn');
+    await waitFor(`document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")`, 'both takes rendered', 12000);
+    eq(comfy.prompts.length, before + 2, 'one render per take');
+    await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('history cards show the latest render', async () => {
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    const idx = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("a lighthouse at dusk")) + 1');
+    assert(await js(`!!document.querySelector('.hcard:nth-of-type(${idx}) .hthumb img[src^="/renders/"]')`), 'render as the thumbnail');
+    assert(/\d+ renders/.test(await text(`.hcard:nth-of-type(${idx}) .hthumb .tag`)), 'render count');
+  });
+
+  await test('workflows: upload an API file, pick between two, export, delete', async () => {
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    await click('#addWorkflowBtn');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [apiWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapPrompt select'), '6|text', 'mapped from an API file too');
+    assert(await js('document.querySelector(\'#samplerCtl .sp-field[data-key="3|cfg"] input\').disabled'), 'CFG 1 is locked');
+    await click('#samplerCtl .sp-field[data-key="3|cfg"] .sp-unlock');
+    assert(!(await js('document.querySelector(\'#samplerCtl .sp-field[data-key="3|cfg"] input\').disabled')), 'unlocks on request');
+    await type('#wfName', 'Uploaded API flow');
+    await click('#wfSave');
+    await toastText('is ready');
+    eq(await count('#wfList .wf-row'), 2, 'two workflows');
+    await click('#wfList .wf-row:nth-child(2) [data-act="export"]');
+    await toastText('Workflow exported');
+    await click('#wfList .wf-row:nth-child(2) [data-act="delete"]');
+    await click('#wfList .wf-row:nth-child(2) [data-act="delete"]');
+    await waitFor('document.querySelectorAll("#wfList .wf-row").length === 1', 'deleted');
+  });
+
+  await test('security: other websites can\'t use the local API', async () => {
+    const res = await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{"llmModel":"x"}' });
+    eq(res.status, 403, 'cross-site write blocked');
+    // fetch() won't send a custom Host header, so use a raw request.
+    const rebind = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: APP_PORT, path: '/api/history', headers: { Host: `evil.example:${APP_PORT}` } }, r => { r.resume(); resolve(r.statusCode); }).on('error', reject);
+    });
+    eq(rebind, 403, 'DNS-rebinding host blocked');
+    const ok = await fetch(`${APP}/api/models`);
+    eq(ok.status, 200, 'local tools still work');
+  });
+
   await test('routing: deep link + back button', async () => {
     await goto(`${APP}/#history`);
     assert(await js('document.querySelector("#view-history").classList.contains("active")'), 'deep link to history');
@@ -759,11 +1009,12 @@ async function main() {
     const sizes = [[360, 740, true], [390, 844, true], [820, 1180, true], [1024, 768, false], [1280, 800, false], [1920, 1080, false]];
     for (const [w, h, mobile] of sizes) {
       await viewport(w, h, mobile);
-      for (const view of ['create', 'history', 'models', 'settings']) {
+      for (const view of ['create', 'history', 'gallery', 'models', 'settings']) {
         await js(`document.querySelector('.tabs button[data-view="${view}"]').click()`);
         await sleep(250);
         const overflow = await js('document.documentElement.scrollWidth - innerWidth');
-        assert(overflow <= 1, `${view} at ${w}px scrolls sideways by ${overflow}px`);
+        const culprit = overflow > 1 ? await js(`[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1 && e.offsetParent).slice(-4).map(e => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\\s+/).join('.') : '') + ' r=' + Math.round(e.getBoundingClientRect().right)).join(' | ')`) : '';
+        assert(overflow <= 1, `${view} at ${w}px scrolls sideways by ${overflow}px: ${culprit}`);
         await shot(`r-${w}-${view}`, { full: view === 'create' });
       }
     }
@@ -782,6 +1033,7 @@ async function main() {
   app.kill();
   await Promise.race([chromeExit, sleep(3000)]);
   await mock.stop();
+  await comfy.stop();
   await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   process.exit(failed.length ? 1 : 0);
 }

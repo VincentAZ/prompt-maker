@@ -1,6 +1,8 @@
-# Personal data stays local; model guides in data/models/ are versioned.
+# Personal data stays local; model playbooks in data/models/ are versioned.
 data/history.json
 data/images/
+data/renders/
+data/workflows/
 data/settings.json
 *.tmp
 node_modules/

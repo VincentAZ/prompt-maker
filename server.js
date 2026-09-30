@@ -1,4 +1,5 @@
-// Prompt Maker: local web server. Zero dependencies; serves the UI and talks to LM Studio.
+// Prompt Maker: local web server. Zero dependencies; serves the UI, talks to LM Studio (prompts)
+// and, optionally, to a local ComfyUI (renders).
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -6,6 +7,9 @@ import path from 'node:path';
 import * as store from './lib/store.js';
 import { listLlms, streamChat, assertLocalUrl, startServer } from './lib/lmstudio.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
+import * as comfy from './lib/comfy.js';
+import * as wf from './lib/workflows.js';
+import { convertUiWorkflow, isApiWorkflow, isUiWorkflow, pruneToOutputs, ConvertError } from './lib/comfy-convert.js';
 
 const PORT = Number(process.env.PORT) || 5317;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -22,6 +26,22 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.webp': 'image/webp',
   '.ico': 'image/x-icon',
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.woff2': 'font/woff2',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.opus': 'audio/ogg',
 };
 
 // The browser may only talk to this server: nothing external can load, even by accident.
@@ -68,15 +88,43 @@ function openStream(res) {
   return { send, runId, signal: controller.signal, end: () => { runs.delete(runId); res.end(); } };
 }
 
-async function serveFile(res, file, extraHeaders = {}) {
+// Serves a file, with byte ranges so videos can seek.
+async function serveFile(req, res, file, extraHeaders = {}) {
+  let data;
   try {
-    const data = await fs.readFile(file);
-    const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache', ...extraHeaders });
-    res.end(data);
+    data = await fs.readFile(file);
   } catch {
-    sendJson(res, 404, { error: 'Not found' });
+    return sendJson(res, 404, { error: 'Not found' });
   }
+  const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+  const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache', 'Accept-Ranges': 'bytes', ...extraHeaders };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (range && (range[1] || range[2])) {
+    const size = data.length;
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      return res.end();
+    }
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
+    return res.end(data.subarray(start, end + 1));
+  }
+  res.writeHead(200, { ...headers, 'Content-Length': data.length });
+  res.end(data);
+}
+
+// Blocks other websites (cross-site requests) and DNS-rebinding tricks from using this local API.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+function isTrustedRequest(req) {
+  const host = String(req.headers.host || '');
+  const hostname = host.replace(/:\d+$/, '');
+  const openToNetwork = !['127.0.0.1', 'localhost', '::1'].includes(HOST);
+  if (!openToNetwork && !LOOPBACK_HOSTS.has(hostname)) return false;
+  const origin = req.headers.origin;
+  if (origin && origin !== 'null' && origin !== `http://${host}`) return false;
+  if (origin === 'null' && req.method !== 'GET') return false;
+  return true;
 }
 
 function within(dir, rel) {
@@ -264,6 +312,156 @@ async function draftGuide(req, res) {
   stream.end();
 }
 
+// ---------- ComfyUI workflows & renders ----------
+
+// Turns an uploaded or ComfyUI-saved workflow into an API prompt plus a suggested input mapping.
+async function prepareWorkflow(body) {
+  const settings = await store.getSettings();
+  let json = body.json;
+  let name = String(body.name || '').replace(/\.json$/i, '');
+  let source = 'upload';
+  if (body.comfyPath) {
+    json = await comfy.readSavedWorkflow(settings.comfyUrl, body.comfyPath);
+    name = body.comfyPath.split('/').pop().replace(/\.json$/i, '');
+    source = `comfyui:${body.comfyPath}`;
+  }
+  if (!json || typeof json !== 'object') throw store.httpError(400, 'That file is not valid JSON.');
+  let preset = null;
+  if (json.format === wf.EXPORT_FORMAT) {
+    preset = json;
+    name = json.name || name;
+    json = json.prompt;
+  }
+  let prompt;
+  const info = await comfy.objectInfo(settings.comfyUrl).catch(() => null);
+  if (isApiWorkflow(json)) {
+    prompt = json;
+  } else if (isUiWorkflow(json)) {
+    if (!info) throw store.httpError(400, 'ComfyUI needs to be running to read this workflow (it is in editor format). Start ComfyUI and try again, or export it with Workflow → Export (API).');
+    try {
+      prompt = pruneToOutputs(convertUiWorkflow(json, info), info);
+    } catch (err) {
+      if (err instanceof ConvertError) throw store.httpError(400, err.message);
+      throw err;
+    }
+  } else {
+    throw store.httpError(400, 'This doesn\'t look like a ComfyUI workflow. In ComfyUI use Workflow → Save, or Workflow → Export (API).');
+  }
+  const analysis = wf.analyze(prompt, info);
+  return {
+    name: name || 'Workflow',
+    source,
+    prompt,
+    mapping: preset?.mapping || analysis.mapping,
+    options: preset?.options || analysis.options,
+    candidates: analysis.candidates,
+    warnings: analysis.warnings,
+    producesVideo: analysis.producesVideo,
+    nodes: Object.keys(prompt).length,
+  };
+}
+
+const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+
+async function renderTake(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const entry = await store.getHistory(body.historyId || '');
+  if (!entry) throw store.httpError(404, 'That take is no longer in history.');
+  const variation = entry.variations[body.index];
+  if (!variation) throw store.httpError(400, 'Unknown take.');
+  const versionIndex = variation.versions[body.versionIndex] ? body.versionIndex : variation.versions.length - 1;
+  const text = variation.versions[versionIndex].text;
+  const workflow = await wf.getWorkflow(body.workflowId || '');
+  if (!workflow) throw store.httpError(400, 'Pick a workflow to render with.');
+  if (workflow.mapping.image && !entry.imageFile) {
+    throw store.httpError(400, `"${workflow.name}" needs an input image (it has a Load Image node), but this take has none. Add an image on the Create page, or pick a text-to-image/video workflow.`);
+  }
+  const base = settings.comfyUrl;
+  await comfy.status(base);
+  const info = await comfy.objectInfo(base).catch(() => null);
+  let imageName = null;
+  if (workflow.mapping.image && entry.imageFile) {
+    const buf = await fs.readFile(path.join(store.IMAGES_DIR, entry.imageFile));
+    const ext = entry.imageFile.split('.').pop();
+    imageName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.imageFile}`, IMAGE_MIME[ext] || 'image/jpeg');
+  }
+  const count = Math.min(4, Math.max(1, Math.round(Number(body.count) || 1)));
+  const lockedSeed = Number.isSafeInteger(body.seed) ? body.seed : null;
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
+  const clientId = comfy.newClientId();
+  for (let i = 0; i < count; i++) {
+    const t0 = Date.now();
+    let promptId = null;
+    const onAbort = () => { if (promptId) comfy.cancel(base, promptId); };
+    try {
+      const seed = lockedSeed !== null ? lockedSeed + i : workflow.options.randomizeSeed ? wf.randomSeed() : null;
+      const { prompt, applied } = wf.buildPrompt(workflow, {
+        text,
+        imageName,
+        aspectRatio: entry.aspectRatio,
+        resolution: entry.resolution,
+        duration: entry.duration,
+        seed,
+      }, info);
+      promptId = await comfy.queuePrompt(base, prompt, clientId);
+      stream.signal.addEventListener('abort', onAbort, { once: true });
+      stream.send({ type: 'queued', i, applied });
+      let lastPreview = 0;
+      const done = await comfy.watch(base, promptId, clientId, prompt, {
+        signal: stream.signal,
+        onEvent: ev => {
+          if (ev.type !== 'preview') return stream.send({ ...ev, i });
+          if (Date.now() - lastPreview < 350) return;
+          lastPreview = Date.now();
+          stream.send({ type: 'preview', i, src: `data:${ev.mime};base64,${ev.data.toString('base64')}` });
+        },
+      });
+      stream.signal.removeEventListener('abort', onAbort);
+      const outputs = comfy.outputFiles(done);
+      if (!outputs.length) throw store.httpError(502, 'ComfyUI finished but saved no image, video or audio. Does the workflow end in a Save node?');
+      const id = crypto.randomUUID();
+      const files = [];
+      for (const [n, out] of outputs.entries()) {
+        const ext = (path.extname(out.filename).toLowerCase() || '.bin').replace(/[^.\w]/g, '');
+        const file = `${id}_${n}${ext}`;
+        await fs.writeFile(path.join(store.RENDERS_DIR, file), await comfy.download(base, out));
+        files.push({ file, kind: out.kind, name: out.filename });
+      }
+      const render = {
+        id,
+        versionIndex,
+        text,
+        workflowId: workflow.id,
+        workflowName: workflow.name,
+        seed: applied.seed ?? null,
+        sampler: applied.sampler,
+        steps: applied.steps,
+        cfg: applied.cfg,
+        size: applied.size || null,
+        aspect: applied.aspect || null,
+        frames: applied.frames || null,
+        duration: applied.duration || null,
+        files,
+        createdAt: new Date().toISOString(),
+        secs: Math.round((Date.now() - t0) / 100) / 10,
+      };
+      await store.updateHistory(entry.id, e => { (e.variations[body.index].renders ||= []).push(render); });
+      stream.send({ type: 'render', i, render });
+    } catch (err) {
+      stream.signal.removeEventListener('abort', onAbort);
+      if (err.name === 'AbortError' || stream.signal.aborted) {
+        if (promptId) await comfy.cancel(base, promptId);
+        break;
+      }
+      stream.send({ type: 'error', i, message: err.message });
+      break;
+    }
+  }
+  stream.end();
+}
+
 // ---------- routing ----------
 
 async function route(req, res) {
@@ -271,6 +469,7 @@ async function route(req, res) {
   const p = url.pathname;
   const m = req.method;
   let match;
+  if (p.startsWith('/api/') && !isTrustedRequest(req)) return sendJson(res, 403, { error: 'Forbidden' });
 
   if (p === '/api/models' && m === 'GET') return sendJson(res, 200, await store.listModels());
   if (p === '/api/models' && m === 'POST') {
@@ -296,6 +495,7 @@ async function route(req, res) {
     }
     if (m === 'DELETE') {
       await store.deleteModel(id);
+      await wf.deleteWorkflowsForModel(id);
       return sendJson(res, 200, { ok: true });
     }
   }
@@ -306,6 +506,7 @@ async function route(req, res) {
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
     if (typeof body.lmStudioUrl === 'string') assertLocalUrl(body.lmStudioUrl.trim());
+    if (typeof body.comfyUrl === 'string') assertLocalUrl(body.comfyUrl.trim());
     return sendJson(res, 200, settingsView(await store.updateSettings(body)));
   }
 
@@ -372,22 +573,71 @@ async function route(req, res) {
     }
   }
 
+  // ---- ComfyUI (optional renders) ----
+  if (p === '/api/comfy/status' && m === 'GET') {
+    const settings = await store.getSettings();
+    const base = url.searchParams.get('url') || settings.comfyUrl;
+    try {
+      return sendJson(res, 200, { ...(await comfy.status(base)), url: base });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, url: base, error: err.message });
+    }
+  }
+  if (p === '/api/comfy/workflows' && m === 'GET') {
+    const settings = await store.getSettings();
+    return sendJson(res, 200, await comfy.savedWorkflows(settings.comfyUrl));
+  }
+  if (p === '/api/workflows' && m === 'GET') return sendJson(res, 200, await wf.listWorkflows());
+  if (p === '/api/workflows/prepare' && m === 'POST') return sendJson(res, 200, await prepareWorkflow(await readBody(req)));
+  if (p === '/api/workflows' && m === 'POST') {
+    const body = await readBody(req);
+    if (!(await store.getModel(body.modelId || ''))) throw store.httpError(400, 'Save the model first.');
+    return sendJson(res, 200, wf.summary(await wf.saveWorkflow(body)));
+  }
+  if ((match = p.match(/^\/api\/workflows\/([\w-]+)$/))) {
+    const existing = await wf.getWorkflow(match[1]);
+    if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
+    if (m === 'GET') {
+      const settings = await store.getSettings();
+      const info = await comfy.objectInfo(settings.comfyUrl).catch(() => null);
+      const { candidates, warnings, producesVideo } = wf.analyze(existing.prompt, info);
+      return sendJson(res, 200, { ...existing, candidates, warnings, producesVideo });
+    }
+    if (m === 'PUT') {
+      const body = await readBody(req);
+      return sendJson(res, 200, wf.summary(await wf.saveWorkflow({ name: body.name, mapping: body.mapping, options: body.options, overrides: body.overrides }, existing)));
+    }
+    if (m === 'DELETE') {
+      await wf.deleteWorkflow(match[1]);
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+  if (p === '/api/render' && m === 'POST') return renderTake(req, res);
+  if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'DELETE') {
+    return sendJson(res, 200, await store.deleteRender(match[1], match[2]));
+  }
+  if (p.startsWith('/renders/') && m === 'GET') {
+    const file = within(store.RENDERS_DIR, decodeURIComponent(p.slice('/renders/'.length)));
+    return file ? serveFile(req, res, file) : sendJson(res, 404, { error: 'Not found' });
+  }
+
   if (p.startsWith('/images/') && m === 'GET') {
     const file = within(store.IMAGES_DIR, decodeURIComponent(p.slice('/images/'.length)));
-    return file ? serveFile(res, file) : sendJson(res, 404, { error: 'Not found' });
+    return file ? serveFile(req, res, file) : sendJson(res, 404, { error: 'Not found' });
   }
 
   if (m === 'GET' && !p.startsWith('/api/')) {
     const rel = p === '/' ? 'index.html' : decodeURIComponent(p.slice(1));
     const file = within(PUBLIC_DIR, rel);
     const headers = { 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff' };
-    return file ? serveFile(res, file, headers) : sendJson(res, 404, { error: 'Not found' });
+    return file ? serveFile(req, res, file, headers) : sendJson(res, 404, { error: 'Not found' });
   }
 
   sendJson(res, 404, { error: 'Not found' });
 }
 
 await store.init();
+await wf.initWorkflows();
 
 const server = http.createServer(async (req, res) => {
   try {

@@ -26,6 +26,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
         <span>History</span><em id="historyBadge" class="badge" hidden></em>
       </button>
+      <button type="button" data-view="gallery" aria-label="Gallery">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+        <span>Gallery</span>
+      </button>
       <button type="button" data-view="models" aria-label="Models">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
         <span>Models</span>
@@ -175,6 +179,23 @@
       <div id="historyList" class="history-grid"></div>
     </section>
 
+    <!-- ================= GALLERY ================= -->
+    <section id="view-gallery" class="view" aria-label="Gallery">
+      <div class="page-head">
+        <h1>Gallery <span id="galleryCount" class="count-pill"></span></h1>
+        <p>Everything you've rendered with ComfyUI, straight from your prompts.</p>
+      </div>
+      <div class="toolbar">
+        <div id="galleryKinds" class="filter-chips" role="group" aria-label="Filter by type">
+          <button type="button" class="chip-btn" data-kind="" aria-pressed="true">All</button>
+          <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">📷 Images</button>
+          <button type="button" class="chip-btn" data-kind="video" aria-pressed="false">🎬 Videos</button>
+        </div>
+        <div id="galleryModels" class="filter-chips" role="group" aria-label="Filter by model"></div>
+      </div>
+      <div id="galleryGrid" class="gallery"></div>
+    </section>
+
     <!-- ================= MODELS ================= -->
     <section id="view-models" class="view" aria-label="Models">
       <div class="page-head">
@@ -192,6 +213,17 @@
           <ul id="modelList" class="model-list"></ul>
         </aside>
 
+        <div class="models-main">
+        <section class="card wf-card" id="wfCard" aria-labelledby="wfTitle">
+          <div class="wf-head">
+            <div>
+              <h2 id="wfTitle">🎨 ComfyUI workflows <span class="tag">optional</span></h2>
+              <p class="hint">Attach your ComfyUI workflows to render this model's prompts on your own GPU, right from each take. Add as many as you like, and pick one each time you render.</p>
+            </div>
+            <button type="button" id="addWorkflowBtn" class="btn primary small">＋ Add workflow</button>
+          </div>
+          <ul id="wfList" class="wf-list"></ul>
+        </section>
         <form id="modelForm" class="card model-form" autocomplete="off" novalidate>
           <div class="form-head">
             <span id="mSwatch" class="swatch"></span>
@@ -274,6 +306,9 @@
           <label class="field"><span>Sources <small>one per line, for your reference</small></span><textarea id="mSources" rows="3" class="mono"></textarea></label>
           <p class="muted small" id="mUpdated"></p>
         </form>
+
+
+        </div>
       </div>
     </section>
 
@@ -291,6 +326,15 @@
           </label>
           <p id="sTestResult" class="test-result" hidden></p>
           <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start the server in LM Studio's <b>Developer</b> tab, or run <code>lms server start</code>. Choose the LLM (“Brain”) in the top bar. Image input needs a vision model marked 👁.</p>
+        </section>
+
+        <section class="card">
+          <h2>🎨 ComfyUI <span class="tag">optional</span></h2>
+          <label class="field"><span>Local ComfyUI URL</span>
+            <div class="row"><input id="sComfyUrl" placeholder="http://127.0.0.1:8188"><button type="button" id="sComfyTest" class="btn small">Test connection</button></div>
+          </label>
+          <p id="sComfyResult" class="test-result" hidden></p>
+          <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI as usual (e.g. <code>python main.py</code>), then attach workflows to a model in the <b>Models</b> tab. For live previews while rendering, start ComfyUI with <code>--preview-method auto</code>.</p>
         </section>
 
         <section class="card">
@@ -327,6 +371,76 @@
       </form>
     </section>
   </main>
+
+  <dialog id="wfDialog" class="modal" aria-labelledby="wfDialogTitle">
+    <form method="dialog" class="modal-body" id="wfForm" novalidate>
+      <header class="modal-head">
+        <h2 id="wfDialogTitle">Add a workflow</h2>
+        <button type="button" class="icon-btn" id="wfClose" aria-label="Close">✕</button>
+      </header>
+
+      <div id="wfPick">
+        <div class="seg wf-tabs" role="tablist">
+          <button type="button" role="tab" data-value="comfy" class="active" aria-selected="true">From ComfyUI</button>
+          <button type="button" role="tab" data-value="upload" aria-selected="false">Upload a file</button>
+        </div>
+        <div id="wfFromComfy" class="wf-pane">
+          <div class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="wfSearch" placeholder="Search your saved workflows…" aria-label="Search saved workflows"></div>
+          <ul id="wfSaved" class="wf-saved"></ul>
+        </div>
+        <div id="wfFromFile" class="wf-pane" hidden>
+          <label class="wf-drop" id="wfDrop" tabindex="0">
+            <input type="file" id="wfFile" accept=".json,application/json" hidden>
+            <span class="dz-ico">📄</span>
+            <b>Drop a workflow .json here, or <u>browse</u></b>
+            <small>Saved workflows and "Export (API)" files both work. So do workflows exported from Prompt Maker.</small>
+          </label>
+        </div>
+        <p id="wfPickMsg" class="notice" hidden></p>
+      </div>
+
+      <div id="wfSetup" hidden>
+        <label class="field"><span>Name</span><input id="wfName" maxlength="120"></label>
+        <div id="wfWarnings"></div>
+        <p class="hint">Here's where Prompt Maker drops things into this workflow. We guessed from the workflow itself, so change anything that's off.</p>
+        <div class="map-grid">
+          <div class="map-row"><span class="map-ico">✍️</span><b>Prompt</b><div class="map-ctl" id="mapPrompt"></div></div>
+          <div class="map-row" id="rowImage"><span class="map-ico">🖼️</span><b>Image</b><div class="map-ctl"><select id="mapImage"></select><small>For image-to-image or image-to-video. The take's image is uploaded to ComfyUI.</small></div></div>
+          <div class="map-row" id="rowSize"><span class="map-ico">📐</span><b>Size</b><div class="map-ctl">
+            <div class="map-pair"><label>Width<select id="mapWidth"></select></label><label>Height<select id="mapHeight"></select></label><label>Round to<select id="optSnap"><option value="1">—</option><option value="8">8</option><option value="16">16</option><option value="32">32</option><option value="64">64</option></select></label></div>
+            <label>Aspect ratio input<select id="mapAspect"></select></label>
+            <small>Width &amp; height come from the take's resolution and aspect. An aspect input gets the closest option.</small>
+          </div></div>
+          <div class="map-row" id="rowDuration"><span class="map-ico">⏱️</span><b>Duration</b><div class="map-ctl">
+            <div class="map-pair"><label>Seconds<select id="mapSeconds"></select></label><label>Frames<select id="mapFrames"></select></label></div>
+            <div class="map-pair"><label>Frame rate<select id="mapFps"></select></label><label>Default fps<input id="optFps" type="number" min="1" max="120" step="1"></label><label>Frame count<select id="optFrameRule"><option value="exact">seconds × fps</option><option value="8n+1">8n+1 (LTX)</option><option value="4n+1">4n+1 (Wan, Hunyuan)</option></select></label></div>
+            <small>From the take's duration. Frames are worked out from the fps.</small>
+          </div></div>
+          <div class="map-row" id="rowSeed"><span class="map-ico">🎛️</span><b>Sampler</b><div class="map-ctl">
+            <label class="check"><input type="checkbox" id="optSeed"> <span id="optSeedLabel">New random seed every render</span></label>
+            <div id="samplerCtl" class="sampler-ctl"></div>
+            <small>These are the workflow's own values. Change any of them, and ↺ puts one back.</small>
+          </div></div>
+        </div>
+        <p id="mapMissing" class="map-missing" hidden></p>
+      </div>
+
+      <footer class="modal-foot">
+        <button type="button" id="wfBack" class="btn small" hidden>← Back</button>
+        <span class="spacer"></span>
+        <span id="wfBusy" class="muted small" hidden>Reading workflow…</span>
+        <button type="button" id="wfSave" class="btn primary" hidden>Save workflow</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Render viewer" hidden>
+    <button type="button" class="icon-btn lb-close" id="lbClose" aria-label="Close">✕</button>
+    <button type="button" class="lb-nav lb-prev" id="lbPrev" aria-label="Previous">‹</button>
+    <div class="lb-stage" id="lbStage"></div>
+    <button type="button" class="lb-nav lb-next" id="lbNext" aria-label="Next">›</button>
+    <aside class="lb-info" id="lbInfo"></aside>
+  </div>
 
   <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
   <div id="dropOverlay" class="drop-overlay" hidden><div>Drop it like it's hot 🔥</div></div>

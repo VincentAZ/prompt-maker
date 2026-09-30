@@ -2,13 +2,14 @@
 
 # ✦ Prompt Maker
 
-**Write the perfect prompt for any image or video model, from a theme, an image, or both.**
-Runs 100% offline on your own machine, powered by a local LLM in [LM Studio](https://lmstudio.ai).
+**Write the perfect prompt for any image or video model, from a theme, an image, or both. Then render it with your own ComfyUI workflows.**
+Runs 100% offline on your own machine, powered by a local LLM in [LM Studio](https://lmstudio.ai) and, optionally, [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 
 ![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![100% offline](https://img.shields.io/badge/runs-100%25%20offline-8b5cf6)
 ![Powered by LM Studio](https://img.shields.io/badge/LLM-LM%20Studio-ff4d8d)
+![Renders with ComfyUI](https://img.shields.io/badge/renders-ComfyUI-22d3ee)
 ![MIT license](https://img.shields.io/badge/license-MIT-blue)
 
 <img src="docs/screenshots/create.png" alt="Prompt Maker writing two takes of a Krea 2 RAW prompt" width="900">
@@ -23,7 +24,7 @@ Every image and video model wants its prompts written differently:
 - **LTX 2.3** wants one flowing paragraph, with camera moves and sound written in.
 - **MiniMax H3** expects a structured "shooting script" with timed shots and dialogue tags.
 
-Prompt Maker keeps a **playbook for each model** and has a local LLM write the prompt in exactly that style. You describe the idea, and it handles the dialect.
+Prompt Maker keeps a **playbook for each model** and has a local LLM write the prompt in exactly that style. You describe the idea, and it handles the dialect. Hook up your ComfyUI workflows and each prompt is one click away from the finished image or video.
 
 ## Contents
 
@@ -33,6 +34,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Using Prompt Maker](#using-prompt-maker)
+- [Rendering with ComfyUI (optional)](#rendering-with-comfyui-optional)
 - [Target models](#target-models)
 - [Choosing a brain (LLM)](#choosing-a-brain-llm)
 - [Settings](#settings)
@@ -63,6 +65,11 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - Timing for each take, plus a status while the model loads or thinks.
   - Progress shown in the browser tab title.
 - **History.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, star favorites, and reopen any entry to keep refining.
+- **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
+  - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
+  - Watch live progress (and previews) right on the take.
+  - Browse every result in the **Gallery**, and view it in a full-screen lightbox.
+  - Chain models: turn a still into the input image for a video model with one click.
 - **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let the local LLM draft the playbook. Import and export models as `.json`.
 - **Zero install fuss.** Plain Node.js with no dependencies: no `npm install`, no build step.
 - **Private by design.** Nothing leaves your machine (see [Privacy & offline](#privacy--offline)).
@@ -73,9 +80,13 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
  You (browser) ──▶ Prompt Maker (localhost:5317) ──▶ LM Studio (localhost:1234)
                     • the target model's playbook      • your local LLM ("the brain")
                     • your theme / image / settings    • writes the prompt, streamed back
+                                   │
+                                   └──(optional)──▶ ComfyUI (localhost:8188)
+                                                     • your workflow, with the prompt dropped in
+                                                     • renders the image/video on your GPU
 ```
 
-Prompt Maker builds a request out of three parts and sends it to LM Studio: its shared master rules, the target model's playbook and example prompts, and your theme, image and settings. The LLM's reply streams back into the page as your prompt.
+Prompt Maker builds a request out of three parts and sends it to LM Studio: its shared master rules, the target model's playbook and example prompts, and your theme, image and settings. The LLM's reply streams back into the page as your prompt. When you render, Prompt Maker makes a copy of the workflow you picked, puts the prompt (plus image, size, duration and a fresh seed) into it, and queues it on your ComfyUI. The result is saved alongside the take.
 
 ## Requirements
 
@@ -86,6 +97,7 @@ Prompt Maker builds a request out of three parts and sends it to LM Studio: its 
 | **A local LLM** | Any chat model works. Use a **vision** model (tagged "Vision" in LM Studio) if you want to use images. See [Choosing a brain](#choosing-a-brain-llm). |
 | **Hardware** | Enough memory to run that model. A small 4–8B vision model needs roughly 4–8 GB of GPU VRAM or Mac unified memory. CPU-only works, just slowly. |
 | **A modern browser** | Chrome/Edge 111+, Firefox 121+, Safari 16.2+ |
+| **ComfyUI** *(optional)* | Only for rendering. Any recent [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally (default port `8188`). Node 22+ gives live progress; older Node versions poll instead. |
 
 ## Installation
 
@@ -188,6 +200,56 @@ Everything you generate is saved automatically:
 | `Enter` (in *Tweak it…*) | Refine that take |
 | `Ctrl` / `⌘` + `V` | Paste an image |
 
+## Rendering with ComfyUI (optional)
+
+<img src="docs/screenshots/render.png" alt="A take rendered with a ComfyUI workflow" width="900">
+
+Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfyanonymous/ComfyUI), it can also **render** your prompts, using your own workflows on your own GPU.
+
+### 1. Attach a workflow to a model
+
+1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**.
+2. Open **Models**, pick a model (say *Krea 2 RAW*), and click **＋ Add workflow**.
+3. Choose where the workflow comes from:
+   - **From ComfyUI** lists every workflow you've saved in ComfyUI. Click one.
+   - **Upload a file** accepts a saved workflow, an *Export (API)* file, or a workflow exported from Prompt Maker.
+4. Check the **setup**. Prompt Maker reads the workflow and suggests where things go:
+
+   | Slot | What Prompt Maker puts there |
+   |---|---|
+   | ✍️ **Prompt** | The take's prompt. It picks the text that feeds the sampler's *positive* input, never the negative. You can send it to several inputs. |
+   | 🖼️ **Image** | The take's image, uploaded to ComfyUI (for image-to-image or image-to-video). |
+   | 📐 **Size** | Width and height from the take's resolution and aspect, rounded to a multiple of 8/16/32/64. An *aspect ratio* input gets its closest option. |
+   | ⏱️ **Duration** | Seconds, or a frame count worked out from the frame rate (with 8n+1 or 4n+1 rounding for LTX and Wan-style models). |
+   | 🎲 **Seed** | A fresh random seed every render, unless you lock it. |
+
+   Anything you don't map stays exactly as the workflow has it. Add as many workflows per model as you like, for example a fast draft workflow and a slow hi-res one.
+
+5. Tune the **🎛️ Sampler** settings if you like. Prompt Maker shows the workflow's own **seed, steps, CFG, sampler and scheduler** (every sampler in it, two-stage ones included) and lets you change any of them; **↺** puts a value back.
+   - A **CFG of 1 is locked**, because distilled, turbo and lightning models need it. **🔒 unlock** is there if you really mean it.
+   - Leave *New random seed every render* on, or turn it off to use a fixed seed.
+
+### 2. Render
+
+Every take now has a **🎨 Render** bar:
+
+- **Pick the workflow** for this render. Prompt Maker remembers your last choice for each model. The line under it shows what the render will use (sampler, steps, CFG, seed), and **⚙** opens those settings right there.
+- **×1–×4**: render several at once, each with its own seed.
+- **🎲 New seed / 🔒 Seed**: lock the last seed to try prompt tweaks on the same composition.
+- **▶ Render**: live progress shows on the tile (queue position, node, step, %), with previews if ComfyUI was started with `--preview-method auto`. **✕** cancels.
+- **🎨 Render all** does every take in one go.
+
+Click any result to open the **lightbox**, where you can:
+- see the prompt, seed, size and timing,
+- **download** the file,
+- **render again** with a new seed,
+- **🖼️ use it as the input image** for your next prompt (for example, animate a Krea still with LTX 2.3),
+- or delete it.
+
+Every render also appears in the **Gallery** tab, with filters for images, videos and models. The newest render becomes the thumbnail of its History card.
+
+> **Tip:** if a workflow runs its own prompt-writing LLM node (some LTX workflows do), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.
+
 ## Target models
 
 Three models come with ready-made playbooks, researched from their official prompting guides (September 2026):
@@ -263,6 +325,7 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 | Setting | Default | What it does |
 |---|---|---|
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
+| **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
 | **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. |
 | **Top P** | 0.95 | Nucleus sampling. Temperature is set for each run on the Create page. |
 | **Max tokens** | 4096 | The cap on each answer. Raise it if you turn thinking on. |
@@ -279,11 +342,12 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 
 ## Privacy & offline
 
-- **Everything runs on your machine.** The app talks only to your own LM Studio.
+- **Everything runs on your machine.** The app talks only to your own LM Studio, and to your own ComfyUI if you render.
 - **It refuses anything else.** The LM Studio URL must be this computer or a local-network address; internet URLs are rejected.
 - **Nothing external loads.** The page's Content-Security-Policy blocks external scripts, fonts and trackers, and the fonts are bundled.
 - **Nothing is sent anywhere.** No accounts, no telemetry, no analytics.
 - **Localhost only by default.** The web server binds to `127.0.0.1`, so other devices can't reach it.
+- **Protected from websites you visit.** Requests from other websites (cross-site requests) and DNS-rebinding tricks are rejected, so a web page can't quietly drive your local Prompt Maker.
 
 ## Your data
 
@@ -292,13 +356,15 @@ Everything lives in the `data/` folder (or `PROMPT_MAKER_DATA`):
 ```
 data/
 ├── models/         # model playbooks (.json), versioned in git
-├── history.json    # every generation and all its versions
+├── workflows/      # ComfyUI workflows you've attached, with their setup
+├── history.json    # every generation, its versions and its renders
 ├── images/         # images you've used (deduplicated)
+├── renders/        # images and videos rendered with ComfyUI
 └── settings.json   # your settings
 ```
 
 - **Back up `data/`** to keep everything.
-- **Only `data/models/` is committed to git.** Your history, images and settings are in `.gitignore`.
+- **Only `data/models/` is committed to git.** Your history, images, workflows, renders and settings are in `.gitignore`.
 
 ## Troubleshooting
 
@@ -346,6 +412,30 @@ LM Studio is loading the model into memory; the take shows "Loading … into mem
 Another copy is probably running. Open http://127.0.0.1:5317, or start on another port with `PORT=5400 npm start` (Windows PowerShell: `$env:PORT=5400; npm start`).
 </details>
 
+<details>
+<summary><b>"Can't reach ComfyUI"</b></summary>
+
+Start ComfyUI (for example `python main.py` in its folder) and check the URL in **Settings → ComfyUI → Test connection**. The render bar shows *ComfyUI offline* while it's down, and reconnects on its own.
+</details>
+
+<details>
+<summary><b>"This workflow uses nodes your ComfyUI doesn't have"</b></summary>
+
+The workflow needs custom nodes that aren't installed. In ComfyUI, open **Manager → Install Missing Custom Nodes**, restart, then add the workflow again.
+</details>
+
+<details>
+<summary><b>A workflow doesn't convert or render quite right</b></summary>
+
+Prompt Maker converts saved workflows itself. It handles bypassed nodes, reroutes, primitives, subgraphs and so on, and was checked against ComfyUI's own conversion on real workflows. A few exotic custom widgets can still differ. If one misbehaves, export it from ComfyUI with **Workflow → Export (API)** and upload that file instead.
+</details>
+
+<details>
+<summary><b>"This workflow needs an image"</b></summary>
+
+The workflow has a Load Image node mapped as the image input, but the take has no image. Add an image on the Create page, or pick a text-to-image/video workflow.
+</details>
+
 ## Platform support
 
 | | Linux | macOS | Windows |
@@ -367,11 +457,15 @@ prompt-maker/
 ├── lib/
 │   ├── lmstudio.js         # LM Studio client: model list, streaming chat, start server
 │   ├── prompt.js           # builds the messages sent to the LLM (master rules + playbook + request)
-│   └── store.js            # file storage: models, settings, history, images
+│   ├── store.js            # file storage: models, settings, history, images, renders
+│   ├── comfy.js            # ComfyUI client: status, saved workflows, queue, live progress, downloads
+│   ├── comfy-convert.js    # saved (editor) workflows → API format, incl. subgraphs & bypass
+│   └── workflows.js        # attached workflows: auto-mapping and building the prompt to queue
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts)
 ├── data/models/            # model playbooks
 ├── tests/
 │   ├── mock-lmstudio.mjs   # fake LM Studio for tests
+│   ├── mock-comfyui.mjs    # fake ComfyUI (HTTP + WebSocket progress) for tests
 │   └── ui.test.mjs         # end-to-end suite (headless Chrome)
 └── start.sh                # Linux launcher
 ```
@@ -382,10 +476,10 @@ prompt-maker/
 npm run test:ui
 ```
 
-The suite runs the real app against a mock LM Studio in headless Chrome, and uses a temporary data folder so your models and history are never touched:
+The suite runs the real app against a mock LM Studio and a mock ComfyUI in headless Chrome, and uses a temporary data folder so your models and history are never touched:
 
 - **Real clicks:** it uses real mouse events, so a button hidden under something else fails.
-- **Coverage:** generating, refining, versions, images, errors, stopping, History, Models, Settings and keyboard use.
+- **Coverage:** generating, refining, versions, images, errors, stopping, History, Models, Settings, keyboard use, ComfyUI workflows, rendering, the Gallery and security checks.
 - **Strict:** it fails on any console error.
 - **Layout:** it checks for sideways scrolling at six screen sizes, from 360px phones to 1920px desktops.
 
@@ -398,6 +492,7 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 ## Acknowledgements
 
 - [LM Studio](https://lmstudio.ai), for making local LLMs easy.
+- [ComfyUI](https://github.com/comfyanonymous/ComfyUI), for being the best local rendering engine there is.
 - The prompting guides from **Krea**, **Lightricks (LTX)** and **MiniMax** that the bundled playbooks are built on (sources are in each model's editor).
 - Fonts: [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), both under the SIL Open Font License (`public/fonts/OFL.txt`).
 
