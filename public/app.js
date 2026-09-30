@@ -229,6 +229,47 @@ function lengthTarget(model, length) {
   return r ? [Number(r[1]), Number(r[2])] : null;
 }
 
+// "16:9", "2.35:1" or "1920×1080" → width / height.
+function ratioOf(s) {
+  const m = /^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/.exec(String(s || '').trim());
+  return m && Number(m[2]) ? Number(m[1]) / Number(m[2]) : null;
+}
+const ratioDist = (a, b) => Math.abs(Math.log(a / b));
+
+// Sets Aspect to the model's option closest to the attached image's shape.
+function matchImageAspect() {
+  const m = currentModel();
+  const r = state.image?.ratio;
+  if (!m || !r) return null;
+  let best = null;
+  for (const a of m.aspectRatios) {
+    const ar = ratioOf(a);
+    if (ar && (!best || ratioDist(ar, r) < ratioDist(ratioOf(best), r))) best = a;
+  }
+  if (!best) return null;
+  $('#aspect').value = best;
+  syncResolution();
+  $('#aspectNote').hidden = false;
+  savePrefs();
+  return best;
+}
+
+// Keeps a W×H resolution in step with the aspect ratio (e.g. 9:16 → 1080×1920, not 1920×1080).
+function syncResolution() {
+  const m = currentModel();
+  const ar = ratioOf($('#aspect').value);
+  const sel = $('#resolution');
+  if (!m || !ar) return;
+  const current = ratioOf(sel.value);
+  if (current && ratioDist(current, ar) < 0.05) return;
+  const pixels = s => s.split(/[×x]/).reduce((a, b) => a * Number(b), 1);
+  const matches = m.resolutions.filter(r => ratioOf(r) && ratioDist(ratioOf(r), ar) < 0.05);
+  if (!matches.length) return;
+  const target = current ? pixels(sel.value) : pixels(matches[0]);
+  matches.sort((a, b) => Math.abs(pixels(a) - target) - Math.abs(pixels(b) - target));
+  sel.value = matches[0];
+}
+
 // The role actually used: "animate" only exists for video models.
 const effectiveRole = () => (state.imageRole === 'animate' && currentModel()?.kind !== 'video' ? 'reference' : state.imageRole);
 
@@ -534,6 +575,8 @@ function selectModel(id, { values } = {}) {
   setActive($('#lengthSeg'), state.length);
   setTemperature(Number.isFinite(Number(v.temperature)) ? v.temperature : m.defaults.temperature);
   $$('#lengthSeg button').forEach(b => { b.title = m.lengthGuide?.[b.dataset.value] || ''; });
+  $('#aspectNote').hidden = true;
+  if (!values) matchImageAspect();
   renderRole();
 }
 
@@ -595,7 +638,12 @@ $('#roleBlock').addEventListener('click', e => {
 });
 $('#temperature').addEventListener('input', e => setTemperature(e.target.value));
 $('#temperature').addEventListener('change', savePrefs);
-for (const id of ['#aspect', '#resolution', '#duration']) $(id).addEventListener('change', savePrefs);
+$('#aspect').addEventListener('change', () => {
+  $('#aspectNote').hidden = true;
+  syncResolution();
+  savePrefs();
+});
+for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', savePrefs);
 $('#theme').addEventListener('input', e => {
   renderRole();
   sizeTheme();
@@ -612,8 +660,10 @@ $('#theme').addEventListener('input', e => {
 async function loadImageFile(file) {
   if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
   let dataUrl;
+  let ratio;
   try {
     const bitmap = await createImageBitmap(file);
+    ratio = bitmap.width / bitmap.height;
     const max = 1536;
     const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement('canvas');
@@ -627,16 +677,17 @@ async function loadImageFile(file) {
   } catch {
     return toast('Could not read that image.', true);
   }
-  setImage({ dataUrl });
+  setImage({ dataUrl, ratio });
+  const aspect = matchImageAspect();
   // Store it right away: survives reloads and never has to be re-sent.
   try {
     const { file: name } = await api('/api/images', { method: 'POST', body: { image: dataUrl } });
     if (state.image?.dataUrl === dataUrl) {
-      state.image = { file: name, dataUrl };
+      state.image = { file: name, dataUrl, ratio };
       saved.set('image', name);
     }
-    toast('🖼️ Image added');
-    announce('Image added');
+    toast(aspect ? `🖼️ Image added · aspect set to ${aspect} to match` : '🖼️ Image added');
+    announce(aspect ? `Image added. Aspect ratio set to ${aspect} to match it.` : 'Image added');
   } catch (err) {
     toast(`Image upload failed: ${err.message}`, true);
   }
@@ -645,8 +696,13 @@ async function loadImageFile(file) {
 function setImage(img) {
   state.image = img;
   const preview = $('#imagePreview');
-  if (img) preview.src = img.dataUrl || `/images/${img.file}`;
-  else preview.removeAttribute('src');
+  if (img) {
+    preview.onload = () => { if (state.image === img && !img.ratio) img.ratio = preview.naturalWidth / preview.naturalHeight; };
+    preview.src = img.dataUrl || `/images/${img.file}`;
+  } else {
+    preview.removeAttribute('src');
+    $('#aspectNote').hidden = true;
+  }
   $('.dz-empty').hidden = Boolean(img);
   $('.dz-preview').hidden = !img;
   $('#dropzone').setAttribute('aria-label', img ? 'Image added' : 'Add an image: drop, paste or browse');

@@ -241,6 +241,8 @@ async function main() {
   await fs.writeFile(fakeLms, `#!/bin/sh\necho "$@" > ${JSON.stringify(lmsMarker)}\n`, { mode: 0o755 });
   const fixture = path.join(tmp, 'fixture.png');
   await fs.writeFile(fixture, makePng(640, 400));
+  const portrait = path.join(tmp, 'portrait.png');
+  await fs.writeFile(portrait, makePng(400, 700));
 
   const mock = startMock(MOCK_PORT);
   await mock.start();
@@ -399,7 +401,14 @@ async function main() {
     await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
     assert(await visible('#roleBlock'), 'role picker visible');
     assert(!(await visible('#roleBlock [data-value="animate"]')), 'no animate for image model');
+    // 640×400 (1.6) → Krea's closest ratio is 3:2, and the resolution follows.
+    eq(await value('#aspect'), '3:2', 'aspect matched to the image');
+    eq(await value('#resolution'), '1216×832', 'resolution matches the aspect');
+    assert(await visible('#aspectNote'), '"from image" note');
+    await toastText('aspect set to 3:2');
     await click('.model-card[data-id="ltx-2-3"]');
+    eq(await value('#aspect'), '16:9', 'LTX follows the image too');
+    eq(await value('#resolution'), '1920×1080', 'LTX resolution is landscape');
     assert(await visible('#roleBlock [data-value="animate"]'), 'animate for video model');
     assert(await visible('#durationField'), 'duration shown for video');
     await click('#roleBlock [data-value="animate"]');
@@ -413,6 +422,16 @@ async function main() {
     assert(JSON.stringify(lastCall().messages).includes('role = \\"animate\\"'), 'animate role sent');
     eq(await text('#historyBadge'), '2', 'history badge 2');
     await shot('04-image-animate', { full: true });
+  });
+
+  await test('portrait image flips to 9:16; manual change wins', async () => {
+    await setFiles('#imageInput', [portrait]);
+    await waitFor('document.querySelector("#aspect").value === "9:16"', 'portrait aspect');
+    eq(await value('#resolution'), '1080×1920', 'portrait resolution of the same size');
+    await choose('#aspect', '1:1');
+    eq(await value('#resolution'), '1024×1024', 'resolution follows a manual aspect change');
+    assert(!(await visible('#aspectNote')), 'note cleared after a manual change');
+    await choose('#aspect', '9:16');
   });
 
   await test('text-only brain warns and blocks images', async () => {

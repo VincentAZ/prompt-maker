@@ -276,6 +276,7 @@ main { padding: 24px; max-width: 1560px; margin: 0 auto; }
 .dials.two { grid-template-columns: 1.3fr 1fr; }
 .dial { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .dial > span { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.dial-note { font-style: normal; font-size: 12px; font-weight: 700; color: var(--m); margin-top: -2px; white-space: nowrap; }
 .seg { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line-2); }
 .seg button { flex: 1; padding: 7px 4px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font-weight: 650; font-size: 14px; transition: all 0.15s; }
 .seg button:hover { color: var(--text); background: rgb(255 255 255 / 5%); }
