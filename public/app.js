@@ -268,15 +268,40 @@ let llmLoading = null;
 function loadLlms() {
   llmLoading ??= (async () => {
     const res = await api('/api/llms').catch(err => ({ ok: false, error: err.message, models: [] }));
+    const cameBack = state.llmOk === false && res.ok;
     state.llmOk = res.ok;
     state.llmError = res.error || '';
     if (res.ok) state.llms = res.models; // offline: keep last-known names for the picker
     renderLlmSelect();
     renderBanner();
     renderVisionWarning();
+    if (cameBack) {
+      toast('🔌 LM Studio is back');
+      if (/LM Studio/.test($('#stageError').textContent)) showError('');
+    }
     llmLoading = null;
   })();
   return llmLoading;
+}
+
+// While LM Studio is down (or still indexing its models), keep checking so the app catches up on its own.
+setInterval(() => {
+  if ((state.llmOk === false || (state.llmOk && !state.llms.length)) && !document.hidden && !state.busy) loadLlms();
+}, 5000);
+
+// Turns on LM Studio's local server (works with the app open or closed).
+async function startLmStudio(btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    await api('/api/lmstudio/start', { method: 'POST' });
+    await loadLlms();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    if (btn.isConnected) { btn.disabled = false; btn.textContent = label; }
+  }
 }
 
 let lastFocusRefresh = 0;
@@ -289,7 +314,7 @@ window.addEventListener('focus', () => {
 function renderBanner() {
   const down = state.llmOk === false;
   $('#banner').hidden = !down;
-  if (down) $('#bannerLong').textContent = `Nothing at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Open LM Studio → Developer → Start server (or run “lms server start”).`;
+  if (down) $('#bannerLong').textContent = `Nothing is answering at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Start it here, or in LM Studio → Developer. It reconnects on its own.`;
 }
 
 function renderLlmSelect() {
@@ -368,8 +393,9 @@ $('#llmRefresh').addEventListener('click', async () => {
 });
 $('#bannerRetry').addEventListener('click', async () => {
   await loadLlms();
-  if (state.llmOk) toast('🔌 Connected to LM Studio');
+  if (!state.llmOk) toast('🔌 Still no answer from LM Studio', true);
 });
+$('#bannerStart').addEventListener('click', e => startLmStudio(e.currentTarget));
 
 // ---------- create: form ----------
 
@@ -688,9 +714,11 @@ function showError(msg) {
   const card = $('#stageError');
   if (!msg) { card.hidden = true; card.innerHTML = ''; return; }
   const [ico, title] = errorTitle(msg);
-  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b><p>${esc(msg)}</p></div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
+  const canStart = /reach LM Studio|stopped responding/i.test(msg);
+  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b><p>${esc(msg)}</p>${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
   card.hidden = false;
   $('.x', card).addEventListener('click', () => showError(''));
+  $('.e-start', card)?.addEventListener('click', e => startLmStudio(e.currentTarget));
   announce(`${title}. ${msg}`);
   if (!isView('create')) { toast(`${ico} ${title}`, true); return; }
   const r = card.getBoundingClientRect();
@@ -937,7 +965,7 @@ async function generate() {
     return showError('Give me something to work with: type a theme, add an image, or both.');
   }
   if (state.llmOk === false) await loadLlms();
-  if (state.llmOk === false) return showError(`Can't reach LM Studio at ${state.settings.lmStudioUrl}. Start its local server (Developer tab, or run: lms server start), then try again.`);
+  if (state.llmOk === false) return showError(`Can't reach LM Studio at ${state.settings.lmStudioUrl}. Its local server is off (quitting the LM Studio app turns it off too).`);
   const llm = selectedLlm();
   if (state.image && llm?.vision === false) return showError(`${llm.name} is text-only and can't see images. Pick a vision model (👁) in the top bar.`);
   await flushEdits();

@@ -236,13 +236,16 @@ async function main() {
     await fs.copyFile(path.join(ROOT, 'data/models', f), path.join(dataDir, 'models', f));
   }
   await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, llmModel: 'mock/vision-8b' }));
+  const lmsMarker = path.join(tmp, 'lms-called');
+  const fakeLms = path.join(tmp, 'fake-lms');
+  await fs.writeFile(fakeLms, `#!/bin/sh\necho "$@" > ${JSON.stringify(lmsMarker)}\n`, { mode: 0o755 });
   const fixture = path.join(tmp, 'fixture.png');
   await fs.writeFile(fixture, makePng(640, 400));
 
   const mock = startMock(MOCK_PORT);
   await mock.start();
 
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
   app.stdout.on('data', d => { appLog += d; });
   app.stderr.on('data', d => { appLog += d; });
@@ -524,10 +527,22 @@ async function main() {
     await waitFor('document.querySelector("#stageError") && !document.querySelector("#stageError").hidden', 'error card');
     assert((await text('#stageError')).includes('LM Studio'), 'offline error');
     await shot('06-offline');
+    // "Start it" runs `lms server start`; the fake lms records the call and we bring the mock back.
+    await click('#bannerStart');
+    for (let i = 0; i < 50 && !(await fs.stat(lmsMarker).catch(() => null)); i++) await sleep(100);
+    eq((await fs.readFile(lmsMarker, 'utf8')).trim(), `server start --port ${MOCK_PORT}`, 'lms called with the right port');
     await mock.start();
-    await click('#bannerRetry');
-    await waitFor('document.querySelector("#banner").hidden', 'banner cleared');
+    await waitFor('document.querySelector("#banner").hidden', 'banner cleared after start', 12000);
     assert(await js('document.querySelector("#llmDot").classList.contains("ok")'), 'green dot again');
+    await toastText('LM Studio is back');
+  });
+
+  await test('reconnects on its own when LM Studio comes back', async () => {
+    await mock.stop();
+    await click('#llmRefresh');
+    await waitFor('!document.querySelector("#banner").hidden', 'offline banner');
+    await mock.start();
+    await waitFor('document.querySelector("#banner").hidden', 'auto-reconnected without clicking', 9000);
   });
 
   await test('history: list, search, filter, favorite, open', async () => {

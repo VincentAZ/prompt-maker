@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as store from './lib/store.js';
-import { listLlms, streamChat, assertLocalUrl } from './lib/lmstudio.js';
+import { listLlms, streamChat, assertLocalUrl, startServer } from './lib/lmstudio.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 
 const PORT = Number(process.env.PORT) || 5317;
@@ -319,6 +319,19 @@ async function route(req, res) {
     }
   }
 
+  if (p === '/api/lmstudio/start' && m === 'POST') {
+    const settings = await store.getSettings();
+    await startServer(settings.lmStudioUrl);
+    // A fresh server answers before it has finished indexing, so wait until chat models show up.
+    let models = null;
+    for (let i = 0; i < 40; i++) {
+      models = await listLlms(settings.lmStudioUrl).catch(() => null);
+      if (models?.length) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (!models) throw store.httpError(502, 'LM Studio said it started, but its server is not answering yet. Try again in a few seconds.');
+    return sendJson(res, 200, { ok: true, models });
+  }
   if (p === '/api/generate' && m === 'POST') return generate(req, res);
   if ((match = p.match(/^\/api\/runs\/([\w-]+)\/cancel$/)) && m === 'POST') {
     runs.get(match[1])?.abort();

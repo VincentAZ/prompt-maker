@@ -49,6 +49,15 @@ Each target model is one JSON file in `data/models/`, edited in the **Models** t
 
 The shared rules sent before every model's instructions live in **Settings → Master instructions**.
 
+## LM Studio connection
+
+Prompt Maker talks to whatever serves LM Studio's API at `127.0.0.1:1234`. It isn't tied to the LM Studio desktop app or to Bionic, LM Studio's makers' newer app. Keep in mind:
+
+- **Opening the LM Studio app doesn't turn its server on**, unless "start server on launch" is enabled in its Developer tab.
+- **Quitting the app turns the server off.**
+- **If the server is off**, the app shows a banner with **▶ Start it**. That runs `lms server start`, which works whether the desktop app is open or not; without the app, LM Studio runs as a background service.
+- **It reconnects automatically** once the server is back.
+
 ## Settings
 
 - **Thinking**: *Off* by default. Reasoning models such as Qwen 3.5/3.6 otherwise think for thousands of tokens before writing a single word.
