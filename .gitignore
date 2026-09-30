@@ -1,0 +1,6 @@
+# Personal data stays local; model guides in data/models/ are versioned.
+data/history.json
+data/images/
+data/settings.json
+*.tmp
+node_modules/

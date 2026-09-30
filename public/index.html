@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Prompt Maker</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="bg-fx" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <header class="topbar">
+    <a class="brand" href="#create" aria-label="Prompt Maker home">
+      <img src="icon.svg" alt="" width="30" height="30">
+      <span class="wordmark">prompt<b>maker</b></span>
+    </a>
+    <nav class="tabs" aria-label="Sections">
+      <button type="button" data-view="create" aria-label="Create">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
+        <span>Create</span>
+      </button>
+      <button type="button" data-view="history" aria-label="History">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
+        <span>History</span><em id="historyBadge" class="badge" hidden></em>
+      </button>
+      <button type="button" data-view="models" aria-label="Models">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+        <span>Models</span>
+      </button>
+      <button type="button" data-view="settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+    <div class="llm" id="llmBox">
+      <span class="dot" id="llmDot"></span>
+      <span class="llm-label">Brain</span>
+      <select id="llmSelect" aria-label="Local LLM that writes the prompts"></select>
+      <button type="button" id="llmRefresh" class="icon-btn" title="Refresh LM Studio model list" aria-label="Refresh model list">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" role="alert" hidden>
+    <span class="banner-ico">🔌</span>
+    <span id="bannerText"><b>LM Studio isn't answering.</b> <span class="long" id="bannerLong"></span></span>
+    <button type="button" id="bannerRetry" class="btn small">Retry</button>
+  </div>
+
+  <main>
+    <!-- ================= CREATE ================= -->
+    <section id="view-create" class="view" aria-label="Create">
+      <div class="create">
+        <form id="createForm" class="director" autocomplete="off" novalidate>
+          <section class="step">
+            <header class="step-head"><span class="num">1</span><h2>Pick your model</h2></header>
+            <div id="modelChips" class="model-grid" role="radiogroup" aria-label="Target model"></div>
+            <p id="modelDesc" class="model-desc"></p>
+          </section>
+
+          <section class="step">
+            <header class="step-head">
+              <span class="num">2</span><h2>Describe the shot</h2><span class="opt" id="themeOpt"></span>
+              <span class="head-actions">
+                <button type="button" id="themeUndo" class="chip-btn undo" hidden>↶ Undo</button>
+                <button type="button" id="surpriseBtn" class="chip-btn" title="Fill in a random theme">🎲 Surprise me</button>
+              </span>
+            </header>
+            <textarea id="theme" class="theme" rows="3" aria-label="Theme"></textarea>
+          </section>
+
+          <section class="step">
+            <header class="step-head"><span class="num">3</span><h2>Add an image</h2><span class="opt">optional</span></header>
+            <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Add an image: drop, paste or browse">
+              <input type="file" id="imageInput" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden>
+              <div class="dz-empty">
+                <span class="dz-ico">🖼️</span>
+                <span class="dz-title">Drop an image, paste it, or <u>browse</u></span>
+                <span class="dz-sub">JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.</span>
+              </div>
+              <div class="dz-preview" hidden>
+                <img id="imagePreview" alt="Your image">
+                <div class="dz-actions">
+                  <button type="button" id="imageReplace" class="btn small glass">Replace</button>
+                  <button type="button" id="imageClear" class="btn small glass danger">Remove</button>
+                </div>
+              </div>
+            </div>
+            <p id="visionWarn" class="warn-line" hidden></p>
+            <div id="roleBlock" class="roles" role="radiogroup" aria-label="Use the image as" hidden>
+              <button type="button" class="role" data-value="reference" role="radio"><span class="role-ico">🎯</span><b>Reference</b><small>Borrow its vibe</small></button>
+              <button type="button" class="role" data-value="recreate" role="radio"><span class="role-ico">🪞</span><b>Recreate</b><small>Rebuild this image</small></button>
+              <button type="button" class="role" data-value="animate" role="radio"><span class="role-ico">🎬</span><b>Animate</b><small>It's frame one</small></button>
+            </div>
+            <p id="roleHint" class="hint" hidden></p>
+          </section>
+
+          <section class="step">
+            <header class="step-head"><span class="num">4</span><h2>Dial it in</h2></header>
+            <div class="dials">
+              <label class="dial" id="aspectField"><span>Aspect</span><select id="aspect"></select></label>
+              <label class="dial" id="resolutionField"><span>Resolution</span><select id="resolution"></select></label>
+              <label class="dial" id="durationField"><span>Duration</span><select id="duration"></select></label>
+            </div>
+            <div class="dials two">
+              <div class="dial">
+                <span>Prompt length</span>
+                <div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length">
+                  <button type="button" role="radio" data-value="short">Short</button>
+                  <button type="button" role="radio" data-value="medium">Medium</button>
+                  <button type="button" role="radio" data-value="long">Long</button>
+                </div>
+              </div>
+              <div class="dial">
+                <span>Takes</span>
+                <div class="seg" id="varSeg" role="radiogroup" aria-label="Number of variations">
+                  <button type="button" role="radio" data-value="1">1</button>
+                  <button type="button" role="radio" data-value="2">2</button>
+                  <button type="button" role="radio" data-value="3">3</button>
+                  <button type="button" role="radio" data-value="4">4</button>
+                </div>
+              </div>
+            </div>
+            <div class="dial temp">
+              <span>Temperature <output id="tempOut" class="temp-val"></output> <small id="tempWord" class="temp-word"></small></span>
+              <input type="range" id="temperature" min="0" max="2" step="0.05" aria-label="Temperature">
+              <div class="range-labels"><span>🎯 precise</span><span>🌶️ wild</span></div>
+            </div>
+          </section>
+
+          <div class="generate-bar">
+            <button type="submit" id="generateBtn" class="btn-generate">
+              <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Generate</span><kbd>Ctrl ↵</kbd>
+            </button>
+            <button type="button" id="stopBtn" class="btn-stop" hidden>■ Stop <kbd>Esc</kbd></button>
+          </div>
+        </form>
+
+        <section class="stage" aria-label="Results">
+          <div id="stageHead" class="stage-head" hidden></div>
+          <div id="stageError" class="error-card" role="alert" hidden></div>
+          <div id="resultsList" class="takes"></div>
+          <div id="resultsEmpty" class="empty">
+            <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
+            <h3>Let's make something wild.</h3>
+            <p>Pick a model, describe your shot or drop in an image, then hit <b>Generate</b>. Your local LLM writes the prompt in exactly the style that model wants.</p>
+            <div class="try">
+              <span>Try one:</span>
+              <div id="tryChips" class="try-chips"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ================= HISTORY ================= -->
+    <section id="view-history" class="view" aria-label="History">
+      <div class="page-head">
+        <h1>History <span id="historyCount" class="count-pill"></span></h1>
+        <p>Every prompt you've made, saved automatically. Open one to keep refining it.</p>
+      </div>
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="historySearch" placeholder="Search themes and prompts…" aria-label="Search history">
+        </div>
+        <div id="historyFilters" class="filter-chips" role="group" aria-label="Filter by model"></div>
+        <button type="button" id="historyFav" class="chip-btn" aria-pressed="false">☆ Favorites</button>
+      </div>
+      <div id="historyList" class="history-grid"></div>
+    </section>
+
+    <!-- ================= MODELS ================= -->
+    <section id="view-models" class="view" aria-label="Models">
+      <div class="page-head">
+        <h1>Models</h1>
+        <p>Each model carries its own playbook: the instructions your local LLM follows to write prompts for it. New model out? Add it here.</p>
+      </div>
+      <div class="models-layout">
+        <aside class="models-side">
+          <button type="button" id="newModelBtn" class="btn primary block">＋ New model</button>
+          <div class="side-row">
+            <button type="button" id="importBtn" class="btn small">⤓ Import</button>
+            <button type="button" id="exportAllBtn" class="btn small">⤒ Export all</button>
+          </div>
+          <input type="file" id="importInput" accept=".json,application/json" multiple hidden>
+          <ul id="modelList" class="model-list"></ul>
+        </aside>
+
+        <form id="modelForm" class="card model-form" autocomplete="off" novalidate>
+          <div class="form-head">
+            <span id="mSwatch" class="swatch"></span>
+            <h2 id="modelFormTitle">Model</h2>
+            <span id="dirtyFlag" class="tag warn" hidden>● Unsaved</span>
+            <div class="form-actions">
+              <button type="button" id="useModelBtn" class="btn small">▶ Use in Create</button>
+              <button type="button" id="dupModelBtn" class="btn small">Duplicate</button>
+              <button type="button" id="exportModelBtn" class="btn small">Export</button>
+              <button type="button" id="deleteModelBtn" class="btn small danger">Delete</button>
+              <button type="submit" id="saveModelBtn" class="btn small primary">Save</button>
+            </div>
+          </div>
+          <p id="modelFormMsg" class="notice" hidden></p>
+
+          <div class="grid-4">
+            <label class="field wide"><span>Name</span><input id="mName" placeholder="e.g. Krea 2 RAW"></label>
+            <label class="field"><span>Kind</span>
+              <select id="mKind"><option value="image">📷 Image model</option><option value="video">🎬 Video model</option></select>
+            </label>
+            <label class="field"><span>Color</span><input id="mColor" type="color" value="#ff4d8d"></label>
+          </div>
+          <label class="field"><span>Short description <small>shown under the model picker</small></span><input id="mDesc" placeholder="What makes this model tick, in one line"></label>
+          <p class="muted small">ID: <code id="mId">—</code> <span class="muted">(the file name in data/models/)</span></p>
+
+          <label class="field"><span>Instructions for the AI <small>markdown · this is the model's playbook</small></span>
+            <textarea id="mInstr" class="mono" rows="18" spellcheck="false"></textarea>
+          </label>
+
+          <details class="assist" id="assist">
+            <summary><span>✨ Draft the instructions from pasted docs</span><small>uses your local LLM</small></summary>
+            <p class="hint">Paste the model's official prompting guide, a Reddit write-up or your own notes. Nothing gets replaced until you click <b>Use this draft</b>.</p>
+            <textarea id="draftDocs" rows="6" placeholder="Paste documentation here…"></textarea>
+            <div class="row">
+              <button type="button" id="draftBtn" class="btn small primary">✨ Draft instructions</button>
+              <button type="button" id="draftStop" class="btn small" hidden>■ Stop</button>
+              <span id="draftStatus" class="muted small"></span>
+            </div>
+            <div id="draftResultWrap" hidden>
+              <textarea id="draftResult" class="mono" rows="12" spellcheck="false"></textarea>
+              <div class="row">
+                <button type="button" id="draftUse" class="btn small primary">Use this draft</button>
+                <button type="button" id="draftAppend" class="btn small">Append to instructions</button>
+              </div>
+            </div>
+          </details>
+
+          <div class="field">
+            <span>Example prompts <small>gold-standard prompts the AI copies the style of, never the content</small></span>
+            <div id="examplesList" class="examples"></div>
+            <button type="button" id="addExampleBtn" class="btn small">＋ Add example</button>
+          </div>
+
+          <div class="grid-3">
+            <label class="field"><span>Aspect ratios <small>comma-separated</small></span><input id="mAspects" placeholder="1:1, 16:9, 9:16"></label>
+            <label class="field"><span>Resolutions <small>comma-separated</small></span><input id="mRes" placeholder="1024×1024, 1920×1080"></label>
+            <label class="field video-only"><span>Durations <small>comma-separated</small></span><input id="mDur" placeholder="5s, 10s"></label>
+          </div>
+
+          <fieldset>
+            <legend>Defaults</legend>
+            <div class="grid-5">
+              <label class="field"><span>Aspect</span><select id="dAspect"></select></label>
+              <label class="field"><span>Resolution</span><select id="dRes"></select></label>
+              <label class="field video-only"><span>Duration</span><select id="dDur"></select></label>
+              <label class="field"><span>Length</span><select id="dLen"><option value="short">Short</option><option value="medium">Medium</option><option value="long">Long</option></select></label>
+              <label class="field"><span>Temperature</span><input id="dTemp" type="number" min="0" max="2" step="0.05"></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>What short, medium and long mean for this model</legend>
+            <div class="grid-3">
+              <label class="field"><span>Short</span><input id="lShort" placeholder="≈40–70 words"></label>
+              <label class="field"><span>Medium</span><input id="lMed" placeholder="≈80–130 words"></label>
+              <label class="field"><span>Long</span><input id="lLong" placeholder="≈150–220 words"></label>
+            </div>
+          </fieldset>
+
+          <label class="field"><span>Sources <small>one per line, for your reference</small></span><textarea id="mSources" rows="3" class="mono"></textarea></label>
+          <p class="muted small" id="mUpdated"></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section id="view-settings" class="view" aria-label="Settings">
+      <div class="page-head">
+        <h1>Settings</h1>
+        <p>Everything runs on your machine. Nothing leaves it.</p>
+      </div>
+      <form id="settingsForm" class="settings" autocomplete="off" novalidate>
+        <section class="card">
+          <h2>🔌 LM Studio</h2>
+          <label class="field"><span>Local server URL</span>
+            <div class="row"><input id="sUrl" placeholder="http://127.0.0.1:1234"><button type="button" id="sTest" class="btn small">Test connection</button></div>
+          </label>
+          <p id="sTestResult" class="test-result" hidden></p>
+          <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start the server in LM Studio's <b>Developer</b> tab, or run <code>lms server start</code>. Choose the LLM (“Brain”) in the top bar. Image input needs a vision model marked 👁.</p>
+        </section>
+
+        <section class="card">
+          <h2>🧠 How the brain thinks</h2>
+          <div class="grid-3">
+            <label class="field"><span>Thinking</span>
+              <select id="sThinking">
+                <option value="off">Off (fastest, recommended)</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="default">Model default</option>
+              </select>
+              <small class="hint">For reasoning models such as Qwen 3.5/3.6. Left on, they can think for thousands of tokens before writing.</small>
+            </label>
+            <label class="field"><span>Top P</span><input id="sTopP" type="number" min="0" max="1" step="0.01"><small class="hint">Lower is more focused. Temperature is set per run on the Create page.</small></label>
+            <label class="field"><span>Max tokens</span><input id="sMax" type="number" min="256" max="32768" step="256"><small class="hint">The cap on each answer. Raise it if thinking is on.</small></label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>📜 Master instructions</h2>
+          <p class="hint">Shared rules sent before every model's own instructions: output format, staying faithful to the theme, and so on.</p>
+          <textarea id="sMaster" class="mono" rows="16" spellcheck="false"></textarea>
+          <div class="row"><button type="button" id="sResetMaster" class="btn small">↺ Reset to default</button></div>
+        </section>
+
+        <div class="settings-foot">
+          <span id="sDataDir" class="muted small"></span>
+          <div class="spacer"></div>
+          <span id="settingsDirty" class="tag warn" hidden>● Unsaved</span>
+          <button type="submit" class="btn primary">Save settings</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
+  <div id="dropOverlay" class="drop-overlay" hidden><div>Drop it like it's hot 🔥</div></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

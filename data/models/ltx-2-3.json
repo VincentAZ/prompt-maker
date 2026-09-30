@@ -1,0 +1,71 @@
+{
+  "id": "ltx-2-3",
+  "name": "LTX 2.3",
+  "kind": "video",
+  "description": "Lightricks' open 22B video+audio model: cinematic text/image-to-video with synced sound, dialogue and lip sync.",
+  "color": "#22d3ee",
+  "instructions": "## What LTX 2.3 is\n- Lightricks' open-weights 22B model (March 2026) that renders video plus synchronized audio in one pass: ambience, effects, music, speech and singing with lip sync.\n- Strong at cinematic single-subject shots, facial nuance, atmosphere (fog, rain, golden hour, reflections), clear camera moves, stylized looks (film noir, analog film, claymation, animation) and native vertical video.\n- Its Gemma 3 text encoder rewards literal, specific, cinematographer-style prose; vague or poetic wording gets diluted.\n\n## Prompt format\n- Write ONE flowing paragraph of plain present-tense prose. No line breaks, lists, tags, keyword piles, timestamps or shot numbers.\n- Start directly with the style and shot, never \"The video begins with\". Optionally open with `Style: <style>.` (default: cinematic realism).\n- Order the content:\n  1. Shot scale and angle plus the main subject doing the main action, in one sentence.\n  2. Appearance: age, build, hair, clothing, distinguishing features, in plain color words (\"red coat\", not \"vibrant crimson\").\n  3. Setting: location, foreground and background, left/right placement, facing direction.\n  4. Lighting and palette: one consistent light logic (source, direction, softness, color) plus textures and materials.\n  5. Action beats in chronological order, linked with \"as\", \"then\", \"while\".\n  6. Camera: how and when it moves, and what is in frame afterward.\n  7. Audio, woven in where each sound happens.\n- Every sentence must contain something visible or audible. Close-ups need fine face and fabric detail; wide shots need layout and atmosphere.\n\n## Camera language\n- Use concrete terms: static or locked-off frame, slow dolly in / push in, pull back, dolly left or right, pans across, tilts up or down, jib or crane up, tracks alongside, follows from behind, arcs around, handheld, over-the-shoulder, overhead; plus close-up, medium shot, wide establishing shot, low angle, shallow depth of field.\n- Describe moves relative to the subject and say what they reveal: \"The camera pans right, revealing workers in hard hats.\"\n- One primary move per shot, usually slow. If nothing calls for movement, write \"The camera remains static.\" Never leave the camera unstated, or it drifts.\n\n## Motion and timing\n- Prompt order is the timeline.\n- Budget beats: 5-6 s = 1-2 beats; 8-10 s = 3-4; 12-20 s = 4-6 slower, continuous actions. Too many beats get skipped; too few make the model rush or loop.\n- Give every sentence a physical verb (turns, lifts, exhales, steps back). Appearance alone does not animate.\n- Write pauses as beats (\"he pauses\", \"a beat of silence\"). End with a settling action or the camera coming to rest.\n- One continuous shot: no cuts unless the theme explicitly asks.\n\n## Audio\n- Always describe the soundscape specifically (\"soft footsteps on tile\", \"rain drumming on a tin roof\"), never generically (\"ambient sound\").\n- Set background ambience early, then place each effect next to the action causing it, with loudness matching the action.\n- Music: say whether it is in the scene or a score, with genre, instruments and tempo (\"slow solo piano\"). \"No music\" is fine.\n- Speech only when the theme involves talking, narration, singing or conversation; never invent it otherwise.\n  - Exact words in double quotes, each line attributed to a visually identified speaker with voice qualities first: `The old man in the grey cap says in a slow, gravelly voice, \"...\"`\n  - Split longer speech into short phrases with physical acting between them: `He pauses, looks aside, then continues, \"...\"`\n  - Give delivery (whisper, calm, shout) and, if not English, language and accent, with the words in that language's script.\n  - Budget about 2-3 spoken words per second of clip, minus pauses. At most two speakers.\n- Singing: quote the lyrics and describe voice and accompaniment.\n- Optionally end with audio quality: \"The audio is crisp with faint room tone.\"\n\n## Avoid\n- Emotion labels (sad, nervous): show trembling hands, a tight smile, lowered eyes instead.\n- Readable text, logos, signs, captions, brand names.\n- Chaotic physics (juggling, flips, collisions). Walking, gestures and dancing are fine.\n- Crowded scenes: at most 2-3 main subjects, one action thread, no characters the theme did not ask for.\n- Mixed light logic (warm sunset plus cold fluorescent) and contradictions (\"a still lake with crashing waves\").\n- Numeric specs (counts, angles, speeds) and technical settings (resolution, fps, duration, ratio).\n- Metaphors, hype adjectives (\"breathtaking\"), and smell, taste or touch.\n\n## Image roles\n- **reference**: LTX never sees the image. Borrow its subject, palette, lighting, setting and style, merge them with the theme, and write a complete standalone prompt.\n- **recreate**: Describe the image as the opening frame (shot scale, angle, placement, appearance, setting, light direction and color, textures, medium), then add gentle plausible motion, a matching soundscape and any theme changes.\n- **animate** (the image IS the first frame):\n  - Describe only what happens next: motion, changes, camera, sound. Do not re-describe the visible scene; wrong or repeated descriptions cause cuts or drift.\n  - Refer to subjects with short identifiers matching the image (\"the woman in the yellow raincoat\").\n  - Start from the pose in the frame and describe the transition from stillness into motion with clear verbs, so the clip does not freeze or become a slow zoom.\n  - Keep the camera static unless the theme asks for a move; then one slow move.\n  - If the theme conflicts with the image, describe a gradual change away from it, keeping its style and lighting.\n\n## Aspect ratio\n- 16:9: horizontal staging, subjects left and right, lateral moves (pans, tracking), wide establishing shots.\n- 9:16 (native portrait): one subject, explicit framing (\"centered, shot from the shoulders up\"), medium and close shots with headroom; prefer tilts, jib moves, push-ins and movement toward or away from camera over wide pans.\n- 1:1: centered, symmetrical, medium or close framing.\n- Express the format through framing words, never the ratio itself.\n\n## Length\n- short 50-90 words; medium 100-170 words (the official 4-8 sentences); long 170-250 words.\n- Stay under about 200 words unless the extra words are dialogue, beats or sounds needed for a 10-20 s clip. Never pad.\n- Long clips need detailed prompts. If short is requested for a long clip, use fewer, slower actions.",
+  "examples": [
+    "Style: cinematic realism, natural light. In a medium close-up, an elderly fisherman in his seventies with white stubble and a faded navy knit cap sits on an upturned wooden crate at the end of a dock, mending a green fishing net draped across his knees. Pale dawn light comes from the left, catching the wet planks and a thin mist over the grey water behind him. Gulls call in the distance and small waves slap against the pilings. He pulls a knot tight with his teeth, then looks up toward someone off-screen right and speaks in a slow, gravelly voice, \"Your grandfather taught me this knot...\" He pauses, turns the net over in his rough hands, and continues more quietly, \"and I never once got it right the first time.\" Small creases gather at the corners of his eyes as he smiles. The camera slowly pushes in on his face as he lowers his gaze back to the net and the dock creaks under his weight. The audio is clear, with a low, steady wind.",
+    "Style: cinematic realism, shallow depth of field. A vertical medium close-up frames a street food cook in his forties with a shaved head and a black apron, centered in frame from the chest up behind a steaming wok at a night market stall, warm paper lanterns glowing softly above him. The steady hiss of hot oil and the chatter of the crowd fill the air, with faint pop music from a small radio behind the stall. He tosses a handful of chopped scallions into the wok and a burst of flame rises from the pan with a loud whoosh, lighting his face orange for a moment. He flips the noodles twice with a quick flick of his wrist, the metal spatula clanging against the rim, then tilts the wok and slides the noodles into a white ceramic bowl. The camera tilts down slowly from his face to the bowl as steam curls upward through the lantern light, and it settles on the bowl as a distant scooter horn sounds.",
+    "The woman slowly lowers the letter from her face as a gust of wind rushes past, lifting loose strands of hair across her cheek and rippling the hem of her coat. Waves break softly against the rocks below and a lone gull cries in the distance. She folds the paper once along its crease with a quiet rustle, presses it against her chest, and her shoulders rise and fall with a slow breath. Then she steps forward to the railing, opens her hand, and the letter flutters away over the water, drifting out of frame to the right. She watches it go and says softly, almost in a whisper, \"Goodbye, Tom.\" Her hand stays resting on the metal rail as the wind settles into a steady low murmur. The camera remains static throughout.",
+    "Style: stop-motion claymation with a slightly jittery frame rate and soft, warm studio light. In a medium wide shot at table height, two clay mice sit at a tiny wooden table in a cluttered miniature kitchen: on the left, a plump grey mouse in a blue knitted scarf; on the right, a thin brown mouse in round wire glasses. A wedge of yellow cheese rests on a plate between them, and a small wall clock ticks steadily behind them. The grey mouse leans forward, whiskers twitching, and says in a high, eager voice, \"Just one bite. Nobody will know.\" The brown mouse pushes his glasses up his nose, narrows his eyes, and replies in a dry, nasal voice, \"There is a mousetrap under that plate, Gerald.\" A beat of silence. The grey mouse slowly lifts the edge of the plate, peeks underneath, and his ears droop as a kettle begins to whistle softly on the stove behind them. The camera stays locked off for the whole shot."
+  ],
+  "aspectRatios": [
+    "16:9",
+    "9:16",
+    "1:1"
+  ],
+  "resolutions": [
+    "1280×720",
+    "720×1280",
+    "1920×1080",
+    "1080×1920",
+    "2560×1440",
+    "1440×2560",
+    "3840×2160",
+    "2160×3840",
+    "1024×1024"
+  ],
+  "durations": [
+    "5s",
+    "6s",
+    "8s",
+    "10s",
+    "12s",
+    "14s",
+    "16s",
+    "18s",
+    "20s"
+  ],
+  "defaults": {
+    "aspectRatio": "16:9",
+    "resolution": "1920×1080",
+    "duration": "6s",
+    "temperature": 0.7,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈50–90 words",
+    "medium": "≈100–170 words",
+    "long": "≈170–250 words"
+  },
+  "sources": [
+    "https://ltx.io/blog/ltx-2-3-prompt-guide",
+    "https://ltx.io/blog/how-to-improve-ltx-2-3-prompt-adherence",
+    "https://ltx.io/blog/ltx-2-3-portrait-video",
+    "https://ltx.io/model/model-blog/ltx-2-3-release",
+    "https://ltx.io/blog/domain-specific-prompting",
+    "https://ltx.video/blog/how-to-prompt-for-ltx-2",
+    "https://docs.ltx.video/open-source-model/usage-guides/prompting-guide",
+    "https://docs.ltx.io/models/ltx-2-3",
+    "https://docs.ltx.io/open-source-model/usage-guides/image-to-video",
+    "https://huggingface.co/Lightricks/LTX-2.3",
+    "https://github.com/Lightricks/LTX-2",
+    "https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-core/src/ltx_core/text_encoders/gemma/encoders/prompts/gemma3_t2v_system_prompt.txt",
+    "https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-core/src/ltx_core/text_encoders/gemma/encoders/prompts/gemma3_i2v_system_prompt.txt",
+    "https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-pipelines/docs/pipelines.md",
+    "https://prompt-architects.com/blog/221-structuring-a-20-second-generation-ltx-2-3"
+  ],
+  "updatedAt": "2026-09-30"
+}

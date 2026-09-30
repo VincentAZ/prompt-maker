@@ -1,0 +1,70 @@
+{
+  "id": "minimax-h3",
+  "name": "MiniMax H3 (Hailuo 03)",
+  "kind": "video",
+  "description": "MiniMax's omni-modal 2K video model with native stereo audio; structured shot-by-shot prompts, 4–15 s.",
+  "color": "#a47bff",
+  "instructions": "# MiniMax H3 (Hailuo 03)\n\n## What it is\n- MiniMax's omni-modal video model: 4-15 s clips at 24 fps with native stereo audio (lip-synced dialogue, sound effects, ambience, music) generated together with the picture.\n- It is strong at multi-shot sequences with timed cuts, dialogue in 11 languages, and physically coherent action.\n- It was trained on a structured \"shooting script\" format. Always write in that format.\n\n## Output format (mandatory)\nWrite exactly three fields, in this order. Each field starts on its own line, and one blank line separates the fields:\nintegrated_multimodal_description: [Shot 1] ...\noverall_soundscape: ...\nnon_diegetic_music: ...\n- Write in English. Only spoken words and visible text keep their original language.\n- Use no other fields, headings or bullets. Only the \"animate\" role adds a first line (see Image roles).\n\n## integrated_multimodal_description\n- Open [Shot 1] with the style and shot size: \"Live-action, cinematic, a medium-wide shot frames...\". Other styles: 2D-animated, 3D CG, anime, claymation, watercolor, vintage film.\n- Then give the subject (age, build, clothing, colors, position in frame), the setting and key props, and the lighting (source, color, time of day).\n- Then give one camera-motion sentence, then the actions in chronological order. Place each sound or line of dialogue at the moment it happens.\n- Write flowing present-tense prose about only what can be seen or heard. Never write keyword lists.\n\n### Shots and cuts\n- [Shot 1] never has a timestamp. Start each later shot like this: \"[Shot 2] At 00:04.500, the camera cuts to a close-up of ...\".\n- Cut times must strictly increase and fall inside the duration, and every shot must last at least about 2 s.\n- Cut only to add a new angle, subject, place or moment. For a small reframe, use camera motion.\n- After a cut, refer back to characters (\"the captain from Shot 1\") and keep their look identical.\n\n### Camera motion\n- Use only these motion types, written as natural English verbs: Zoom In/Out (lens only), Push In/Pull Out (camera travels), Pan Left/Right (rotates in place), Truck Left/Right (slides sideways), Tilt Up/Down, Pedestal Up/Down (camera rises or lowers), Arc Shot (circles the subject), Tracking Shot (follows a moving subject), Static Shot, Shake Slightly/Strongly, POV, Roll Clockwise/Counterclockwise.\n- Optional modifiers: \"with small amplitude\" or \"with large amplitude\", and \"at slow speed\" or \"at fast speed\". Leave them out for medium range and normal pace.\n- Pattern: \"The camera pushes in with small amplitude at slow speed toward the letter in her hands.\" or \"The camera holds a static shot as the runner exits the frame.\"\n- Do NOT write bracketed commands like [Pan left] or [Push in]. That is old Hailuo syntax, and in H3 square brackets are reserved for [Shot N] and language tags.\n- Use one camera motion per shot. At most two may appear, one after the other (\"then\"), and never in opposite directions. Shake may accompany another move.\n\n## Motion and timing\n- Write each action as a path: starting state, then the movement (direction, speed, body part), then the end state. Example: \"She reaches forward, lifts the cup to chest height, and turns it until the label faces the camera.\"\n- Keep subject motion and camera motion in separate sentences: \"He walks toward the camera. The camera tracks backward at the same speed.\"\n- Mark time with phrases like \"at first\", \"midway\", \"toward the end\" and \"as the shot ends\".\n- Fit the beats to the duration:\n  - 4-6 s: 1 shot (2 at most) and 2-3 beats.\n  - 7-10 s: 1-2 shots and 3-5 beats.\n  - 11-15 s: 2-4 shots and 5-7 beats.\n- Describe physics as cause, then effect, with verbs such as tips, falls, settles, splashes, ripples, billows, sways, flutters and recoils. Include weight shifts, momentum, and cloth or hair reacting to movement.\n\n## Audio\n- Add dialogue only when the theme implies speech. At a character's first line, give a voice description and an ID: \"The old fisherman with a deep, gravelly voice (S1) says: <d>[English] Tide's turning.</d>\". Reuse (S1) later, and use (S1,S2) when two speak together. Characters who never speak get no ID.\n- Put only the language tag and the exact words inside <d>. Delivery goes outside it. Allow about 2-3 words per second.\n- Write a voiceover like this: \"The man (S1) says in an off-screen voiceover: <d>[English] ...</d> while his lips remain completely closed.\"\n- Never put spoken words in double quotes, because quotes produce visible text. Use quotes only for requested on-screen text: a sign reading \"OPEN\".\n- overall_soundscape: write 1-4 sentences as one paragraph covering ambience, action sounds, and non-verbal sounds (breathing, footsteps, laughter), in order. Do not repeat dialogue. Write N/A only if the user wants total silence.\n- non_diegetic_music: write 1-3 sentences on instruments, tempo and dynamics, e.g. \"Sparse piano at a slow tempo, joined by low strings that swell, then fade.\" Leave out mood words. Write N/A for realistic, documentary or dialogue-driven scenes. Music the characters can hear (a radio, a busker) belongs in the description.\n\n## What to avoid\n- Quality tags (4K, masterpiece) and vague words (\"epic\", \"dynamic\") used in place of concrete detail.\n- More actions than the duration allows, because beats get dropped or rushed.\n- Contradictory motion, such as a pan left plus a pan right, a static shot plus a push-in, or a subject running while standing still.\n- Changing a character's appearance between shots unless the user asks for it.\n- \"No X\" phrasing. Describe what is there instead.\n\n## Image roles\n- reference: The model does not receive the image. Carry the needed parts (subject, palette, lighting, setting, style) into words, blend them with the theme, and write a normal text-to-video prompt. Never write <Picture 1>.\n- recreate: Write a text-to-video prompt whose [Shot 1] opening describes the image faithfully: style or medium, shot size and angle, subject placement, clothing, setting, lighting and palette. Then add gentle motion and sound that fit the scene. Apply the theme's changes. Never write <Picture 1>.\n- animate: The image is the exact first frame. Start with this exact line, then one blank line, then the three fields:\n  For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n  - Open [Shot 1] with the style and ONE short anchor sentence, e.g. \"the woman shown in <Picture 1> remains at the window, preserving her appearance, clothing and the room layout.\" Do not re-describe the whole image.\n  - Spend the rest on what changes: the action starting, its development, and the result, plus camera motion and sound. Keep identity, colors and layout consistent.\n  - Prefer a single shot. The output takes the image's aspect ratio, so keep its framing.\n\n## Aspect ratio\n- 21:9: wide vistas, lateral truck or pan moves, subjects off-center.\n- 16:9: standard cinematic framing. Any move works.\n- 4:3 and 1:1: centered, contained compositions and medium shots. Favor push-in, pull-out and static shots.\n- 3:4 and 9:16: one main subject, full-body or waist-up, stacked vertically. Favor tilt, pedestal, push-in, or tracking toward the camera. Avoid wide lateral pans and groups side by side.\n\n## Length\n- Count all three fields together against the length target. The duration sets the number of shots, and the length sets the amount of detail. Stay under about 900 words (the hard limit is 7000 characters).",
+  "examples": [
+    "integrated_multimodal_description: [Shot 1] Live-action, cinematic, a low-angle medium shot frames a red fox standing in knee-deep fresh snow at the edge of a birch forest at dawn, pale pink light glowing between the white trunks. The camera holds a static shot. The fox tilts its head toward a sound beneath the snow, crouches with its weight pressed onto its hind legs, then springs upward and dives nose-first into the drift. Powder bursts into the air and drifts down slowly while its tail sweeps from side to side above the surface.\n\noverall_soundscape: Quiet winter stillness with a faint breeze through bare branches. Soft crunching paws, a muffled thump as the fox plunges into the snow, and a light hiss of powder settling.\n\nnon_diegetic_music: N/A",
+    "integrated_multimodal_description: [Shot 1] Live-action, cinematic, a medium-wide shot frames a narrow night-market alley under strings of warm bulbs, steam drifting through the air. A woman in her fifties with a grey bun, a maroon apron and rolled sleeves stands behind a flat iron griddle, pressing scallion pancakes with a steel spatula. The camera pushes in with small amplitude at slow speed as she flips a golden pancake, slides it into a paper sleeve and holds it out toward the camera. The woman with a warm, slightly husky voice (S1) says: <d>[English] Careful, it's hot. First bite is the best one.</d> [Shot 2] At 00:05.500, the camera cuts to a close-up of a young man's hands taking the paper sleeve; he tears the pancake open and a puff of steam rises past his face as he laughs and blows on it. Behind him, the vendor from Shot 1 cracks an egg onto the griddle.\n\noverall_soundscape: Constant crowd chatter and distant scooter engines fill the alley. Oil sizzles and pops on the griddle, the spatula scrapes against iron, paper crinkles, and the young man lets out a short laugh.\n\nnon_diegetic_music: N/A",
+    "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] Live-action, cinematic, the elderly lighthouse keeper shown in <Picture 1> stands at the gallery railing, preserving his yellow oilskin coat, white beard and the stormy sea behind him. The camera performs an arc shot around him with small amplitude at slow speed, moving from his profile toward a three-quarter front view. A gust tugs at his hood and he raises one hand to hold it, squinting at the horizon. Midway, a wave bursts against the rocks below and spray rises past the railing. Toward the end, the lighthouse beam sweeps across his face and he lowers his hand, his expression settling into a calm half-smile.\n\noverall_soundscape: Howling wind and heavy surf dominate, with the crack of a breaking wave midway and the flapping of his coat. A low mechanical hum from the rotating lamp continues underneath.\n\nnon_diegetic_music: Low sustained cello notes at a slow tempo, joined by a single soft horn phrase that rises as the beam passes and then fades out.",
+    "integrated_multimodal_description: [Shot 1] Claymation, handmade stop-motion texture, a vertical close-up frames a small clay snail with a glossy teal shell on a mossy tree stump in soft morning light, dew beads glinting on the moss. The camera holds a static shot as the snail stretches its eyestalks upward one at a time, then slides forward in small, slightly jerky steps, leaving a shiny trail behind it. [Shot 2] At 00:04.000, the camera cuts to a medium shot from slightly above as the snail reaches a tiny clay coffee cup at the edge of the stump, dips its head inside and pops back up with a blob of foam on its face. The camera pulls out with small amplitude at slow speed, revealing a ring of red clay mushrooms around the stump.\n\noverall_soundscape: Soft forest ambience with distant birdsong. A faint wet squelch as the snail slides, a tiny ceramic clink when it touches the cup, and a small satisfied slurp.\n\nnon_diegetic_music: A playful pizzicato string pattern at a moderate tempo with light glockenspiel accents, ending on a single held note."
+  ],
+  "aspectRatios": [
+    "16:9",
+    "21:9",
+    "4:3",
+    "1:1",
+    "3:4",
+    "9:16"
+  ],
+  "resolutions": [
+    "768p",
+    "2K"
+  ],
+  "durations": [
+    "4s",
+    "5s",
+    "6s",
+    "7s",
+    "8s",
+    "9s",
+    "10s",
+    "11s",
+    "12s",
+    "13s",
+    "14s",
+    "15s"
+  ],
+  "defaults": {
+    "aspectRatio": "16:9",
+    "resolution": "768p",
+    "duration": "5s",
+    "temperature": 0.7,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈90–140 words",
+    "medium": "≈160–260 words",
+    "long": "≈280–450 words"
+  },
+  "sources": [
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md",
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md",
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3",
+    "https://github.com/MiniMax-AI/MiniMax-H3",
+    "https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/SKILL.md",
+    "https://platform.minimax.io/docs/guides/video-generation",
+    "https://platform.minimax.io/docs/api-reference/video-generation-v2-create",
+    "https://platform.minimax.io/docs/api-reference/video-generation-v2-h3-context-ir",
+    "https://www.minimax.io/news/minimax-h3-open-source",
+    "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-prompt-guide",
+    "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-native",
+    "https://fal.ai/models/minimax/h3/text-to-video/api",
+    "https://www.kapwing.com/resources/how-to-prompt-minimax-h3-hailuo-3-0-a-guide-for-ai-video-creators/",
+    "https://aireiter.com/blog/minimax-h3-prompt-guide",
+    "https://www.piclumen.com/blog/minimax-h3-prompt-guide/"
+  ],
+  "updatedAt": "2026-09-30"
+}
