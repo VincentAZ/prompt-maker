@@ -345,10 +345,14 @@ async function prepareWorkflow(body) {
   let json = body.json;
   let name = String(body.name || '').replace(/\.json$/i, '');
   let source = 'upload';
+  let sourceModified = null;
   if (body.comfyPath) {
+    const listed = (await comfy.savedWorkflows(settings.comfyUrl)).find(f => f.path === body.comfyPath);
+    if (!listed) throw store.httpError(404, `“${body.comfyPath}” isn't in ComfyUI's saved workflows anymore. Was it renamed or deleted?`);
     json = await comfy.readSavedWorkflow(settings.comfyUrl, body.comfyPath);
     name = body.comfyPath.split('/').pop().replace(/\.json$/i, '');
     source = `comfyui:${body.comfyPath}`;
+    sourceModified = Number(listed.modified) || null;
   }
   if (!json || typeof json !== 'object') throw store.httpError(400, 'That file is not valid JSON.');
   let preset = null;
@@ -376,6 +380,7 @@ async function prepareWorkflow(body) {
   return {
     name: name || 'Workflow',
     source,
+    sourceModified,
     prompt,
     mapping: preset?.mapping || analysis.mapping,
     options: preset?.options || analysis.options,
@@ -384,6 +389,17 @@ async function prepareWorkflow(body) {
     producesVideo: analysis.producesVideo,
     nodes: Object.keys(prompt).length,
   };
+}
+
+// Pulls in a newer version of a workflow: from ComfyUI (if it came from there) or from a file you pick.
+async function refreshWorkflow(existing, body) {
+  const fromComfy = existing.source.startsWith('comfyui:');
+  if (!body.json && !fromComfy) throw store.httpError(400, 'This workflow was uploaded from a file. Pick the new version of the file to update it.');
+  const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
+  const { mapping, overrides, lost, changes } = wf.carryOver(existing, fresh.prompt, fresh.mapping);
+  if (!mapping.prompt.length) throw store.httpError(400, 'The new version has no text input for the prompt, so it can\'t be used for rendering.');
+  const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
+  return { ...saved, candidates: fresh.candidates, warnings: fresh.warnings, producesVideo: fresh.producesVideo, lost, changes };
 }
 
 const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
@@ -624,6 +640,11 @@ async function route(req, res) {
     const body = await readBody(req);
     if (!(await store.getModel(body.modelId || ''))) throw store.httpError(400, 'Save the model first.');
     return sendJson(res, 200, wf.summary(await wf.saveWorkflow(body)));
+  }
+  if ((match = p.match(/^\/api\/workflows\/([\w-]+)\/refresh$/)) && m === 'POST') {
+    const existing = await wf.getWorkflow(match[1]);
+    if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
+    return sendJson(res, 200, await refreshWorkflow(existing, await readBody(req)));
   }
   if ((match = p.match(/^\/api\/workflows\/([\w-]+)$/))) {
     const existing = await wf.getWorkflow(match[1]);

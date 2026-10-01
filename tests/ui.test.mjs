@@ -1211,6 +1211,61 @@ async function main() {
     await press('Escape');
   });
 
+  await test('workflows: edits made in ComfyUI are noticed and pulled in, setup kept', async () => {
+    const setupOpen = () => waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'workflow setup open');
+    await click('.model-card[data-id="krea2-raw"]');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Mock T2I', 'the ComfyUI workflow is picked');
+    assert(!(await visible('#wfpStale')), 'up to date at first');
+    const id = await value('#wfpSelect');
+    comfy.editSaved(w => { w.nodes.find(n => n.id === 7).widgets_values[0] = 'ugly, deformed'; return w; });
+    await js('window.dispatchEvent(new Event("focus"))'); // coming back from the ComfyUI tab
+    await waitFor('!document.querySelector("#wfpStale").hidden', 'noticed the edit made in ComfyUI');
+    assert((await text('#wfpStale')).includes('was changed in ComfyUI'), 'says what happened');
+    assert(await visible('.take .rb-stale'), 'the take\'s render bar says so too');
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    assert((await text('#wfList')).includes('changed in ComfyUI'), 'Models shows it too');
+    await click('.tabs button[data-view="create"]');
+    await shot('36-wf-changed');
+    await click('#wfpStale button');
+    await toastText('updated');
+    assert(!(await visible('#wfpStale')), 'notice gone');
+    const w = await (await fetch(`${APP}/api/workflows/${id}`)).json();
+    eq(w.prompt['7'].inputs.text, 'ugly, deformed', 'the new version is in');
+    eq(JSON.stringify(w.mapping.prompt), JSON.stringify([{ node: '6', input: 'text' }]), 'prompt spot kept');
+    eq(w.overrides['3|steps'], 9, 'sampler tweaks kept');
+
+    await type('#theme', 'a quiet harbor at dawn');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    eq(comfy.prompts.at(-1).prompt['7'].inputs.text, 'ugly, deformed', 'ComfyUI got the updated workflow');
+    eq(comfy.prompts.at(-1).prompt['3'].inputs.steps, 9, 'with your tweaks');
+
+    // The prompt node got a new id in ComfyUI: that part of the setup can't be kept, so the setup opens for a check.
+    comfy.editSaved(wf => {
+      wf.nodes.find(n => n.id === 6).id = 16;
+      wf.links.forEach(l => { if (l[1] === 6) l[1] = 16; if (l[3] === 6) l[3] = 16; });
+      return wf;
+    });
+    await click('#wfpEdit');
+    await setupOpen();
+    eq(await text('#wfRefresh'), '↻ Update from ComfyUI', 'manual update offered');
+    await click('#wfRefresh');
+    await waitFor('!!document.querySelector("#wfWarnings .wf-note")', 'update note');
+    assert((await text('#wfWarnings .wf-note')).includes('Couldn\'t keep where the prompt went'), 'explains what needs a check');
+    eq(await value('#mapPrompt select'), '16|text', 'a new spot was picked for the prompt');
+    await shot('37-wf-updated-review');
+    await click('#wfSave');
+    await toastText('Workflow updated');
+    await click('#wfpEdit');
+    await setupOpen();
+    await click('#wfRefresh');
+    await waitFor('document.querySelector("#wfWarnings .wf-note")?.textContent.includes("Already up to date")', 'nothing new');
+    await click('#wfClose');
+  });
+
   await test('security: other websites can\'t use the local API', async () => {
     const res = await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{"llmModel":"x"}' });
     eq(res.status, 403, 'cross-site write blocked');

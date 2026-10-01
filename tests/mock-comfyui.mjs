@@ -42,6 +42,8 @@ export function startMockComfy(port, { png }) {
   const prompts = [];
   const uploads = [];
   const history = {};
+  // The saved "Mock T2I" workflow, as if it lived in ComfyUI's library (editSaved = you changed it in ComfyUI).
+  const saved = { json: SAVED_WORKFLOW, modified: Date.now() - 3600e3 };
   const sockets = new Map();
   const allSockets = new Set();
   const interrupted = new Set();
@@ -95,8 +97,8 @@ export function startMockComfy(port, { png }) {
     const p = url.pathname;
     if (p === '/system_stats') return json(200, { system: { comfyui_version: '0.38.0-mock' }, devices: [{ name: 'cuda:0 Mock GPU : cudaMallocAsync', vram_total: 8 * 2 ** 30, vram_free: 6 * 2 ** 30 }] });
     if (p === '/object_info') return json(200, OBJECT_INFO);
-    if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: Date.now() - 3600e3 }, { path: '.index.json', size: 10, modified: 0 }]);
-    if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, SAVED_WORKFLOW);
+    if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: saved.modified }, { path: '.index.json', size: 10, modified: 0 }]);
+    if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, saved.json);
     if (p === '/upload/image' && req.method === 'POST') {
       const name = /filename="([^"]+)"/.exec(raw.toString('latin1'))?.[1] || 'upload.png';
       uploads.push(name);
@@ -148,6 +150,10 @@ export function startMockComfy(port, { png }) {
   return {
     prompts,
     uploads,
+    editSaved(fn) {
+      saved.json = fn(structuredClone(saved.json));
+      saved.modified = Date.now();
+    },
     start: listen,
     stop: () => new Promise(resolve => {
       for (const s of allSockets) s.destroy();

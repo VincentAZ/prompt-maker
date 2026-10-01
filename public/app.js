@@ -31,6 +31,7 @@ const state = {
   dirty: false,
   settingsDirty: false,
   workflows: [],
+  wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   comfy: null,
   renderRuns: new Set(),
   galleryKind: '',
@@ -312,7 +313,7 @@ function showView(name, { push = true } = {}) {
   if (name === 'settings' && !state.settingsDirty) renderSettings();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
     if (state.models.length) editModel(state.modelId || state.models[0].id); else newModel();
-  }
+  } else if (name === 'models') renderWorkflowList(); // workflows may have changed elsewhere (e.g. in ComfyUI)
   requestAnimationFrame(resizeTextareas);
 }
 window.addEventListener('popstate', () => showView(location.hash.slice(1), { push: false }));
@@ -1931,6 +1932,65 @@ async function loadWorkflows() {
   renderWorkflowPicker();
   if (isView('models')) renderWorkflowList();
   state.cards.forEach(c => { if (!c.interrupted && state.entry?.id) renderZone(c); });
+  checkWorkflowUpdates();
+}
+
+// Prompt Maker renders from its own copy of each workflow. This notices when the ComfyUI original has been
+// saved since, so you can pull the changes in (↻ Update) instead of rendering an old version.
+let staleCheck = null;
+function checkWorkflowUpdates() {
+  const fromComfy = state.workflows.filter(w => w.source?.startsWith('comfyui:'));
+  if (!fromComfy.length || !state.comfy?.ok) return Promise.resolve();
+  staleCheck ??= api('/api/comfy/workflows').then(list => {
+    const modified = new Map(list.map(f => [f.path, Number(f.modified) || 0]));
+    const stale = new Set(fromComfy.filter(w => {
+      const now = modified.get(w.source.slice('comfyui:'.length));
+      return now && now > (w.sourceModified ?? Date.parse(w.createdAt)) + 1000;
+    }).map(w => w.id));
+    const changed = stale.size !== state.wfStale.size || [...stale].some(id => !state.wfStale.has(id));
+    state.wfStale = stale;
+    if (changed) {
+      renderWorkflowPicker();
+      state.cards.forEach(updateSettingsLine);
+      if (isView('models')) renderWorkflowList();
+    }
+  }).catch(() => {}).finally(() => { staleCheck = null; });
+  return staleCheck;
+}
+let lastStaleCheck = 0;
+window.addEventListener('focus', () => {
+  if (Date.now() - lastStaleCheck < 3000) return;
+  lastStaleCheck = Date.now();
+  checkWorkflowUpdates();
+});
+
+// Pulls in the new version (from ComfyUI, or from a file for uploaded workflows), keeping your setup.
+async function updateWorkflow(id, { json = null, review = false } = {}) {
+  let data;
+  try {
+    data = await api(`/api/workflows/${id}/refresh`, { method: 'POST', body: json ? { json } : {} });
+  } catch (err) {
+    if ($('#wfDialog').open) wfToast(err.message); else toast(err.message, true);
+    return;
+  }
+  state.wfStale.delete(id);
+  await loadWorkflows();
+  const c = data.changes;
+  const what = [c.changed && `${c.changed} node${c.changed > 1 ? 's' : ''} changed`, c.added && `${c.added} added`, c.removed && `${c.removed} removed`].filter(Boolean).join(', ');
+  const needsCheck = data.lost.length > 0 || c.droppedTweaks > 0;
+  if (needsCheck || review) {
+    // Something you set up no longer fits (or you're in the dialog anyway): show the setup.
+    openWorkflowDialog({ edit: data });
+    const notes = [
+      data.lost.length && `Couldn't keep where the ${data.lost.join(', ')} went (those inputs are gone), so new spots were picked. Check them below.`,
+      c.droppedTweaks && `${c.droppedTweaks} sampler tweak${c.droppedTweaks > 1 ? 's were' : ' was'} dropped because ${c.droppedTweaks > 1 ? 'their inputs are' : 'its input is'} gone.`,
+    ].filter(Boolean);
+    const note = what ? `↻ Updated: ${what}. ${notes.join(' ') || 'Your setup was kept.'}` : `✓ Already up to date with ${data.source?.startsWith('comfyui:') ? 'ComfyUI' : 'that file'}.`;
+    $('#wfWarnings').insertAdjacentHTML('afterbegin', `<p class="wf-warn wf-note${needsCheck ? '' : ' ok'}">${esc(note)}</p>`);
+    toast(needsCheck ? `↻ “${data.name}” updated. Check its setup` : what ? `↻ “${data.name}” updated, your setup kept` : `✓ “${data.name}” is already up to date`);
+  } else {
+    toast(what ? `↻ “${data.name}” updated: ${what}. Your setup was kept` : `✓ “${data.name}” is already up to date`);
+  }
 }
 
 async function editWorkflow(id, { focusSampler = false } = {}) {
@@ -1961,6 +2021,7 @@ function renderWorkflowPicker() {
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
   renderWorkflowWarning();
+  renderStaleNotice();
   renderComfyState();
 }
 
@@ -1975,6 +2036,14 @@ function renderWorkflowWarning() {
   warn.hidden = !msg;
   warn.textContent = msg ? `⚠️ ${msg}` : '';
 }
+
+function renderStaleNotice() {
+  const box = $('#wfpStale');
+  const flow = state.workflows.find(f => f.id === $('#wfpSelect').value && f.modelId === state.modelId);
+  box.hidden = !flow || $('#wfpBox').hidden || !state.wfStale.has(flow.id);
+  if (!box.hidden) $('span', box).textContent = `“${flow.name}” was changed in ComfyUI. This copy is older.`;
+}
+$('#wfpStale button').addEventListener('click', () => updateWorkflow($('#wfpSelect').value));
 
 function renderComfyState() {
   const el = $('#comfyState');
@@ -2013,6 +2082,7 @@ function loadComfyStatus() {
       state.cards.forEach(updateRenderStatus);
       renderComfyState();
       if (cameBack) toast('🎨 ComfyUI is connected');
+      if (st.ok) checkWorkflowUpdates();
       return st;
     });
   return comfyLoading;
@@ -2101,7 +2171,10 @@ function settingsHtml(flow) {
 function updateSettingsLine(card) {
   const line = $('.rb-settings', card.el);
   const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
-  if (line && flow) line.innerHTML = settingsHtml(flow);
+  if (!line || !flow) return;
+  const stale = state.wfStale.has(flow.id);
+  line.innerHTML = `${stale ? '<button type="button" class="chip-btn rb-stale" title="This workflow was saved again in ComfyUI after you added it">↻ Changed in ComfyUI · Update</button>' : ''}${settingsHtml(flow)}`;
+  $('.rb-stale', line)?.addEventListener('click', () => updateWorkflow(flow.id));
 }
 
 function updateSeedChip(card) {
@@ -2485,9 +2558,10 @@ function renderWorkflowList() {
   list.innerHTML = flows.map(f => `
     <li class="wf-row" data-id="${esc(f.id)}">
       <span aria-hidden="true">🎨</span>
-      <div><div class="wf-name">${esc(f.name)}</div><div class="wf-src">${f.source.startsWith('comfyui:') ? 'from your ComfyUI library' : 'uploaded file'} · ${f.nodes} nodes</div></div>
+      <div><div class="wf-name">${esc(f.name)}${state.wfStale.has(f.id) ? ' <span class="tag warn">↻ changed in ComfyUI</span>' : ''}</div><div class="wf-src">${f.source.startsWith('comfyui:') ? 'from your ComfyUI library' : 'uploaded file'} · ${f.nodes} nodes</div></div>
       <div class="wf-maps">${MAP_CHIPS.map(([k, label]) => `<span class="${f.maps[k] ? 'on' : ''}" title="${f.maps[k] ? 'Set by Prompt Maker' : 'Left as the workflow has it'}">${label}</span>`).join('')}</div>
       <div class="wf-actions">
+        ${state.wfStale.has(f.id) ? '<button type="button" class="btn small primary" data-act="refresh">↻ Update</button>' : ''}
         <button type="button" class="btn small" data-act="setup">⚙ Set up</button>
         <button type="button" class="btn small" data-act="export">Export</button>
         <button type="button" class="btn small danger" data-act="delete">Delete</button>
@@ -2500,7 +2574,9 @@ $('#wfList').addEventListener('click', async e => {
   if (!btn) return;
   const id = btn.closest('.wf-row').dataset.id;
   try {
-    if (btn.dataset.act === 'setup') {
+    if (btn.dataset.act === 'refresh') {
+      await updateWorkflow(id);
+    } else if (btn.dataset.act === 'setup') {
       const data = await api(`/api/workflows/${id}`);
       openWorkflowDialog({ edit: data });
     } else if (btn.dataset.act === 'export') {
@@ -2532,6 +2608,8 @@ function openWorkflowDialog({ edit = null, modelId = null, focusSampler = false 
   dlg.editId = edit?.id || null;
   $('#wfPickMsg').hidden = true;
   $('#wfDelete').hidden = !edit;
+  $('#wfRefresh').hidden = !edit;
+  if (edit) $('#wfRefresh').textContent = edit.source?.startsWith('comfyui:') ? '↻ Update from ComfyUI' : '↻ Update from a file';
   if (edit) {
     $('#wfDialogTitle').textContent = `Set up “${edit.name}”`;
     showSetup(edit);
@@ -2589,6 +2667,22 @@ $('#wfSaved').addEventListener('click', e => {
 $('.wf-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) switchWfTab(b.dataset.value); });
 $('#wfClose').addEventListener('click', () => $('#wfDialog').close());
 $('#wfBack').addEventListener('click', () => openWorkflowDialog({ modelId: dlg.modelId }));
+$('#wfRefresh').addEventListener('click', () => {
+  const flow = state.workflows.find(f => f.id === dlg.editId);
+  if (!flow) return;
+  if (flow.source.startsWith('comfyui:')) updateWorkflow(flow.id, { review: true });
+  else $('#wfRefreshFile').click();
+});
+$('#wfRefreshFile').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !dlg.editId) return;
+  try {
+    await updateWorkflow(dlg.editId, { json: JSON.parse(await file.text()), review: true });
+  } catch {
+    wfToast('That file isn\'t valid JSON. Pick a ComfyUI workflow (.json).');
+  }
+});
 $('#wfDelete').addEventListener('click', e => {
   const id = dlg.editId;
   if (!id) return;
@@ -2828,7 +2922,7 @@ $('#wfSave').addEventListener('click', async () => {
     const overrides = readOverrides();
     if (dlg.editId) await api(`/api/workflows/${dlg.editId}`, { method: 'PUT', body: { name, mapping, options, overrides } });
     else {
-      const added = await api('/api/workflows', { method: 'POST', body: { modelId: dlg.modelId, name, source: data.source, prompt: data.prompt, mapping, options, overrides } });
+      const added = await api('/api/workflows', { method: 'POST', body: { modelId: dlg.modelId, name, source: data.source, sourceModified: data.sourceModified, prompt: data.prompt, mapping, options, overrides } });
       saved.set(`wf.${dlg.modelId}`, added.id); // a workflow you just added is the one you want next
     }
     $('#wfDialog').close();

@@ -155,6 +155,7 @@
               </div>
               <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
               <p id="wfpWarn" class="warn-line" hidden></p>
+              <div id="wfpStale" class="wfp-stale" hidden><span></span><button type="button" class="btn small">↻ Update</button></div>
               <label class="switch"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
             </div>
           </section>
@@ -453,6 +454,8 @@
       <footer class="modal-foot">
         <button type="button" id="wfBack" class="btn small" hidden>← Back</button>
         <button type="button" id="wfDelete" class="btn small danger" hidden>Delete workflow</button>
+        <button type="button" id="wfRefresh" class="btn small" hidden>↻ Update from ComfyUI</button>
+        <input type="file" id="wfRefreshFile" accept=".json,application/json" hidden>
         <span class="spacer"></span>
         <span id="wfBusy" class="muted small" hidden>Reading workflow…</span>
         <button type="button" id="wfSave" class="btn primary" hidden>Save workflow</button>
