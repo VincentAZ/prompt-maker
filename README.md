@@ -162,6 +162,9 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Then choose how to use it (below). |
 | **④ Dial it in** | Aspect ratio, resolution, duration (video), prompt length, number of takes, temperature. |
+| **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
+
+**＋ New** (next to Generate) starts a new session: it clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in History.
 
 **Image modes**
 
@@ -209,7 +212,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 ### 1. Attach a workflow to a model
 
 1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**.
-2. Open **Models**, pick a model (say *Krea 2 RAW*), and click **＋ Add workflow**.
+2. On **Create**, pick a model (say *Krea 2 RAW*) and click **＋ Add workflow** in step ⑤. (Or do it in **Models**, which lists every model's workflows.)
 3. Choose where the workflow comes from:
    - **From ComfyUI** lists every workflow you've saved in ComfyUI. Click one.
    - **Upload a file** accepts a saved workflow, an *Export (API)* file, or a workflow exported from Prompt Maker.
@@ -231,9 +234,15 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 
 ### 2. Render
 
-Every take now has a **🎨 Render** bar:
+Step **⑤ Render it** on the Create page is your control center:
 
-- **Pick the workflow** for this render. Prompt Maker remembers your last choice for each model. The line under it shows what the render will use (sampler, steps, CFG, seed), and **⚙** opens those settings right there.
+- **Pick the workflow** your takes render with. Prompt Maker remembers it for each model.
+- **⚙ Edit** changes its name, inputs and sampler settings; the chips under it show what it will use (sampler, steps, CFG, seed), and clicking them jumps to those settings. **＋** adds another workflow. **Delete workflow** is in the edit dialog.
+- **Auto-render every new prompt** sends each new or refined take to ComfyUI as soon as it's written.
+
+Every take also has a **🎨 Render** bar:
+
+- **The workflow menu** is the same choice as step ⑤; change either one. **⚙** opens its sampler settings.
 - **×1–×4**: render several at once, each with its own seed.
 - **🎲 New seed / 🔒 Seed**: lock the last seed to try prompt tweaks on the same composition.
 - **▶ Render**: live progress shows on the tile (queue position, node, step, %), with previews if ComfyUI was started with `--preview-method auto`. **✕** cancels.
@@ -285,7 +294,9 @@ New models come out constantly. Open the **Models** tab and:
 - **✨ Draft the instructions from pasted docs:** paste the model's official prompting guide (or a good community write-up) and your local LLM turns it into a playbook in the standard format. Review it, then click **Use this draft**.
 - **Import / Export:** share models as `.json`. Importing a model with an existing ID updates it, which is handy when someone publishes an improved playbook.
 
-Each model is a single file in `data/models/<id>.json`:
+- **Built-in vs. yours:** the playbooks that ship with the app live in `playbooks/` and are never modified. When you edit one, your copy is saved in your [data folder](#your-data) and used instead. **↺ Reset to built-in** drops your copy. If you delete a built-in, a **↺ Bring back** button appears under the model list.
+
+Each model is a single `.json` file (built-ins in `playbooks/<id>.json`, yours in `models/<id>.json` inside your data folder):
 
 ```jsonc
 {
@@ -337,7 +348,7 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 |---|---|---|
 | `PORT` | `5317` | Port for the web app. |
 | `HOST` | `127.0.0.1` | Interface to bind. ⚠️ There's no login, so don't expose it to a network you don't trust. |
-| `PROMPT_MAKER_DATA` | `./data` | Where models, history, images and settings are stored. |
+| `PROMPT_MAKER_DATA` | [per-user data folder](#your-data) | Where your settings, history, images, renders, workflows and playbooks are stored. |
 | `LMS_BIN` | `~/.lmstudio/bin/lms` | Path to LM Studio's `lms` tool, used by the **▶ Start it** button. |
 
 ## Privacy & offline
@@ -351,20 +362,29 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 
 ## Your data
 
-Everything lives in the `data/` folder (or `PROMPT_MAKER_DATA`):
+Everything personal lives in a per-user data folder, **outside the app folder**, so none of it can end up in git, and updating or re-cloning the app never touches it:
+
+| System | Data folder |
+|---|---|
+| Linux | `~/.local/share/prompt-maker` (or `$XDG_DATA_HOME/prompt-maker`) |
+| macOS | `~/Library/Application Support/Prompt Maker` |
+| Windows | `%APPDATA%\Prompt Maker` |
+
+Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in use.
 
 ```
-data/
-├── models/         # model playbooks (.json), versioned in git
-├── workflows/      # ComfyUI workflows you've attached, with their setup
+<data folder>/
+├── settings.json   # your settings, including your master instructions
 ├── history.json    # every generation, its versions and its renders
 ├── images/         # images you've used (deduplicated)
 ├── renders/        # images and videos rendered with ComfyUI
-└── settings.json   # your settings
+├── workflows/      # ComfyUI workflows you've attached, with their setup
+└── models/         # playbooks you added or edited
 ```
 
-- **Back up `data/`** to keep everything.
-- **Only `data/models/` is committed to git.** Your history, images, workflows, renders and settings are in `.gitignore`.
+- **The app folder is read-only to the app.** The only playbooks in it are the built-ins in `playbooks/`.
+- **Back up the data folder** to keep everything.
+- **Upgrading from an older version?** Older versions kept data in `./data` inside the app folder. It moves to the data folder automatically the first time you start the new version.
 
 ## Troubleshooting
 
@@ -457,12 +477,12 @@ prompt-maker/
 ├── lib/
 │   ├── lmstudio.js         # LM Studio client: model list, streaming chat, start server
 │   ├── prompt.js           # builds the messages sent to the LLM (master rules + playbook + request)
-│   ├── store.js            # file storage: models, settings, history, images, renders
+│   ├── store.js            # file storage in your data folder: models, settings, history, images, renders
 │   ├── comfy.js            # ComfyUI client: status, saved workflows, queue, live progress, downloads
 │   ├── comfy-convert.js    # saved (editor) workflows → API format, incl. subgraphs & bypass
 │   └── workflows.js        # attached workflows: auto-mapping and building the prompt to queue
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts)
-├── data/models/            # model playbooks
+├── playbooks/              # the built-in model playbooks (read-only to the app)
 ├── tests/
 │   ├── mock-lmstudio.mjs   # fake LM Studio for tests
 │   ├── mock-comfyui.mjs    # fake ComfyUI (HTTP + WebSocket progress) for tests

@@ -481,6 +481,8 @@ async function route(req, res) {
     return sendJson(res, 200, Array.isArray(body) ? saved : saved[0]);
   }
   if (p === '/api/models/draft' && m === 'POST') return draftGuide(req, res);
+  if (p === '/api/models/hidden' && m === 'GET') return sendJson(res, 200, await store.hiddenBuiltins());
+  if ((match = p.match(/^\/api\/models\/([\w-]+)\/reset$/)) && m === 'POST') return sendJson(res, 200, await store.resetModel(match[1]));
   if ((match = p.match(/^\/api\/models\/([\w-]+)$/))) {
     const id = match[1];
     if (m === 'GET') {
@@ -636,7 +638,8 @@ async function route(req, res) {
   sendJson(res, 404, { error: 'Not found' });
 }
 
-await store.init();
+const moved = await store.init();
+if (moved.length) console.log(`Moved your data out of the app folder into ${store.DATA_DIR}: ${moved.join(', ')}`);
 await wf.initWorkflows();
 
 const server = http.createServer(async (req, res) => {

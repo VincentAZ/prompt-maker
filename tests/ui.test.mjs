@@ -210,6 +210,8 @@ async function toastText(expected = '') {
   return waitFor(`(() => { const t = document.querySelector("#toast"); return !t.hidden && t.textContent.includes(${q(expected)}) && t.textContent; })()`, `toast "${expected}"`);
 }
 
+const fileExists = p => fs.access(p).then(() => true, () => false);
+
 function assert(cond, msg) { if (!cond) throw new Error(`Assertion failed: ${msg}`); }
 function eq(actual, expected, msg) { if (actual !== expected) throw new Error(`${msg}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`); }
 
@@ -235,10 +237,11 @@ async function main() {
   await fs.mkdir(OUT, { recursive: true });
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-test-'));
   const dataDir = path.join(tmp, 'data');
-  await fs.mkdir(path.join(dataDir, 'models'), { recursive: true });
-  for (const f of await fs.readdir(path.join(ROOT, 'data/models'))) {
-    await fs.copyFile(path.join(ROOT, 'data/models', f), path.join(dataDir, 'models', f));
-  }
+  await fs.mkdir(dataDir, { recursive: true });
+  // The app must never write into its own folder: remember how it looks now.
+  const shipped = {};
+  for (const f of await fs.readdir(path.join(ROOT, 'playbooks'))) shipped[f] = await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8');
+  const hadLegacyData = await fileExists(path.join(ROOT, 'data'));
   await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, comfyUrl: `http://127.0.0.1:${COMFY_PORT}`, llmModel: 'mock/vision-8b' }));
   const lmsMarker = path.join(tmp, 'lms-called');
   const fakeLms = path.join(tmp, 'fake-lms');
@@ -684,6 +687,37 @@ async function main() {
     eq(await value('#mName'), 'LTX 2.3', 'discarded draft by switching');
   });
 
+  await test('models: edits go to your data folder; built-ins reset and come back', async () => {
+    await click('#modelList button[data-id="minimax-h3"]');
+    assert((await text('#mOrigin')).includes('built-in'), 'marked as built-in');
+    assert(!(await visible('#resetModelBtn')), 'nothing to reset on an untouched built-in');
+    await type('#mDesc', 'my private tweak');
+    await click('#saveModelBtn');
+    await toastText('Saved');
+    const mine = path.join(dataDir, 'models', 'minimax-h3.json');
+    eq(JSON.parse(await fs.readFile(mine, 'utf8')).description, 'my private tweak', 'your copy is in your data folder');
+    eq(await fs.readFile(path.join(ROOT, 'playbooks', 'minimax-h3.json'), 'utf8'), shipped['minimax-h3.json'], 'the shipped playbook is untouched');
+    assert((await text('#mOrigin')).includes('edited copy'), 'marked as your copy');
+    await click('#resetModelBtn');
+    await click('#resetModelBtn');
+    await toastText('back to the built-in');
+    assert((await value('#mDesc')) !== 'my private tweak', 'built-in text is back');
+    assert(!(await fileExists(mine)), 'your copy is gone');
+    assert(!(await visible('#resetModelBtn')), 'nothing left to reset');
+
+    await click('#deleteModelBtn');
+    await click('#deleteModelBtn');
+    await waitFor('!document.querySelector(\'#modelList button[data-id="minimax-h3"]\')', 'gone from the list');
+    eq(await count('.model-card'), 2, 'gone from Create');
+    await waitFor('!document.querySelector("#restoreBuiltinsBtn").hidden', 'bring-back offered');
+    assert((await text('#restoreBuiltinsBtn')).includes('MiniMax'), 'names it');
+    await click('#restoreBuiltinsBtn');
+    await toastText('Brought back');
+    eq(await count('#modelList li'), 3, 'back in the list');
+    eq(await count('.model-card'), 3, 'back on Create');
+    assert(!(await visible('#restoreBuiltinsBtn')), 'nothing left to bring back');
+  });
+
   await test('keyboard: Space on a model card keeps focus', async () => {
     await click('.tabs button[data-view="create"]');
     await js('document.querySelector(\'.model-card[data-id="krea2-raw"]\').focus()');
@@ -712,6 +746,40 @@ async function main() {
     await click('#themeUndo');
     eq(await value('#theme'), 'my draft theme', 'draft restored');
     await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('new session: clears theme, image and takes; undo brings them back', async () => {
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'SLOWTEST owl');
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#newBtn").hidden && !document.querySelector("#stopBtn").hidden', 'Stop takes New\'s place while cooking');
+    await click('#stopBtn');
+    await genDone();
+    await type('#theme', 'a fox in a phone booth');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden && JSON.parse(localStorage.getItem("pm.image"))', 'image stored');
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('.take'), 1, 'one take');
+    await click('#newBtn');
+    await toastText('Fresh start');
+    eq(await value('#theme'), '', 'theme cleared');
+    assert(await js('document.querySelector(".dz-preview").hidden'), 'image removed');
+    eq(await count('.take'), 0, 'takes cleared');
+    assert(await visible('#resultsEmpty'), 'empty stage is back');
+    assert(await js('document.activeElement === document.querySelector("#theme")'), 'ready to type');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'model kept');
+    assert(await js('document.querySelector("#newBtn").disabled'), 'nothing left to clear');
+    await shot('30-new-session');
+    await click('#toast .toast-act');
+    await toastText('Back where you were');
+    eq(await value('#theme'), 'a fox in a phone booth', 'theme back');
+    assert(!(await js('document.querySelector(".dz-preview").hidden')), 'image back');
+    eq(await count('.take'), 1, 'take back');
+    await click('#newBtn');
+    await goto(`${APP}/#create`);
+    eq(await value('#theme'), '', 'still clear after a reload');
+    assert(await js('document.querySelector(".dz-preview").hidden'), 'no image after a reload');
   });
 
   await test('settings: unsaved edits survive a tab switch', async () => {
@@ -978,6 +1046,106 @@ async function main() {
     await waitFor('document.querySelectorAll("#wfList .wf-row").length === 1', 'deleted');
   });
 
+  await test('create: pick, add, edit and delete workflows without leaving Create', async () => {
+    const picked = () => js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent');
+    const optionId = name => js(`[...document.querySelectorAll("#wfpSelect option")].find(o => o.textContent === ${q(name)})?.value`);
+    const setupOpen = () => waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'workflow setup open');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(await visible('#wfpBox'), 'picker shown');
+    eq(await count('#wfpSelect option'), 1, 'one workflow');
+    eq(await picked(), 'Mock T2I', 'it is picked');
+    assert((await text('#wfpSettings')).includes('dpmpp_2m'), 'its sampler settings are shown');
+    assert((await text('#comfyState')).includes('ComfyUI ready'), 'ComfyUI status');
+
+    await click('#wfpAdd');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    assert((await text('#wfDialogTitle')).includes('Krea 2 RAW'), 'adds to the model picked on Create');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [apiWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    await type('#wfName', 'Turbo flow');
+    await click('#wfSave');
+    await toastText('is ready');
+    assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'still on Create');
+    eq(await count('#wfpSelect option'), 2, 'two workflows');
+    eq(await picked(), 'Turbo flow', 'the new one is picked');
+    assert((await text('#wfpSettings')).includes('CFG 1 🔒'), 'its settings are shown');
+    const mockId = await optionId('Mock T2I');
+    const turboId = await optionId('Turbo flow');
+
+    await type('#theme', 'a paper boat in a gutter stream');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-wf")', 'render bar');
+    eq(await value('.take .rb-wf'), turboId, 'the take uses the picked workflow');
+    await choose('#wfpSelect', mockId);
+    eq(await value('.take .rb-wf'), mockId, 'the take follows the picker');
+    assert((await text('.take .rb-settings')).includes('dpmpp_2m'), 'and so do its settings');
+    await choose('.take .rb-wf', turboId);
+    eq(await value('#wfpSelect'), turboId, 'the picker follows the take');
+    await choose('#wfpSelect', mockId);
+
+    await click('#wfpEdit');
+    await setupOpen();
+    eq(await value('#wfName'), 'Mock T2I', 'editing the picked workflow');
+    assert(await visible('#wfDelete'), 'delete offered while editing');
+    await type('#samplerCtl .sp-field[data-key="3|steps"] input', '9');
+    await shot('31-wf-edit-from-create');
+    await click('#wfSave');
+    await toastText('Workflow updated');
+    await waitFor('document.querySelector("#wfpSettings").textContent.includes("9 steps")', 'picker shows the new steps');
+    assert((await text('.take .rb-settings')).includes('9 steps'), 'the take shows them too');
+    await click('#wfpSettings');
+    await setupOpen();
+    assert(await js('document.activeElement?.closest("#samplerCtl")'), 'settings chips jump to the sampler');
+    await click('#wfClose');
+
+    await choose('#wfpSelect', turboId);
+    await click('#wfpEdit');
+    await setupOpen();
+    await click('#wfDelete');
+    await click('#wfDelete');
+    await toastText('Workflow removed');
+    assert(!(await js('document.querySelector("#wfDialog").open')), 'dialog closed');
+    eq(await count('#wfpSelect option'), 1, 'one left');
+    eq(await value('.take .rb-wf'), mockId, 'the take falls back to the one left');
+
+    await click('#renderStep .switch');
+    assert(await js('document.querySelector("#wfpAuto").checked'), 'auto-render on');
+    await toastText('Auto-render on');
+    let before = comfy.prompts.length;
+    await type('#theme', 'a red kite over the dunes');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered with no click', 10000);
+    eq(comfy.prompts.length, before + 1, 'one render queued by itself');
+    eq(comfy.prompts.at(-1).prompt['6'].inputs.text, await value('.take .prompt-text'), 'the new take was sent');
+    before = comfy.prompts.length;
+    await click('.take .chips button');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'refined take rendered too', 12000);
+    eq(comfy.prompts.length, before + 1, 'refining renders again');
+    await shot('32-auto-render', { full: true });
+    await click('#renderStep .switch');
+    assert(!(await js('document.querySelector("#wfpAuto").checked')), 'auto-render off again');
+
+    await viewport(390, 844, true);
+    await sleep(200);
+    eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');
+    await shot('33-picker-phone', { full: true });
+    await viewport(1440, 900);
+
+    await click('.model-card[data-id="ltx-2-3"]');
+    assert(await visible('#wfpEmpty'), 'a model with no workflows gets the add prompt');
+    assert(!(await visible('#wfpBox')), 'and no picker');
+    assert((await text('#wfpEmpty')).includes('videos'), 'video wording');
+    await click('#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    assert((await text('#wfDialogTitle')).includes('LTX'), 'adds to LTX');
+    await click('#wfClose');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
   await test('security: other websites can\'t use the local API', async () => {
     const res = await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{"llmModel":"x"}' });
     eq(res.status, 403, 'cross-site write blocked');
@@ -1019,6 +1187,55 @@ async function main() {
       }
     }
     await viewport(1440, 900);
+  });
+
+  await test('storage: an old ./data folder moves out of the app folder', async () => {
+    const app2 = path.join(tmp, 'old-install');
+    for (const d of ['lib', 'public', 'playbooks']) await fs.cp(path.join(ROOT, d), path.join(app2, d), { recursive: true });
+    for (const f of ['server.js', 'package.json']) await fs.copyFile(path.join(ROOT, f), path.join(app2, f));
+    const old = path.join(app2, 'data');
+    for (const d of ['models', 'images', 'renders', 'workflows']) await fs.mkdir(path.join(old, d), { recursive: true });
+    await fs.writeFile(path.join(old, 'settings.json'), JSON.stringify({ comfyUrl: 'http://127.0.0.1:9999' }));
+    await fs.writeFile(path.join(old, 'history.json'), JSON.stringify([{ id: 'old-1', createdAt: '2026-09-01T00:00:00.000Z', theme: 'an old theme', modelId: 'krea2-raw', variations: [] }]));
+    await fs.writeFile(path.join(old, 'images', 'a.jpg'), 'jpg');
+    await fs.writeFile(path.join(old, 'renders', 'r.png'), 'png');
+    await fs.writeFile(path.join(old, 'workflows', 'w1.json'), JSON.stringify({ id: 'w1', modelId: 'krea2-raw', name: 'Old flow', prompt: {}, mapping: {} }));
+    await fs.copyFile(path.join(ROOT, 'playbooks', 'krea2-raw.json'), path.join(old, 'models', 'krea2-raw.json')); // an untouched built-in
+    await fs.writeFile(path.join(old, 'models', 'my-model.json'), JSON.stringify({ id: 'my-model', name: 'My Model', kind: 'image', instructions: '## Mine' }));
+    const home = path.join(tmp, 'home');
+    const env = { ...process.env, PORT: String(APP_PORT + 1), HOME: home, XDG_DATA_HOME: path.join(home, 'xdg'), APPDATA: path.join(home, 'appdata') };
+    delete env.PROMPT_MAKER_DATA;
+    const srv = spawn(process.execPath, ['server.js'], { cwd: app2, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let log = '';
+    srv.stdout.on('data', d => { log += d; });
+    srv.stderr.on('data', d => { log += d; });
+    try {
+      for (let i = 0; i < 50 && !log.includes('running at'); i++) await sleep(100);
+      assert(log.includes('running at'), `the old install starts:\n${log}`);
+      assert(log.includes('Moved your data out of the app folder'), 'it says what it moved');
+      const base = `http://127.0.0.1:${APP_PORT + 1}`;
+      const get = p => fetch(`${base}${p}`).then(r => r.json());
+      const settings = await get('/api/settings');
+      const dir = settings.dataDir;
+      assert(dir.startsWith(home) && !dir.startsWith(app2), `per-user data folder outside the app: ${dir}`);
+      eq(await fileExists(old), false, 'the old data folder is gone');
+      eq(settings.comfyUrl, 'http://127.0.0.1:9999', 'settings moved');
+      eq((await get('/api/history'))[0]?.theme, 'an old theme', 'history moved');
+      eq((await get('/api/workflows'))[0]?.name, 'Old flow', 'workflows moved');
+      for (const f of ['images/a.jpg', 'renders/r.png', 'models/my-model.json']) assert(await fileExists(path.join(dir, f)), `${f} moved`);
+      assert(!(await fileExists(path.join(dir, 'models', 'krea2-raw.json'))), 'an untouched copy of a built-in is dropped');
+      const models = await get('/api/models');
+      assert(models.some(m => m.id === 'my-model' && !m.builtin), 'your own model is there');
+      assert(models.some(m => m.id === 'krea2-raw' && m.builtin && !m.edited), 'built-ins come from the app');
+    } finally {
+      srv.kill();
+    }
+  });
+
+  await test('the app folder is never written to', async () => {
+    eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
+    for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);
+    eq(await fileExists(path.join(ROOT, 'data')), hadLegacyData, 'no data folder appears in the app folder');
   });
 
   await test('no console errors', async () => {

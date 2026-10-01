@@ -137,11 +137,32 @@
             </div>
           </section>
 
+          <section class="step" id="renderStep">
+            <header class="step-head">
+              <span class="num">5</span><h2>Render it</h2><span class="opt">optional</span>
+              <span class="head-actions"><span id="comfyState" class="comfy-state" hidden></span></span>
+            </header>
+            <div id="wfpEmpty" class="wfp-empty" hidden>
+              <span>🎨 Turn these prompts into <span id="wfpKind">images</span> on your own GPU: add a ComfyUI workflow for this model.</span>
+              <button type="button" id="wfpAddFirst" class="btn small">＋ Add workflow</button>
+            </div>
+            <div id="wfpBox" class="wfp" hidden>
+              <div class="wfp-row">
+                <select id="wfpSelect" aria-label="Workflow that renders your takes"></select>
+                <button type="button" id="wfpEdit" class="btn small" title="Change this workflow's name, inputs and sampler settings">⚙ Edit</button>
+                <button type="button" id="wfpAdd" class="btn small" title="Add another workflow" aria-label="Add another workflow">＋</button>
+              </div>
+              <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
+              <label class="switch"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
+            </div>
+          </section>
+
           <div class="generate-bar">
             <button type="submit" id="generateBtn" class="btn-generate">
               <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Generate</span><kbd>Ctrl ↵</kbd>
             </button>
             <button type="button" id="stopBtn" class="btn-stop" hidden>■ Stop <kbd>Esc</kbd></button>
+            <button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in History." aria-label="New session">＋ New</button>
           </div>
         </form>
 
@@ -211,6 +232,7 @@
           </div>
           <input type="file" id="importInput" accept=".json,application/json" multiple hidden>
           <ul id="modelList" class="model-list"></ul>
+          <button type="button" id="restoreBuiltinsBtn" class="btn small block" hidden></button>
         </aside>
 
         <div class="models-main">
@@ -231,6 +253,7 @@
             <span id="dirtyFlag" class="tag warn" hidden>● Unsaved</span>
             <div class="form-actions">
               <button type="button" id="useModelBtn" class="btn small">▶ Use in Create</button>
+              <button type="button" id="resetModelBtn" class="btn small" title="Drop your edits and go back to the playbook that ships with the app" hidden>↺ Reset to built-in</button>
               <button type="button" id="dupModelBtn" class="btn small">Duplicate</button>
               <button type="button" id="exportModelBtn" class="btn small">Export</button>
               <button type="button" id="deleteModelBtn" class="btn small danger">Delete</button>
@@ -247,7 +270,7 @@
             <label class="field"><span>Color</span><input id="mColor" type="color" value="#ff4d8d"></label>
           </div>
           <label class="field"><span>Short description <small>shown under the model picker</small></span><input id="mDesc" placeholder="What makes this model tick, in one line"></label>
-          <p class="muted small">ID: <code id="mId">—</code> <span class="muted">(the file name in data/models/)</span></p>
+          <p class="muted small">ID: <code id="mId">—</code> <span id="mOrigin" class="muted">· saved in your data folder, never in the app's folder</span></p>
 
           <label class="field"><span>Instructions for the AI <small>markdown · this is the model's playbook</small></span>
             <textarea id="mInstr" class="mono" rows="18" spellcheck="false"></textarea>
@@ -427,6 +450,7 @@
 
       <footer class="modal-foot">
         <button type="button" id="wfBack" class="btn small" hidden>← Back</button>
+        <button type="button" id="wfDelete" class="btn small danger" hidden>Delete workflow</button>
         <span class="spacer"></span>
         <span id="wfBusy" class="muted small" hidden>Reading workflow…</span>
         <button type="button" id="wfSave" class="btn primary" hidden>Save workflow</button>

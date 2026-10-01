@@ -96,15 +96,22 @@ function esc(s) {
 }
 
 let toastTimer;
-function toast(msg, bad = false) {
+// action: optional { label, run } shown as a button in the toast (e.g. Undo), which then stays up longer.
+function toast(msg, bad = false, action = null) {
   const t = $('#toast');
   t.hidden = true;
   void t.offsetWidth; // restart the pop-in animation
   t.textContent = msg;
+  if (action) {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'toast-act', textContent: action.label });
+    b.addEventListener('click', () => { clearTimeout(toastTimer); t.hidden = true; action.run(); });
+    t.append(b);
+  }
   t.classList.toggle('bad', bad);
+  t.classList.toggle('has-act', Boolean(action));
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, bad ? 5000 : 2400);
+  toastTimer = setTimeout(() => { t.hidden = true; }, action ? 8000 : bad ? 5000 : 2400);
 }
 
 // Screen-reader announcements (the stage itself is not a live region; streaming tokens would flood it).
@@ -571,6 +578,7 @@ function selectModel(id, { values } = {}) {
   document.documentElement.style.setProperty('--m', m ? modelColor(m) : '#ff4d8d');
   $('#modelDesc').textContent = m?.description || '';
   $('#modelDesc').hidden = !m?.description;
+  renderWorkflowPicker();
   if (!m) return;
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
   fillSelect($('#aspect'), m.aspectRatios, v.aspectRatio);
@@ -655,6 +663,7 @@ for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', 
 $('#theme').addEventListener('input', e => {
   renderRole();
   sizeTheme();
+  syncNewBtn();
   saved.set('theme', $('#theme').value);
   if (themeUndo !== null) {
     // Typing after a replacement retires the undo chip (replaceTheme re-arms it right after its own edit).
@@ -717,6 +726,7 @@ function setImage(img) {
   if (!img) saved.set('image', null);
   else if (img.file) saved.set('image', img.file);
   renderRole();
+  syncNewBtn();
 }
 
 const dz = $('#dropzone');
@@ -978,6 +988,7 @@ function renderResults(entry, { totalSecs } = {}) {
   state.cards = [];
   $('#resultsEmpty').hidden = Boolean(entry);
   renderStageHead(entry, { totalSecs });
+  syncNewBtn();
   if (!entry) return;
   const model = modelById(entry.modelId);
   entry.variations.forEach((v, i) => {
@@ -1008,6 +1019,7 @@ function setBusy(busy) {
   $('#generateBtn').disabled = busy;
   $('#genLabel').textContent = busy ? 'Cooking…' : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
   $('#stopBtn').hidden = !busy;
+  syncNewBtn();
   $$('.take .refine button, .take .refine input, .take .chips button, .take .save-edit, .take .versions button').forEach(el => { el.disabled = busy; });
   if (!busy) state.cards.forEach(c => { if (!c.interrupted && versionsOf(c).length) { $('.prev', c.el).disabled = c.view === 0; $('.next', c.el).disabled = c.view === versionsOf(c).length - 1; } });
   $('#draftBtn').disabled = busy;
@@ -1025,6 +1037,55 @@ function stop() {
     state.controller?.abort();
   }
 }
+
+// ---------- create: new session ----------
+
+// New swaps places with Stop while a prompt is cooking, and has nothing to do on a blank slate.
+function syncNewBtn() {
+  const b = $('#newBtn');
+  b.hidden = state.busy;
+  b.disabled = !($('#theme').value.trim() || state.image || state.entry);
+}
+
+function setThemeQuietly(text) {
+  const t = $('#theme');
+  t.value = text;
+  saved.set('theme', text);
+  themeUndo = null;
+  $('#themeUndo').hidden = true;
+  sizeTheme();
+}
+
+// A clean slate: theme, image and takes go; the model, dials and workflow stay. The takes are already in History.
+async function newSession() {
+  if (state.busy) return;
+  await flushEdits();
+  const before = { theme: $('#theme').value, image: state.image, entry: state.entry?.id ? state.entry : null, timings: state.timings };
+  showError('');
+  setThemeQuietly('');
+  setImage(null);
+  state.timings = {};
+  renderResults(null);
+  setTitle('');
+  window.scrollTo({ top: 0, behavior: scrollMode() });
+  $('#theme').focus({ preventScroll: true });
+  announce('New session. The theme, image and takes are cleared.');
+  const rendering = state.renderRuns.size ? ' Renders still running will land in the Gallery.' : '';
+  toast(`✨ Fresh start.${before.entry ? ' Your takes are in History.' : ''}${rendering}`, false, {
+    label: '↶ Undo',
+    run: () => {
+      if (state.busy || state.entry) return toast('Too late to undo here. It\'s all in History.', true);
+      setThemeQuietly(before.theme);
+      setImage(before.image);
+      if (before.entry) {
+        state.timings = before.timings;
+        renderResults(before.entry);
+      }
+      toast('↶ Back where you were');
+    },
+  });
+}
+$('#newBtn').addEventListener('click', newSession);
 
 async function generate() {
   if (state.busy) return;
@@ -1121,6 +1182,7 @@ async function generate() {
     savedEntry.llmName = state.entry.llmName;
     adoptEntry(savedEntry, (performance.now() - t0) / 1000);
     bumpHistoryBadge(1);
+    autoRender(state.cards);
   } else {
     const keep = stopped ? [] : state.cards.filter(c => c.partial);
     state.cards.filter(c => !keep.includes(c)).forEach(c => c.el.remove());
@@ -1184,6 +1246,7 @@ async function refineCard(card, instruction) {
     state.timings[card.index] = (performance.now() - t0) / 1000;
     showVersion(card, savedEntry.variations[card.index].versions.length - 1);
     announce(`Refined: ${instruction}`);
+    autoRender([card]);
   } else {
     showVersion(card, card.view);
     ta.value = before;
@@ -1489,6 +1552,10 @@ function fillModelForm(m, isNew) {
   $('#mUpdated').textContent = m.updatedAt ? `Last updated ${m.updatedAt}` : '';
   $('#modelForm').classList.toggle('is-video', m.kind === 'video');
   for (const id of ['#deleteModelBtn', '#exportModelBtn', '#useModelBtn', '#dupModelBtn']) $(id).hidden = isNew;
+  $('#resetModelBtn').hidden = isNew || !m.edited;
+  $('#mOrigin').textContent = !isNew && m.builtin
+    ? (m.edited ? '· your edited copy of a built-in playbook, saved in your data folder' : '· built-in playbook. Saving makes your own copy in your data folder')
+    : '· saved in your data folder, never in the app\'s folder';
   $('#draftResultWrap').hidden = true;
   $('#draftStatus').textContent = '';
   formMessage('');
@@ -1612,6 +1679,39 @@ $('#deleteModelBtn').addEventListener('click', e => confirmClick(e.currentTarget
   }
 }));
 
+$('#resetModelBtn').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure? Your edits go', async () => {
+  try {
+    const m = await api(`/api/models/${state.editId}/reset`, { method: 'POST' });
+    setDirty(false);
+    await loadModels();
+    editModel(m.id);
+    toast(`↺ “${m.name}” is back to the built-in playbook`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}));
+
+// Built-in playbooks you deleted can come back.
+async function refreshHiddenBuiltins() {
+  const hidden = await api('/api/models/hidden').catch(() => []);
+  const b = $('#restoreBuiltinsBtn');
+  b.hidden = !hidden.length;
+  b.textContent = hidden.length === 1 ? `↺ Bring back ${hidden[0].name}` : `↺ Bring back ${hidden.length} built-in models`;
+  b.title = hidden.map(h => h.name).join(', ');
+  b.dataset.ids = hidden.map(h => h.id).join(',');
+}
+$('#restoreBuiltinsBtn').addEventListener('click', async e => {
+  const ids = e.currentTarget.dataset.ids.split(',').filter(Boolean);
+  try {
+    for (const id of ids) await api(`/api/models/${id}/reset`, { method: 'POST' });
+    await loadModels();
+    if (!state.dirty) editModel(ids[0]);
+    toast(`↺ Brought back ${ids.length === 1 ? modelById(ids[0])?.name || 'the model' : `${ids.length} models`}`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 $('#dupModelBtn').addEventListener('click', () => {
   const copy = readModelForm();
   copy.name = `${copy.name} copy`;
@@ -1619,12 +1719,14 @@ $('#dupModelBtn').addEventListener('click', () => {
   newModel(copy);
 });
 
+// Exports carry the playbook only, not where it came from.
+const portable = ({ builtin, edited, ...m }) => m;
 $('#exportModelBtn').addEventListener('click', () => {
   const m = modelById(state.editId);
-  if (m) { download(`${m.id}.json`, m); toast(`⤒ Exported ${m.id}.json`); }
+  if (m) { download(`${m.id}.json`, portable(m)); toast(`⤒ Exported ${m.id}.json`); }
 });
 $('#exportAllBtn').addEventListener('click', () => {
-  download(`prompt-maker-models-${new Date().toISOString().slice(0, 10)}.json`, state.models);
+  download(`prompt-maker-models-${new Date().toISOString().slice(0, 10)}.json`, state.models.map(portable));
   toast(`⤒ Exported ${state.models.length} models`);
 });
 $('#useModelBtn').addEventListener('click', () => {
@@ -1763,11 +1865,89 @@ $('#settingsForm').addEventListener('submit', async e => {
 
 const workflowsFor = modelId => state.workflows.filter(w => w.modelId === modelId);
 
+// The workflow ▶ Render uses for a model: the one picked last, else the first. One choice per model,
+// shared by the Create panel and every take's render bar.
+function activeWorkflowId(modelId) {
+  const flows = workflowsFor(modelId);
+  const remembered = saved.get(`wf.${modelId}`, null);
+  return flows.some(f => f.id === remembered) ? remembered : flows[0]?.id || null;
+}
+
+function pickWorkflow(modelId, id) {
+  saved.set(`wf.${modelId}`, id);
+  state.cards.forEach(c => {
+    if (c.model?.id !== modelId || !c.rb) return;
+    c.rb.workflowId = id;
+    const sel = $('.rb-wf', c.el);
+    if (sel) sel.value = id;
+    updateSettingsLine(c);
+  });
+  if (modelId === state.modelId) renderWorkflowPicker();
+}
+
 async function loadWorkflows() {
   state.workflows = await api('/api/workflows').catch(() => []);
+  state.workflowsLoaded = true;
   renderModelList();
+  renderWorkflowPicker();
   if (isView('models')) renderWorkflowList();
   state.cards.forEach(c => { if (!c.interrupted && state.entry?.id) renderZone(c); });
+}
+
+async function editWorkflow(id, { focusSampler = false } = {}) {
+  try {
+    openWorkflowDialog({ edit: await api(`/api/workflows/${id}`), focusSampler });
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+// ---------- create: step 5, the workflow picker ----------
+
+const autoRenderKey = modelId => `autoRender.${modelId}`;
+
+function renderWorkflowPicker() {
+  const m = currentModel();
+  const flows = m ? workflowsFor(m.id) : [];
+  $('#wfpEmpty').hidden = !m || !state.workflowsLoaded || flows.length > 0;
+  $('#wfpBox').hidden = !flows.length;
+  $('#wfpKind').textContent = m?.kind === 'video' ? 'videos' : 'images';
+  if (flows.length) {
+    const id = activeWorkflowId(m.id);
+    const sel = $('#wfpSelect');
+    sel.innerHTML = flows.map(f => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
+    sel.value = id;
+    sel.title = flows.find(f => f.id === id)?.name || '';
+    $('#wfpSettings').innerHTML = settingsHtml(flows.find(f => f.id === id));
+    $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
+  }
+  renderComfyState();
+}
+
+function renderComfyState() {
+  const el = $('#comfyState');
+  const c = state.comfy;
+  el.hidden = !c || !workflowsFor(state.modelId).length;
+  if (el.hidden) return;
+  el.innerHTML = `<span class="dot ${c.ok ? 'ok' : 'bad'}"></span>${c.ok ? 'ComfyUI ready' : 'ComfyUI offline'}`;
+  el.title = c.ok ? `ComfyUI ${c.version || ''}${c.gpu ? ` on ${c.gpu}` : ''}`.trim() : c.error || '';
+}
+
+$('#wfpSelect').addEventListener('change', e => pickWorkflow(state.modelId, e.target.value));
+$('#wfpEdit').addEventListener('click', () => editWorkflow($('#wfpSelect').value));
+$('#wfpSettings').addEventListener('click', () => editWorkflow($('#wfpSelect').value, { focusSampler: true }));
+for (const id of ['#wfpAdd', '#wfpAddFirst']) $(id).addEventListener('click', () => openWorkflowDialog({ modelId: state.modelId }));
+$('#wfpAuto').addEventListener('change', e => {
+  saved.set(autoRenderKey(state.modelId), e.target.checked);
+  const flow = state.workflows.find(f => f.id === $('#wfpSelect').value);
+  toast(e.target.checked ? `⚡ Auto-render on: new prompts go straight to “${flow?.name}”` : 'Auto-render off: hit ▶ Render when you\'re ready');
+});
+
+// Renders freshly written takes right away when the model's auto-render switch is on.
+function autoRender(cards) {
+  const m = modelById(state.entry?.modelId);
+  if (!m || !saved.get(autoRenderKey(m.id), false) || !workflowsFor(m.id).length) return;
+  cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); });
 }
 
 let comfyLoading = null;
@@ -1779,6 +1959,7 @@ function loadComfyStatus() {
       state.comfy = st;
       comfyLoading = null;
       state.cards.forEach(updateRenderStatus);
+      renderComfyState();
       if (cameBack) toast('🎨 ComfyUI is connected');
       return st;
     });
@@ -1814,9 +1995,8 @@ function renderZone(card) {
   zone.hidden = false;
   let bar = '';
   if (flows.length) {
-    const remembered = saved.get(`wf.${model.id}`, null);
     card.rb ??= { count: 1, lockSeed: false, lastSeed: null };
-    if (!flows.some(f => f.id === card.rb.workflowId)) card.rb.workflowId = flows.some(f => f.id === remembered) ? remembered : flows[0].id;
+    card.rb.workflowId = activeWorkflowId(model.id);
     const name = card.el.getAttribute('aria-label');
     bar = `<div class="render-bar">
       <span class="rb-title">🎨 Render</span>
@@ -1836,14 +2016,8 @@ function renderZone(card) {
   if (bar$) {
     setActive($('.rb-count', bar$), card.rb.count);
     updateSeedChip(card);
-    $('.rb-wf', bar$).addEventListener('change', e => { card.rb.workflowId = e.target.value; saved.set(`wf.${model.id}`, e.target.value); updateSettingsLine(card); });
-    $('.rb-tune', bar$).addEventListener('click', async () => {
-      try {
-        openWorkflowDialog({ edit: await api(`/api/workflows/${card.rb.workflowId}`), focusSampler: true });
-      } catch (err) {
-        toast(err.message, true);
-      }
-    });
+    $('.rb-wf', bar$).addEventListener('change', e => pickWorkflow(model.id, e.target.value));
+    $('.rb-tune', bar$).addEventListener('click', () => editWorkflow(card.rb.workflowId, { focusSampler: true }));
     updateSettingsLine(card);
     $('.rb-count', bar$).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { card.rb.count = Number(b.dataset.value); setActive($('.rb-count', bar$), card.rb.count); } });
     $('.rb-seed', bar$).addEventListener('click', () => {
@@ -1853,25 +2027,29 @@ function renderZone(card) {
     });
     $('.rb-go', bar$).addEventListener('click', () => startRender(card));
   }
-  $('.rh-add', zone)?.addEventListener('click', () => { showView('models'); guardDirty(model.id, () => { editModel(model.id); openWorkflowDialog(); }); });
+  $('.rh-add', zone)?.addEventListener('click', () => openWorkflowDialog({ modelId: model.id }));
   $('.rh-x', zone)?.addEventListener('click', () => { saved.set('hideRenderHint', true); state.cards.forEach(renderZone); toast('Tip hidden. Add workflows any time in Models.'); });
   renderTiles(card);
   updateRenderStatus(card);
 }
 
-// One line under the render bar: what this workflow will actually use.
-function updateSettingsLine(card) {
-  const line = $('.rb-settings', card.el);
-  const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
-  if (!line || !flow) return;
-  const s = flow.settings || {};
+// What a workflow will actually use (sampler, steps, CFG, seed), as small chips.
+function settingsHtml(flow) {
+  const s = flow?.settings || {};
   const bits = [
     s.sampler && `${s.sampler}${s.scheduler ? ` · ${s.scheduler}` : ''}`,
     s.steps != null && `${s.steps} steps`,
     s.cfg != null && `CFG ${s.cfg}${Number(s.cfg) === 1 ? ' 🔒' : ''}`,
     s.seed != null && (s.seed === 'random' ? 'seed 🎲 random' : `seed ${s.seed}`),
   ].filter(Boolean);
-  line.innerHTML = bits.length ? bits.map(b => `<span>${esc(b)}</span>`).join('') : '<span>workflow defaults</span>';
+  return bits.length ? bits.map(b => `<span>${esc(b)}</span>`).join('') : '<span>workflow defaults</span>';
+}
+
+// One line under the render bar: what this workflow will actually use.
+function updateSettingsLine(card) {
+  const line = $('.rb-settings', card.el);
+  const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
+  if (line && flow) line.innerHTML = settingsHtml(flow);
 }
 
 function updateSeedChip(card) {
@@ -2251,14 +2429,17 @@ $('#wfList').addEventListener('click', async e => {
 
 // ---------- add / set up a workflow (dialog) ----------
 
-const dlg = { editId: null, prepared: null, saved: [] };
+const dlg = { editId: null, modelId: null, prepared: null, saved: [] };
 
-function openWorkflowDialog({ edit = null, focusSampler = false } = {}) {
+// Opens on the picker to add a workflow to modelId, or straight on the setup of an existing one (edit).
+function openWorkflowDialog({ edit = null, modelId = null, focusSampler = false } = {}) {
   const d = $('#wfDialog');
-  const m = modelById(edit?.modelId || state.editId);
+  dlg.modelId = edit?.modelId || modelId;
+  const m = modelById(dlg.modelId);
   d.style.setProperty('--m', m ? modelColor(m) : 'var(--hot)');
   dlg.editId = edit?.id || null;
   $('#wfPickMsg').hidden = true;
+  $('#wfDelete').hidden = !edit;
   if (edit) {
     $('#wfDialogTitle').textContent = `Set up “${edit.name}”`;
     showSetup(edit);
@@ -2315,7 +2496,21 @@ $('#wfSaved').addEventListener('click', e => {
 });
 $('.wf-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) switchWfTab(b.dataset.value); });
 $('#wfClose').addEventListener('click', () => $('#wfDialog').close());
-$('#wfBack').addEventListener('click', () => openWorkflowDialog());
+$('#wfBack').addEventListener('click', () => openWorkflowDialog({ modelId: dlg.modelId }));
+$('#wfDelete').addEventListener('click', e => {
+  const id = dlg.editId;
+  if (!id) return;
+  confirmClick(e.currentTarget, 'Sure? Delete it', async () => {
+    try {
+      await api(`/api/workflows/${id}`, { method: 'DELETE' });
+      $('#wfDialog').close();
+      await loadWorkflows();
+      toast('🗑️ Workflow removed');
+    } catch (err) {
+      wfToast(err.message);
+    }
+  });
+});
 $('#wfDrop').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#wfFile').click(); } });
 $('#wfFile').addEventListener('change', e => { readWorkflowFile(e.target.files[0]); e.target.value = ''; });
 $('#wfDrop').addEventListener('dragover', e => { e.preventDefault(); e.currentTarget.classList.add('drag'); });
@@ -2540,7 +2735,10 @@ $('#wfSave').addEventListener('click', async () => {
   try {
     const overrides = readOverrides();
     if (dlg.editId) await api(`/api/workflows/${dlg.editId}`, { method: 'PUT', body: { name, mapping, options, overrides } });
-    else await api('/api/workflows', { method: 'POST', body: { modelId: state.editId, name, source: data.source, prompt: data.prompt, mapping, options, overrides } });
+    else {
+      const added = await api('/api/workflows', { method: 'POST', body: { modelId: dlg.modelId, name, source: data.source, prompt: data.prompt, mapping, options, overrides } });
+      saved.set(`wf.${dlg.modelId}`, added.id); // a workflow you just added is the one you want next
+    }
     $('#wfDialog').close();
     await loadWorkflows();
     toast(dlg.editId ? '💾 Workflow updated' : `🎨 “${name}” is ready: hit ▶ Render on any take`);
@@ -2557,7 +2755,7 @@ function wfToast(msg) {
   w.scrollIntoView({ block: 'nearest' });
 }
 
-$('#addWorkflowBtn').addEventListener('click', () => openWorkflowDialog());
+$('#addWorkflowBtn').addEventListener('click', () => openWorkflowDialog({ modelId: state.editId }));
 
 // Settings: ComfyUI connection test.
 $('#sComfyTest').addEventListener('click', async () => {
@@ -2579,6 +2777,7 @@ async function loadModels() {
   if (!modelById(state.modelId)) state.modelId = state.models[0]?.id || null;
   selectModel(state.modelId);
   renderModelList();
+  await refreshHiddenBuiltins();
 }
 
 (async function boot() {
@@ -2601,7 +2800,7 @@ async function loadModels() {
     showError(`Could not start: ${friendly(err)}`);
   }
   api('/api/history').then(h => { state.history = h; $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
-  await Promise.all([loadLlms(), loadWorkflows()]);
+  await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins()]);
   if (state.workflows.length) await loadComfyStatus();
   document.documentElement.dataset.ready = '1';
 })();

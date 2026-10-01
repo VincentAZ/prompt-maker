@@ -1,8 +1,5 @@
-# Personal data stays local; model playbooks in data/models/ are versioned.
-data/history.json
-data/images/
-data/renders/
-data/workflows/
-data/settings.json
+# Personal data lives outside the app folder (see "Your data" in the README).
+# Older versions kept it in ./data; ignore that in case an old copy is still around.
+/data/
 *.tmp
 node_modules/
