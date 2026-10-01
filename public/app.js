@@ -498,7 +498,7 @@ function replaceTheme(text, { focus = true } = {}) {
   if (prev === text) return;
   t.focus({ preventScroll: true });
   t.select();
-  if (!document.execCommand('insertText', false, text)) {
+  if (!document.execCommand(text ? 'insertText' : 'delete', false, text)) {
     t.value = text;
     t.dispatchEvent(new Event('input'));
   }
@@ -524,13 +524,25 @@ $('#surpriseBtn').addEventListener('click', () => {
 });
 
 // Rotating example placeholder while the theme box is empty.
+// Rotating example placeholder while the theme box is empty. When animating, the theme says what happens.
+const MOTIONS = [
+  'she takes a sip and laughs as the camera slowly pushes in',
+  'wind picks up, hair and fabric ripple, slow orbit around the subject',
+  'he turns toward the camera and smiles, gentle handheld drift',
+  'waves roll in while the camera cranes up to reveal the bay',
+];
 let phIdx = 0;
-$('#theme').placeholder = `e.g. ${SURPRISES[0]}…`;
+const animating = () => Boolean(state.image) && effectiveRole() === 'animate';
+function themePlaceholder() {
+  const list = animating() ? MOTIONS : SURPRISES;
+  const ex = list[phIdx % list.length];
+  $('#theme').placeholder = animating() ? `What happens? e.g. ${ex}… (optional)` : `e.g. ${ex}…`;
+}
+themePlaceholder();
 setInterval(() => {
-  const t = $('#theme');
-  if (t.value) return;
-  phIdx = (phIdx + 1) % SURPRISES.length;
-  t.placeholder = `e.g. ${SURPRISES[phIdx]}…`;
+  if ($('#theme').value) return;
+  phIdx++;
+  themePlaceholder();
 }, 3500);
 
 function renderModelChips() {
@@ -620,7 +632,9 @@ function renderRole() {
   const hasTheme = Boolean($('#theme').value.trim());
   $('#roleHint').textContent = ROLE_HINTS[role][hasTheme ? 0 : 1];
   $('#themeOpt').textContent = hasImage ? 'optional' : '';
+  themePlaceholder();
   renderVisionWarning();
+  renderWorkflowWarning();
 }
 
 function setVariations(n, { persist = true } = {}) {
@@ -674,7 +688,9 @@ $('#theme').addEventListener('input', e => {
 
 // ---------- create: image ----------
 
-async function loadImageFile(file) {
+// source: the render this image came from, when it's the next step of a chain (kept as a link, and its
+// original file is what ComfyUI gets).
+async function loadImageFile(file, { source = null, quiet = false } = {}) {
   if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
   let dataUrl;
   let ratio;
@@ -694,15 +710,16 @@ async function loadImageFile(file) {
   } catch {
     return toast('Could not read that image.', true);
   }
-  setImage({ dataUrl, ratio });
+  setImage({ dataUrl, ratio, source });
   const aspect = matchImageAspect();
   // Store it right away: survives reloads and never has to be re-sent.
   try {
     const { file: name } = await api('/api/images', { method: 'POST', body: { image: dataUrl } });
     if (state.image?.dataUrl === dataUrl) {
-      state.image = { file: name, dataUrl, ratio };
+      state.image = { file: name, dataUrl, ratio, source };
       saved.set('image', name);
     }
+    if (quiet) return;
     toast(aspect ? `🖼️ Image added · aspect set to ${aspect} to match` : '🖼️ Image added');
     announce(aspect ? `Image added. Aspect ratio set to ${aspect} to match it.` : 'Image added');
   } catch (err) {
@@ -725,8 +742,20 @@ function setImage(img) {
   $('#dropzone').setAttribute('aria-label', img ? 'Image added' : 'Add an image: drop, paste or browse');
   if (!img) saved.set('image', null);
   else if (img.file) saved.set('image', img.file);
+  saved.set('imageSource', img?.source || null);
+  renderSourceBadge();
   renderRole();
   syncNewBtn();
+}
+
+const takeLabel = src => `${src.modelName} · take ${src.index + 1}${src.seed != null ? ` · seed ${src.seed}` : ''}`;
+
+// "🔗 From your Krea 2 RAW still" on the image, when it came from a render.
+function renderSourceBadge() {
+  const src = state.image?.source;
+  const badge = $('#dzSource');
+  badge.hidden = !src;
+  if (src) badge.textContent = `🔗 From ${takeLabel(src)}`;
 }
 
 const dz = $('#dropzone');
@@ -811,13 +840,21 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   const via = entry.llmName || state.llms.find(l => l.id === entry.llmModel)?.name || entry.llmModel;
   const takes = entry.variations?.length || 0;
   head.style.setProperty('--m', m ? modelColor(m) : 'var(--hot)');
-  head.innerHTML = `<span class="tag model">${kindIcon(entry.modelKind)} ${esc(entry.modelName)}</span>${tags}
+  head.innerHTML = `<span class="tag model">${kindIcon(entry.modelKind)} ${esc(entry.modelName)}</span>${entry.source ? `<button type="button" class="tag src-link" id="srcLink" title="Open the take this came from">⬑ from ${esc(takeLabel(entry.source))}</button>` : ''}${tags}
     ${via ? `<span class="via">${running ? 'rolling on' : 'written by'} ${esc(via)}${totalSecs ? ` in ${totalSecs.toFixed(1)}s` : ''}</span>` : ''}
     ${!running && takes > 1 && entry.id && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn">🎨 Render all ${takes}</button>` : ''}
     ${!running && takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn">📋 Copy all ${takes} takes</button>` : ''}`;
   head.hidden = false;
+  $('#srcLink')?.addEventListener('click', () => openSource(entry.source));
   $('#renderAllBtn')?.addEventListener('click', () => state.cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); }));
   $('#copyAllBtn')?.addEventListener('click', e => copyText(takesText(state.cards.filter(c => !c.interrupted).map(c => $('.prompt-text', c.el).value.trim())), e.currentTarget));
+}
+
+// Opens the take a chained entry came from.
+async function openSource(src) {
+  const parent = await api('/api/history').then(h => { state.history = h; return h.find(e => e.id === src.entryId); }).catch(() => null);
+  if (!parent) return toast('That take is no longer in History.', true);
+  openEntry(parent);
 }
 
 function createTake(index, count, model) {
@@ -1114,7 +1151,9 @@ async function generate() {
     temperature: Number($('#temperature').value),
     variations: state.variations,
     ...(state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}),
+    ...(state.image?.source ? { source: state.image.source } : {}),
   };
+  if (state.image?.source && m.kind === 'video') saved.set('animateModel', m.id);
 
   // Placeholder entry so the stage header and meters work while streaming.
   state.entry = { ...body, modelName: m.name, modelKind: m.kind, variations: [] };
@@ -1374,7 +1413,7 @@ function renderHistory() {
         </div>
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite: ${esc(title)}" title="${e.favorite ? 'Unfavorite' : 'Favorite'}">${e.favorite ? '★' : '☆'}</button>
         <div class="hbody">
-          <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span><span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
+          <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
           <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open">${esc(title)}</div>
           <p class="hprompt">${esc(first)}</p>
           <div class="hactions">
@@ -1921,7 +1960,20 @@ function renderWorkflowPicker() {
     $('#wfpSettings').innerHTML = settingsHtml(flows.find(f => f.id === id));
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
+  renderWorkflowWarning();
   renderComfyState();
+}
+
+// The picked workflow and the image have to fit: a first frame needs an image input, and vice versa.
+function renderWorkflowWarning() {
+  const warn = $('#wfpWarn');
+  const flow = state.workflows.find(f => f.id === $('#wfpSelect').value && f.modelId === state.modelId);
+  const msg = !flow || $('#wfpBox').hidden ? ''
+    : animating() && !flow.maps.image ? `“${flow.name}” has no image input, so it would ignore your first frame. Pick or add an image-to-video workflow.`
+      : !state.image && flow.maps.image ? `“${flow.name}” needs an input image. Add one in step 3, or pick another workflow.`
+        : '';
+  warn.hidden = !msg;
+  warn.textContent = msg ? `⚠️ ${msg}` : '';
 }
 
 function renderComfyState() {
@@ -2075,6 +2127,7 @@ function renderTiles(card) {
   if (!box) return;
   const items = takeRenders(card).slice().reverse().flatMap(r => r.files.map(f => ({ entry: state.entry, index: card.index, render: r, file: f })));
   const ar = ASPECT_CSS(state.entry?.aspectRatio);
+  const video = animateTarget();
   const tiles = items.map((it, n) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -2083,7 +2136,15 @@ function renderTiles(card) {
     b.setAttribute('aria-label', `Open render ${n + 1}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}`);
     b.innerHTML = `${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-meta">${it.render.seed != null ? `seed ${it.render.seed}` : ''}${it.render.secs ? ` · ${it.render.secs}s` : ''}</span>`;
     b.addEventListener('click', () => openLightbox(items, n));
-    return b;
+    if (it.file.kind !== 'image' || !video) return b;
+    const cell = document.createElement('div');
+    cell.className = 'rcell';
+    const go = Object.assign(document.createElement('button'), { type: 'button', className: 'rt-next', textContent: '🎬 Animate' });
+    go.title = `Make a video from this still with ${video.name}: it becomes the first frame`;
+    go.setAttribute('aria-label', `Animate render ${n + 1} with ${video.name}`);
+    go.addEventListener('click', () => continueFrom(it, { animate: true }));
+    cell.append(b, go);
+    return cell;
   });
   box.replaceChildren(...card.running.values(), ...tiles);
   box.hidden = !box.children.length;
@@ -2208,6 +2269,46 @@ async function startRender(card) {
   loadComfyStatus();
 }
 
+// ---------- next step from a render (chaining) ----------
+
+// The video model a still gets animated with: the one used last time, else the first video model.
+function animateTarget() {
+  const videos = state.models.filter(m => m.kind === 'video');
+  return videos.find(m => m.id === saved.get('animateModel', null)) || videos[0] || null;
+}
+
+// Starts the next step from a render: it becomes the input image on Create, linked back to where it came from.
+// animate: switch to a video model and use the still as the first frame.
+async function continueFrom(it, { animate }) {
+  if (state.busy) return toast('Hold on, a prompt is still cooking. Stop it or wait.', true);
+  const target = animate ? animateTarget() : null;
+  if (animate && !target) return toast('Add a video model first (Models tab).', true);
+  let blob;
+  try {
+    blob = await (await fetch(`/renders/${encodeURIComponent(it.file.file)}`)).blob();
+  } catch (err) {
+    return toast(`Couldn't use that render: ${err.message}`, true);
+  }
+  await flushEdits();
+  showView('create');
+  if (target) {
+    if (target.id !== state.modelId) selectModel(target.id);
+    state.imageRole = 'animate';
+    saved.set('imageRole', 'animate');
+  }
+  const source = { entryId: it.entry.id, index: it.index, renderId: it.render.id, file: it.file.file, modelName: it.entry.modelName, seed: it.render.seed ?? null };
+  await loadImageFile(new File([blob], it.file.name || it.file.file, { type: blob.type || 'image/png' }), { source, quiet: true });
+  if (target) {
+    replaceTheme(''); // the theme now says what happens; ↶ Undo brings the still's theme back
+    toast(`🎬 Ready to animate with ${target.name}. Say what happens (or leave it to the AI), then Generate`);
+    announce(`The still is now the first frame for ${target.name}. Describe what happens, then generate.`);
+    $('#theme').scrollIntoView({ block: 'center', behavior: scrollMode() });
+  } else {
+    toast('🖼️ Render set as your image, linked to where it came from');
+    $('#dropzone').scrollIntoView({ block: 'center', behavior: scrollMode() });
+  }
+}
+
 // ---------- lightbox ----------
 
 const lb = { items: [], index: 0, fromGallery: false, returnFocus: null };
@@ -2246,6 +2347,7 @@ function lbRender() {
   $('#lbPrev').disabled = $('#lbNext').disabled = lb.items.length < 2;
   const facts = [
     ['Model', entry.modelName],
+    entry.source ? ['From', takeLabel(entry.source)] : null,
     ['Workflow', render.workflowName],
     ['Seed', render.seed ?? '—'],
     render.sampler ? ['Sampler', `${render.sampler}${render.steps ? ` · ${render.steps} steps` : ''}${render.cfg != null ? ` · CFG ${render.cfg}` : ''}`] : null,
@@ -2261,26 +2363,16 @@ function lbRender() {
     <div class="lb-actions">
       <a class="btn small primary" href="/renders/${encodeURIComponent(file.file)}" download="${esc(file.name || file.file)}">⬇ Download</a>
       <button type="button" class="btn small" data-lb="copy">📋 Copy prompt</button>
-      ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt, e.g. to animate it">🖼️ Use as input image</button>' : ''}
+      ${file.kind === 'image' && animateTarget() ? `<button type="button" class="btn small" data-lb="animate" title="Make a video from this still: it becomes the first frame">🎬 Animate this</button>` : ''}
+      ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${lb.fromGallery ? '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>' : '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>'}
       <button type="button" class="btn small danger" data-lb="delete">🗑 Delete</button>
     </div>
     <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · Esc to close</p>`;
   $('[data-lb="copy"]', $('#lbInfo')).addEventListener('click', e => copyText(render.text, e.currentTarget));
   $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); openEntry(entry); });
-  $('[data-lb="use"]', $('#lbInfo'))?.addEventListener('click', async () => {
-    try {
-      const blob = await (await fetch(`/renders/${encodeURIComponent(file.file)}`)).blob();
-      closeLightbox();
-      showView('create');
-      await loadImageFile(new File([blob], file.name || file.file, { type: blob.type || 'image/png' }));
-      const video = state.models.find(m => m.kind === 'video');
-      toast(video ? `🖼️ Render set as your image. Pick ${video.name} and 🎬 Animate to bring it to life` : '🖼️ Render set as your input image');
-      $('#dropzone').scrollIntoView({ block: 'center', behavior: scrollMode() });
-    } catch (err) {
-      toast(`Couldn't use that render: ${err.message}`, true);
-    }
-  });
+  $('[data-lb="animate"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: true }); });
+  $('[data-lb="use"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false }); });
   $('[data-lb="again"]', $('#lbInfo'))?.addEventListener('click', () => {
     const card = state.cards.find(c => c.index === it.index);
     if (!card || !card.rb) return;
@@ -2789,7 +2881,7 @@ async function loadModels() {
     setVariations(saved.get('variations', 1));
     $('#theme').value = saved.get('theme', '');
     const img = saved.get('image', null);
-    if (img && (await api(`/api/images/${encodeURIComponent(img)}`).catch(() => ({}))).exists) setImage({ file: img });
+    if (img && (await api(`/api/images/${encodeURIComponent(img)}`).catch(() => ({}))).exists) setImage({ file: img, source: saved.get('imageSource', null) });
     else saved.set('image', null);
     renderRole();
     renderResults(null);

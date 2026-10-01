@@ -252,8 +252,19 @@ Click any result to open the **lightbox**, where you can:
 - see the prompt, seed, size and timing,
 - **download** the file,
 - **render again** with a new seed,
-- **🖼️ use it as the input image** for your next prompt (for example, animate a Krea still with LTX 2.3),
+- **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
 - or delete it.
+
+### 3. Turn a still into a video
+
+Hover any still you rendered and click **🎬 Animate** (it's also in the lightbox):
+
+- **The still becomes the first frame.** Create switches to your video model (the one you used last) and picks 🎬 *Animate*. The theme box asks **what happens**. Leave it empty and the AI picks fitting motion.
+- **It stays consistent.** The LLM sees the frame and also gets the still's prompt, so people, clothes and places are described the same way.
+- **Full quality.** ComfyUI gets the original render file as the first frame, not a re-compressed copy.
+- **It remembers where it came from.** The video's results, History card and lightbox link back with **⬑ from Krea 2 RAW · take 1 · seed …**.
+
+You'll need an image-to-video workflow (one with a *Load Image* node) on the video model. Step ⑤ warns you if the picked workflow can't take the frame.
 
 Every render also appears in the **Gallery** tab, with filters for images, videos and models. The newest render becomes the thumbnail of its History card.
 

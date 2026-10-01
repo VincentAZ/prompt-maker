@@ -89,6 +89,7 @@
               </div>
               <div class="dz-preview" hidden>
                 <img id="imagePreview" alt="Your image">
+                <span id="dzSource" class="dz-source" hidden></span>
                 <div class="dz-actions">
                   <button type="button" id="imageReplace" class="btn small glass">Replace</button>
                   <button type="button" id="imageClear" class="btn small glass danger">Remove</button>
@@ -153,6 +154,7 @@
                 <button type="button" id="wfpAdd" class="btn small" title="Add another workflow" aria-label="Add another workflow">＋</button>
               </div>
               <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
+              <p id="wfpWarn" class="warn-line" hidden></p>
               <label class="switch"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
             </div>
           </section>

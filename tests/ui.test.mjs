@@ -259,6 +259,9 @@ async function main() {
   const turbo = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
   turbo['3'].inputs.cfg = 1; // a distilled/turbo-style workflow: CFG must stay 1
   await fs.writeFile(apiWorkflowFile, JSON.stringify(turbo));
+  // An image-to-video style workflow: same graph plus a Load Image node for the first frame.
+  const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
+  await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
 
   const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
@@ -1144,6 +1147,68 @@ async function main() {
     assert((await text('#wfDialogTitle')).includes('LTX'), 'adds to LTX');
     await click('#wfClose');
     await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('chain: animate a still (first frame at full quality, linked both ways)', async () => {
+    await click('.model-card[data-id="ltx-2-3"]');
+    await click('#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [i2vWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapImage'), '11|image', 'the Load Image node takes the frame');
+    await type('#wfName', 'Mock I2V');
+    await click('#wfSave');
+    await toastText('is ready');
+    assert((await text('#wfpWarn')).includes('needs an input image'), 'warns that this workflow wants a frame');
+
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'a lighthouse keeper on the rocks');
+    await click('#generateBtn');
+    await genDone();
+    const stillText = await value('.take .prompt-text');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rcell .rt-next") && !document.querySelector(".take .rtile.running")', 'still rendered, with Animate', 10000);
+
+    await click('.take .rcell .rt-next');
+    await waitFor('document.querySelector(".model-card.active")?.dataset.id === "ltx-2-3" && !document.querySelector(".dz-preview").hidden && !document.querySelector("#dzSource").hidden', 'still loaded as the first frame');
+    await toastText('Ready to animate');
+    assert((await text('#dzSource')).startsWith('🔗 From Krea 2 RAW · take 1 · seed'), 'the image says where it came from');
+    eq(await js('document.querySelector("#roleBlock .role.active")?.dataset.value'), 'animate', 'animate is picked');
+    eq(await value('#theme'), '', 'the theme is free for the motion');
+    assert(await visible('#themeUndo'), 'the still\'s theme can come back');
+    assert((await js('document.querySelector("#theme").placeholder')).startsWith('What happens?'), 'the box asks what happens');
+    assert(!(await visible('#wfpWarn')), 'the image-to-video workflow fits');
+    await shot('34-animate-ready', { full: true });
+
+    await type('#theme', 'the keeper raises a lantern');
+    await click('#generateBtn');
+    await genDone();
+    const asked = JSON.stringify(lastCall().messages);
+    assert(asked.includes('PREVIOUS STEP') && asked.includes(stillText.slice(0, 60)), 'the LLM gets the still\'s prompt as context');
+    assert((await text('#srcLink')).includes('from Krea 2 RAW · take 1'), 'results link back to the still');
+    const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'the keeper raises a lantern');
+    eq(entry.source.text, stillText, 'the link keeps the still\'s prompt');
+    assert(/\.png$/.test(entry.source.file), 'the link points at the original render');
+
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'video rendered', 10000);
+    eq(comfy.uploads.at(-1), `prompt-maker_${entry.source.file}`, 'ComfyUI got the original render, not the smaller copy');
+    eq(comfy.prompts.at(-1).prompt['11'].inputs.image, `prompt-maker_${entry.source.file}`, 'and it went into the first-frame input');
+    await shot('35-animated', { full: true });
+
+    await click('#srcLink');
+    await waitFor('document.querySelector("#theme").value === "a lighthouse keeper on the rocks"', 'back on the still');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'with its model');
+
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    assert(await js('[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("the keeper raises a lantern") && c.querySelector(".hsrc")?.textContent.includes("from Krea 2 RAW"))'), 'History shows the link');
+    await click('.tabs button[data-view="create"]');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert(await visible('[data-lb="animate"]'), 'the lightbox offers Animate this');
+    await press('Escape');
   });
 
   await test('security: other websites can\'t use the local API', async () => {

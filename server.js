@@ -187,6 +187,29 @@ function pickParams(body, model) {
 
 // ---------- generation ----------
 
+// A take started from an earlier render (e.g. a still that becomes a video's first frame). Returns the link
+// to store on the new entry, or null if that render is gone.
+async function resolveSource(src) {
+  if (!src || typeof src !== 'object') return null;
+  const parent = await store.getHistory(String(src.entryId || ''));
+  const index = Number(src.index);
+  const render = parent?.variations?.[index]?.renders?.find(r => r.id === src.renderId);
+  const file = render?.files?.find(f => f.file === src.file && f.kind === 'image');
+  if (!file) return null;
+  return {
+    entryId: parent.id,
+    index,
+    renderId: render.id,
+    file: file.file,
+    kind: 'image',
+    modelId: parent.modelId,
+    modelName: parent.modelName,
+    workflowName: render.workflowName || '',
+    seed: render.seed ?? null,
+    text: render.text,
+  };
+}
+
 async function generate(req, res) {
   const body = await readBody(req);
   const settings = await store.getSettings();
@@ -204,6 +227,7 @@ async function generate(req, res) {
     imageDataUrl = await store.readImageDataUrl(imageFile);
   }
   if (!params.theme && !imageDataUrl) throw store.httpError(400, 'Enter a theme, add an image, or both.');
+  const source = imageDataUrl ? await resolveSource(body.source) : null;
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   const llmModel = llm.id;
@@ -214,7 +238,7 @@ async function generate(req, res) {
   const texts = [];
   try {
     for (let index = 0; index < count; index++) {
-      const messages = buildGenerateMessages(settings.masterPrompt, model, params, imageDataUrl, { index, count, previous: texts });
+      const messages = buildGenerateMessages(settings.masterPrompt, model, { ...params, sourcePrompt: source?.text }, imageDataUrl, { index, count, previous: texts });
       const raw = await streamChat(settings.lmStudioUrl, { model: llmModel, messages, ...opts }, {
         signal: stream.signal,
         onUpdate: u => stream.send({ type: 'delta', index, text: u.text, thinking: u.thinking, reasoningChars: u.reasoningChars }),
@@ -239,6 +263,7 @@ async function generate(req, res) {
       ...params,
       temperature: opts.temperature,
       imageFile,
+      ...(source ? { source } : {}),
       variations: texts.map(text => ({ versions: [{ text, instruction: null, createdAt: now }] })),
     });
     stream.send({ type: 'saved', entry });
@@ -269,7 +294,7 @@ async function refine(req, res) {
 
   const stream = startStream(res, llm, 1, Boolean(imageDataUrl));
   try {
-    const messages = buildRefineMessages(settings.masterPrompt, model, params, imageDataUrl, current, instruction);
+    const messages = buildRefineMessages(settings.masterPrompt, model, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '' }, imageDataUrl, current, instruction);
     const raw = await streamChat(settings.lmStudioUrl, { model: llmModel, messages, ...opts }, {
       signal: stream.signal,
       onUpdate: u => stream.send({ type: 'delta', index: body.index, text: u.text, thinking: u.thinking, reasoningChars: u.reasoningChars }),
@@ -382,9 +407,13 @@ async function renderTake(req, res) {
   const info = await comfy.objectInfo(base).catch(() => null);
   let imageName = null;
   if (workflow.mapping.image && entry.imageFile) {
-    const buf = await fs.readFile(path.join(store.IMAGES_DIR, entry.imageFile));
-    const ext = entry.imageFile.split('.').pop();
-    imageName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.imageFile}`, IMAGE_MIME[ext] || 'image/jpeg');
+    // A take started from a render sends that original file (full size, lossless), not the smaller copy the LLM saw.
+    const original = entry.source?.file ? within(store.RENDERS_DIR, entry.source.file) : null;
+    const useOriginal = Boolean(original) && (await fs.access(original).then(() => true, () => false));
+    const name = useOriginal ? entry.source.file : entry.imageFile;
+    const buf = await fs.readFile(useOriginal ? original : path.join(store.IMAGES_DIR, entry.imageFile));
+    const ext = name.split('.').pop().toLowerCase();
+    imageName = await comfy.uploadImage(base, buf, `prompt-maker_${name}`, IMAGE_MIME[ext] || 'image/png');
   }
   const count = Math.min(4, Math.max(1, Math.round(Number(body.count) || 1)));
   const lockedSeed = Number.isSafeInteger(body.seed) ? body.seed : null;
