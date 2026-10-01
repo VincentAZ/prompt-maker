@@ -32,6 +32,24 @@ function cannedPrompt(body) {
   return scene;
 }
 
+// Assistant turns (requests with tools), scripted by words in the user's last message. Each entry is one round:
+// tool calls to make, or the reply once the tool results are back.
+function assistantTurn(body) {
+  const msgs = body.messages;
+  const at = msgs.map(m => m.role).lastIndexOf('user');
+  const said = textOf(msgs[at].content).toLowerCase();
+  const round = msgs.slice(at + 1).filter(m => m.role === 'assistant').length;
+  const results = msgs.slice(at + 1).filter(m => m.role === 'tool').map(m => m.content).join('\n');
+  const script = /set up/.test(said) ? [{ calls: [['set_model', { model: 'krea' }], ['set_theme', { text: 'a surfer at golden hour' }], ['set_dials', { aspect: '9:16', takes: 2 }]] }, { text: 'All set: **Krea 2 RAW**, 9:16, 2 takes. Say *go* and I\'ll write them.' }]
+    : /\bgo\b/.test(said) ? [{ calls: [['generate', {}]] }, { text: 'Your 2 takes are ready on the right.' }]
+    : /\bhow\b/.test(said) ? [{ calls: [['read_guide', { topic: said }]] }, { text: results.includes('Add LoRA') ? 'In step ⑤, click **＋ Add LoRA** and pick one from your model\'s folder.' : 'I couldn\'t find that in the guide.' }]
+    : /\blora\b/.test(said) ? [{ calls: [['add_lora', { name: 'detail', strength: 0.6 }]] }, { text: 'Added it at 0.6.' }]
+    : /bogus/.test(said) ? [{ calls: [['set_model', { model: 'nonexistent' }]] }, { text: results.includes('"error"') ? 'There\'s no model by that name.' : 'Done.' }]
+    : /tag fallback/.test(said) ? [{ text: '<tool_call>{"name": "set_theme", "arguments": {"text": "from a tag"}}</tool_call>' }, { text: 'Theme set.' }]
+    : [{ text: 'I can help with that.' }];
+  return script[Math.min(round, script.length - 1)];
+}
+
 export function startMock(port) {
   const log = [];
   let server;
@@ -56,6 +74,19 @@ export function startMock(port) {
     res.on('close', () => { closed = true; });
 
     await sleep(slow ? 800 : 350);
+    if (body.tools) {
+      const step = assistantTurn(body);
+      (step.calls || []).forEach(([name, args], i) => {
+        const a = JSON.stringify(args);
+        send({ choices: [{ delta: { tool_calls: [{ index: i, id: `call_${i}`, type: 'function', function: { name, arguments: '' } }] } }] });
+        send({ choices: [{ delta: { tool_calls: [{ index: i, function: { arguments: a.slice(0, 5) } }] } }] });
+        send({ choices: [{ delta: { tool_calls: [{ index: i, function: { arguments: a.slice(5) } }] } }] });
+      });
+      for (const w of (step.text || '').split(/(?<=\s)/)) if (w) send({ choices: [{ delta: { content: w } }] });
+      send({ choices: [{ delta: {}, finish_reason: step.calls ? 'tool_calls' : 'stop' }] });
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (allText.includes('EMPTYTEST')) {
       send({ choices: [{ delta: {}, finish_reason: 'length' }] });
       res.end('data: [DONE]\n\n');

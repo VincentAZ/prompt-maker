@@ -326,6 +326,7 @@ function showView(name, { push = true } = {}) {
   if (name === 'history') loadHistory();
   if (name === 'gallery') loadGallery();
   if (name === 'settings' && !state.settingsDirty) renderSettings();
+  if (name === 'settings') showOutputDir();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
     if (state.models.length) editModel(state.modelId || state.models[0].id); else newModel();
   } else if (name === 'models') renderWorkflowList(); // workflows may have changed elsewhere (e.g. in ComfyUI)
@@ -823,6 +824,58 @@ document.addEventListener('paste', e => {
   if (!isView('create')) return;
   const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'));
   if (file) { e.preventDefault(); loadImageFile(file); }
+});
+
+// ---------- create: step 3, an image from the Gallery ----------
+// Any image you've rendered can be the input image: it's linked back to its render, and ComfyUI gets the original.
+
+const picker = { model: '', items: [] };
+
+async function openImagePicker() {
+  const all = await api('/api/history').catch(() => null);
+  if (all) state.history = all;
+  picker.items = galleryItems().filter(it => it.file.kind === 'image');
+  renderImagePicker();
+  $('#imgPick').showModal();
+  ($('#imgPickGrid .ip-tile') || $('#imgPickClose')).focus();
+}
+
+function renderImagePicker() {
+  const items = picker.items;
+  const models = [...new Map(items.map(it => [it.entry.modelId, it.entry.modelName])).entries()];
+  if (picker.model && !models.some(([id]) => id === picker.model)) picker.model = '';
+  $('#imgPickModels').innerHTML = models.length > 1
+    ? [['', 'All models'], ...models].map(([id, name]) => `<button type="button" class="chip-btn" data-id="${esc(id)}" aria-pressed="${picker.model === id}">${esc(name)}</button>`).join('')
+    : '';
+  const shown = items.filter(it => !picker.model || it.entry.modelId === picker.model);
+  $('#imgPickGrid').innerHTML = shown.length
+    ? shown.map(it => `<button type="button" class="ip-tile" data-n="${items.indexOf(it)}" style="--m:${modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId })}" aria-label="Use ${esc(it.entry.theme || 'this image')} (${esc(it.entry.modelName)}${it.render.seed != null ? `, seed ${it.render.seed}` : ''})"><img src="/renders/${encodeURIComponent(it.file.file)}" alt="" loading="lazy"><span class="ip-cap">${esc(it.entry.theme || 'From an image')}</span></button>`).join('')
+    : `<p class="muted">${items.length ? 'No images from this model yet.' : 'No image renders yet. Render a take with ComfyUI and it shows up here.'}</p>`;
+}
+
+async function useRenderAsImage(it) {
+  try {
+    const blob = await (await fetch(`/renders/${encodeURIComponent(it.file.file)}`)).blob();
+    const source = { entryId: it.entry.id, index: it.index, renderId: it.render.id, file: it.file.file, modelName: it.entry.modelName, seed: it.render.seed ?? null };
+    await loadImageFile(new File([blob], it.file.name || it.file.file, { type: blob.type || 'image/png' }), { source });
+  } catch (err) {
+    toast(`Couldn't use that image: ${err.message}`, true);
+  }
+}
+
+for (const id of ['#dzGallery', '#imageGallery']) $(id).addEventListener('click', openImagePicker);
+$('#imgPickClose').addEventListener('click', () => $('#imgPick').close());
+$('#imgPickModels').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  picker.model = b.dataset.id;
+  renderImagePicker();
+});
+$('#imgPickGrid').addEventListener('click', e => {
+  const b = e.target.closest('.ip-tile');
+  if (!b) return;
+  $('#imgPick').close();
+  useRenderAsImage(picker.items[Number(b.dataset.n)]);
 });
 
 // ---------- create: takes (results) ----------
@@ -1375,7 +1428,7 @@ async function saveEdit(card, { quiet = false } = {}) {
 $('#createForm').addEventListener('submit', e => { e.preventDefault(); generate(); });
 $('#stopBtn').addEventListener('click', stop);
 document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && isView('create') && !e.target.closest?.('.take')) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && isView('create') && !e.target.closest?.('.take, #assistant')) {
     e.preventDefault();
     generate();
   }
@@ -1924,6 +1977,9 @@ function renderSettings() {
   $('#sMax').value = s.maxTokens;
   $('#sComfyUrl').value = s.comfyUrl || '';
   $('#sComfyResult').hidden = true;
+  $('#sComfyCleanup').checked = Boolean(s.comfyCleanup);
+  $('#sComfyDir').value = s.comfyOutputDir || '';
+  $('#sComfyDirField').hidden = !s.comfyCleanup;
   $('#sThinking').value = s.thinking;
   $('#sMaster').value = s.masterPrompt;
   $('#sDataDir').textContent = s.dataDir ? `📁 Your data lives in ${s.dataDir}` : '';
@@ -1932,6 +1988,11 @@ function renderSettings() {
 }
 
 $('#settingsForm').addEventListener('input', () => setSettingsDirty(true));
+// Where ComfyUI's output folder is, as a hint in the field (it's usually found on its own).
+function showOutputDir() {
+  api('/api/comfy/output-dir').then(r => { $('#sComfyDir').placeholder = r.detected ? `found: ${r.detected}` : 'not found: enter it, or start ComfyUI on this computer'; }).catch(() => {});
+}
+$('#sComfyCleanup').addEventListener('change', e => { $('#sComfyDirField').hidden = !e.target.checked; if (e.target.checked) showOutputDir(); });
 $('#settingsForm').addEventListener('change', () => setSettingsDirty(true));
 $('#sTest').addEventListener('click', async () => {
   const out = $('#sTestResult');
@@ -1954,7 +2015,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value },
     });
     renderSettings();
     toast('💾 Settings saved');
@@ -2065,6 +2126,147 @@ async function editWorkflow(id, { focusSampler = false } = {}) {
     toast(err.message, true);
   }
 }
+
+// ---------- create: step 5, seed ----------
+// Like ComfyUI's "control after generate": 🎲 random, 🔒 fixed, ＋1 or −1 after each render. Saved on the
+// workflow; the server hands seeds out, so renders started together never share one.
+
+const SEED_MODES = [['random', '🎲 Random', 'A new random seed every render'], ['fixed', '🔒 Fixed', 'The same seed every render'], ['increment', '＋1', 'This seed, then one higher each render'], ['decrement', '−1', 'This seed, then one lower each render']];
+
+function renderSeedRow() {
+  const box = $('#wfpSeed');
+  const flow = activeFlow();
+  const s = flow?.seed;
+  box.hidden = !s?.inputs;
+  if (box.hidden) { box.innerHTML = ''; return; }
+  const focus = document.activeElement?.closest?.('#wfpSeed') ? (document.activeElement.dataset.value ? `[data-value="${document.activeElement.dataset.value}"]` : document.activeElement.dataset.act ? `[data-act="${document.activeElement.dataset.act}"]` : '.seed-val') : null;
+  const v = s.value;
+  const hint = s.mode === 'random' ? (s.last != null ? 'Each render gets a new seed. Like one? Keep it.' : 'Each render gets a new random seed.')
+    : s.mode === 'fixed' ? `Every render uses ${v}. (×2 renders use ${v} and ${v + 1}.)`
+      : s.mode === 'increment' ? `Next render: ${v}, then ${v + 1}, ${v + 2}…`
+        : `Next render: ${v}, then ${Math.max(0, v - 1)}, ${Math.max(0, v - 2)}…`;
+  box.innerHTML = `
+    <div class="seed-head">
+      <span class="dn-label">🎲 Seed</span>
+      <div class="seg seed-mode" role="radiogroup" aria-label="Seed for each render">${SEED_MODES.map(([m, label, title]) => `<button type="button" role="radio" data-value="${m}" title="${title}">${label}</button>`).join('')}</div>
+    </div>
+    ${s.mode === 'random'
+      ? (s.last != null ? `<div class="seed-ctl"><span class="seed-last">Last seed: <b>${s.last}</b></span><button type="button" class="btn small" data-act="keep" title="Use ${s.last} for every render from now on">🔒 Keep it</button></div>` : '')
+      : `<div class="seed-ctl"><input type="number" class="seed-val" min="0" step="1" value="${v}" aria-label="Seed"><button type="button" class="icon-btn" data-act="last" title="Use the last render's seed${s.last != null ? ` (${s.last})` : ''}" aria-label="Use the last render's seed"${s.last == null ? ' disabled' : ''}>↶</button><button type="button" class="icon-btn" data-act="roll" title="Roll a new random seed" aria-label="Roll a new random seed">🎲</button></div>`}
+    <small class="dn-hint">${esc(hint)}</small>`;
+  setActive($('.seed-mode', box), s.mode);
+  if (focus) $(focus, box)?.focus();
+}
+
+// Changes a workflow's seed mode and/or next seed (shown at once, saved right after).
+async function setSeed(flow, change) {
+  const s = flow.seed;
+  if (change.mode && change.mode !== 'random' && change.value == null && s.mode === 'random' && s.last != null) change.value = s.last;
+  flow.seed = { ...s, ...change };
+  renderSeedRow();
+  state.cards.forEach(updateSeedChip);
+  try {
+    const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { seedPatch: change } });
+    const i = state.workflows.findIndex(f => f.id === flow.id);
+    if (i >= 0) state.workflows[i] = { ...state.workflows[i], ...updated };
+    renderSeedRow();
+    state.cards.forEach(updateSeedChip);
+  } catch (err) {
+    toast(`Couldn't save the seed: ${err.message}`, true);
+  }
+}
+
+// After renders, the workflows' last / next seeds have moved on.
+async function refreshSeeds() {
+  const list = await api('/api/workflows').catch(() => null);
+  if (!list) return;
+  const box = document.activeElement?.classList?.contains('seed-val') ? document.activeElement : null;
+  const typing = box && Number(box.value) !== activeFlow()?.seed?.value; // don't overwrite a number being typed
+  const before = JSON.stringify(activeFlow()?.seed);
+  for (const w of list) {
+    const i = state.workflows.findIndex(f => f.id === w.id);
+    if (i >= 0) state.workflows[i] = { ...state.workflows[i], seed: w.seed };
+  }
+  if (!typing && JSON.stringify(activeFlow()?.seed) !== before) renderSeedRow(); // only when it changed: no needless layout shifts
+  state.cards.forEach(updateSeedChip);
+}
+
+$('#wfpSeed').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  const flow = activeFlow();
+  if (!b || !flow) return;
+  if (b.dataset.value) setSeed(flow, { mode: b.dataset.value });
+  else if (b.dataset.act === 'keep') setSeed(flow, { mode: 'fixed', value: flow.seed.last });
+  else if (b.dataset.act === 'last' && flow.seed.last != null) setSeed(flow, { value: flow.seed.last });
+  else if (b.dataset.act === 'roll') setSeed(flow, { value: Math.floor(Math.random() * 2 ** 32) });
+});
+$('#wfpSeed').addEventListener('change', e => {
+  const flow = activeFlow();
+  if (!flow || !e.target.classList.contains('seed-val')) return;
+  const v = Math.max(0, Math.floor(Number(e.target.value)));
+  if (Number.isSafeInteger(v)) setSeed(flow, { value: v });
+});
+$('#wfpSeed').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.classList.contains('seed-val')) { e.preventDefault(); e.target.dispatchEvent(new Event('change', { bubbles: true })); } // inside the Create form: not Generate
+});
+
+// ---------- create: step 5, denoise (image-to-image) ----------
+// How much the render may change the input image: 0 keeps it, 1 ignores it. Shown when the picked workflow
+// takes an image and has a denoise setting; saved on the workflow like its other sampler settings.
+
+function renderDenoise() {
+  const box = $('#wfpDenoise');
+  const flow = activeFlow();
+  const params = flow?.maps.image ? flow.denoise || [] : [];
+  box.hidden = !params.length;
+  if (!params.length) { box.innerHTML = ''; return; }
+  const focus = document.activeElement?.closest?.('#wfpDenoise [data-key]')?.dataset.key;
+  box.innerHTML = params.map(p => `
+    <div class="dn-row" data-key="${esc(p.key)}">
+      <span class="dn-label">🎚️ Denoise${params.length > 1 ? ` <small>${esc(p.title)}</small>` : ''}</span>
+      <input type="range" class="dn-range" min="0" max="1" step="0.01" value="${Number(p.value)}" aria-label="Denoise${params.length > 1 ? `, ${esc(p.title)}` : ''}: how much the render may change your image">
+      <output class="dn-val">${Number(p.value).toFixed(2)}</output>
+      ${Number(p.value) !== Number(p.original) ? `<button type="button" class="icon-btn dn-reset" title="Back to the workflow's ${Number(p.original).toFixed(2)}" aria-label="Reset denoise">↺</button>` : '<span></span>'}
+      <small class="dn-hint">${Number(p.value) < 0.35 ? 'stays close to your image' : Number(p.value) < 0.7 ? 'keeps the layout, changes the details' : 'changes a lot'}</small>
+    </div>`).join('');
+  if (focus) $(`[data-key="${CSS.escape(focus)}"] .dn-range`, box)?.focus();
+}
+
+let denoiseTimer;
+function saveDenoise(flow, key, value) {
+  const p = flow.denoise.find(x => x.key === key);
+  p.value = value;
+  clearTimeout(denoiseTimer);
+  denoiseTimer = setTimeout(async () => {
+    try {
+      const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { overridePatch: { [key]: value === p.original ? null : value } } });
+      const i = state.workflows.findIndex(f => f.id === flow.id);
+      if (i >= 0) state.workflows[i] = { ...state.workflows[i], ...updated };
+      $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
+      state.cards.forEach(updateSettingsLine);
+    } catch (err) {
+      toast(`Couldn't save denoise: ${err.message}`, true);
+    }
+  }, 300);
+}
+
+$('#wfpDenoise').addEventListener('input', e => {
+  if (!e.target.classList.contains('dn-range')) return;
+  const row = e.target.closest('[data-key]');
+  const flow = activeFlow();
+  const v = Math.round(Number(e.target.value) * 100) / 100;
+  $('.dn-val', row).textContent = v.toFixed(2);
+  if (flow) saveDenoise(flow, row.dataset.key, v);
+});
+$('#wfpDenoise').addEventListener('change', e => { if (e.target.classList.contains('dn-range')) renderDenoise(); });
+$('#wfpDenoise').addEventListener('click', e => {
+  const b = e.target.closest('.dn-reset');
+  const flow = activeFlow();
+  if (!b || !flow) return;
+  const key = b.closest('[data-key]').dataset.key;
+  saveDenoise(flow, key, flow.denoise.find(x => x.key === key).original);
+  renderDenoise();
+});
 
 // ---------- create: step 5, LoRAs ----------
 // A workflow's LoRAs: its own (switch off or re-weight them) plus ones you add from the model's LoRA folder.
@@ -2274,6 +2476,8 @@ function renderWorkflowPicker() {
     sel.value = id;
     sel.title = flows.find(f => f.id === id)?.name || '';
     $('#wfpSettings').innerHTML = settingsHtml(flows.find(f => f.id === id));
+    renderSeedRow();
+    renderDenoise();
     renderLoraPanel();
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
@@ -2374,7 +2578,7 @@ function renderZone(card) {
   zone.hidden = false;
   let bar = '';
   if (flows.length) {
-    card.rb ??= { count: 1, lockSeed: false, lastSeed: null };
+    card.rb ??= { count: 1 };
     card.rb.workflowId = activeWorkflowId(model.id);
     const name = card.el.getAttribute('aria-label');
     bar = `<div class="render-bar">
@@ -2400,9 +2604,9 @@ function renderZone(card) {
     updateSettingsLine(card);
     $('.rb-count', bar$).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { card.rb.count = Number(b.dataset.value); setActive($('.rb-count', bar$), card.rb.count); } });
     $('.rb-seed', bar$).addEventListener('click', () => {
-      if (!card.rb.lastSeed) return toast('Render once first. Then you can reuse its seed.', true);
-      card.rb.lockSeed = !card.rb.lockSeed;
-      updateSeedChip(card);
+      if (model.id !== state.modelId) return toast(`The seed for ${model.name} is set in step 5 when ${model.name} is the picked model.`);
+      $('#wfpSeed').scrollIntoView({ block: 'center', behavior: scrollMode() });
+      $('#wfpSeed .seed-mode button.active')?.focus();
     });
     $('.rb-go', bar$).addEventListener('click', () => startRender(card));
   }
@@ -2419,7 +2623,7 @@ function settingsHtml(flow) {
     s.sampler && `${s.sampler}${s.scheduler ? ` · ${s.scheduler}` : ''}`,
     s.steps != null && `${s.steps} steps`,
     s.cfg != null && `CFG ${s.cfg}${Number(s.cfg) === 1 ? ' 🔒' : ''}`,
-    s.seed != null && (s.seed === 'random' ? 'seed 🎲 random' : `seed ${s.seed}`),
+    s.denoise != null && flow?.maps?.image && `denoise ${Number(s.denoise).toFixed(2)}`,
     loraCount(flow) && `🧬 ${loraCount(flow)} LoRA${loraCount(flow) > 1 ? 's' : ''}`,
   ].filter(Boolean);
   return bits.length ? bits.map(b => `<span>${esc(b)}</span>`).join('') : '<span>workflow defaults</span>';
@@ -2435,12 +2639,15 @@ function updateSettingsLine(card) {
   $('.rb-stale', line)?.addEventListener('click', () => updateWorkflow(flow.id));
 }
 
+const SEED_ICON = { fixed: '🔒', increment: '＋1', decrement: '−1' };
 function updateSeedChip(card) {
   const chip = $('.rb-seed', card.el);
   if (!chip) return;
-  chip.setAttribute('aria-pressed', card.rb.lockSeed);
-  chip.textContent = card.rb.lockSeed ? `🔒 Seed ${card.rb.lastSeed}` : '🎲 New seed';
-  chip.title = card.rb.lockSeed ? 'Reusing the last seed. Click for a new random seed each render.' : 'A fresh random seed each render. Click to reuse the last one.';
+  const s = state.workflows.find(f => f.id === card.rb?.workflowId)?.seed;
+  chip.hidden = !s?.inputs;
+  if (!s?.inputs) return;
+  chip.textContent = s.mode === 'random' ? '🎲 Random seed' : `${SEED_ICON[s.mode]} Seed ${s.value}`;
+  chip.title = 'The seed is set in step 5. Click to go there';
 }
 
 function updateRenderStatus(card) {
@@ -2546,7 +2753,7 @@ async function startRender(card) {
       versionIndex: card.view,
       workflowId: flow.id,
       count,
-      seed: card.rb.lockSeed ? card.rb.lastSeed : undefined,
+      newSeed: card.rb.newSeed === true || undefined,
     }, ev => {
       const i = ev.i ?? 0;
       if (ev.type === 'start') run.runId = ev.runId;
@@ -2577,8 +2784,6 @@ async function startRender(card) {
         card.running.delete(keys[i]);
         const v = entry.variations?.[card.index];
         if (v) (v.renders ||= []).push(ev.render);
-        if (ev.render.seed != null) card.rb.lastSeed = ev.render.seed;
-        updateSeedChip(card);
         renderTiles(card);
         announce(`Render ${i + 1} of ${count} done`);
       } else if (ev.type === 'error') {
@@ -2595,6 +2800,8 @@ async function startRender(card) {
     if (err.name !== 'AbortError') failed = friendly(err);
   }
   state.renderRuns.delete(run);
+  card.rb.newSeed = false;
+  refreshSeeds(); // increment / decrement moved the workflow's next seed on
   // Clear tiles that never finished (stopped); keep failed ones briefly so the reason is visible.
   keys.forEach((k, i) => {
     if (done.has(i)) return;
@@ -3038,7 +3245,7 @@ async function renderStep(run, entry, k) {
   const cards = state.cards.filter(c => c.rb && !c.interrupted);
   run.rendering.add(entry.id);
   renderRunStrip();
-  await Promise.all(cards.map(c => { c.rb.count = step.renders; c.rb.lockSeed = false; return startRender(c); }));
+  await Promise.all(cards.map(c => { c.rb.count = step.renders; return startRender(c); }));
   run.rendering.delete(entry.id);
   renderRunStrip();
 }
@@ -3312,6 +3519,7 @@ function lbRender() {
       <button type="button" class="btn small" data-lb="copy">📋 Copy prompt</button>
       ${file.kind === 'image' && animateTarget() ? `<button type="button" class="btn small" data-lb="animate" title="Make a video from this still: it becomes the first frame">🎬 Animate this</button>` : ''}
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
+      ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
       ${lb.fromGallery ? '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>' : '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>'}
       <button type="button" class="btn small danger" data-lb="delete">🗑 Delete</button>
     </div>
@@ -3320,11 +3528,17 @@ function lbRender() {
   $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); openEntry(entry); });
   $('[data-lb="animate"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: true }); });
   $('[data-lb="use"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false }); });
+  $('[data-lb="seed"]', $('#lbInfo'))?.addEventListener('click', () => {
+    const flow = state.workflows.find(f => f.id === render.workflowId);
+    if (!flow) return;
+    setSeed(flow, { mode: 'fixed', value: render.seed });
+    toast(`🔒 “${flow.name}” now renders with seed ${render.seed}`);
+  });
   $('[data-lb="again"]', $('#lbInfo'))?.addEventListener('click', () => {
     const card = state.cards.find(c => c.index === it.index);
     if (!card || !card.rb) return;
     if (state.workflows.some(f => f.id === render.workflowId)) card.rb.workflowId = render.workflowId;
-    card.rb.lockSeed = false;
+    card.rb.newSeed = true; // "again" always means a new seed, whatever the seed mode
     closeLightbox();
     renderZone(card);
     startRender(card);
@@ -3615,7 +3829,7 @@ async function prepareWorkflow(payload) {
 
 const targetKey = t => (t ? `${t.node}|${t.input}` : '');
 
-const PARAM_LABEL = { seed: 'Seed', steps: 'Steps', cfg: 'CFG', sampler: 'Sampler', scheduler: 'Scheduler' };
+const PARAM_LABEL = { seed: 'Seed', steps: 'Steps', cfg: 'CFG', sampler: 'Sampler', scheduler: 'Scheduler', denoise: 'Denoise' };
 const paramLabel = p => {
   const stage = /^(stage\d+|first|second|pass\d+|hires|refiner|base)_/i.exec(p.input)?.[1];
   const base = p.input.toLowerCase() === 'guidance' ? 'Guidance' : PARAM_LABEL[p.kind];
@@ -3639,7 +3853,7 @@ function renderSamplerControls(data) {
     wrap.innerHTML = `<b>#${esc(node)} ${esc(list[0].title)}</b><div class="sp-grid"></div>`;
     for (const p of list) {
       const key = `${p.node}|${p.input}`;
-      const current = overrides[key] ?? p.value;
+      const current = p.kind === 'seed' ? data.options?.seed ?? overrides[key] ?? p.value : overrides[key] ?? p.value;
       const field = document.createElement('label');
       field.className = 'sp-field';
       field.dataset.key = key;
@@ -3647,7 +3861,7 @@ function renderSamplerControls(data) {
       field.dataset.original = String(p.value);
       const control = p.options
         ? `<select>${p.options.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select>`
-        : `<input type="${p.kind === 'sampler' || p.kind === 'scheduler' ? 'text' : 'number'}" ${p.kind === 'cfg' ? 'step="0.1" min="0"' : p.kind === 'steps' ? 'step="1" min="1"' : 'step="1" min="0"'}>`;
+        : `<input type="${p.kind === 'sampler' || p.kind === 'scheduler' ? 'text' : 'number'}" ${p.kind === 'cfg' ? 'step="0.1" min="0"' : p.kind === 'denoise' ? 'step="0.01" min="0" max="1"' : p.kind === 'steps' ? 'step="1" min="1"' : 'step="1" min="0"'}>`;
       const locked = p.kind === 'cfg' && Number(p.value) === 1 && overrides[key] === undefined;
       field.innerHTML = `<span>${esc(paramLabel(p))} <button type="button" class="sp-reset" title="Back to the workflow's value (${esc(p.value)})" hidden>↺</button>${locked ? '<button type="button" class="sp-unlock" title="CFG 1 is what distilled, turbo and lightning models need. Unlock only if you know this model takes more.">🔒 unlock</button>' : ''}</span>${control}${locked ? '<small class="sp-lock">Locked at 1 (distilled/turbo)</small>' : ''}`;
       const input = $('input, select', field);
@@ -3677,9 +3891,9 @@ function renderSamplerControls(data) {
   syncSeedFields();
 }
 
-// Seed fields only matter when the seed isn't randomized.
+// Seed fields only matter when the seed isn't random.
 function syncSeedFields() {
-  const random = $('#optSeed').checked;
+  const random = $('#optSeedMode').value === 'random';
   $$('#samplerCtl .sp-field[data-kind="seed"]').forEach(f => {
     const input = $('input', f);
     input.disabled = random;
@@ -3687,15 +3901,15 @@ function syncSeedFields() {
     f.classList.toggle('edited', !random && input.value !== f.dataset.original);
   });
 }
-$('#optSeed').addEventListener('change', syncSeedFields);
+$('#optSeedMode').addEventListener('change', syncSeedFields);
 
 function readOverrides() {
   const out = {};
   for (const f of $$('#samplerCtl .sp-field')) {
     const input = $('input, select', f);
     if (input.disabled) continue;
-    if (String(input.value) === f.dataset.original && f.dataset.kind !== 'seed') continue;
-    if (f.dataset.kind === 'seed' && String(input.value) === f.dataset.original) continue;
+    if (f.dataset.kind === 'seed') continue; // the seed is the seed mode's value, saved with the options
+    if (String(input.value) === f.dataset.original) continue;
     out[f.dataset.key] = f.dataset.kind === 'sampler' || f.dataset.kind === 'scheduler' ? input.value : Number(input.value);
   }
   return out;
@@ -3752,11 +3966,9 @@ function showSetup(data) {
   $('#optSnap').value = String(data.options.snap);
   $('#optFps').value = data.options.fps;
   $('#optFrameRule').value = data.options.frameRule;
-  $('#optSeed').checked = data.options.randomizeSeed !== false;
-  $('#optSeedLabel').textContent = c.seed.length
-    ? `New random seed every render (${c.seed.length} seed input${c.seed.length > 1 ? 's' : ''})`
-    : 'This workflow has no seed input';
-  $('#optSeed').disabled = !c.seed.length;
+  $('#optSeedMode').value = data.options.seedMode || (data.options.randomizeSeed === false ? 'fixed' : 'random');
+  $('#optSeedLabel').textContent = c.seed.length ? `${c.seed.length} seed input${c.seed.length > 1 ? 's' : ''}` : 'This workflow has no seed input';
+  $('#optSeedMode').disabled = !c.seed.length;
   renderSamplerControls(data);
   // Only show what this workflow can actually take; name the rest.
   const rows = [
@@ -3788,9 +4000,10 @@ $('#wfSave').addEventListener('click', async () => {
     seconds: parseTarget($('#mapSeconds').value),
     frames: parseTarget($('#mapFrames').value),
     fps: parseTarget($('#mapFps').value),
-    seed: $('#optSeed').checked ? data.candidates.seed.map(t => ({ node: t.node, input: t.input })) : [],
+    seed: data.candidates.seed.map(t => ({ node: t.node, input: t.input })),
   };
-  const options = { snap: Number($('#optSnap').value), fps: Number($('#optFps').value) || 24, frameRule: $('#optFrameRule').value, randomizeSeed: $('#optSeed').checked };
+  const seedField = $('#samplerCtl .sp-field[data-kind="seed"] input');
+  const options = { snap: Number($('#optSnap').value), fps: Number($('#optFps').value) || 24, frameRule: $('#optFrameRule').value, seedMode: $('#optSeedMode').value, ...(seedField && $('#optSeedMode').value !== 'random' ? { seed: Number(seedField.value) } : {}) };
   const name = $('#wfName').value.trim() || data.name;
   try {
     const overrides = readOverrides();
@@ -3829,6 +4042,565 @@ $('#sComfyTest').addEventListener('click', async () => {
     ? `✓ Connected to ComfyUI ${res.version}${res.gpu ? ` on ${res.gpu}` : ''}${res.vramTotal ? ` (${Math.round(res.vramTotal / 2 ** 30)} GB)` : ''}.`
     : `✗ ${res.error}`;
 });
+
+// ---------- the assistant (✦ Ask) ----------
+// Chat with the Brain, which can look at and use the app through tools. The tools run here, through the same
+// functions the buttons use, so everything it does shows up on screen. The conversation lives in the data folder.
+
+const as = { messages: [], loaded: false, busy: false, stopped: false, controller: null, running: null, live: null };
+
+const T = (name, description, properties = {}, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
+const S = description => ({ type: 'string', description });
+const N = description => ({ type: 'number', description });
+const I = description => ({ type: 'integer', description });
+const B = description => ({ type: 'boolean', description });
+const E = (values, description) => ({ type: 'string', enum: values, description });
+
+const TOOLS = [
+  T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
+  T('list_models', 'The target models (image and video) with their aspect ratios, resolutions and durations.'),
+  T('list_workflows', 'The ComfyUI workflows of a model, and which one is picked.', { model: S('Model name; default: the current model') }),
+  T('list_loras', 'The LoRAs available for a model (from its LoRA folder) and the ones in use on the picked workflow.', { model: S('Model name; default: the current model'), search: S('Words to filter by') }),
+  T('read_guide', 'Look up how something in Prompt Maker works, in its user guide. Use it before answering how-to questions.', { topic: S('What to look up, e.g. "LoRAs" or "animate a still"') }, ['topic']),
+  T('search_history', 'Find earlier prompts in History by words in their theme or text.', { query: S('Words to look for'), limit: I('How many, up to 10') }, ['query']),
+  T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
+  T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
+  T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
+  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('e.g. "1920×1080"'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild') }),
+  T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate'], 'animate = first frame of a video (video models only)') }, ['role']),
+  T('clear_image', 'Remove the image from step 3.'),
+  T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (step 5).', { name: S('Workflow name') }, ['name']),
+  T('add_lora', 'Add a LoRA (from the model\'s LoRA folder) to the picked workflow.', { name: S('LoRA name or part of it'), strength: N('Strength, usually 0.3–1.2; default 1') }, ['name']),
+  T('set_lora', 'Change a LoRA\'s strength or switch it on or off (the workflow\'s own LoRAs or added ones).', { name: S('LoRA name or part of it'), strength: N('New strength'), on: B('On or off') }, ['name']),
+  T('remove_lora', 'Remove a LoRA that was added (the workflow\'s own LoRAs can only be switched off).', { name: S('LoRA name or part of it') }, ['name']),
+  T('set_seed', 'Set how the picked workflow seeds each render: random, fixed, increment (+1 each render) or decrement (−1), and/or the seed number.', { mode: E(['random', 'fixed', 'increment', 'decrement'], 'Seed mode'), value: I('The seed (the next one, for increment / decrement)') }),
+  T('set_auto_render', 'Turn auto-render on or off for the current model (renders every new prompt right away).', { on: B('On or off') }, ['on']),
+  T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in History.'),
+  T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 6). Waits until they are written.'),
+  T('refine_take', 'Change a take with an instruction, e.g. "golden hour" or "shorter".', { take: I('Take number, starting at 1'), instruction: S('What to change') }, ['take', 'instruction']),
+  T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–4; default 1') }),
+  T('animate_render', 'Make a still render the first frame of a video: switches to the video model and attaches the still. Then use set_theme for what happens, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
+  T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
+    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate'], 'How it uses the image; animate = first frame'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'auto'], 'pick = wait for the user to choose renders; auto = all go on') }, required: ['model'] } },
+  }, ['steps']),
+  T('clear_chain', 'Remove every step from step 6, back to a single step.'),
+  T('load_chain', 'Load a saved chain by name.', { name: S('Chain name') }, ['name']),
+  T('continue_chain', 'In a chain run that is waiting, send renders on to the next step.', { takes: { type: 'array', items: { type: 'integer' }, description: 'Take numbers whose renders go on; leave out for all of them' } }),
+  T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
+  T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
+];
+
+// What the assistant shows while a tool runs.
+const TOOL_RUNNING = {
+  generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
+  search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
+};
+
+function findModel(q) {
+  if (!q) return currentModel();
+  const s = squash(q);
+  return state.models.find(m => m.id === q || squash(m.name) === s)
+    || state.models.find(m => squash(m.name).includes(s) || squash(m.id).includes(s) || s.includes(squash(m.id))) || null;
+}
+function needModel(q) {
+  const m = findModel(q);
+  if (!m) throw new Error(`There's no model called “${q}”. The models are: ${state.models.map(x => x.name).join(', ')}.`);
+  return m;
+}
+function needCard(n) {
+  const card = state.cards[Number(n) - 1];
+  if (!card || card.interrupted) throw new Error(state.cards.length ? `There's no take ${n}. There ${state.cards.length === 1 ? 'is 1 take' : `are ${state.cards.length} takes`} on screen.` : 'There are no takes on screen. Generate first.');
+  return card;
+}
+function notBusy() {
+  if (state.busy || state.chainActive) throw new Error('Something is still running. Wait for it, or press Stop.');
+}
+const pick = (options, q) => {
+  const s = squash(q);
+  return options.find(o => o === q) || options.find(o => squash(o) === s) || options.find(o => ratioOf(o) && ratioOf(q) && Math.abs(ratioOf(o) - ratioOf(q)) < 0.01) || null;
+};
+const stageError = () => (!$('#stageError').hidden && $('#stageError p')?.textContent) || '';
+
+function assistantState() {
+  const m = currentModel();
+  const flow = activeFlow();
+  return {
+    page: VIEWS.find(isView),
+    brain: selectedLlm()?.name || null,
+    model: m && { name: m.name, kind: m.kind },
+    theme: $('#theme').value,
+    image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
+    dials: m && {
+      aspect: $('#aspect').value, aspects: m.aspectRatios,
+      resolution: $('#resolution').value, resolutions: m.resolutions,
+      ...(m.kind === 'video' ? { duration: $('#duration').value, durations: m.durations } : {}),
+      length: state.length, takes: state.variations, temperature: Number($('#temperature').value),
+    },
+    comfyui: state.comfy ? (state.comfy.ok ? 'ready' : 'offline') : 'unknown',
+    workflow: flow && { name: flow.name, takesImage: flow.maps.image, others: workflowsFor(m.id).filter(f => f.id !== flow.id).map(f => f.name), autoRender: saved.get(autoRenderKey(m.id), false) },
+    loras: flow ? [...flowLoras(flow).own.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on, inWorkflow: true })), ...flowLoras(flow).added.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on }))] : [],
+    chain: state.chain.steps.length ? state.chain.steps.map(s => ({ model: modelById(s.modelId)?.name, use: s.use, whatHappens: s.direction, gate: s.gate, takes: s.takes })) : null,
+    chainRun: state.run ? { status: state.run.status, steps: state.run.entries.length } : null,
+    takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, start: $('.prompt-text', c.el).value.slice(0, 140) })) : [],
+    busy: state.busy || state.chainActive,
+  };
+}
+
+async function ensureLoraList() {
+  if (!state.loraList || state.loraError) await loadLoraList();
+  if (state.loraError) throw new Error(`Couldn't get the LoRA list from ComfyUI: ${state.loraError}`);
+}
+function findLora(flow, q) {
+  const s = squash(q);
+  const { own, added } = flowLoras(flow);
+  const all = [...own.map(l => ({ l, key: l.key })), ...added.map((l, i) => ({ l, key: `+${i}` }))];
+  return all.find(x => squash(loraShort(x.l.name)) === s) || all.find(x => squash(x.l.name).includes(s)) || null;
+}
+
+const TOOL_IMPL = {
+  get_state: () => ({ summary: 'Looked at the Create page', ...assistantState() }),
+  list_models: () => ({ summary: `${state.models.length} models`, models: state.models.map(m => ({ name: m.name, kind: m.kind, description: m.description, aspects: m.aspectRatios, resolutions: m.resolutions, durations: m.durations })) }),
+  list_workflows: ({ model }) => {
+    const m = needModel(model);
+    const flows = workflowsFor(m.id);
+    return { summary: `${flows.length} workflow${flows.length === 1 ? '' : 's'} for ${m.name}`, workflows: flows.map(f => ({ name: f.name, picked: f.id === activeWorkflowId(m.id), takesImage: f.maps.image, loras: loraCount(f) })) };
+  },
+  list_loras: async ({ model, search }) => {
+    const m = needModel(model);
+    await ensureLoraList();
+    const { folder } = loraFolderFor(m);
+    const q = squash(search);
+    const available = state.loraList.filter(n => (!folder || loraFolderOf(n) === folder) && (!q || squash(n).includes(q))).map(loraShort);
+    const flow = m.id === state.modelId ? activeFlow() : null;
+    return { summary: `${available.length} LoRAs for ${m.name}${folder ? ` (${folder}/)` : ''}`, folder, available: available.slice(0, 80), inUse: flow ? assistantState().loras : [] };
+  },
+  read_guide: async ({ topic }) => {
+    const found = await api(`/api/assistant/guide?q=${encodeURIComponent(topic || '')}`);
+    return { summary: `Read the guide: ${found.map(f => f.title).join(', ') || 'nothing found'}`, sections: found };
+  },
+  search_history: async ({ query, limit }) => {
+    const all = await api('/api/history');
+    state.history = all;
+    const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const hits = all.filter(e => { const t = [e.theme, e.modelName, ...e.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase(); return words.every(w => t.includes(w)); });
+    return { summary: `${hits.length} match${hits.length === 1 ? '' : 'es'} in History`, results: hits.slice(0, Math.min(10, limit || 6)).map(e => ({ when: timeAgo(e.createdAt), model: e.modelName, theme: e.theme, takes: e.variations.length, renders: e.variations.reduce((n, v) => n + (v.renders?.length || 0), 0) })) };
+  },
+  read_take: ({ take }) => {
+    const card = needCard(take);
+    return { summary: `Read take ${take}`, text: $('.prompt-text', card.el).value, renders: takeRenders(card).length };
+  },
+  set_model: ({ model }) => {
+    const m = needModel(model);
+    showView('create');
+    selectModel(m.id);
+    return { summary: `Model → ${m.name}` };
+  },
+  set_theme: ({ text }) => {
+    showView('create');
+    replaceTheme(String(text || ''), { focus: false });
+    return { summary: `Theme → “${String(text).slice(0, 80)}${String(text).length > 80 ? '…' : ''}”` };
+  },
+  set_dials: args => {
+    const m = currentModel();
+    const done = [];
+    const choose = (key, sel, options, label) => {
+      if (args[key] == null || args[key] === '') return;
+      const v = pick(options, String(args[key]));
+      if (!v) throw new Error(`${m.name} has no ${label} “${args[key]}”. It has: ${options.join(', ')}.`);
+      $(sel).value = v;
+      done.push(`${label} ${v}`);
+    };
+    choose('aspect', '#aspect', m.aspectRatios, 'aspect');
+    if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
+    choose('resolution', '#resolution', m.resolutions, 'resolution');
+    if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');
+    if (['short', 'medium', 'long'].includes(args.length)) { state.length = args.length; setActive($('#lengthSeg'), state.length); done.push(`${args.length} length`); }
+    if (args.takes != null) { setVariations(clampInt(args.takes, 1, 4)); done.push(`${state.variations} take${state.variations > 1 ? 's' : ''}`); }
+    if (args.temperature != null) { setTemperature(Math.min(2, Math.max(0, Number(args.temperature) || 0))); done.push(`temperature ${Number($('#temperature').value).toFixed(2)}`); }
+    savePrefs();
+    showView('create');
+    return { summary: done.length ? done.join(', ') : 'Nothing to change' };
+  },
+  set_image_role: ({ role }) => {
+    if (!state.image) throw new Error('There\'s no image in step 3.');
+    if (role === 'animate' && currentModel()?.kind !== 'video') throw new Error('Animate only works with a video model.');
+    state.imageRole = role;
+    saved.set('imageRole', role);
+    renderRole();
+    return { summary: `Image used as ${USE_LABEL[role] || role}` };
+  },
+  clear_image: () => { setImage(null); return { summary: 'Image removed' }; },
+  pick_workflow: ({ name }) => {
+    const m = currentModel();
+    const flows = workflowsFor(m.id);
+    const s = squash(name);
+    const f = flows.find(x => squash(x.name) === s) || flows.find(x => squash(x.name).includes(s));
+    if (!f) throw new Error(flows.length ? `${m.name} has no workflow like “${name}”. It has: ${flows.map(x => x.name).join(', ')}.` : `${m.name} has no workflows yet. Add one in step 5 (＋).`);
+    pickWorkflow(m.id, f.id);
+    return { summary: `Workflow → ${f.name}` };
+  },
+  add_lora: async ({ name, strength }) => {
+    const flow = activeFlow();
+    if (!flow) throw new Error('Pick a workflow in step 5 first: LoRAs belong to a workflow.');
+    await ensureLoraList();
+    const m = currentModel();
+    const { folder } = loraFolderFor(m);
+    const { own, added } = flowLoras(flow);
+    const taken = new Set([...own, ...added].map(l => l.name));
+    const pool = state.loraList.filter(n => (!folder || loraFolderOf(n) === folder) && !taken.has(n));
+    const s = squash(name);
+    const hit = pool.find(n => squash(loraShort(n)) === s) || pool.filter(n => squash(n).includes(s)).sort((a, b) => a.length - b.length)[0];
+    if (!hit) {
+      const close = pool.filter(n => s.split(/(?=[a-z]{3})/).some(part => squash(n).includes(part.slice(0, 4)))).slice(0, 8).map(loraShort);
+      throw new Error(`No LoRA like “${name}” in ${folder ? `${folder}/` : 'ComfyUI'}${close.length ? `. Close ones: ${close.join(', ')}` : ''}.`);
+    }
+    const v = strengthOf(strength ?? 1);
+    flow.loras.added.push({ name: hit, strength: v, on: true });
+    saveLoras(flow, { now: true });
+    renderLoraPanel();
+    return { summary: `Added LoRA ${loraShort(hit)} at ${v.toFixed(2)}` };
+  },
+  set_lora: ({ name, strength, on }) => {
+    const flow = activeFlow();
+    const found = flow && findLora(flow, name);
+    if (!found) throw new Error(`No LoRA like “${name}” on the picked workflow.`);
+    const change = {};
+    if (strength != null) change.strength = strengthOf(strength);
+    if (on != null) change.on = Boolean(on);
+    saveLoras(setLora(found.key, change), { now: true });
+    renderLoraPanel();
+    const l = found.key.startsWith('+') ? flow.loras.added[Number(found.key.slice(1))] : { ...found.l, ...flow.loras.tweaks[found.key] };
+    return { summary: `${loraShort(found.l.name)} → ${l.on === false ? 'off' : Number(l.strength).toFixed(2)}` };
+  },
+  remove_lora: ({ name }) => {
+    const flow = activeFlow();
+    const found = flow && findLora(flow, name);
+    if (!found) throw new Error(`No LoRA like “${name}” on the picked workflow.`);
+    if (!found.key.startsWith('+')) throw new Error(`${loraShort(found.l.name)} is part of the workflow. It can be switched off (set_lora on=false), not removed.`);
+    flow.loras.added.splice(Number(found.key.slice(1)), 1);
+    saveLoras(flow, { now: true });
+    renderLoraPanel();
+    return { summary: `Removed LoRA ${loraShort(found.l.name)}` };
+  },
+  set_seed: async ({ mode, value }) => {
+    const flow = activeFlow();
+    if (!flow?.seed?.inputs) throw new Error('The picked workflow has no seed to set.');
+    const change = {};
+    if (['random', 'fixed', 'increment', 'decrement'].includes(mode)) change.mode = mode;
+    if (value != null && Number.isSafeInteger(Number(value)) && Number(value) >= 0) change.value = Number(value);
+    if (!Object.keys(change).length) throw new Error('Give a seed mode or a seed number.');
+    await setSeed(flow, change);
+    const s = flow.seed;
+    return { summary: s.mode === 'random' ? 'Seed → random each render' : `Seed → ${SEED_ICON[s.mode]} ${s.value}` };
+  },
+  set_auto_render: ({ on }) => {
+    const m = currentModel();
+    if (!workflowsFor(m.id).length) throw new Error(`${m.name} has no workflow to render with yet.`);
+    saved.set(autoRenderKey(m.id), Boolean(on));
+    renderWorkflowPicker();
+    return { summary: `Auto-render ${on ? 'on' : 'off'} for ${m.name}` };
+  },
+  new_session: async () => {
+    notBusy();
+    await newSession();
+    return { summary: 'Started a new session' };
+  },
+  generate: async () => {
+    notBusy();
+    showView('create');
+    const before = state.entry;
+    await generate();
+    if (!state.entry?.id || state.entry === before) throw new Error(stageError() || 'Nothing was generated.');
+    const takes = state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, text: $('.prompt-text', c.el).value }));
+    if (state.run) return { summary: `Chain ${state.run.status === 'done' ? 'done' : state.run.status === 'waiting' ? 'waiting for picks' : 'ran'}`, run: state.run.status, takes };
+    return { summary: `Wrote ${takes.length} take${takes.length > 1 ? 's' : ''} for ${state.entry.modelName}`, takes };
+  },
+  refine_take: async ({ take, instruction }) => {
+    notBusy();
+    const card = needCard(take);
+    const ok = await refineCard(card, String(instruction || ''));
+    if (!ok) throw new Error(stageError() || 'The refine didn\'t go through.');
+    return { summary: `Refined take ${take}: “${instruction}”`, text: $('.prompt-text', card.el).value };
+  },
+  render: async ({ take, count }) => {
+    notBusy();
+    const cards = take ? [needCard(take)] : state.cards.filter(c => !c.interrupted);
+    if (!cards.length) throw new Error('There are no takes to render. Generate first.');
+    if (!cards.every(c => c.rb)) throw new Error(`${currentModel()?.name || 'This model'} has no workflow to render with. Add one in step 5.`);
+    const before = cards.reduce((n, c) => n + takeRenders(c).length, 0);
+    await Promise.all(cards.map(c => { c.rb.count = clampInt(count ?? 1, 1, 4); return startRender(c); }));
+    const made = cards.reduce((n, c) => n + takeRenders(c).length, 0) - before;
+    if (!made) throw new Error(stageError() || 'The render didn\'t come back.');
+    return { summary: `Rendered ${made} file${made > 1 ? 's' : ''}` };
+  },
+  animate_render: async ({ take, render }) => {
+    notBusy();
+    const card = needCard(take || 1);
+    const items = takeRenders(card).slice().reverse().flatMap(r => r.files.filter(f => f.kind === 'image').map(f => ({ entry: state.entry, index: card.index, render: r, file: f })));
+    const it = items[(render || 1) - 1];
+    if (!it) throw new Error(`Take ${take || 1} has no still render${render > 1 ? ` number ${render}` : ''}. Render it first.`);
+    await continueFrom(it, { animate: true });
+    return { summary: `The still is now the first frame for ${currentModel()?.name}` };
+  },
+  build_chain: ({ steps }) => {
+    const m0 = currentModel();
+    if (m0?.kind === 'video') throw new Error('Chains start with an image model in step 1 (a video can\'t feed the next step yet).');
+    const list = (Array.isArray(steps) ? steps : []).slice(0, 4).map(st => {
+      const m = needModel(st.model);
+      const flows = workflowsFor(m.id);
+      const wf = st.workflow && (flows.find(f => squash(f.name) === squash(st.workflow)) || flows.find(f => squash(f.name).includes(squash(st.workflow))));
+      return thenStep({ modelId: m.id, workflowId: wf?.id, use: st.use, direction: st.what_happens || '', takes: st.takes, renders: st.renders, duration: st.duration, gate: st.gate, open: false });
+    });
+    if (!list.length) throw new Error('A chain needs at least one step after step 1.');
+    state.chain = { ...state.chain, recipeId: null, steps: list };
+    saveChainState();
+    renderChainEditor();
+    showView('create');
+    const problems = chainProblems();
+    return { summary: `Chain: ${[m0.name, ...list.map(s => modelById(s.modelId).name)].join(' → ')}`, cost: chainCost(), problems: [problems.all, ...problems.steps].filter(Boolean) };
+  },
+  clear_chain: () => {
+    state.chain = { ...state.chain, recipeId: null, steps: [] };
+    saveChainState();
+    renderChainEditor();
+    return { summary: 'Chain cleared' };
+  },
+  load_chain: ({ name }) => {
+    const s = squash(name);
+    const r = state.recipes.find(x => squash(x.name) === s) || state.recipes.find(x => squash(x.name).includes(s));
+    if (!r) throw new Error(`No saved chain like “${name}”. Saved chains: ${state.recipes.map(x => x.name).join(', ') || 'none'}.`);
+    applyRecipe(r, { quiet: true });
+    showView('create');
+    return { summary: `Loaded the chain “${r.name}”`, cost: chainCost() };
+  },
+  continue_chain: async ({ takes }) => {
+    notBusy();
+    const run = state.run;
+    if (!run || run.status === 'running') throw new Error('There\'s no chain waiting for picks.');
+    const k = focusStep(run);
+    if (!runStep(run, k + 1)) throw new Error('That chain has no next step.');
+    const outputs = stepOutputs(run, k);
+    const items = Array.isArray(takes) && takes.length ? outputs.filter(it => takes.includes(it.index + 1)) : outputs.filter(it => !continuedFrom(run, it));
+    if (!items.length) throw new Error('No renders to send on from those takes.');
+    await continueWith(run, k, items);
+    return { summary: `Sent ${items.length} render${items.length > 1 ? 's' : ''} on: chain ${run.status === 'done' ? 'done' : run.status}` };
+  },
+  go_to: ({ page }) => { showView(page); return { summary: `Opened ${page[0].toUpperCase()}${page.slice(1)}` }; },
+  open_history: async ({ query }) => {
+    notBusy();
+    const all = await api('/api/history');
+    const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const e = all.find(x => { const t = [x.theme, x.modelName, ...x.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase(); return words.every(w => t.includes(w)); });
+    if (!e) throw new Error(`Nothing in History matches “${query}”.`);
+    await openEntry(e);
+    return { summary: `Opened “${e.theme || 'from an image'}” (${e.modelName})` };
+  },
+};
+
+async function runTool(call) {
+  let args = {};
+  try {
+    args = call.arguments ? JSON.parse(call.arguments) : {};
+  } catch {
+    return { error: `The arguments for ${call.name} weren't valid JSON.` };
+  }
+  const fn = TOOL_IMPL[call.name];
+  if (!fn) return { error: `There's no tool called ${call.name}.` };
+  as.running = TOOL_RUNNING[call.name] || null;
+  renderAssistantLog();
+  try {
+    return { ok: true, ...(await fn(args || {})) };
+  } catch (err) {
+    return { error: friendly(err) };
+  } finally {
+    as.running = null;
+  }
+}
+
+// The conversation as sent to the Brain: no display-only notes, and every tool call answered.
+function wireMessages() {
+  const out = [];
+  for (const m of as.messages) {
+    if (m.note) continue;
+    out.push(m);
+    for (const c of m.tool_calls || []) {
+      if (!as.messages.some(x => x.role === 'tool' && x.tool_call_id === c.id)) out.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify({ error: 'Stopped by the user.' }) });
+    }
+  }
+  return out;
+}
+
+async function askAssistant(text) {
+  if (as.busy || !text.trim()) return;
+  as.messages.push({ role: 'user', content: text.trim() });
+  as.busy = true;
+  as.stopped = false;
+  syncAssistantBusy();
+  renderAssistantLog();
+  try {
+    for (let round = 0; round < 10 && !as.stopped; round++) {
+      let done = null;
+      let failed = null;
+      as.live = { text: '', thinking: false, status: '' };
+      renderAssistantLog();
+      as.controller = new AbortController();
+      await streamApi('/api/assistant', { messages: wireMessages(), state: assistantState(), tools: TOOLS }, ev => {
+        if (ev.type === 'delta') { as.live.text = ev.text; as.live.thinking = ev.thinking; updateLiveBubble(); }
+        else if (ev.type === 'status') { as.live.status = ev.text; updateLiveBubble(); }
+        else if (ev.type === 'done') done = ev;
+        else if (ev.type === 'error') failed = ev.message;
+      }, as.controller.signal);
+      as.live = null;
+      if (failed) throw new Error(failed);
+      if (!done) break;
+      const calls = done.toolCalls || [];
+      as.messages.push({ role: 'assistant', content: done.text || '', ...(calls.length ? { tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) } : {}) });
+      renderAssistantLog();
+      if (!calls.length) break;
+      for (const c of calls) {
+        if (as.stopped) break;
+        const result = await runTool(c);
+        as.messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(result) });
+        renderAssistantLog();
+      }
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') as.messages.push({ role: 'assistant', content: '', note: `⚠️ ${friendly(err)}` });
+  }
+  as.live = null;
+  as.running = null;
+  as.busy = false;
+  syncAssistantBusy();
+  renderAssistantLog();
+  api('/api/assistant/chat', { method: 'PUT', body: { messages: as.messages } }).catch(() => {});
+}
+
+function stopAssistant() {
+  as.stopped = true;
+  as.controller?.abort();
+  if (state.busy || state.chainActive) stop();
+}
+
+// Short, safe formatting: paragraphs, bullet lists, **bold** and `code`.
+function mdLite(text) {
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  const out = [];
+  let list = null;
+  for (const line of String(text).split('\n')) {
+    const li = /^\s*(?:[-*•]|\d+[.)])\s+(.*)/.exec(line);
+    if (li) { (list ||= []).push(`<li>${inline(li[1])}</li>`); continue; }
+    if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+    if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  }
+  if (list) out.push(`<ul>${list.join('')}</ul>`);
+  return out.join('');
+}
+
+const STARTERS = [
+  ['🎬 Set up a shot', 'Set up a 16:9 shot of '],
+  ['🧬 Add a LoRA', 'Add the  LoRA at 0.6'],
+  ['📽️ Animate my last still', 'Turn my newest still into a video'],
+  ['❓ How do chains work?', 'How do chains work?', true],
+];
+
+function renderAssistantLog() {
+  const log = $('#asLog');
+  if (!log) return;
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+  const items = [];
+  for (const m of as.messages) {
+    if (m.role === 'user') items.push(`<div class="as-msg me">${mdLite(m.content)}</div>`);
+    else if (m.role === 'assistant') {
+      if (m.note) items.push(`<div class="as-act bad">${esc(m.note)}</div>`);
+      else if (m.content) items.push(`<div class="as-msg bot">${mdLite(m.content)}</div>`);
+    } else if (m.role === 'tool') {
+      let r = {};
+      try { r = JSON.parse(m.content); } catch { /* shown as done */ }
+      items.push(r.error ? `<div class="as-act bad">⚠️ ${esc(r.error)}</div>` : `<div class="as-act">✓ ${esc(r.summary || 'Done')}</div>`);
+    }
+  }
+  if (!as.messages.length) {
+    items.push(`<div class="as-hello"><b>Hi! I know my way around Prompt Maker.</b><p>Ask how something works, or tell me what to make: “set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them”.</p>
+      <div class="as-starters">${STARTERS.map(([label, text, send], i) => `<button type="button" class="chip-btn" data-starter="${i}">${esc(label)}</button>`).join('')}</div></div>`);
+  }
+  if (as.running) items.push(`<div class="as-act live">⏳ ${esc(as.running)}</div>`);
+  if (as.live) items.push('<div class="as-msg bot live" id="asLive"></div>');
+  log.innerHTML = items.join('');
+  updateLiveBubble();
+  if (atBottom || as.busy) log.scrollTop = log.scrollHeight;
+}
+
+function updateLiveBubble() {
+  const el = $('#asLive');
+  if (!el || !as.live) return;
+  el.innerHTML = as.live.text ? mdLite(as.live.text) : `<p class="as-typing">${esc(as.live.status || (as.live.thinking ? 'Thinking…' : '…'))}</p>`;
+  const log = $('#asLog');
+  log.scrollTop = log.scrollHeight;
+}
+
+function syncAssistantBusy() {
+  $('#asSend').hidden = as.busy;
+  $('#asStop').hidden = !as.busy;
+  $('#asBrain').textContent = selectedLlm()?.name ? `· ${selectedLlm().name}` : '';
+}
+
+async function openAssistant(open = $('#assistant').hidden) {
+  const panel = $('#assistant');
+  panel.hidden = !open;
+  document.body.classList.toggle('as-open', open);
+  $('#askBtn').setAttribute('aria-expanded', open);
+  document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`);
+  if (!open) { $('#askBtn').focus(); return; }
+  syncAssistantBusy();
+  if (!as.loaded) {
+    as.loaded = true;
+    as.messages = (await api('/api/assistant/chat').catch(() => ({ messages: [] }))).messages;
+  }
+  renderAssistantLog();
+  $('#asInput').focus();
+}
+
+function sendAssistant() {
+  const input = $('#asInput');
+  const text = input.value;
+  if (!text.trim() || as.busy) return;
+  input.value = '';
+  askAssistant(text);
+}
+
+$('#askBtn').addEventListener('click', () => openAssistant());
+$('#asClose').addEventListener('click', () => openAssistant(false));
+$('#asSend').addEventListener('click', sendAssistant);
+$('#asStop').addEventListener('click', stopAssistant);
+$('#asClear').addEventListener('click', e => confirmClick(e.currentTarget, '✓?', () => {
+  if (as.busy) return;
+  as.messages = [];
+  renderAssistantLog();
+  api('/api/assistant/chat', { method: 'PUT', body: { messages: [] } }).catch(() => {});
+}));
+$('#asInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAssistant(); }
+});
+$('#asLog').addEventListener('click', e => {
+  const b = e.target.closest('[data-starter]');
+  if (!b) return;
+  const [, text, send] = STARTERS[Number(b.dataset.starter)];
+  if (send) return askAssistant(text);
+  const input = $('#asInput');
+  input.value = text;
+  input.focus();
+  const gap = text.indexOf('  ');
+  input.setSelectionRange(gap >= 0 ? gap + 1 : text.length, gap >= 0 ? gap + 1 : text.length);
+});
+$('#assistant').addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  e.stopPropagation();
+  if (as.busy) stopAssistant(); else openAssistant(false);
+});
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openAssistant(); }
+});
+window.addEventListener('resize', () => document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`));
 
 // ---------- boot ----------
 

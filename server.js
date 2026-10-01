@@ -5,7 +5,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as store from './lib/store.js';
-import { listLlms, streamChat, assertLocalUrl, startServer } from './lib/lmstudio.js';
+import { listLlms, streamChat, streamCompletion, assertLocalUrl, startServer } from './lib/lmstudio.js';
+import * as assistant from './lib/assistant.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
@@ -348,6 +349,42 @@ async function draftGuide(req, res) {
   stream.end();
 }
 
+// ---------- assistant ----------
+
+// One turn of the assistant: the LLM answers, or asks for tools (which the page runs, then sends back).
+async function assistantChat(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const llm = await prepareLlm(settings, body.llmModel, false);
+  const messages = [{ role: 'system', content: assistant.systemPrompt(body.state) }, ...assistant.cleanMessages(body.messages)];
+  const tools = assistant.cleanTools(body.tools);
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
+  if (llm.loaded === false) stream.send({ type: 'status', text: `Loading ${llm.name} into memory…` });
+  try {
+    const out = await streamCompletion(settings.lmStudioUrl, {
+      model: llm.id,
+      messages,
+      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+      ...sampling(settings, 0.3),
+      max_tokens: Math.max(settings.maxTokens, 2048),
+    }, {
+      signal: stream.signal,
+      onUpdate: u => stream.send({ type: 'delta', text: u.text, thinking: u.thinking }),
+    });
+    const { text, toolCalls } = out.toolCalls.length ? out : assistant.fallbackToolCalls(out.text);
+    if (!text && !toolCalls.length) {
+      throw store.httpError(502, out.finishReason === 'length'
+        ? `The brain hit the ${Math.max(settings.maxTokens, 2048)}-token limit before answering. Set Thinking to Off or raise Max tokens in Settings.`
+        : 'The brain sent back an empty answer. Try again, or pick a bigger model in the top bar.');
+    }
+    stream.send({ type: 'done', text, toolCalls });
+  } catch (err) {
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
+  }
+  stream.end();
+}
+
 // ---------- ComfyUI workflows & renders ----------
 
 // Turns an uploaded or ComfyUI-saved workflow into an API prompt plus a suggested input mapping.
@@ -443,7 +480,7 @@ async function renderTake(req, res) {
     imageName = await comfy.uploadImage(base, buf, `prompt-maker_${name}`, IMAGE_MIME[ext] || 'image/png');
   }
   const count = Math.min(4, Math.max(1, Math.round(Number(body.count) || 1)));
-  const lockedSeed = Number.isSafeInteger(body.seed) ? body.seed : null;
+  const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
   const clientId = comfy.newClientId();
@@ -452,7 +489,7 @@ async function renderTake(req, res) {
     let promptId = null;
     const onAbort = () => { if (promptId) comfy.cancel(base, promptId); };
     try {
-      const seed = lockedSeed !== null ? lockedSeed + i : workflow.options.randomizeSeed ? wf.randomSeed() : null;
+      const seed = seeds[i];
       const { prompt, applied } = wf.buildPrompt(workflow, {
         text,
         imageName,
@@ -479,11 +516,17 @@ async function renderTake(req, res) {
       if (!outputs.length) throw store.httpError(502, 'ComfyUI finished but saved no image, video or audio. Does the workflow end in a Save node?');
       const id = crypto.randomUUID();
       const files = [];
+      // ComfyUI reuses its numbers (ComfyUI_00001_.png) once files are gone, so copies get their own names.
+      const named = [store.slugify(entry.modelName), store.slugify(entry.theme || 'from-image').slice(0, 40), applied.seed ?? null, id.slice(0, 6)].filter(x => x !== null && x !== '').join('_');
       for (const [n, out] of outputs.entries()) {
         const ext = (path.extname(out.filename).toLowerCase() || '.bin').replace(/[^.\w]/g, '');
         const file = `${id}_${n}${ext}`;
-        await fs.writeFile(path.join(store.RENDERS_DIR, file), await comfy.download(base, out));
-        files.push({ file, kind: out.kind, name: out.filename });
+        const buf = await comfy.download(base, out);
+        await fs.writeFile(path.join(store.RENDERS_DIR, file), buf);
+        files.push({ file, kind: out.kind, name: `${named}${outputs.length > 1 ? `-${n + 1}` : ''}${ext}` });
+        if (settings.comfyCleanup) {
+          await comfy.removeOutput(base, out, buf.length, settings.comfyOutputDir).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
+        }
       }
       const render = {
         id,
@@ -648,6 +691,17 @@ async function route(req, res) {
       return sendJson(res, 200, { ok: false, url: base, error: err.message });
     }
   }
+  if (p === '/api/assistant' && m === 'POST') return assistantChat(req, res);
+  if (p === '/api/assistant/guide' && m === 'GET') return sendJson(res, 200, await assistant.searchGuide(url.searchParams.get('q')));
+  if (p === '/api/assistant/chat' && m === 'GET') return sendJson(res, 200, await store.getAssistantChat());
+  if (p === '/api/assistant/chat' && m === 'PUT') {
+    await store.saveAssistantChat((await readBody(req)).messages);
+    return sendJson(res, 200, { ok: true });
+  }
+  if (p === '/api/comfy/output-dir' && m === 'GET') {
+    const settings = await store.getSettings();
+    return sendJson(res, 200, { detected: await comfy.detectOutputDir(settings.comfyUrl).catch(() => null), configured: settings.comfyOutputDir });
+  }
   if (p === '/api/comfy/loras' && m === 'GET') {
     const settings = await store.getSettings();
     try {
@@ -683,7 +737,14 @@ async function route(req, res) {
     }
     if (m === 'PUT') {
       const body = await readBody(req);
-      return sendJson(res, 200, wf.summary(await wf.saveWorkflow({ name: body.name, mapping: body.mapping, options: body.options, overrides: body.overrides, loras: body.loras }, existing)));
+      // overridePatch changes single sampler values ({ "node|input": value, or null to drop it }) and keeps the rest.
+      // seedPatch: { mode, value } for the seed mode and the next seed, keeping the other options.
+      const sp = body.seedPatch && typeof body.seedPatch === 'object' ? body.seedPatch : null;
+      const options = sp ? { ...existing.options, ...(sp.mode ? { seedMode: sp.mode } : {}), ...(sp.value != null ? { seed: sp.value } : {}) } : body.options;
+      const overrides = body.overridePatch && typeof body.overridePatch === 'object'
+        ? Object.fromEntries(Object.entries({ ...existing.overrides, ...body.overridePatch }).filter(([, v]) => v !== null))
+        : body.overrides;
+      return sendJson(res, 200, wf.summary(await wf.saveWorkflow({ name: body.name, mapping: body.mapping, options, overrides, loras: body.loras }, existing)));
     }
     if (m === 'DELETE') {
       await wf.deleteWorkflow(match[1]);

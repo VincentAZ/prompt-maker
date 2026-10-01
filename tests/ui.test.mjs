@@ -95,8 +95,23 @@ class Cdp {
 let cdp;
 const problems = [];
 
+// If the page stops answering (stuck in a loop), pause it and report where, instead of hanging the run.
+async function frozenAt() {
+  const within = p => Promise.race([p, sleep(4000).then(() => null)]);
+  await within(cdp.send('Debugger.enable'));
+  const paused = new Promise(r => cdp.on('Debugger.paused', r));
+  await within(cdp.send('Debugger.pause'));
+  const p = await within(paused);
+  const where = p ? p.callFrames.slice(0, 8).map(f => `${f.functionName || '(anonymous)'}:${f.location.lineNumber + 1}`).join(' ← ') : 'not in JavaScript (the renderer is blocked)';
+  await within(cdp.send('Debugger.resume').catch(() => {}));
+  return where;
+}
+
 async function js(expr) {
-  const r = await cdp.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+  const r = await Promise.race([
+    cdp.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
+    sleep(30000).then(async () => { throw new Error(`The page froze. Stuck in: ${await frozenAt()}`); }),
+  ]);
   if (r.exceptionDetails) throw new Error(`JS error in test expression: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}\n  ${expr.slice(0, 200)}`);
   return r.result.value;
 }
@@ -119,7 +134,25 @@ const count = sel => js(`document.querySelectorAll(${q(sel)}).length`);
 const value = sel => js(`document.querySelector(${q(sel)})?.value ?? null`);
 
 async function click(sel) {
-  const box = await js(`(() => {
+  // Like a person: wait until the element holds still (async updates can move things for a moment).
+  let box;
+  for (let tries = 0; tries < 20; tries++) {
+    box = await locate(sel);
+    if (box.err) break;
+    await sleep(30);
+    const again = await locate(sel);
+    if (!again.err && Math.abs(again.x - box.x) < 1 && Math.abs(again.y - box.y) < 1) { box = again; break; }
+  }
+  if (box.err) throw new Error(`click(${sel}): ${box.err}`);
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await cdp.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+  }
+  await sleep(40);
+}
+
+// Where to click an element (its center), after scrolling it into view; or why it can't be clicked.
+function locate(sel) {
+  return js(`(() => {
     const el = document.querySelector(${q(sel)});
     if (!el) return { err: 'element not found' };
     el.scrollIntoView({ block: 'center', inline: 'center' });
@@ -134,11 +167,6 @@ async function click(sel) {
     }
     return { x, y };
   })()`);
-  if (box.err) throw new Error(`click(${sel}): ${box.err}`);
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await cdp.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
-  }
-  await sleep(40);
 }
 
 async function type(sel, str, { clear = true } = {}) {
@@ -201,6 +229,13 @@ async function shot(name, { full = false } = {}) {
 }
 
 async function goto(url) {
+  const here = await js('location.href').catch(() => '');
+  await js('document.documentElement.dataset.ready = ""').catch(() => {});
+  // Only the #hash differs = no page load at all; go via a blank page so "after a reload" really means it.
+  if (here.split('#')[0] === url.split('#')[0]) {
+    await cdp.send('Page.navigate', { url: 'about:blank' });
+    await waitFor('location.href === "about:blank"', 'left the page');
+  }
   await cdp.send('Page.navigate', { url });
   await sleep(150);
   await waitFor('document.documentElement.dataset.ready === "1"', 'app boot', 10000);
@@ -255,7 +290,9 @@ async function main() {
 
   const mock = startMock(MOCK_PORT);
   await mock.start();
-  const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96) });
+  const comfyRoot = path.join(tmp, 'ComfyUI');
+  for (const d of ['output', 'custom_nodes']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
+  const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot });
   await comfy.start();
   const apiWorkflowFile = path.join(tmp, 'mock-api.json');
   const turbo = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
@@ -292,6 +329,8 @@ async function main() {
   if (!target) throw new Error('Chrome did not start');
   cdp = await Cdp.connect(target.webSocketDebuggerUrl);
   await Promise.all(['Page.enable', 'Runtime.enable', 'Log.enable', 'DOM.enable'].map(m => cdp.send(m)));
+  // Reloading with unsaved Settings asks "Leave site?" (on purpose); the tests always leave.
+  cdp.on('Page.javascriptDialogOpening', () => cdp.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}));
   cdp.on('Runtime.exceptionThrown', p => problems.push(`exception: ${p.exceptionDetails.exception?.description || p.exceptionDetails.text}`));
   cdp.on('Runtime.consoleAPICalled', p => { if (p.type === 'error' || p.type === 'warning') problems.push(`console.${p.type}: ${p.args.map(a => a.value ?? a.description).join(' ')}`); });
   cdp.on('Log.entryAdded', ({ entry }) => {
@@ -906,15 +945,62 @@ async function main() {
     assert(await js('document.querySelector("#lightbox").hidden'), 'Esc closes');
   });
 
-  await test('render: ×2 in one go, and a locked seed', async () => {
+  await test('seed: random, keep it, fixed, ×2, +1, −1, the setup and the lightbox agree', async () => {
+    const seedOf = (k = -1) => comfy.prompts.at(k).prompt['3'].inputs.seed;
+    const renderOnce = async n => {
+      const before = await count('.take .rtile img');
+      await click('.take .rb-go');
+      await waitFor(`document.querySelectorAll(".take .rtile img").length === ${before + n} && !document.querySelector(".take .rtile.running")`, 'rendered', 12000);
+    };
+    await waitFor('!document.querySelector("#wfpSeed").hidden', 'a seed row in step 5');
+    assert(await js('document.querySelector(\'#wfpSeed [data-value="random"]\').classList.contains("active")'), 'random by default');
+    const last = seedOf();
+    await waitFor(`document.querySelector("#wfpSeed .seed-last")?.textContent.includes("${last}")`, 'it shows the last seed');
+    eq(await text('.take .rb-seed'), '🎲 Random seed', 'and the take says random');
+    await shot('27-seed-random');
+    await click('#wfpSeed [data-act="keep"]');
+    await waitFor(`document.querySelector("#wfpSeed .seed-val")?.value === "${last}"`, 'kept: fixed at the last seed');
+    eq(await text('.take .rb-seed'), `🔒 Seed ${last}`, 'the take shows it');
     await click('.take .rb-count button[data-value="2"]');
-    await click('.take .rb-seed');
-    assert((await text('.take .rb-seed')).startsWith('🔒 Seed'), 'seed locked');
-    const locked = comfy.prompts.at(-1).prompt['3'].inputs.seed;
-    await click('.take .rb-go');
-    await waitFor('document.querySelectorAll(".take .rtile img").length === 3 && !document.querySelector(".take .rtile.running")', 'three renders', 12000);
-    eq(comfy.prompts.at(-2).prompt['3'].inputs.seed, locked, 'first reuses the locked seed');
-    eq(comfy.prompts.at(-1).prompt['3'].inputs.seed, locked + 1, 'second steps it by one');
+    await renderOnce(2);
+    eq(seedOf(-2), last, 'first render uses the fixed seed');
+    eq(seedOf(-1), last + 1, '×2 in one go: the second steps by one');
+    await click('.take .rb-count button[data-value="1"]');
+    await renderOnce(1);
+    eq(seedOf(), last, 'fixed stays fixed');
+
+    await click('#wfpSeed [data-value="increment"]');
+    await type('#wfpSeed .seed-val', '1000');
+    await press('Enter');
+    await waitFor('document.querySelector("#wfpSeed .dn-hint").textContent.includes("Next render: 1000, then 1001")', 'it says what comes next');
+    await shot('28-seed-increment');
+    await renderOnce(1);
+    eq(seedOf(), 1000, 'increment starts at the seed');
+    await waitFor('document.querySelector("#wfpSeed .seed-val").value === "1001"', 'then moves up by one');
+    await renderOnce(1);
+    eq(seedOf(), 1001, 'the next render uses the next seed');
+    await click('#wfpSeed [data-value="decrement"]');
+    await renderOnce(1);
+    eq(seedOf(), 1002, 'decrement starts where increment left off');
+    await waitFor('document.querySelector("#wfpSeed .seed-val").value === "1001"', 'then moves down by one');
+
+    await click('.take .rb-tune');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'setup open');
+    eq(await value('#optSeedMode'), 'decrement', 'the setup shows the same mode');
+    eq(await value('#samplerCtl .sp-field[data-key="3|seed"] input'), '1001', 'and the same next seed');
+    await click('#wfClose');
+
+    await click('#wfpSeed [data-value="random"]');
+    await renderOnce(1);
+    const fresh = seedOf();
+    assert(fresh < 1000 || fresh > 1002, 'random again');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="seed"]');
+    await toastText('now renders with seed');
+    await press('Escape');
+    await waitFor(`document.querySelector("#wfpSeed .seed-val")?.value === "${fresh}"`, 'the render\'s seed is now fixed');
+    await click('#wfpSeed [data-value="random"]');
   });
 
   await test('workflow sampler settings: see them, change them, lock CFG 1', async () => {
@@ -937,7 +1023,6 @@ async function main() {
     await toastText('Workflow updated');
     await waitFor('document.querySelector(".take .rb-settings").textContent.includes("dpmpp_2m")', 'summary updated');
     assert((await text('.take .rb-settings')).includes('12 steps') && (await text('.take .rb-settings')).includes('CFG 5'), 'new values in summary');
-    await click('.take .rb-seed'); // back to a fresh seed each render
     await click('.take .rb-count button[data-value="1"]');
     await click('.take .rb-go');
     await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
@@ -1462,6 +1547,145 @@ async function main() {
     eq(await js(`[...document.querySelectorAll('${lora('.lp-list button')}')].map(b => b.dataset.lora).join(',')`), 'LTX_2.3/motion_boost.safetensors', 'and only its LoRAs');
     await press('Escape');
     await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('assistant: sets up a shot, generates, adds a LoRA, explains; failures are safe', async () => {
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const acts = () => js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join(" | ")');
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    await click('#askBtn');
+    await waitFor('!document.querySelector("#assistant").hidden && document.activeElement === document.querySelector("#asInput")', 'panel open, ready to type');
+    assert(await visible('.as-hello'), 'a hello with starters');
+    await type('#asInput', 'Set up a 9:16 shot of a surfer at golden hour, 2 takes');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('All set'), 'it says what it did');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'model set');
+    eq(await value('#theme'), 'a surfer at golden hour', 'theme written');
+    eq(await value('#aspect'), '9:16', 'aspect set');
+    eq(await js('document.querySelector("#varSeg .active")?.dataset.value'), '2', 'takes set');
+    const a = await acts();
+    assert(a.includes('Model → Krea 2 RAW') && a.includes('Theme → “a surfer at golden hour”') && a.includes('aspect 9:16'), `each step shows: ${a}`);
+    assert(lastCall().messages[0].content.includes('"theme": "a surfer at golden hour"') && lastCall().tools.length > 20, 'the brain sees the app and its tools');
+    await shot('43-assistant');
+
+    await type('#asInput', 'go');
+    await press('Enter');
+    await idle();
+    eq(await count('#resultsList .take'), 2, 'two takes written');
+    assert((await bot()).includes('ready'), 'and it says so');
+
+    await type('#asInput', 'add the detail lora at 0.6');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('Added LoRA detail_slider at 0.60'), 'found the LoRA by part of its name');
+    assert((await text('#wfpLoras')).includes('detail_slider'), 'it\'s in step 5');
+
+    await type('#asInput', 'how do I add a LoRA?');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Add LoRA'), 'answers from the guide');
+
+    await type('#asInput', 'switch to the bogus model');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('There\'s no model called “nonexistent”'), 'a failing tool is shown, nothing breaks');
+    assert((await bot()).includes('no model by that name'), 'and it tells you');
+
+    await type('#asInput', 'tag fallback please');
+    await press('Enter');
+    await idle();
+    eq(await value('#theme'), 'from a tag', 'tool calls written as text work too');
+
+    await goto(`${APP}/#create`);
+    await click('#askBtn');
+    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 6', 'the conversation is still there after a reload');
+    await viewport(390, 844, true);
+    await sleep(200);
+    eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');
+    eq(await js('Math.round(document.querySelector("#assistant").getBoundingClientRect().width)'), 390, 'full width on a phone');
+    await shot('44-assistant-phone');
+    await viewport(1440, 900);
+    await click('#asClear');
+    await click('#asClear');
+    assert(await visible('.as-hello'), 'cleared');
+    await press('Escape');
+    assert(await js('document.querySelector("#assistant").hidden && document.activeElement === document.querySelector("#askBtn")'), 'Esc closes it');
+  });
+
+  await test('denoise: shown for image-to-image workflows, saved on the workflow', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(!(await visible('#wfpDenoise')), 'no denoise for a text-to-image workflow');
+    await click('.model-card[data-id="ltx-2-3"]');
+    await waitFor('!document.querySelector("#wfpDenoise").hidden', 'denoise for a workflow that takes an image');
+    eq(await text('#wfpDenoise .dn-val'), '1.00', 'at the workflow\'s value');
+    await js('const r = document.querySelector("#wfpDenoise .dn-range"); r.value = "0.55"; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true }))');
+    eq(await text('#wfpDenoise .dn-val'), '0.55', 'shows the new value');
+    assert((await text('#wfpDenoise .dn-hint')).includes('keeps the layout'), 'says what it means');
+    const id = await value('#wfpSelect');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)})?.denoise[0].value === 0.55)`, 'saved on the workflow');
+    await waitFor('document.querySelector("#wfpSettings").textContent.includes("denoise 0.55")', 'and in the settings chips');
+    await click('#wfpEdit');
+    await waitFor('document.querySelector("#wfDialog").open', 'setup open');
+    eq(await value('#samplerCtl .sp-field[data-key="3|denoise"] input'), '0.55', 'the setup dialog shows it too');
+    await click('#wfClose');
+    await click('#wfpDenoise .dn-reset');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)})?.denoise[0].value === 1)`, '↺ puts it back');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('cleanup: a copied render is deleted from ComfyUI\'s output folder and gets its own name', async () => {
+    await click('.tabs button[data-view="settings"]');
+    assert(!(await visible('#sComfyDirField')), 'folder field hidden until cleanup is on');
+    await click('#sComfyCleanup');
+    assert(await visible('#sComfyDirField'), 'then shown');
+    await waitFor(`document.querySelector('#sComfyDir').placeholder.includes(${q(path.join(comfyRoot, 'output'))})`, 'the output folder is found on its own');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+    await type('#theme', 'a red fox in fresh snow');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    const made = comfy.prompts.at(-1).id.slice(0, 6);
+    assert(!(await fileExists(path.join(comfyRoot, 'output', `mock_${made}.png`))), 'gone from ComfyUI\'s output folder');
+    const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'a red fox in fresh snow');
+    const f = entry.variations[0].renders[0].files[0];
+    assert(await fileExists(path.join(dataDir, 'renders', f.file)), 'the copy is in the data folder');
+    assert(/^krea-2-raw_a-red-fox-in-fresh-snow_\d+_[0-9a-f]{6}\.png$/.test(f.name), `the copy has its own name: ${f.name}`);
+    await fs.writeFile(path.join(comfyRoot, 'output', 'not-ours.png'), 'keep me');
+    await click('.tabs button[data-view="settings"]');
+    await click('#sComfyCleanup');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered again', 10000);
+    assert(await fileExists(path.join(comfyRoot, 'output', `mock_${comfy.prompts.at(-1).id.slice(0, 6)}.png`)), 'with cleanup off, ComfyUI keeps its file');
+    assert(await fileExists(path.join(comfyRoot, 'output', 'not-ours.png')), 'other files are never touched');
+  });
+
+  await test('step 3: pick any image from the Gallery', async () => {
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('#dzGallery');
+    await waitFor('document.querySelector("#imgPick").open && document.querySelectorAll("#imgPickGrid .ip-tile").length > 0', 'the picker shows your image renders');
+    const all = await count('#imgPickGrid .ip-tile');
+    if ((await count('#imgPickModels button')) > 1) {
+      await click('#imgPickModels button[data-id="ltx-2-3"]');
+      assert((await count('#imgPickGrid .ip-tile')) < all, 'filter by model');
+      await click('#imgPickModels button[data-id=""]');
+    }
+    await shot('45-image-picker');
+    await click('#imgPickGrid .ip-tile');
+    await waitFor('!document.querySelector(".dz-preview").hidden && !document.querySelector("#dzSource").hidden', 'attached, linked to its render');
+    await toastText('Image added');
+    assert(!(await js('document.querySelector("#imgPick").open')), 'the picker closed');
+    assert((await text('#dzSource')).startsWith('🔗 From '), 'it says where it came from');
+    assert(await visible('#imageGallery'), 'and another can be picked from the Gallery');
+    await click('#imageClear');
   });
 
   await test('security: other websites can\'t use the local API', async () => {

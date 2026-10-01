@@ -39,6 +39,7 @@
         <span>Settings</span>
       </button>
     </nav>
+    <button type="button" id="askBtn" class="ask-btn" aria-expanded="false" aria-controls="assistant" title="Ask the assistant (Ctrl+K)"><span aria-hidden="true">✦</span><span class="ask-label">Ask</span></button>
     <div class="llm" id="llmBox">
       <span class="dot" id="llmDot"></span>
       <span class="llm-label">Brain</span>
@@ -86,11 +87,13 @@
                 <span class="dz-ico">🖼️</span>
                 <span class="dz-title">Drop an image, paste it, or <u>browse</u></span>
                 <span class="dz-sub">JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.</span>
+                <button type="button" id="dzGallery" class="chip-btn dz-gallery">🖼️ Pick from your Gallery</button>
               </div>
               <div class="dz-preview" hidden>
                 <img id="imagePreview" alt="Your image">
                 <span id="dzSource" class="dz-source" hidden></span>
                 <div class="dz-actions">
+                  <button type="button" id="imageGallery" class="btn small glass" title="Pick another image from your Gallery">Gallery</button>
                   <button type="button" id="imageReplace" class="btn small glass">Replace</button>
                   <button type="button" id="imageClear" class="btn small glass danger">Remove</button>
                 </div>
@@ -154,6 +157,8 @@
                 <button type="button" id="wfpAdd" class="btn small" title="Add another workflow" aria-label="Add another workflow">＋</button>
               </div>
               <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
+              <div id="wfpSeed" class="wfp-seed" role="group" aria-label="Seed" hidden></div>
+              <div id="wfpDenoise" class="wfp-denoise" hidden></div>
               <div id="wfpLoras" class="loras" role="group" aria-label="LoRAs"></div>
               <p id="wfpWarn" class="warn-line" hidden></p>
               <div id="wfpStale" class="wfp-stale" hidden><span></span><button type="button" class="btn small">↻ Update</button></div>
@@ -375,6 +380,9 @@
             <div class="row"><input id="sComfyUrl" placeholder="http://127.0.0.1:8188"><button type="button" id="sComfyTest" class="btn small">Test connection</button></div>
           </label>
           <p id="sComfyResult" class="test-result" hidden></p>
+          <label class="check-row"><input type="checkbox" id="sComfyCleanup"> <span>After copying a render, delete it from ComfyUI's output folder</span></label>
+          <label class="field" id="sComfyDirField"><span>ComfyUI output folder <small>only if ComfyUI was started with <code>--output-directory</code></small></span><input id="sComfyDir" placeholder="found automatically"></label>
+          <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer.</p>
           <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI as usual (e.g. <code>python main.py</code>), then attach workflows to a model in the <b>Models</b> tab. For live previews while rendering, start ComfyUI with <code>--preview-method auto</code>.</p>
         </section>
 
@@ -458,7 +466,7 @@
             <small>From the take's duration. Frames are worked out from the fps.</small>
           </div></div>
           <div class="map-row" id="rowSeed"><span class="map-ico">🎛️</span><b>Sampler</b><div class="map-ctl">
-            <label class="check"><input type="checkbox" id="optSeed"> <span id="optSeedLabel">New random seed every render</span></label>
+            <div class="seed-dlg"><label>Seed <select id="optSeedMode"><option value="random">🎲 Random every render</option><option value="fixed">🔒 Fixed</option><option value="increment">＋1 after each render</option><option value="decrement">−1 after each render</option></select></label><small id="optSeedLabel"></small></div>
             <div id="samplerCtl" class="sampler-ctl"></div>
             <small>These are the workflow's own values. Change any of them, and ↺ puts one back.</small>
           </div></div>
@@ -478,6 +486,17 @@
     </form>
   </dialog>
 
+  <dialog id="imgPick" class="modal img-pick" aria-labelledby="imgPickTitle">
+    <div class="modal-body">
+      <header class="modal-head">
+        <h2 id="imgPickTitle">Pick an image from your Gallery</h2>
+        <button type="button" class="icon-btn" id="imgPickClose" aria-label="Close">✕</button>
+      </header>
+      <div id="imgPickModels" class="filter-chips ip-filters" role="group" aria-label="Filter by model"></div>
+      <div id="imgPickGrid" class="ip-grid"></div>
+    </div>
+  </dialog>
+
   <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Render viewer" hidden>
     <button type="button" class="icon-btn lb-close" id="lbClose" aria-label="Close">✕</button>
     <button type="button" class="lb-nav lb-prev" id="lbPrev" aria-label="Previous">‹</button>
@@ -485,6 +504,22 @@
     <button type="button" class="lb-nav lb-next" id="lbNext" aria-label="Next">›</button>
     <aside class="lb-info" id="lbInfo"></aside>
   </div>
+
+  <aside id="assistant" class="assistant" aria-label="Assistant" hidden>
+    <header class="as-head">
+      <span class="as-title">✦ Assistant</span>
+      <span id="asBrain" class="as-brain"></span>
+      <span class="spacer"></span>
+      <button type="button" id="asClear" class="icon-btn" title="Clear the conversation" aria-label="Clear the conversation">🧹</button>
+      <button type="button" id="asClose" class="icon-btn" title="Close (Esc)" aria-label="Close the assistant">✕</button>
+    </header>
+    <div id="asLog" class="as-log" role="log" aria-live="polite" aria-label="Conversation"></div>
+    <div class="as-compose">
+      <textarea id="asInput" rows="2" placeholder="Ask anything, or tell me what to make…" aria-label="Message the assistant"></textarea>
+      <button type="button" id="asSend" class="btn primary small" aria-label="Send (Enter)">➜</button>
+      <button type="button" id="asStop" class="btn small" hidden>■ Stop</button>
+    </div>
+  </aside>
 
   <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
   <div id="dropOverlay" class="drop-overlay" hidden><div>Drop it like it's hot 🔥</div></div>

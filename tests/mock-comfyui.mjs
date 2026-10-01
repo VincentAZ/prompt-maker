@@ -2,6 +2,8 @@
 // execution progress. Prompt text containing COMFYFAIL fails; SLOWRENDER renders slowly.
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // A small saved (editor-format) workflow: checkpoint → prompts → sampler → decode → save.
 export const SAVED_WORKFLOW = {
@@ -39,7 +41,8 @@ function wsFrame(text) {
   return Buffer.concat([header, payload]);
 }
 
-export function startMockComfy(port, { png }) {
+// root: a fake ComfyUI install folder; finished renders are saved to root/output like the real thing.
+export function startMockComfy(port, { png, root = null }) {
   const prompts = [];
   const uploads = [];
   const history = {};
@@ -84,6 +87,7 @@ export function startMockComfy(port, { png }) {
       return;
     }
     send(clientId, { type: 'executing', data: { node: '9', prompt_id: id } });
+    if (root) fs.writeFileSync(path.join(root, 'output', `mock_${id.slice(0, 6)}.png`), png);
     history[id] = { outputs: { 9: { images: [{ filename: `mock_${id.slice(0, 6)}.png`, subfolder: '', type: 'output' }] } }, status: { status_str: 'success', completed: true, messages: [] } };
     send(clientId, { type: 'executing', data: { node: null, prompt_id: id } });
     send(clientId, { type: 'execution_success', data: { prompt_id: id } });
@@ -98,6 +102,7 @@ export function startMockComfy(port, { png }) {
     const p = url.pathname;
     if (p === '/system_stats') return json(200, { system: { comfyui_version: '0.38.0-mock' }, devices: [{ name: 'cuda:0 Mock GPU : cudaMallocAsync', vram_total: 8 * 2 ** 30, vram_free: 6 * 2 ** 30 }] });
     if (p === '/object_info') return json(200, OBJECT_INFO);
+    if (p === '/internal/folder_paths') return json(200, root ? { custom_nodes: [path.join(root, 'custom_nodes')] } : {});
     if (p === '/models/loras') return json(200, ['LTX_2.3/motion_boost.safetensors', 'krea2/baked_in.safetensors', 'krea2/detail_slider.safetensors', 'krea2/film_grain.safetensors', 'loose_file.safetensors']);
     if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: saved.modified }, { path: '.index.json', size: 10, modified: 0 }]);
     if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, saved.json);

@@ -179,6 +179,19 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 
 **Prompt length** (*short / medium / long*) means something different for each model. For example, "medium" is about 70–120 words for Krea and about 160–260 for MiniMax. Every take shows its word count against that target.
 
+### ✦ The assistant
+
+Click **✦ Ask** in the top bar (or press **Ctrl+K**) on any page. The assistant runs on your **Brain** (the same LM Studio model, so it stays offline) and knows its way around the app:
+
+- **Ask how things work.** *"Why is my render ignoring the image?"* It looks up the answer in this guide.
+- **Tell it what to make.** *"Set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them."*
+  - It works the same controls you would: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, chains, History.
+  - Each step shows in the chat ("✓ Model → Krea 2 RAW") and on screen.
+  - **■ Stop** or **Esc** stops it.
+- **It never deletes anything or changes Settings.** It tells you where to do that yourself.
+
+The conversation is kept in your data folder; 🧹 clears it. It works best with a model that supports tool calling (Qwen 3/3.5/3.6, Hermes, Gemma 3+, Llama 3.1+).
+
 ### Refine and versions
 
 - Type a change in **Tweak it…** and press Enter, or tap a chip like ✂️ *Shorter*, 🎞️ *More cinematic* or ⚡ *More dynamic motion*.
@@ -203,6 +216,7 @@ Everything you generate is saved automatically:
 | `Esc` | Stop the current run |
 | `Enter` (in *Tweak it…*) | Refine that take |
 | `Ctrl` / `⌘` + `V` | Paste an image |
+| `Ctrl` / `⌘` + `K` | Open or close the assistant |
 
 ## Rendering with ComfyUI (optional)
 
@@ -257,6 +271,27 @@ Click any result to open the **lightbox**, where you can:
 - **render again** with a new seed,
 - **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
 - or delete it.
+
+### Seed
+
+Step ⑤ has a **🎲 Seed** row for the picked workflow, with ComfyUI's four modes:
+
+| Mode | What each render gets |
+|---|---|
+| 🎲 **Random** | A new random seed. The row shows the last one, and **🔒 Keep it** switches to Fixed with it. |
+| 🔒 **Fixed** | The same seed every time. (×2 renders in one go use the seed and the seed + 1.) |
+| **＋1** | The seed, then one higher each render. |
+| **−1** | The seed, then one lower each render. |
+
+- **Type any seed** in the box. **↶** puts back the last render's seed, and **🎲** rolls a new one.
+- **The hint says what comes next,** e.g. *Next render: 1000, then 1001…*
+- **Each take's render bar shows the mode** (e.g. 🔒 Seed 4211). Click it to jump to the row.
+- **In the lightbox,** **🔒 Use this seed** fixes the seed of a render you liked, and **🎲 Render again** always uses a new one.
+- **Seeds are saved per workflow,** and renders started together never share one.
+
+### Denoise (image-to-image)
+
+When the picked workflow takes an image and has a **denoise** setting, step ⑤ shows a **🎚️ Denoise** slider. Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
 
 ### LoRAs
 
@@ -383,6 +418,7 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 |---|---|---|
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
 | **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
+| **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. |
 | **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. |
 | **Top P** | 0.95 | Nucleus sampling. Temperature is set for each run on the Create page. |
 | **Max tokens** | 4096 | The cap on each answer. Raise it if you turn thinking on. |
