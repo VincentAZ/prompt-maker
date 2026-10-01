@@ -1,13 +1,17 @@
 // A fake LM Studio server for UI tests: deterministic streaming, a text-only model,
-// a "thinking" model, failures and slow responses, triggered by words in the theme.
+// a "thinking" model LM Studio can switch off, one that ignores the switch (only an empty
+// thinking block stops it), one never used, failures and slow responses, triggered by words in the theme.
 //   FAILTEST  → HTTP 500        EMPTYTEST → hits the token limit with no output
 //   SLOWTEST  → very slow stream  SLOWSECOND → only takes 2+ are slow
+//   REFUSETEST → turns the job down
 import http from 'node:http';
 
 const MODELS = [
-  { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', capabilities: { vision: true }, loaded_instances: [{ id: 'mock/vision-8b' }] },
-  { key: 'mock/thinker', display_name: 'Mock Thinker 9B', type: 'llm', capabilities: { vision: true }, loaded_instances: [] },
+  { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b' }] },
+  { key: 'mock/thinker', display_name: 'Mock Thinker 9B', type: 'llm', capabilities: { vision: true, reasoning: { allowed_options: ['off', 'on'], default: 'on' } }, loaded_instances: [] },
+  { key: 'mock/fable', display_name: 'Mock Fable 27B', type: 'llm', capabilities: { vision: true }, loaded_instances: [] },
   { key: 'mock/text-only', display_name: 'Mock Text 7B', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
+  { key: 'mock/fresh', display_name: 'Mock Fresh 3B', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
   { key: 'mock/embed', display_name: 'Embedder', type: 'embedding', loaded_instances: [] },
 ];
 
@@ -62,8 +66,12 @@ export function startMock(port) {
 
     let raw = '';
     for await (const c of req) raw += c;
-    const body = JSON.parse(raw);
+    let body = JSON.parse(raw);
     log.push(body);
+    // An answer that starts with its thinking already over: drop it, and remember it was there.
+    const pre = body.messages.at(-1);
+    const thinkingOver = pre.role === 'assistant' && /^<think>\s*<\/think>/.test(pre.content);
+    if (thinkingOver) body = { ...body, messages: body.messages.slice(0, -1) };
     const allText = body.messages.map(m => textOf(m.content)).join('\n');
     if (allText.includes('FAILTEST')) return json(500, { error: { message: 'Mock failure: the model crashed' } });
 
@@ -92,7 +100,7 @@ export function startMock(port) {
       res.end('data: [DONE]\n\n');
       return;
     }
-    if (body.model === 'mock/thinker' && body.reasoning_effort !== 'none') {
+    if ((body.model === 'mock/thinker' && body.reasoning_effort !== 'none') || (body.model === 'mock/fable' && !thinkingOver)) {
       for (let i = 0; i < 25 && !closed; i++) {
         send({ choices: [{ delta: { reasoning_content: 'Let me think about the framing and the light. ' } }] });
         await sleep(40);
@@ -100,6 +108,8 @@ export function startMock(port) {
     }
     const words = (body.messages[0].content.startsWith('You write prompting guides')
       ? '## What this model is\n- A mock model.\n\n## Prompt structure\n- Subject first, then setting.'
+      : allText.includes('Which two colors fill this image') ? 'Red and blue.'
+      : allText.includes('REFUSETEST') ? "I'm sorry, but I can't help with that request."
       : cannedPrompt(body)).split(/(?<=\s)/);
     for (const w of words) {
       if (closed) return;

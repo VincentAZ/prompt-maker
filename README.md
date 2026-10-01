@@ -70,6 +70,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - Watch live progress (and previews) right on the take.
   - Browse every result in the **Gallery**, and view it in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
+- **🧠 Brain profiles.** **Models → Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
 - **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let the local LLM draft the playbook. Import and export models as `.json`.
 - **Zero install fuss.** Plain Node.js with no dependencies: no `npm install`, no build step.
 - **Private by design.** Nothing leaves your machine (see [Privacy & offline](#privacy--offline)).
@@ -411,6 +412,20 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 | 24 GB+ VRAM | 27B–35B vision models for the best playbook-following |
 
 > **Reasoning ("thinking") models** such as Qwen 3.5/3.6 can spend thousands of tokens thinking before they write. Prompt Maker turns thinking **off** by default (**Settings → Thinking**), which makes them answer in seconds instead of minutes.
+>
+> LM Studio can only switch thinking off for models it recognizes, mostly the official releases. Many community fine-tunes ignore the switch. Prompt Maker handles those itself: if a Brain starts thinking when Thinking is Off, it stops it right away and asks again with the thinking already marked as finished. It remembers which Brains need this, and hovering over the Brain in the top bar shows it.
+
+### Brain profiles (Models → Brains)
+
+Open **Models** and switch to **🧠 Brains** to see every model in LM Studio. Prompt Maker fills in each card on its own as you work:
+
+- **LM Studio's facts:** size, quantization, 👁 vision, 🛠 tool calling (which ✦ Ask uses).
+- **Thinking:** how *Thinking: Off* works on it (LM Studio's switch, Prompt Maker's workaround, or it thinks anyway). You can give a Brain **its own Thinking level**, which wins over Settings, e.g. Off for one that rambles and Low for one you like thinking a little.
+- **Speed:** seconds per prompt on your machine, from your own runs, plus how often it ran out of room, came back empty or refused.
+- **Record:** takes it wrote for image and video models, and how many you rendered or starred.
+- **⚡ Quick check:** about 20 seconds. It writes one image prompt and one video prompt and, for vision models, names the colors in a test image. You see the time, word count and whether the prompt needed tidying. It loads the Brain in LM Studio, unloading the model there now, so it only runs when you click it.
+
+**Best for** ranks the Brains for any of your models. Renders and ⭐ count most, then refines, then the Quick check, and failures count against a Brain. The same ranking puts a **Suggested for …** group at the top of the Brain menu on Create, with the reason ("3 rendered"). There are no built-in opinions about model families: suggestions come only from your runs. A newly downloaded model shows up on its own under *Brains you haven't used or checked yet*.
 
 ## Settings
 
@@ -419,7 +434,7 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
 | **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
 | **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. |
-| **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. |
+| **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. It's the default for every Brain; a Brain can have its own level on **Models → Brains**. |
 | **Top P** | 0.95 | Nucleus sampling. Temperature is set for each run on the Create page. |
 | **Max tokens** | 4096 | The cap on each answer. Raise it if you turn thinking on. |
 | **Master instructions** | built-in | Shared rules sent before every model's playbook (output format, faithfulness to your theme…). There's a **Reset to default** button. |
@@ -462,6 +477,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── renders/        # images and videos rendered with ComfyUI
 ├── workflows/      # ComfyUI workflows you've attached, with their setup
 ├── chains/         # chains you saved or edited
+├── brains.json     # what the app learned about each LLM: thinking, speed, Quick check, its own Thinking level
 └── models/         # playbooks you added or edited
 ```
 
@@ -488,7 +504,7 @@ The selected LLM is text-only. Pick a model marked 👁 in the **Brain** menu, o
 <details>
 <summary><b>"The brain ran out of room" / empty prompt</b></summary>
 
-The model used up all its tokens, usually by thinking. Set **Settings → Thinking** to *Off*, or raise **Max tokens**.
+The model used up all its tokens, usually by thinking. Set **Settings → Thinking** to *Off*, or raise **Max tokens**. If the message says the Brain *kept thinking even with Thinking: Off*, that model can't be stopped from thinking: raise **Max tokens**, or pick another Brain.
 </details>
 
 <details>

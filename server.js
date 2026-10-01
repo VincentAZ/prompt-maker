@@ -5,8 +5,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as store from './lib/store.js';
-import { listLlms, streamChat, streamCompletion, assertLocalUrl, startServer } from './lib/lmstudio.js';
+import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
+import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
@@ -133,7 +134,8 @@ function within(dir, rel) {
   return full.startsWith(dir + path.sep) || full === dir ? full : null;
 }
 
-// Picks the LM Studio model to use and reports what we know about it: { id, name, vision, loaded }.
+// Picks the LM Studio model to use and reports what we know about it: LM Studio's facts ({ id, name, vision,
+// loaded, thinkSwitch, … }) plus its Thinking level (its own, else Settings) and how Thinking: Off works on it.
 async function prepareLlm(settings, requested, needsVision) {
   const llms = await listLlms(settings.lmStudioUrl);
   const id = (requested || settings.llmModel || '').trim();
@@ -148,7 +150,8 @@ async function prepareLlm(settings, requested, needsVision) {
   if (needsVision && info.vision === false) {
     throw store.httpError(400, `"${info.name}" is text-only and can't see images. Pick a vision model (👁) in the top bar.`);
   }
-  return info;
+  const notes = (await store.getBrainNotes())[info.id] || {};
+  return { ...info, thinking: notes.thinking || settings.thinking, thinkOff: notes.thinkOff || null };
 }
 
 // Opens the event stream and tells the UI which LLM is working and whether it still has to load.
@@ -160,7 +163,7 @@ function startStream(res, info, count, hasImage) {
   return stream;
 }
 
-function sampling(settings, temperature) {
+function sampling(settings, temperature, llm) {
   const t = Number(temperature);
   const opts = {
     temperature: Number.isFinite(t) ? Math.min(2, Math.max(0, t)) : 0.8,
@@ -168,11 +171,58 @@ function sampling(settings, temperature) {
     max_tokens: settings.maxTokens,
   };
   // Reasoning models think for thousands of tokens by default; prompt writing rarely needs it.
-  if (settings.thinking !== 'default') opts.reasoning_effort = settings.thinking === 'off' ? 'none' : settings.thinking;
+  if (llm.thinking !== 'default') opts.reasoning_effort = llm.thinking === 'off' ? 'none' : llm.thinking;
   return opts;
 }
 
+// Runs one completion with the Thinking setting applied. LM Studio can switch thinking off only for models it
+// recognizes (llm.thinkSwitch). Other Brains are watched when Thinking is Off: one that starts thinking anyway is
+// stopped and asked again with its thinking already over (EMPTY_THINK), and the app remembers which Brains need that.
+async function complete(settings, llm, body, { signal, onUpdate, onStatus }) {
+  const run = (b, stopIfThinking) => streamCompletion(settings.lmStudioUrl, b, { signal, onUpdate, stopIfThinking });
+  if (llm.thinking !== 'off' || llm.thinkSwitch) return run(body, false);
+  const learn = thinkOff => { llm.thinkOff = thinkOff; return store.noteBrain(llm.id, { thinkOff }); };
+  const tricked = { ...body, messages: [...body.messages, EMPTY_THINK] };
+  if (llm.thinkOff === 'trick') return run(tricked, false);
+  if (llm.thinkOff === 'stubborn') return run(body, false);
+  const first = await run(body, true);
+  if (!first.thoughtAnyway) {
+    if (!llm.thinkOff) await learn('quiet');
+    return first;
+  }
+  onStatus?.(`${llm.name} ignores Thinking: Off. Switching it off another way…`);
+  const second = await run(tricked, true);
+  if (!second.thoughtAnyway) {
+    await learn('trick');
+    return second;
+  }
+  await learn('stubborn');
+  onStatus?.(`${llm.name} keeps thinking even with Thinking: Off. Letting it think…`);
+  return run(body, false);
+}
+
+// A completion that must produce text: its text, or a clear error when the Brain ran out of room first.
+async function writeText(settings, llm, body, opts) {
+  const out = await complete(settings, llm, body, opts);
+  if (!out.text && out.finishReason === 'length') throw brainFailure('room', outOfRoom(llm, body.max_tokens, out.reasoningChars));
+  return out.text;
+}
+
+function outOfRoom(llm, maxTokens, reasoningChars) {
+  if (!reasoningChars) return `The LLM hit the ${maxTokens}-token limit before writing anything. Raise Max tokens in Settings.`;
+  if (llm.thinking === 'off') return `${llm.name} kept thinking even with Thinking: Off and hit the ${maxTokens}-token limit before writing anything. Raise Max tokens in Settings, or pick another Brain in the top bar.`;
+  return `The LLM hit the ${maxTokens}-token limit before writing anything (it spent them all thinking). Set Thinking to Off (in Settings, or for this Brain on Models → Brains) or raise Max tokens in Settings.`;
+}
+
+// An error that counts against the Brain in its record ('room' or 'empty').
+const brainFailure = (outcome, message) => Object.assign(store.httpError(502, message), { outcome });
 const EMPTY_HINT = 'The LLM returned an empty prompt. If it is a "thinking" model it may have used all its tokens reasoning. Raise Max tokens in Settings or pick a non-thinking model.';
+const secondsSince = t0 => Math.round((Date.now() - t0) / 100) / 10;
+
+// Adds a prompt-writing run to the Brain's record. Runs that included loading the model aren't timed.
+async function recordRun(llm, outcome, t0, warm) {
+  await store.recordBrainRun(llm.id, { outcome, seconds: warm ? secondsSince(t0) : null }).catch(() => {});
+}
 
 function pickParams(body, model) {
   const role = ['reference', 'recreate', 'animate'].includes(body.imageRole) ? body.imageRole : 'reference';
@@ -243,23 +293,29 @@ async function generate(req, res) {
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   const llmModel = llm.id;
   const count = Math.min(4, Math.max(1, Math.round(Number(body.variations) || 1)));
-  const opts = sampling(settings, body.temperature ?? model.defaults.temperature);
+  const opts = sampling(settings, body.temperature ?? model.defaults.temperature, llm);
 
   const stream = startStream(res, llm, count, Boolean(imageDataUrl));
   const texts = [];
   try {
     for (let index = 0; index < count; index++) {
       const messages = buildGenerateMessages(settings.masterPrompt, model, { ...params, sourcePrompt: source?.text }, imageDataUrl, { index, count, previous: texts });
-      const raw = await streamChat(settings.lmStudioUrl, { model: llmModel, messages, ...opts }, {
+      const t0 = Date.now();
+      const warm = llm.loaded !== false;
+      const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
         signal: stream.signal,
         onUpdate: u => stream.send({ type: 'delta', index, text: u.text, thinking: u.thinking, reasoningChars: u.reasoningChars }),
+        onStatus: text => stream.send({ type: 'status', text }),
       });
+      llm.loaded = true;
       const text = cleanPrompt(raw);
-      if (!text) throw store.httpError(502, EMPTY_HINT);
+      if (!text) throw brainFailure('empty', EMPTY_HINT);
+      await recordRun(llm, looksRefused(text) ? 'refused' : 'ok', t0, warm);
       texts.push(text);
       stream.send({ type: 'done', index, text });
     }
   } catch (err) {
+    if (err.outcome) await recordRun(llm, err.outcome);
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message, index: texts.length, partial: err.partial ? cleanPrompt(err.partial) : '' });
   }
 
@@ -301,18 +357,21 @@ async function refine(req, res) {
   const imageDataUrl = entry.imageFile ? await store.readImageDataUrl(entry.imageFile) : null;
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   const llmModel = llm.id;
-  const opts = sampling(settings, body.temperature ?? entry.temperature);
+  const opts = sampling(settings, body.temperature ?? entry.temperature, llm);
   const params = pickParams(entry, model);
 
   const stream = startStream(res, llm, 1, Boolean(imageDataUrl));
   try {
     const messages = buildRefineMessages(settings.masterPrompt, model, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '' }, imageDataUrl, current, instruction);
-    const raw = await streamChat(settings.lmStudioUrl, { model: llmModel, messages, ...opts }, {
+    const t0 = Date.now();
+    const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
       signal: stream.signal,
       onUpdate: u => stream.send({ type: 'delta', index: body.index, text: u.text, thinking: u.thinking, reasoningChars: u.reasoningChars }),
+      onStatus: text => stream.send({ type: 'status', text }),
     });
     const text = cleanPrompt(raw);
-    if (!text) throw store.httpError(502, EMPTY_HINT);
+    if (!text) throw brainFailure('empty', EMPTY_HINT);
+    await recordRun(llm, looksRefused(text) ? 'refused' : 'ok', t0, llm.loaded !== false);
     const now = new Date().toISOString();
     const saved = await store.updateHistory(entry.id, e => {
       const v = e.variations[body.index];
@@ -322,6 +381,7 @@ async function refine(req, res) {
     stream.send({ type: 'done', index: body.index, text });
     stream.send({ type: 'saved', entry: saved });
   } catch (err) {
+    if (err.outcome) await recordRun(llm, err.outcome);
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
   }
   stream.end();
@@ -337,9 +397,10 @@ async function draftGuide(req, res) {
   const stream = startStream(res, llm, 1, false);
   try {
     const messages = buildDraftGuideMessages(String(body.name || 'the model'), body.kind === 'video' ? 'video' : 'image', docs);
-    const text = await streamChat(settings.lmStudioUrl, { model: llmModel, messages, ...sampling(settings, 0.3), max_tokens: Math.max(settings.maxTokens, 4096) }, {
+    const text = await writeText(settings, llm, { model: llmModel, messages, ...sampling(settings, 0.3, llm), max_tokens: Math.max(settings.maxTokens, 4096) }, {
       signal: stream.signal,
       onUpdate: u => stream.send({ type: 'delta', index: 0, text: u.text, thinking: u.thinking, reasoningChars: u.reasoningChars }),
+      onStatus: text => stream.send({ type: 'status', text }),
     });
     if (!text) throw store.httpError(502, EMPTY_HINT);
     stream.send({ type: 'done', index: 0, text: text.replace(/^```(?:markdown|md)?\s*\n?|\n?```\s*$/g, '').trim() });
@@ -362,20 +423,22 @@ async function assistantChat(req, res) {
   stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
   if (llm.loaded === false) stream.send({ type: 'status', text: `Loading ${llm.name} into memory…` });
   try {
-    const out = await streamCompletion(settings.lmStudioUrl, {
+    const maxTokens = Math.max(settings.maxTokens, 2048);
+    const out = await complete(settings, llm, {
       model: llm.id,
       messages,
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
-      ...sampling(settings, 0.3),
-      max_tokens: Math.max(settings.maxTokens, 2048),
+      ...sampling(settings, 0.3, llm),
+      max_tokens: maxTokens,
     }, {
       signal: stream.signal,
       onUpdate: u => stream.send({ type: 'delta', text: u.text, thinking: u.thinking }),
+      onStatus: text => stream.send({ type: 'status', text }),
     });
     const { text, toolCalls } = out.toolCalls.length ? out : assistant.fallbackToolCalls(out.text);
     if (!text && !toolCalls.length) {
       throw store.httpError(502, out.finishReason === 'length'
-        ? `The brain hit the ${Math.max(settings.maxTokens, 2048)}-token limit before answering. Set Thinking to Off or raise Max tokens in Settings.`
+        ? outOfRoom(llm, maxTokens, out.reasoningChars)
         : 'The brain sent back an empty answer. Try again, or pick a bigger model in the top bar.');
     }
     stream.send({ type: 'done', text, toolCalls });
@@ -383,6 +446,92 @@ async function assistantChat(req, res) {
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
   }
   stream.end();
+}
+
+// ---------- Brains ----------
+
+// What the app knows about a Brain beyond LM Studio's facts (see store.getBrainNotes).
+const brainView = (n = {}) => ({ thinking: n.thinking || null, thinkOff: n.thinkOff || null, stats: n.stats || null, check: n.check || null });
+
+// Quick check: a short test of one Brain on this machine. It writes an image prompt and a video prompt, and looks
+// at a test image if it's a vision model. It uses the Brain's own Thinking level, so the times match Create.
+async function checkBrain(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const llm = await prepareLlm(settings, String(body.id || ''), false);
+  const models = await store.listModels();
+  const target = (id, kind) => models.find(x => x.id === id) || models.find(x => x.kind === kind);
+  const targets = [target('krea2-raw', 'image'), target('ltx-2-3', 'video')].filter(Boolean);
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId });
+  const status = text => stream.send({ type: 'status', text });
+  const check = { at: new Date().toISOString() };
+  try {
+    if (llm.loaded === false) {
+      status(`Loading ${llm.name}…`);
+      const t0 = Date.now();
+      await streamCompletion(settings.lmStudioUrl, { model: llm.id, messages: [{ role: 'user', content: 'Say OK.' }], max_tokens: 1 }, { signal: stream.signal });
+      check.loadSeconds = secondsSince(t0);
+    }
+    for (const model of targets) {
+      status(`Writing ${model.kind === 'video' ? 'a video' : 'an image'} prompt for ${model.name}…`);
+      check[model.kind] = await checkPrompt(settings, llm, model, stream.signal, status);
+    }
+    if (llm.vision !== false) {
+      status('Looking at a test image…');
+      check.vision = await checkVision(settings, llm, stream.signal, status);
+    }
+    await store.noteBrain(llm.id, { check });
+    stream.send({ type: 'done', check });
+  } catch (err) {
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
+  }
+  stream.end();
+}
+
+async function checkPrompt(settings, llm, model, signal, onStatus) {
+  const params = pickParams({ theme: CHECK_THEMES[model.kind], length: 'medium' }, model);
+  const messages = buildGenerateMessages(settings.masterPrompt, model, params, null, { index: 0, count: 1, previous: [] });
+  const target = model.lengthGuide?.medium || null;
+  const t0 = Date.now();
+  try {
+    const raw = await writeText(settings, llm, { model: llm.id, messages, ...sampling(settings, model.defaults.temperature, llm) }, { signal, onStatus });
+    const text = cleanPrompt(raw);
+    const words = countWords(text);
+    const range = wordRange(target);
+    const refused = looksRefused(text);
+    return {
+      model: model.name,
+      seconds: secondsSince(t0),
+      ok: Boolean(text) && !refused,
+      refused,
+      words,
+      target,
+      inRange: range ? words >= range[0] * 0.8 && words <= range[1] * 1.25 : null,
+      tidy: text === raw.trim(), // no preamble, quotes or code fences to strip
+      sample: text.slice(0, 600),
+    };
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    return { model: model.name, seconds: secondsSince(t0), ok: false, error: err.message };
+  }
+}
+
+// Shows the Brain an image that is half red, half blue, and asks for the two colors.
+async function checkVision(settings, llm, signal, onStatus) {
+  const messages = [
+    { role: 'system', content: 'You describe images in as few words as possible.' },
+    { role: 'user', content: [{ type: 'image_url', image_url: { url: testImageDataUrl() } }, { type: 'text', text: 'Which two colors fill this image? Answer with just the two color names.' }] },
+  ];
+  const t0 = Date.now();
+  try {
+    const out = await complete(settings, llm, { model: llm.id, messages, ...sampling(settings, 0.2, llm) }, { signal, onStatus });
+    const answer = out.text.trim();
+    return { seconds: secondsSince(t0), ok: /\bred\b/i.test(answer) && /\bblue\b/i.test(answer), answer: answer.slice(0, 120) };
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    return { seconds: secondsSince(t0), ok: false, error: err.message };
+  }
 }
 
 // ---------- ComfyUI workflows & renders ----------
@@ -622,11 +771,20 @@ async function route(req, res) {
     const settings = await store.getSettings();
     const base = url.searchParams.get('url') || settings.lmStudioUrl;
     try {
-      return sendJson(res, 200, { ok: true, url: base, models: await listLlms(base) });
+      const [models, notes, history] = await Promise.all([listLlms(base), store.getBrainNotes(), store.listHistory()]);
+      const records = brainRecords(history);
+      return sendJson(res, 200, { ok: true, url: base, models: models.map(m => ({ ...m, ...brainView(notes[m.id]), record: records[m.id] || null })) });
     } catch (err) {
       return sendJson(res, 200, { ok: false, url: base, error: err.message, models: [] });
     }
   }
+
+  if (p === '/api/brains' && m === 'PUT') {
+    const body = await readBody(req);
+    if (!body.id) throw store.httpError(400, 'Which Brain?');
+    return sendJson(res, 200, brainView(await store.setBrainThinking(String(body.id), body.thinking || '')));
+  }
+  if (p === '/api/brains/check' && m === 'POST') return checkBrain(req, res);
 
   if (p === '/api/lmstudio/start' && m === 'POST') {
     const settings = await store.getSettings();

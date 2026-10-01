@@ -315,14 +315,17 @@ function resizeTextareas() {
 window.addEventListener('resize', resizeTextareas);
 
 function showView(name, { push = true } = {}) {
-  if (!VIEWS.includes(name)) name = 'create';
+  const [view, sub] = String(name).split('/');
+  name = VIEWS.includes(view) ? view : 'create';
+  if (name === 'models') showModelsPane(sub || modelsPane, { push: false });
   $$('.tabs button').forEach(b => {
     const on = b.dataset.view === name;
     b.classList.toggle('active', on);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
-  if (push && location.hash !== `#${name}`) history.pushState(null, '', `#${name}`);
+  const hash = name === 'models' && modelsPane === 'brains' ? '#models/brains' : `#${name}`;
+  if (push && location.hash !== hash) history.pushState(null, '', hash);
   if (name === 'history') loadHistory();
   if (name === 'gallery') loadGallery();
   if (name === 'settings' && !state.settingsDirty) renderSettings();
@@ -346,6 +349,7 @@ function loadLlms() {
     state.llmError = res.error || '';
     if (res.ok) state.llms = res.models; // offline: keep last-known names for the picker
     renderLlmSelect();
+    renderBrains();
     renderBanner();
     renderVisionWarning();
     if (cameBack) {
@@ -399,17 +403,25 @@ function renderLlmSelect() {
     updateLlmDot();
     return;
   }
-  const label = m => `${m.vision ? '👁 ' : ''}${m.name}${m.loaded ? '  · loaded' : ''}`;
-  const group = (title, list) => (list.length
-    ? `<optgroup label="${esc(title)}">${list.map(m => `<option value="${esc(m.id)}">${esc(label(m))}</option>`).join('')}</optgroup>`
+  const label = m => {
+    const speed = brainSpeed(m);
+    return [`${m.vision ? '👁 ' : ''}${m.name}`, speed && `~${fmtSecs(speed.seconds)}`, m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join('  · ');
+  };
+  const group = (title, list, why = () => '') => (list.length
+    ? `<optgroup label="${esc(title)}">${list.map(m => `<option value="${esc(m.id)}">${esc(label(m) + why(m))}</option>`).join('')}</optgroup>`
     : '');
   const known = state.llms.some(m => m.id === current);
+  const model = currentModel();
+  const suggested = suggestedBrains(model, Boolean(state.image));
+  const reasons = new Map(suggested.map(x => [x.m.id, x.why]));
+  const rest = state.llms.filter(m => !reasons.has(m.id));
   sel.innerHTML =
     '<option value="">Auto: whatever is loaded</option>' +
     (current && !known ? `<option value="${esc(current)}">${esc(current)} (missing)</option>` : '') +
-    group('Loaded now', state.llms.filter(m => m.loaded)) +
-    group('Vision models 👁 (can see images)', state.llms.filter(m => !m.loaded && m.vision)) +
-    group('Text-only models', state.llms.filter(m => !m.loaded && !m.vision));
+    group(`Suggested for ${model?.name}`, suggested.map(x => x.m), m => ` — ${reasons.get(m.id)}`) +
+    group('Loaded now', rest.filter(m => m.loaded)) +
+    group('Vision models 👁 (can see images)', rest.filter(m => !m.loaded && m.vision)) +
+    group('Text-only models', rest.filter(m => !m.loaded && !m.vision));
   sel.value = current;
   updateLlmDot();
 }
@@ -439,6 +451,69 @@ function updateLlmDot() {
     dot.className = 'dot warn';
     box.title = `${m.name} loads on first use, so the first run takes a few extra seconds`;
   }
+  if (!m) return;
+  const level = brainThinking(m);
+  const note = level === 'off' ? thinkNote(m) : '';
+  box.title += `\nThinking: ${THINKING_LABELS[level]}${m.thinking ? " (this Brain's own setting)" : ''}${note ? `. It ${note}` : ''}`;
+  const speed = brainSpeed(m);
+  if (speed) box.title += `\nAbout ${fmtSecs(speed.seconds)} per prompt (${speed.from})`;
+}
+
+// How "Thinking: Off" works for a Brain: LM Studio's own switch, or what the app learned by using it.
+function thinkNote(m) {
+  if (m.thinkSwitch) return 'LM Studio can switch it off';
+  return {
+    quiet: "doesn't think when Thinking is Off",
+    trick: 'ignores Thinking: Off, so Prompt Maker switches it off another way',
+    stubborn: 'keeps thinking even with Thinking: Off, so it is slow and needs a high Max tokens',
+  }[m.thinkOff] || '';
+}
+
+const THINKING_LABELS = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High', default: "Model's default" };
+const brainThinking = m => m.thinking || state.settings?.thinking || 'off';
+const llmById = id => state.llms.find(m => m.id === id);
+const fmtSecs = s => `${s < 10 ? s.toFixed(1) : Math.round(s)} s`;
+const isNewBrain = m => !m.stats?.runs && !m.check && !m.record;
+
+// Seconds per prompt: from your runs (those that didn't include loading), else from the Quick check.
+function brainSpeed(m) {
+  const s = m.stats;
+  if (s?.timed) return { seconds: s.seconds / s.timed, from: `${s.timed} run${s.timed > 1 ? 's' : ''}` };
+  const checked = [m.check?.image, m.check?.video].filter(x => x?.ok);
+  if (checked.length) return { seconds: checked.reduce((a, x) => a + x.seconds, 0) / checked.length, from: 'Quick check' };
+  return null;
+}
+
+// How well a Brain suits a target model: what you rendered, starred and refined with it (for this model, then for
+// others of the same kind), its Quick check, and how often it failed. { score, why, proven }: why is a short reason
+// ('' with nothing to go on); proven means it comes from your own renders or ⭐, not only a check.
+function brainFit(m, model) {
+  if (!model) return { score: 0, why: '' };
+  const r = m.record?.byModel?.[model.id] || {};
+  const k = m.record?.[model.kind] || {};
+  const kind = model.kind === 'video' ? 'video' : 'image';
+  const check = m.check?.[kind];
+  const s = m.stats || {};
+  let score = 3 * (r.fav || 0) + 2 * (r.rendered || 0) + 0.5 * (r.refined || 0) + 0.25 * (r.takes || 0)
+    + 0.5 * ((k.rendered || 0) - (r.rendered || 0)) + 1.5 * ((k.fav || 0) - (r.fav || 0));
+  if (check) score += check.ok ? 1 : -2;
+  if (s.runs >= 3) score -= (4 * ((s.room || 0) + (s.empty || 0) + (s.refused || 0))) / s.runs;
+  if (m.thinkOff === 'stubborn' && brainThinking(m) === 'off') score -= 2;
+  const why = r.fav || r.rendered ? [r.fav && `⭐ ${r.fav}`, r.rendered && `${r.rendered} rendered`].filter(Boolean).join(' · ')
+    : k.fav || k.rendered ? [k.fav && `⭐ ${k.fav}`, k.rendered && `${k.rendered} rendered`].filter(Boolean).join(' · ') + ` with other ${kind} models`
+    : check?.ok ? `passed the ${kind} check`
+    : r.takes ? `wrote ${r.takes} take${r.takes > 1 ? 's' : ''}` : '';
+  return { score, why, proven: Boolean(r.fav || r.rendered || k.fav || k.rendered) };
+}
+
+// Up to 3 Brains worth suggesting for a model, best first (only ones that see images when there's an image).
+function suggestedBrains(model, needsVision) {
+  return state.llms
+    .filter(m => !needsVision || m.vision !== false)
+    .map(m => ({ m, ...brainFit(m, model) }))
+    .filter(x => x.why && x.score >= 1)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
 }
 
 function renderVisionWarning() {
@@ -449,17 +524,22 @@ function renderVisionWarning() {
   if (blind) warn.textContent = `🙈 ${llm.name} can't see images. Switch the Brain (top right) to a 👁 vision model.`;
 }
 
-$('#llmSelect').addEventListener('change', async e => {
+// Makes a model the Brain (or '' for "whatever is loaded").
+async function setBrain(id) {
   try {
-    state.settings = await api('/api/settings', { method: 'PUT', body: { llmModel: e.target.value } });
+    state.settings = await api('/api/settings', { method: 'PUT', body: { llmModel: id } });
+    $('#llmSelect').value = id;
     updateLlmDot();
     renderVisionWarning();
+    renderBrains();
     const m = selectedLlm();
-    toast(e.target.value ? `🧠 Brain: ${m?.name || e.target.value}` : '🧠 Brain: auto (uses whatever is loaded)');
+    const speed = m && brainSpeed(m);
+    toast(id ? `🧠 Brain: ${m?.name || id}${speed ? ` · about ${fmtSecs(speed.seconds)} per prompt` : ''}` : '🧠 Brain: auto (uses whatever is loaded)');
   } catch (err) {
     toast(err.message, true);
   }
-});
+}
+$('#llmSelect').addEventListener('change', e => setBrain(e.target.value));
 $('#llmRefresh').addEventListener('click', async () => {
   await loadLlms();
   toast(state.llmOk ? `🔄 ${state.llms.length} models found in LM Studio` : '🔌 LM Studio is not reachable', !state.llmOk);
@@ -567,7 +647,7 @@ function renderModelChips() {
   $('#createForm').classList.toggle('no-models', !state.models.length);
   if (!state.models.length) {
     grid.innerHTML = '<div class="model-empty"><p>No target models yet. Add one (or import a <code>.json</code>) to get going.</p><button type="button" class="btn primary small" data-go="models">＋ Add a model</button></div>';
-    $('[data-go]', grid).addEventListener('click', () => { showView('models'); newModel(); });
+    $('[data-go]', grid).addEventListener('click', () => { showView('models/models'); newModel(); });
     return;
   }
   const key = JSON.stringify(state.models.map(m => [m.id, m.name, m.kind, m.color, m.description]));
@@ -653,6 +733,7 @@ function renderRole() {
   themePlaceholder();
   renderVisionWarning();
   renderWorkflowWarning();
+  if (state.llmOk !== null) renderLlmSelect(); // suggestions follow the model and the image
 }
 
 function setVariations(n, { persist = true } = {}) {
@@ -1651,6 +1732,173 @@ const NEW_MODEL = {
   lengthGuide: { short: '≈40–70 words', medium: '≈80–130 words', long: '≈150–220 words' },
   sources: [],
 };
+
+// ---------- Brains (Models → Brains) ----------
+
+let modelsPane = saved.get('modelsPane', 'models');
+function showModelsPane(pane, { push = true } = {}) {
+  modelsPane = pane === 'brains' ? 'brains' : 'models';
+  saved.set('modelsPane', modelsPane);
+  $$('.models-switch button').forEach(b => {
+    const on = b.dataset.pane === modelsPane;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  $('#modelsPane').hidden = modelsPane !== 'models';
+  $('#modelsIntro').hidden = modelsPane !== 'models';
+  $('#brainsPane').hidden = modelsPane !== 'brains';
+  $('#brainsIntro').hidden = modelsPane !== 'brains';
+  const hash = modelsPane === 'brains' ? '#models/brains' : '#models';
+  if (push && location.hash !== hash) history.pushState(null, '', hash);
+  renderBrains();
+}
+$$('.models-switch button').forEach(b => b.addEventListener('click', () => showModelsPane(b.dataset.pane)));
+
+// One card per Brain, the best for the "Best for" model first. Brains you haven't used or checked go in a fold.
+function renderBrains() {
+  $('#brainCount').textContent = state.llms.length || '';
+  if ($('#brainsPane').hidden) return;
+  const pick = $('#brainTarget');
+  const target = modelById(pick.value) ? pick.value : state.modelId;
+  pick.innerHTML = state.models.map(m => `<option value="${esc(m.id)}">${m.kind === 'video' ? '🎬' : '📷'} ${esc(m.name)}</option>`).join('');
+  pick.value = target || '';
+  const model = modelById(pick.value);
+  const inUse = selectedLlm()?.id;
+  const ranked = state.llms
+    .map(m => ({ m, fit: brainFit(m, model) }))
+    .sort((a, b) => (b.m.id === inUse) - (a.m.id === inUse) || b.fit.score - a.fit.score || (b.m.stats?.runs || 0) - (a.m.stats?.runs || 0) || a.m.name.localeCompare(b.m.name));
+  const fresh = ranked.filter(x => isNewBrain(x.m) && x.m.id !== inUse);
+  $('#brainList').innerHTML = ranked.filter(x => !fresh.includes(x)).map(x => brainCard(x.m, x.fit, model, inUse)).join('');
+  $('#brainListNew').innerHTML = fresh.map(x => brainCard(x.m, x.fit, model, inUse)).join('');
+  $('#brainsNew').hidden = !fresh.length;
+  $('#brainsNew > summary').textContent = `${fresh.length} Brain${fresh.length > 1 ? 's' : ''} you haven't used or checked yet`;
+  const empty = $('#brainsEmpty');
+  empty.hidden = state.llms.length > 0;
+  empty.textContent = state.llmOk === false
+    ? 'LM Studio is not reachable, so there are no Brains to show. Start its server (see the banner at the top).'
+    : 'No models in LM Studio yet. Download one there and it shows up here.';
+}
+
+function brainCard(m, fit, model, inUse) {
+  const s = m.stats || {};
+  const speed = brainSpeed(m);
+  const fails = [s.room && `ran out of room ${s.room}×`, s.empty && `empty ${s.empty}×`, s.refused && `refused ${s.refused}×`].filter(Boolean).join(' · ');
+  const size = [m.params, m.quant, m.sizeBytes && `${(m.sizeBytes / 1e9).toFixed(1)} GB`].filter(Boolean).join(' · ');
+  const record = kind => {
+    const r = m.record?.[kind];
+    return r?.takes ? `${r.takes} take${r.takes > 1 ? 's' : ''} · ${r.rendered} rendered${r.fav ? ` · ⭐ ${r.fav}` : ''}` : '<span class="muted">none yet</span>';
+  };
+  const checking = state.brainCheck?.id === m.id;
+  const note = thinkNote(m);
+  return `<li class="brain${m.id === inUse ? ' current' : ''}" data-id="${esc(m.id)}">
+    <div class="brain-head">
+      <span class="brain-name">${esc(m.name)}</span>
+      ${m.id === inUse ? '<span class="tag ok">in use</span>' : ''}
+      ${m.loaded ? '<span class="tag">loaded</span>' : ''}
+      <span class="tag">${m.vision ? '👁 sees images' : m.vision === false ? 'text-only' : 'vision unknown'}</span>
+      ${m.tools ? '<span class="tag" title="Trained for tool calling, which ✦ Ask uses">🛠 tools</span>' : ''}
+      ${size ? `<span class="muted small">${esc(size)}</span>` : ''}
+      <span class="brain-actions">
+        ${m.id === inUse ? '' : '<button type="button" class="btn small" data-act="use">▶ Use</button>'}
+        ${checking ? '<button type="button" class="btn small" data-act="stop">■ Stop</button>'
+          : `<button type="button" class="btn small" data-act="check" title="Loads it in LM Studio (unloading the model there now), writes an image and a video prompt${m.vision !== false ? ' and looks at a test image' : ''}"${state.brainCheck ? ' disabled' : ''}>⚡ Quick check</button>`}
+      </span>
+    </div>
+    ${fit.why ? `<p class="brain-fit${fit.proven ? '' : ' muted'}">${fit.proven ? `✓ Good for ${esc(model.name)}: ` : `For ${esc(model.name)}: `}${esc(fit.why)}</p>` : ''}
+    <div class="brain-facts">
+      <div><span class="k">Thinking</span>
+        <select data-act="thinking" aria-label="Thinking for ${esc(m.name)}">
+          <option value="">Settings default (${THINKING_LABELS[state.settings?.thinking || 'off']})</option>
+          ${Object.entries(THINKING_LABELS).map(([v, l]) => `<option value="${v}"${v === m.thinking ? ' selected' : ''}>${l}</option>`).join('')}
+        </select>
+        ${note ? `<span class="muted small">It ${esc(note)}.</span>` : ''}
+      </div>
+      <div><span class="k">Speed</span>
+        <span>${speed ? `about ${fmtSecs(speed.seconds)} per prompt <span class="muted">(${speed.from})</span>` : '<span class="muted">not measured yet</span>'}</span>
+        ${fails ? `<span class="small warn-text">${esc(fails)}</span>` : ''}
+      </div>
+      <div><span class="k">📷 Image prompts</span><span>${record('image')}</span></div>
+      <div><span class="k">🎬 Video prompts</span><span>${record('video')}</span></div>
+      <div class="brain-check"><span class="k">Quick check</span>${checking ? `<span class="brain-status">⏳ ${esc(state.brainCheck.status)}</span>` : checkSummary(m.check)}</div>
+    </div>
+  </li>`;
+}
+
+function checkSummary(c) {
+  if (!c) return '<span class="muted">not checked yet</span>';
+  const part = (x, label) => {
+    if (!x) return '';
+    if (!x.ok) {
+      const why = x.refused ? 'refused' : x.error ? 'failed' : x.answer ? `said "${x.answer.slice(0, 30)}"` : 'failed';
+      return `<span class="warn-text" title="${esc(x.error || x.sample || x.answer || '')}">✗ ${label} (${esc(why)})</span>`;
+    }
+    const words = x.words ? `, ${x.words} words${x.inRange === false ? ` (asked ${x.target})` : ''}` : '';
+    return `<span title="${esc(x.sample || x.answer || '')}">✓ ${label} ${fmtSecs(x.seconds)}${esc(words)}${x.tidy === false ? ', needed tidying' : ''}</span>`;
+  };
+  const parts = [part(c.image, 'image'), part(c.video, 'video'), part(c.vision, 'sees images')].filter(Boolean).join(' · ');
+  return `<span>${parts}</span><span class="muted small">${timeAgo(c.at)}${c.loadSeconds ? ` · loaded in ${fmtSecs(c.loadSeconds)}` : ''}</span>`;
+}
+
+$('#brainsPane').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]');
+  const id = b?.closest('.brain')?.dataset.id;
+  if (!id) return;
+  if (b.dataset.act === 'use') setBrain(id);
+  else if (b.dataset.act === 'check') quickCheck(id);
+  else if (b.dataset.act === 'stop') stopQuickCheck();
+});
+$('#brainsPane').addEventListener('change', async e => {
+  if (e.target.id === 'brainTarget') return renderBrains();
+  const sel = e.target.closest('select[data-act="thinking"]');
+  const m = llmById(sel?.closest('.brain')?.dataset.id);
+  if (!m) return;
+  try {
+    Object.assign(m, await api('/api/brains', { method: 'PUT', body: { id: m.id, thinking: sel.value } }));
+    renderBrains();
+    updateLlmDot();
+    toast(`🧠 ${m.name}: Thinking ${sel.value ? THINKING_LABELS[sel.value] : `follows Settings (${THINKING_LABELS[state.settings?.thinking || 'off']})`}`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+// Quick check: a short test of one Brain (see /api/brains/check). One at a time, never during a run.
+async function quickCheck(id) {
+  const m = llmById(id);
+  if (!m || state.brainCheck) return;
+  if (state.busy || state.chainActive) return toast('Wait for the current run to finish, then check.', true);
+  state.brainCheck = { id, status: m.loaded ? 'Starting…' : `Loading ${m.name}…`, runId: null, stopped: false };
+  renderBrains();
+  let done = null;
+  let failed = null;
+  try {
+    await streamApi('/api/brains/check', { id }, ev => {
+      if (ev.type === 'start') state.brainCheck.runId = ev.runId;
+      else if (ev.type === 'status') {
+        state.brainCheck.status = ev.text;
+        const el = $(`.brain[data-id="${CSS.escape(id)}"] .brain-status`);
+        if (el) el.textContent = `⏳ ${ev.text}`;
+      } else if (ev.type === 'done') done = ev.check;
+      else if (ev.type === 'error') failed = ev.message;
+    });
+  } catch (err) {
+    failed = err.message;
+  }
+  const { stopped } = state.brainCheck;
+  state.brainCheck = null;
+  await loadLlms(); // the saved check, and LM Studio's new loaded model
+  if (failed) toast(failed, true);
+  else if (done) {
+    const parts = [done.image, done.video, done.vision].filter(Boolean);
+    toast(parts.every(x => x.ok) ? `⚡ ${m.name} passed the Quick check` : `⚡ ${m.name}: ${parts.filter(x => !x.ok).length} of ${parts.length} checks failed. See its card.`, !parts.every(x => x.ok));
+  } else if (stopped) toast('Quick check stopped');
+}
+
+function stopQuickCheck() {
+  if (!state.brainCheck?.runId) return;
+  state.brainCheck.stopped = true;
+  api(`/api/runs/${state.brainCheck.runId}/cancel`, { method: 'POST' }).catch(() => {});
+}
 
 function renderModelList() {
   $('#modelList').innerHTML = state.models.map(m => `
@@ -3605,7 +3853,7 @@ function renderGallery() {
       <h3>${none ? 'No renders yet' : 'Nothing matches'}</h3>
       <p>${none ? 'Attach a ComfyUI workflow to a model (Models tab), then hit <b>▶ Render</b> on any take. Every image and video lands here.' : 'Try another filter.'}</p>
       ${none ? '<div class="try"><button type="button" class="btn primary" data-go="models">🎨 Set up a workflow</button></div>' : ''}</div>`;
-    $('[data-go]', grid)?.addEventListener('click', () => showView('models'));
+    $('[data-go]', grid)?.addEventListener('click', () => showView('models/models'));
     return;
   }
   grid.innerHTML = '';

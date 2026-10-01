@@ -533,6 +533,27 @@ async function main() {
     await choose('#llmSelect', 'mock/vision-8b');
   });
 
+  await test('brain that ignores Thinking: Off is switched off another way, and remembered', async () => {
+    await choose('#llmSelect', 'mock/fable');
+    await type('#theme', 'a lighthouse in a storm');
+    const before = mockCalls();
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('.take .prompt-text:not([hidden])'), 1, 'prompt written');
+    eq(mockCalls(), before + 2, 'stopped once it started thinking, then asked again');
+    eq(mock.log.at(-2).messages.at(-1).role, 'user', 'first ask as usual');
+    assert(/^<think>\s*<\/think>/.test(lastCall().messages.at(-1).content), 'second ask starts with its thinking over');
+    await click('#generateBtn');
+    await genDone();
+    eq(mockCalls(), before + 3, 'next time it goes straight to the trick');
+    assert(/^<think>/.test(lastCall().messages.at(-1).content), 'remembered');
+    await waitFor('document.querySelector("#llmBox").title.includes("switches it off another way")', 'tooltip says how thinking is switched off');
+    await choose('#llmSelect', 'mock/vision-8b');
+    await click('#generateBtn');
+    await genDone();
+    eq(lastCall().messages.at(-1).role, 'user', 'a Brain that behaves gets no trick');
+  });
+
   await test('empty output → clear error', async () => {
     await type('#theme', 'EMPTYTEST scene');
     await click('#generateBtn');
@@ -1117,6 +1138,67 @@ async function main() {
     const idx = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("a lighthouse at dusk")) + 1');
     assert(await js(`!!document.querySelector('.hcard:nth-of-type(${idx}) .hthumb img[src^="/renders/"]')`), 'render as the thumbnail');
     assert(/\d+ renders/.test(await text(`.hcard:nth-of-type(${idx}) .hthumb .tag`)), 'render count');
+  });
+
+  await test('brains: cards, records, suggestions, own Thinking level, Quick check', async () => {
+    // a refusal counts against the Brain
+    await click('.tabs button[data-view="create"]');
+    await type('#theme', 'REFUSETEST a quiet harbor');
+    await click('#generateBtn');
+    await genDone();
+
+    // the picker suggests Brains for the model on Create, with the reason
+    const group = await js('document.querySelector("#llmSelect optgroup")?.label');
+    assert(group.startsWith('Suggested for'), `first group is the suggestions (got "${group}")`);
+    assert(await js('[...document.querySelectorAll("#llmSelect optgroup:first-of-type option")].some(o => o.value === "mock/vision-8b" && /rendered/.test(o.textContent))'), 'the Brain you rendered with is suggested, saying why');
+
+    await click('.tabs button[data-view="models"]');
+    await click('.models-switch button[data-pane="brains"]');
+    await waitFor('document.querySelectorAll("#brainList .brain").length > 0', 'Brain cards');
+    eq(await js('location.hash'), '#models/brains', 'own address');
+    assert(await visible('#modelsPane') === false, 'model editor hidden');
+    eq(await js('document.querySelector("#brainList .brain").dataset.id'), 'mock/vision-8b', 'the Brain in use comes first');
+    const card = await text('.brain[data-id="mock/vision-8b"]');
+    assert(card.includes('per prompt'), 'speed from your runs');
+    assert(/\d+ rendered/.test(card), 'record from History');
+    assert(card.includes('refused 1×'), 'refusal counted');
+    assert(card.includes('8B · Q4_K_M · 6.2 GB') && card.includes('🛠 tools'), "LM Studio's facts");
+    assert((await text('.brain[data-id="mock/fable"]')).includes('switches it off another way'), 'thinking behavior learned earlier');
+    assert(!(await js('document.querySelector("#brainsNew").hidden')), 'unused Brains are folded away');
+    assert(await js('!!document.querySelector("#brainListNew .brain[data-id=\\"mock/fresh\\"]")'), 'the never-used Brain is in the fold');
+
+    // a Brain's own Thinking level wins over Settings
+    await choose('.brain[data-id="mock/thinker"] select[data-act="thinking"]', 'default');
+    await toastText("Thinking Model's default");
+    await click('.brain[data-id="mock/thinker"] button[data-act="use"]');
+    await toastText('Brain: Mock Thinker 9B');
+    assert((await js('document.querySelector("#llmBox").title')).includes("Thinking: Model's default (this Brain's own setting)"), 'tooltip shows its own level');
+    await click('.tabs button[data-view="create"]');
+    await type('#theme', 'a paper boat on a pond');
+    await click('#generateBtn');
+    await genDone();
+    eq(lastCall().reasoning_effort, undefined, 'its own level was used');
+    await click('.tabs button[data-view="models"]');
+    await choose('.brain[data-id="mock/thinker"] select[data-act="thinking"]', '');
+    await toastText('follows Settings (Off)');
+    await click('.brain[data-id="mock/vision-8b"] button[data-act="use"]');
+    await toastText('Brain: Mock Vision 8B');
+
+    // Quick check: loads the Brain, writes an image and a video prompt; text-only Brains skip the image test
+    await js('document.querySelector("#brainsNew").open = true');
+    const before = mockCalls();
+    await click('.brain[data-id="mock/fresh"] button[data-act="check"]');
+    await toastText('Mock Fresh 3B passed the Quick check');
+    eq(mock.log[before].messages[0].content, 'Say OK.', 'loaded first');
+    eq(mockCalls(), before + 3, 'then an image and a video prompt');
+    const fresh = await text('#brainList .brain[data-id="mock/fresh"]');
+    assert(fresh && /✓ image .*✓ video/.test(fresh) && !fresh.includes('sees images'), 'results on its card, out of the fold');
+    await click('.brain[data-id="mock/vision-8b"] button[data-act="check"]');
+    await toastText('Mock Vision 8B passed the Quick check');
+    assert((await text('.brain[data-id="mock/vision-8b"]')).includes('✓ sees images'), 'vision test passed');
+    await shot('brains');
+    await click('.models-switch button[data-pane="models"]');
+    eq(await js('location.hash'), '#models', 'back to the model editor');
   });
 
   await test('workflows: upload an API file, pick between two, export, delete', async () => {
@@ -1719,13 +1801,15 @@ async function main() {
     const sizes = [[360, 740, true], [390, 844, true], [820, 1180, true], [1024, 768, false], [1280, 800, false], [1920, 1080, false]];
     for (const [w, h, mobile] of sizes) {
       await viewport(w, h, mobile);
-      for (const view of ['create', 'history', 'gallery', 'models', 'settings']) {
-        await js(`document.querySelector('.tabs button[data-view="${view}"]').click()`);
+      for (const view of ['create', 'history', 'gallery', 'models', 'brains', 'settings']) {
+        if (view === 'brains') await js(`document.querySelector('.models-switch button[data-pane="brains"]').click()`);
+        else await js(`document.querySelector('.tabs button[data-view="${view}"]').click()`);
         await sleep(250);
         const overflow = await js('document.documentElement.scrollWidth - innerWidth');
         const culprit = overflow > 1 ? await js(`[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1 && e.offsetParent).slice(-4).map(e => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\\s+/).join('.') : '') + ' r=' + Math.round(e.getBoundingClientRect().right)).join(' | ')`) : '';
         assert(overflow <= 1, `${view} at ${w}px scrolls sideways by ${overflow}px: ${culprit}`);
         await shot(`r-${w}-${view}`, { full: view === 'create' });
+        if (view === 'brains') await js(`document.querySelector('.models-switch button[data-pane="models"]').click()`);
       }
     }
     await viewport(1440, 900);

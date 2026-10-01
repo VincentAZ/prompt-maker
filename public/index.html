@@ -242,11 +242,30 @@
 
     <!-- ================= MODELS ================= -->
     <section id="view-models" class="view" aria-label="Models">
-      <div class="page-head">
-        <h1>Models</h1>
-        <p>Each model carries its own playbook: the instructions your local LLM follows to write prompts for it. New model out? Add it here.</p>
+      <div class="page-head models-head">
+        <div>
+          <h1>Models</h1>
+          <p id="modelsIntro">Each model carries its own playbook: the instructions your local LLM follows to write prompts for it. New model out? Add it here.</p>
+          <p id="brainsIntro" hidden>Your LM Studio models ("Brains") write the prompts. Prompt Maker learns how each one thinks, how fast it is and which jobs it does well from your own runs. New models show up here on their own.</p>
+        </div>
+        <div class="seg models-switch" role="tablist" aria-label="Which models">
+          <button type="button" role="tab" data-pane="models" class="active" aria-selected="true">🎯 Image &amp; video models</button>
+          <button type="button" role="tab" data-pane="brains" aria-selected="false">🧠 Brains <span id="brainCount" class="count"></span></button>
+        </div>
       </div>
-      <div class="models-layout">
+      <div id="brainsPane" class="brains-pane" hidden>
+        <div class="brains-bar">
+          <label class="field inline"><span>Best for</span><select id="brainTarget" aria-label="Rank Brains for this model"></select></label>
+          <p class="hint">Ranked by what you rendered, starred and refined with each Brain, then by Quick check. ⚡ Quick check loads the Brain in LM Studio (unloading the one there now) and writes two test prompts: about 20 seconds.</p>
+        </div>
+        <ul id="brainList" class="brain-list"></ul>
+        <details id="brainsNew" class="brains-new" hidden>
+          <summary></summary>
+          <ul id="brainListNew" class="brain-list"></ul>
+        </details>
+        <p id="brainsEmpty" class="notice" hidden></p>
+      </div>
+      <div class="models-layout" id="modelsPane">
         <aside class="models-side">
           <button type="button" id="newModelBtn" class="btn primary block">＋ New model</button>
           <div class="side-row">
@@ -397,7 +416,7 @@
                 <option value="high">High</option>
                 <option value="default">Model default</option>
               </select>
-              <small class="hint">For reasoning models such as Qwen 3.5/3.6. Left on, they can think for thousands of tokens before writing.</small>
+              <small class="hint">For reasoning models such as Qwen 3.5/3.6. Left on, they can think for thousands of tokens before writing. This is the default for every Brain; give one Brain its own level on <b>Models → Brains</b>.</small>
             </label>
             <label class="field"><span>Top P</span><input id="sTopP" type="number" min="0" max="1" step="0.01"><small class="hint">Lower is more focused. Temperature is set per run on the Create page.</small></label>
             <label class="field"><span>Max tokens</span><input id="sMax" type="number" min="256" max="32768" step="256"><small class="hint">The cap on each answer. Raise it if thinking is on.</small></label>
