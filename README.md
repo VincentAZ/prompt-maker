@@ -71,6 +71,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - Browse every result in the **Gallery**, and view it in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
 - **🧠 Brain profiles.** **Models → Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
+- **🔞 Adult content (optional, off by default).** A switch under **Settings → Master instructions** lets the Brain write explicit prompts between adults: plain anatomical language, who does what to whom kept exact, the act at the center of the shot. Each model can also have **Adult examples**, used only while the switch is on.
 - **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let the local LLM draft the playbook. Import and export models as `.json`.
 - **Zero install fuss.** Plain Node.js with no dependencies: no `npm install`, no build step.
 - **Private by design.** Nothing leaves your machine (see [Privacy & offline](#privacy--offline)).

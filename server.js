@@ -11,7 +11,7 @@ import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
 import * as cloud from './lib/cloud.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
-import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
+import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import { convertUiWorkflow, isApiWorkflow, isUiWorkflow, pruneToOutputs, ConvertError } from './lib/comfy-convert.js';
@@ -306,7 +306,7 @@ async function generate(req, res) {
   const texts = [];
   try {
     for (let index = 0; index < count; index++) {
-      const messages = buildGenerateMessages(masterFor(settings), model, { ...params, sourcePrompt: source?.text }, imageDataUrl, { index, count, previous: texts });
+      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text }, imageDataUrl, { index, count, previous: texts });
       const t0 = Date.now();
       const warm = llm.loaded !== false;
       const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
@@ -369,7 +369,7 @@ async function refine(req, res) {
 
   const stream = startStream(res, llm, 1, Boolean(imageDataUrl));
   try {
-    const messages = buildRefineMessages(masterFor(settings), model, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '' }, imageDataUrl, current, instruction);
+    const messages = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '' }, imageDataUrl, current, instruction);
     const t0 = Date.now();
     const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
       signal: stream.signal,
@@ -533,7 +533,7 @@ async function checkBrain(req, res) {
 
 async function checkPrompt(settings, llm, model, signal, onStatus) {
   const params = pickParams({ theme: CHECK_THEMES[model.kind], length: 'medium' }, model);
-  const messages = buildGenerateMessages(masterFor(settings), model, params, null, { index: 0, count: 1, previous: [] });
+  const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), params, null, { index: 0, count: 1, previous: [] });
   const target = model.lengthGuide?.medium || null;
   const t0 = Date.now();
   try {

@@ -2126,7 +2126,7 @@ function refreshDefaultSelects(defaults) {
   fillSelect($('#dDur'), listFromInput($('#mDur').value), d.duration);
 }
 
-function addExample(text = '') {
+function addExample(text = '', list = '#examplesList') {
   const row = document.createElement('div');
   row.className = 'example';
   row.innerHTML = '<textarea rows="3" aria-label="Example prompt" placeholder="A complete example prompt in this model\'s ideal style"></textarea><button type="button" class="icon-btn" title="Remove example" aria-label="Remove example">✕</button>';
@@ -2134,7 +2134,7 @@ function addExample(text = '') {
   ta.value = text;
   $('button', row).addEventListener('click', () => { row.remove(); markDirty(); });
   ta.addEventListener('input', () => autosize(ta));
-  $('#examplesList').append(row);
+  $(list).append(row);
   requestAnimationFrame(() => autosize(ta));
 }
 
@@ -2154,6 +2154,8 @@ function fillModelForm(m, isNew) {
   $('#mInstr').value = m.instructions;
   $('#examplesList').innerHTML = '';
   m.examples.forEach(x => addExample(x));
+  $('#adultExamplesList').innerHTML = '';
+  (m.adultExamples || []).forEach(x => addExample(x, '#adultExamplesList'));
   $('#mAspects').value = m.aspectRatios.join(', ');
   $('#mRes').value = m.resolutions.join(', ');
   $('#mDur').value = m.durations.join(', ');
@@ -2186,6 +2188,7 @@ function readModelForm() {
     description: $('#mDesc').value.trim(),
     instructions: $('#mInstr').value,
     examples: $$('#examplesList textarea').map(t => t.value.trim()).filter(Boolean),
+    adultExamples: $$('#adultExamplesList textarea').map(t => t.value.trim()).filter(Boolean),
     aspectRatios: listFromInput($('#mAspects').value),
     resolutions: listFromInput($('#mRes').value),
     durations: listFromInput($('#mDur').value),
@@ -2259,6 +2262,7 @@ $('#modelForm').addEventListener('input', e => {
 });
 $('#mKind').addEventListener('change', e => $('#modelForm').classList.toggle('is-video', e.target.value === 'video'));
 $('#addExampleBtn').addEventListener('click', () => { addExample(); markDirty(); $$('#examplesList textarea').at(-1).focus(); });
+$('#addAdultExampleBtn').addEventListener('click', () => { addExample('', '#adultExamplesList'); markDirty(); $$('#adultExamplesList textarea').at(-1).focus(); });
 
 $('#modelForm').addEventListener('submit', async e => {
   e.preventDefault();
