@@ -977,3 +977,15 @@ dialog.img-pick { width: min(980px, calc(100vw - 32px)); }
 .ip-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .ip-tile:hover, .ip-tile:focus-visible { border-color: var(--m); }
 .ip-cap { position: absolute; inset: auto 0 0 0; padding: 18px 8px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 11.5px; font-weight: 650; color: #fff; background: linear-gradient(to top, rgb(0 0 0 / 80%), transparent); }
+
+/* Settings → Cloud Brains */
+#cloudCard { display: flex; flex-direction: column; gap: 12px; }
+.cloud-add { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; align-items: end; }
+.cloud-add .field a { font-weight: 600; font-size: 12px; margin-left: 6px; color: var(--hot); }
+.cloud-dialog { max-width: 520px; }
+.cloud-dialog .modal-body { display: flex; flex-direction: column; gap: 12px; padding: 22px; }
+.cloud-dialog h2 { margin: 0; font-size: 20px; }
+.cloud-dialog p { margin: 0; line-height: 1.5; }
+.cloud-dialog-acts { justify-content: flex-end; }
+.tag.cloud { background: rgb(120 170 255 / 14%); color: #9cc2ff; }
+.cloud-dialog .modal-body > .cloud-dialog-acts { flex-direction: row; justify-content: flex-end; gap: 8px; padding: 0; }

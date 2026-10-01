@@ -468,10 +468,11 @@ Search the cards by name and sort them by **Best fit**, **Last used** or **Name*
 
 ## Privacy & offline
 
-- **Everything runs on your machine.** The app talks only to your own LM Studio, and to your own ComfyUI if you render.
-- **It refuses anything else.** The LM Studio URL must be this computer or a local-network address; internet URLs are rejected.
+- **It runs 100% offline.** Out of the box, the app talks only to your own LM Studio, and to your own ComfyUI if you render. No cloud provider ships with it.
+- **Cloud Brains are your choice.** If you add a provider in **Settings → ☁️ Cloud Brains** (OpenRouter, Anthropic, OpenAI, Google Gemini, xAI Grok, Kimi, DeepSeek, Mistral, Groq, or any OpenAI-compatible service), its models show up in the Brain menu marked ☁️. Before you switch to one, Prompt Maker asks, because what you write with it (your description, any image, the playbook and the instructions) goes to that provider. You can tell it not to ask again for a provider, and bring the questions back any time. Your API keys stay in your data folder, readable by you only, and never come back to the page. The provider list comes with the app; each provider's model list is fetched from the provider only once you've added your key.
+- **It refuses anything else.** The LM Studio and ComfyUI URLs must be this computer or a local-network address; internet URLs are rejected.
 - **Nothing external loads.** The page's Content-Security-Policy blocks external scripts, fonts and trackers, and the fonts are bundled.
-- **Nothing is sent anywhere.** No accounts, no telemetry, no analytics.
+- **Nothing else is sent anywhere.** No accounts, no telemetry, no analytics.
 - **Localhost only by default.** The web server binds to `127.0.0.1`, so other devices can't reach it.
 - **Protected from websites you visit.** Requests from other websites (cross-site requests) and DNS-rebinding tricks are rejected, so a web page can't quietly drive your local Prompt Maker.
 
@@ -495,6 +496,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── renders/        # images and videos rendered with ComfyUI
 ├── workflows/      # ComfyUI workflows you've attached, with their setup
 ├── chains/         # chains you saved or edited
+├── providers.json  # cloud providers you added, with your API keys (readable by you only)
 ├── brains.json     # what the app learned about each LLM: thinking, speed, Quick check, its own Thinking level
 └── models/         # playbooks you added or edited
 ```

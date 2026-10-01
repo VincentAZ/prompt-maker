@@ -9,6 +9,7 @@ import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } 
 import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
+import * as cloud from './lib/cloud.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
@@ -139,8 +140,10 @@ function within(dir, rel) {
 // Picks the LM Studio model to use and reports what we know about it: LM Studio's facts ({ id, name, vision,
 // loaded, thinkSwitch, … }) plus its Thinking level (its own, else Settings) and how Thinking: Off works on it.
 async function prepareLlm(settings, requested, needsVision) {
-  const llms = await listLlms(settings.lmStudioUrl);
   const id = (requested || settings.llmModel || '').trim();
+  // A cloud Brain doesn't need LM Studio at all.
+  const llms = cloud.isCloudId(id) ? await cloud.listModels() : await listLlms(settings.lmStudioUrl);
+  if (cloud.isCloudId(id) && !llms.some(m => m.id === id)) throw store.httpError(400, 'That cloud Brain is no longer available. Pick another one in the top bar.');
   let info;
   if (id) {
     info = llms.find(m => m.id === id) || { id, name: id, vision: null, loaded: null };
@@ -181,7 +184,9 @@ function sampling(settings, temperature, llm) {
 // recognizes (llm.thinkSwitch). Other Brains are watched when Thinking is Off: one that starts thinking anyway is
 // stopped and asked again with its thinking already over (EMPTY_THINK), and the app remembers which Brains need that.
 async function complete(settings, llm, body, { signal, onUpdate, onStatus }) {
-  const run = (b, stopIfThinking) => streamCompletion(settings.lmStudioUrl, b, { signal, onUpdate, stopIfThinking });
+  const run = (b, stopIfThinking) => (llm.cloud
+    ? cloud.stream(llm.id, b, { signal, onUpdate }, streamCompletion)
+    : streamCompletion(settings.lmStudioUrl, b, { signal, onUpdate, stopIfThinking }));
   if (llm.thinking !== 'off' || llm.thinkSwitch) return run(body, false);
   const learn = thinkOff => { llm.thinkOff = thinkOff; return store.noteBrain(llm.id, { thinkOff }); };
   const tricked = { ...body, messages: [...body.messages, EMPTY_THINK] };
@@ -808,11 +813,13 @@ async function route(req, res) {
     const settings = await store.getSettings();
     const base = url.searchParams.get('url') || settings.lmStudioUrl;
     try {
-      const [models, notes, history] = await Promise.all([listLlms(base), store.getBrainNotes(), store.listHistory()]);
+      const [models, notes, history, clouds] = await Promise.all([listLlms(base), store.getBrainNotes(), store.listHistory(), cloud.listModels()]);
       const records = brainRecords(history);
-      return sendJson(res, 200, { ok: true, url: base, models: models.map(m => ({ ...m, ...brainView(notes[m.id]), record: records[m.id] || null })) });
+      return sendJson(res, 200, { ok: true, url: base, models: [...models, ...clouds].map(m => ({ ...m, ...brainView(notes[m.id]), record: records[m.id] || null })) });
     } catch (err) {
-      return sendJson(res, 200, { ok: false, url: base, error: err.message, models: [] });
+      // LM Studio is down, but cloud Brains still work.
+      const clouds = await cloud.listModels().catch(() => []);
+      return sendJson(res, 200, { ok: false, url: base, error: err.message, models: clouds });
     }
   }
 
@@ -839,6 +846,22 @@ async function route(req, res) {
       await services.stopApp();
     } else if (what === 'app' && action === 'stop') await services.stopApp();
     else throw store.httpError(400, 'Nothing to do.');
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // Cloud Brains (Settings): providers you add, with your keys. The page never gets a key back.
+  if (p === '/api/providers' && m === 'GET') {
+    await cloud.listModels(); // fills in each provider's model count
+    return sendJson(res, 200, { catalog: cloud.CATALOG, providers: await cloud.listProviders() });
+  }
+  if (p === '/api/providers' && m === 'POST') return sendJson(res, 200, await cloud.addProvider(await readBody(req)));
+  if (p === '/api/providers/trust' && m === 'PUT') {
+    const body = await readBody(req);
+    await cloud.setTrusted(body.id ?? null, body.trusted);
+    return sendJson(res, 200, { providers: await cloud.listProviders() });
+  }
+  if ((match = p.match(/^\/api\/providers\/([\w-]+)$/)) && m === 'DELETE') {
+    await cloud.removeProvider(match[1]);
     return sendJson(res, 200, { ok: true });
   }
 

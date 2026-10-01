@@ -398,7 +398,7 @@
     <section id="view-settings" class="view" aria-label="Settings">
       <div class="page-head">
         <h1>Settings</h1>
-        <p>Everything runs on your machine. Nothing leaves it.</p>
+        <p>Prompt Maker runs 100% offline: nothing leaves your machine, unless you choose a ☁️ cloud Brain.</p>
       </div>
       <form id="settingsForm" class="settings" autocomplete="off" novalidate>
         <section class="card" id="servicesCard">
@@ -436,6 +436,20 @@
           </label>
           <p id="sTestResult" class="test-result" hidden></p>
           <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start and stop LM Studio's server in <b>Services</b> above. Choose the LLM (“Brain”) in the top bar. Image input needs a vision model marked 👁.</p>
+        </section>
+
+        <section class="card" id="cloudCard">
+          <h2>☁️ Cloud Brains <span class="tag">optional</span></h2>
+          <p class="hint">Prompt Maker runs 100% offline. If a local model isn't good enough, add a cloud provider with your own API key: its models then show up in the Brain menu, marked ☁️. Whatever you write with a cloud Brain is sent to that provider, and Prompt Maker asks before you switch to one.</p>
+          <ul id="providerList" class="svc-list"></ul>
+          <div class="cloud-add">
+            <label class="field"><span>Provider</span><select id="cpPreset"></select></label>
+            <label class="field" id="cpUrlField" hidden><span>API address</span><input id="cpUrl" placeholder="https://api.example.com/v1"></label>
+            <label class="field" id="cpNameField" hidden><span>Name</span><input id="cpName" placeholder="e.g. My server"></label>
+            <label class="field"><span>API key <a id="cpKeyLink" target="_blank" rel="noopener noreferrer" hidden>get one</a></span><input id="cpKey" type="password" autocomplete="off" placeholder="paste it here"></label>
+            <button type="button" id="cpAdd" class="btn small primary">＋ Add</button>
+          </div>
+          <div class="row"><button type="button" id="cpReset" class="btn small" hidden>Ask again before every cloud Brain</button></div>
         </section>
 
         <section class="card">
@@ -551,6 +565,19 @@
         <span id="wfBusy" class="muted small" hidden>Reading workflow…</span>
         <button type="button" id="wfSave" class="btn primary" hidden>Save workflow</button>
       </footer>
+    </form>
+  </dialog>
+
+  <dialog id="cloudDialog" class="modal cloud-dialog" aria-labelledby="cloudDialogTitle">
+    <form method="dialog" class="modal-body">
+      <h2 id="cloudDialogTitle">☁️ Send your prompts to <span id="cdProvider"></span>?</h2>
+      <p><b id="cdModel"></b> runs on <span id="cdProvider2"></span>'s servers, not on this computer. Everything you write with it leaves your computer: your shot description, any image you attach, the model's playbook and the writing instructions.</p>
+      <p class="muted small">Your local Brains stay 100% offline. Switch back to one any time.</p>
+      <label class="check-row"><input type="checkbox" id="cdTrust"> <span>Don't ask again for <span id="cdProvider3"></span></span></label>
+      <div class="row cloud-dialog-acts">
+        <button value="no" class="btn">Nope</button>
+        <button value="ok" class="btn primary">OK, use it</button>
+      </div>
     </form>
   </dialog>
 

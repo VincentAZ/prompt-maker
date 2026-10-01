@@ -764,6 +764,64 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('cloud Brains: none until you add one; asks before sending prompts; key never shown again', async () => {
+    eq(await js('[...document.querySelectorAll("#llmSelect option")].filter(o => o.value.startsWith("cloud:")).length'), 0, 'ships with no cloud Brains');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelectorAll("#cpPreset option").length > 5', 'provider list');
+    await choose('#cpPreset', 'custom');
+    assert(await visible('#cpUrl'), 'custom asks for the address');
+    await type('#cpUrl', `http://127.0.0.1:${MOCK_PORT}/v1`);
+    await type('#cpName', 'Test Cloud');
+    await type('#cpKey', 'wrong-key');
+    await click('#cpAdd');
+    await toastText("didn't accept that API key");
+    await type('#cpKey', 'sk-test-12345678');
+    await click('#cpAdd');
+    await toastText('Added Test Cloud');
+    assert((await text('#providerList')).includes('key …5678'), 'key shown masked');
+    assert(!(await js('JSON.stringify(document.body.innerHTML)')).includes('sk-test-12345678'), 'the key is never on the page');
+    eq(((await fs.stat(path.join(dataDir, 'providers.json'))).mode & 0o777).toString(8), '600', 'key file readable by you only');
+    assert(!(await visible('#settingsDirty')), 'adding a provider is not an unsaved setting');
+    const cloudId = await js('[...document.querySelectorAll("#llmSelect option")].find(o => o.value.endsWith(":mock/text-only"))?.value');
+    assert(cloudId?.startsWith('cloud:'), 'its models are Brains now');
+
+    // Switching to it asks first. Nope keeps the local Brain.
+    await click('.tabs button[data-view="create"]');
+    await choose('#llmSelect', cloudId);
+    await waitFor('document.querySelector("#cloudDialog").open', 'are-you-sure dialog');
+    assert((await text('#cloudDialog')).includes('leaves your computer'), 'says what leaves');
+    await click('#cloudDialog button[value="no"]');
+    eq(await value('#llmSelect'), 'mock/vision-8b', 'Nope: still the local Brain');
+
+    // OK + don't ask again → cloud Brain, prompts go with the key, no thinking switch forced on it.
+    await choose('#llmSelect', cloudId);
+    await waitFor('document.querySelector("#cloudDialog").open', 'asked again');
+    await click('#cdTrust');
+    await click('#cloudDialog button[value="ok"]');
+    await toastText('Brain: ☁️');
+    eq(await text("#llmPickName"), `☁️ mock/text-only · Test Cloud`, 'top bar marks it ☁️');
+    await type('#theme', 'a lighthouse keeper making tea');
+    await click('#generateBtn');
+    await genDone();
+    eq(lastCall()._auth, 'Bearer sk-test-12345678', 'sent with your key');
+    eq(lastCall().model, 'mock/text-only', 'the provider\'s own model name');
+    eq(lastCall().reasoning_effort, undefined, 'Thinking: Off asks for nothing');
+    await choose('#llmSelect', 'mock/vision-8b');
+    await choose('#llmSelect', cloudId);
+    assert(!(await js('document.querySelector("#cloudDialog").open')), "doesn't ask again");
+    await toastText('Brain: ☁️');
+    await choose('#llmSelect', 'mock/vision-8b');
+
+    // Remove: gone from the menu, key deleted.
+    await click('.tabs button[data-view="settings"]');
+    await click('#providerList [data-act="remove"]');
+    await click('#providerList [data-act="remove"]');
+    await toastText('Provider removed');
+    eq(JSON.parse(await fs.readFile(path.join(dataDir, 'providers.json'), 'utf8')).length, 0, 'key deleted');
+    await waitFor('![...document.querySelectorAll("#llmSelect option")].some(o => o.value.startsWith("cloud:"))', 'gone from the Brain menu');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('offline copy: with the server off, the page still opens, then loads for real when it is back', async () => {
     await waitFor('navigator.serviceWorker.controller !== null', 'the page copy is kept', 10000);
     const conditions = offline => cdp.send('Network.emulateNetworkConditions', { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });

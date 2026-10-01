@@ -61,13 +61,16 @@ export function startMock(port) {
   const handler = async (req, res) => {
     const json = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
     if (req.method === 'GET' && req.url === '/api/v1/models') return json(200, { models: MODELS });
-    if (req.method === 'GET' && req.url === '/v1/models') return json(200, { data: MODELS.map(m => ({ id: m.key })) });
+    if (req.method === 'GET' && req.url === '/v1/models') {
+      if (req.headers.authorization === 'Bearer wrong-key') return json(401, { error: { message: 'bad key' } });
+      return json(200, { data: MODELS.map(m => ({ id: m.key })) });
+    }
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') return json(404, { error: 'not found' });
 
     let raw = '';
     for await (const c of req) raw += c;
     let body = JSON.parse(raw);
-    log.push(body);
+    log.push(Object.assign(body, req.headers.authorization ? { _auth: req.headers.authorization } : {}));
     // An answer that starts with its thinking already over: drop it, and remember it was there.
     const pre = body.messages.at(-1);
     const thinkingOver = pre.role === 'assistant' && /^<think>\s*<\/think>/.test(pre.content);

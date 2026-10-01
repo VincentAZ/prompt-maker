@@ -331,6 +331,7 @@ function showView(name, { push = true } = {}) {
   if (name === 'settings' && !state.settingsDirty) renderSettings();
   if (name === 'settings') showOutputDir();
   if (name === 'settings') loadServices();
+  if (name === 'settings') loadProviders();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
     if (state.models.length) editModel(state.modelId || state.models[0].id); else newModel();
   } else if (name === 'models') renderWorkflowList(); // workflows may have changed elsewhere (e.g. in ComfyUI)
@@ -351,6 +352,7 @@ function loadLlms() {
     state.llmOk = res.ok;
     state.llmError = res.error || '';
     if (res.ok) state.llms = res.models; // offline: keep last-known names for the picker
+    else if (res.models?.length) state.llms = [...state.llms.filter(m => !m.cloud), ...res.models]; // cloud Brains still work
     renderLlmSelect();
     renderBrains();
     renderBanner();
@@ -425,7 +427,7 @@ function renderLlmSelect() {
   }
   const label = m => {
     const speed = brainSpeed(m);
-    return [`${m.vision ? '👁 ' : ''}${m.name}`, speed && `~${fmtSecs(speed.seconds)}`, m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join('  · ');
+    return [`${brainIcon(m)}${m.name}`, speed && `~${fmtSecs(speed.seconds)}`, !m.cloud && m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join('  · ');
   };
   const group = (title, list, why = () => '') => (list.length
     ? `<optgroup label="${esc(title)}">${list.map(m => `<option value="${esc(m.id)}">${esc(label(m) + why(m))}</option>`).join('')}</optgroup>`
@@ -439,9 +441,10 @@ function renderLlmSelect() {
     '<option value="">Auto: whatever is loaded</option>' +
     (current && !known ? `<option value="${esc(current)}">${esc(current)} (missing)</option>` : '') +
     group(`Suggested for ${model?.name}`, suggested.map(x => x.m), m => ` — ${reasons.get(m.id)}`) +
-    group('Loaded now', rest.filter(m => m.loaded)) +
-    group('Vision models 👁 (can see images)', rest.filter(m => !m.loaded && m.vision)) +
-    group('Text-only models', rest.filter(m => !m.loaded && !m.vision));
+    group('Loaded now', rest.filter(m => !m.cloud && m.loaded)) +
+    group('Vision models 👁 (can see images)', rest.filter(m => !m.cloud && !m.loaded && m.vision)) +
+    group('Text-only models', rest.filter(m => !m.cloud && !m.loaded && !m.vision)) +
+    group('☁️ Cloud (sends your prompts to the provider)', rest.filter(m => m.cloud));
   sel.value = current;
   updateLlmDot();
   renderLlmPick();
@@ -450,6 +453,7 @@ function renderLlmSelect() {
 // ---------- Brain picker (top bar) ----------
 // A searchable menu over the hidden #llmSelect: type to narrow it down, sort it smart, by last used or by name.
 
+const brainIcon = m => (m.cloud ? '☁️ ' : m.vision ? '👁 ' : '');
 const lastUsedAt = m => [m.stats?.lastUsed, m.record?.last].filter(Boolean).sort().at(-1) || '';
 const escRe = str => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const searchWords = q => q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -480,7 +484,7 @@ function renderLlmPick() {
   const m = llmById(current);
   $('#llmPickName').textContent = !state.llmOk ? (current ? m?.name || current : state.appDown ? 'Not connected' : 'LM Studio offline')
     : !current ? 'Auto: whatever is loaded'
-    : m ? `${m.vision ? '👁 ' : ''}${m.name}` : `${current} (missing)`;
+    : m ? `${brainIcon(m)}${m.name}` : `${current} (missing)`;
   if (!$('#llmMenu').hidden) renderLlmMenu();
 }
 
@@ -505,9 +509,10 @@ function llmMenuGroups(q, suggested) {
   return [
     { items: [auto] },
     { title: `Suggested for ${currentModel()?.name}`, items: suggested.map(x => x.m) },
-    { title: 'Loaded now', items: rest.filter(m => m.loaded) },
-    { title: 'Vision 👁 (can see images)', items: rest.filter(m => !m.loaded && m.vision) },
-    { title: 'Text-only', items: rest.filter(m => !m.loaded && !m.vision) },
+    { title: 'Loaded now', items: rest.filter(m => !m.cloud && m.loaded) },
+    { title: 'Vision 👁 (can see images)', items: rest.filter(m => !m.cloud && !m.loaded && m.vision) },
+    { title: 'Text-only', items: rest.filter(m => !m.cloud && !m.loaded && !m.vision) },
+    { title: '☁️ Cloud (sends your prompts to the provider)', items: rest.filter(m => m.cloud) },
   ];
 }
 
@@ -521,8 +526,8 @@ function renderLlmMenu() {
     const speed = m.id && brainSpeed(m);
     const last = m.id && lastUsedAt(m);
     const detail = !m.id ? 'Uses the model LM Studio has loaded'
-      : [why.get(m.id), m.vision ? 'sees images' : m.vision === false ? 'text-only' : '', speed && `~${fmtSecs(speed.seconds)}`, last && `used ${timeAgo(last)}`, m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join(' · ');
-    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="n">${m.vision ? '👁 ' : ''}${highlight(m.name, q)}</span><span class="d">${esc(detail)}</span></li>`;
+      : [why.get(m.id), m.cloud && `cloud: ${m.cloud}`, m.vision ? 'sees images' : m.vision === false ? 'text-only' : '', speed && `~${fmtSecs(speed.seconds)}`, last && `used ${timeAgo(last)}`, !m.cloud && m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join(' · ');
+    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="n">${m.id ? brainIcon(m) : ''}${highlight(m.name, q)}</span><span class="d">${esc(detail)}</span></li>`;
   };
   const html = llmMenuGroups(q, suggested).filter(g => g.items.length)
     .map(g => (g.title ? `<li class="grp" role="presentation">${esc(g.title)}</li>` : '') + g.items.map(option).join('')).join('');
@@ -704,6 +709,11 @@ function renderVisionWarning() {
 
 // Makes a model the Brain (or '' for "whatever is loaded").
 async function setBrain(id) {
+  const m = llmById(id);
+  if (m?.cloud && !(await cloudConsent(m))) {
+    $('#llmSelect').value = state.settings?.llmModel || '';
+    return renderLlmPick();
+  }
   try {
     state.settings = await api('/api/settings', { method: 'PUT', body: { llmModel: id } });
     $('#llmSelect').value = id;
@@ -713,7 +723,7 @@ async function setBrain(id) {
     renderBrains();
     const m = selectedLlm();
     const speed = m && brainSpeed(m);
-    toast(id ? `🧠 Brain: ${m?.name || id}${speed ? ` · about ${fmtSecs(speed.seconds)} per prompt` : ''}` : '🧠 Brain: auto (uses whatever is loaded)');
+    toast(id ? `🧠 Brain: ${m?.cloud ? '☁️ ' : ''}${m?.name || id}${speed ? ` · about ${fmtSecs(speed.seconds)} per prompt` : ''}` : '🧠 Brain: auto (uses whatever is loaded)');
   } catch (err) {
     toast(err.message, true);
   }
@@ -1993,7 +2003,7 @@ function brainCard(m, fit, model, inUse, q = '') {
     <div class="brain-head">
       <span class="brain-name">${highlight(m.name, q)}</span>
       ${m.id === inUse ? '<span class="tag ok">in use</span>' : ''}
-      ${m.loaded ? '<span class="tag">loaded</span>' : ''}
+      ${m.cloud ? `<span class="tag cloud" title="Your prompts go to ${esc(m.cloud)}">☁️ ${esc(m.cloud)}</span>` : m.loaded ? '<span class="tag">loaded</span>' : ''}
       <span class="tag">${m.vision ? '👁 sees images' : m.vision === false ? 'text-only' : 'vision unknown'}</span>
       ${m.tools ? '<span class="tag" title="Trained for tool calling, which ✦ Ask uses">🛠 tools</span>' : ''}
       ${size ? `<span class="muted small">${esc(size)}</span>` : ''}
@@ -2417,6 +2427,100 @@ function setSettingsDirty(d) {
   $('#settingsDirty').hidden = !d;
 }
 
+// ---------- settings: cloud Brains ----------
+// Providers you add with your own key. None ship with the app: it runs 100% offline until you add one.
+
+async function loadProviders() {
+  const res = await api('/api/providers').catch(() => null);
+  if (res) {
+    state.catalog = res.catalog;
+    state.providers = res.providers;
+    renderProviders();
+  }
+  return res;
+}
+
+function renderProviders() {
+  const list = state.providers || [];
+  $('#providerList').innerHTML = list.map(p => `<li class="svc" data-id="${esc(p.id)}">
+      <span class="dot ${p.error ? 'bad' : 'ok'}"></span>
+      <span class="svc-text"><b>☁️ ${esc(p.name)}</b><span class="svc-state">${p.error ? esc(p.error) : `${p.models ?? '…'} models`} · key ${esc(p.keyHint)}${p.trusted ? ' · doesn\'t ask before use' : ''}</span></span>
+      <span class="svc-acts"><button type="button" class="btn small danger" data-act="remove">Remove</button></span>
+    </li>`).join('');
+  $('#cpReset').hidden = !list.some(p => p.trusted);
+  const sel = $('#cpPreset');
+  if (!sel.options.length && state.catalog) {
+    sel.innerHTML = state.catalog.map(c => `<option value="${esc(c.preset)}">${esc(c.name)}</option>`).join('');
+    showPreset();
+  }
+}
+
+function showPreset() {
+  const c = state.catalog?.find(x => x.preset === $('#cpPreset').value);
+  const custom = c?.preset === 'custom';
+  $('#cpUrlField').hidden = !custom;
+  $('#cpNameField').hidden = !custom;
+  $('#cpKeyLink').hidden = !c?.keyUrl;
+  if (c?.keyUrl) $('#cpKeyLink').href = c.keyUrl;
+}
+$('#cpPreset').addEventListener('change', showPreset);
+
+$('#cpAdd').addEventListener('click', async e => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  try {
+    const added = await api('/api/providers', { method: 'POST', body: { preset: $('#cpPreset').value, baseUrl: $('#cpUrl').value, name: $('#cpName').value, key: $('#cpKey').value } });
+    $('#cpKey').value = '';
+    toast(`☁️ Added ${added.name}: ${added.models} models in the Brain menu`);
+    await Promise.all([loadProviders(), loadLlms()]);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '＋ Add';
+  }
+});
+
+$('#providerList').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act="remove"]');
+  const id = btn?.closest('.svc')?.dataset.id;
+  if (!id) return;
+  confirmClick(btn, 'Click again to remove', async () => {
+    await api(`/api/providers/${id}`, { method: 'DELETE' }).catch(err => toast(err.message, true));
+    toast('☁️ Provider removed, and its key deleted');
+    await Promise.all([loadProviders(), loadLlms()]);
+  });
+});
+
+$('#cpReset').addEventListener('click', async () => {
+  const res = await api('/api/providers/trust', { method: 'PUT', body: { id: null, trusted: false } }).catch(err => toast(err.message, true));
+  if (!res) return;
+  state.providers = res.providers;
+  renderProviders();
+  toast('☁️ Prompt Maker asks again before you switch to a cloud Brain');
+});
+
+// "Are you sure? This sends your prompts to …": before switching to a cloud Brain, unless you said don't ask again.
+async function cloudConsent(m) {
+  if (!state.providers) await loadProviders();
+  const provider = state.providers?.find(p => p.id === m.providerId);
+  if (provider?.trusted) return true;
+  const dlg = $('#cloudDialog');
+  for (const id of ['#cdProvider', '#cdProvider2', '#cdProvider3']) $(id).textContent = m.cloud;
+  $('#cdModel').textContent = m.name;
+  $('#cdTrust').checked = false;
+  dlg.returnValue = '';
+  dlg.showModal();
+  await new Promise(resolve => dlg.addEventListener('close', resolve, { once: true }));
+  if (dlg.returnValue !== 'ok') return false;
+  if ($('#cdTrust').checked && provider) {
+    const res = await api('/api/providers/trust', { method: 'PUT', body: { id: provider.id, trusted: true } }).catch(() => null);
+    if (res) state.providers = res.providers;
+  }
+  return true;
+}
+
 // ---------- settings: services ----------
 // What's running (Prompt Maker, LM Studio, ComfyUI), with Start and Stop buttons, and starting with the computer.
 
@@ -2588,7 +2692,7 @@ function renderSettings() {
 }
 
 // The Start-up switch saves on its own, so it never makes the form unsaved.
-const marksSettingsDirty = e => { if (!['sAutostart', 'sComfyAutostart'].includes(e.target.id)) setSettingsDirty(true); };
+const marksSettingsDirty = e => { if (!['sAutostart', 'sComfyAutostart'].includes(e.target.id) && !e.target.closest('#cloudCard')) setSettingsDirty(true); };
 $('#settingsForm').addEventListener('input', marksSettingsDirty);
 // Where ComfyUI's output folder is, as a hint in the field (it's usually found on its own).
 function showOutputDir() {
@@ -5239,6 +5343,7 @@ async function loadModels() {
   }
   api('/api/history').then(h => { state.history = h; $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
   loadAutostart();
+  loadProviders();
   await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins(), loadRecipes()]);
   if (state.workflows.length) await loadComfyStatus();
   document.documentElement.dataset.ready = '1';
