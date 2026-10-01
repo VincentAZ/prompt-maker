@@ -354,7 +354,8 @@ function loadLlms() {
     renderBrains();
     renderBanner();
     renderVisionWarning();
-    if (appBack) {
+    if (appBack && !state.booted) location.reload(); // the page came from its offline copy: load it for real
+    else if (appBack) {
       toast(res.ok ? '🔌 Prompt Maker is back' : '🔌 Prompt Maker is back, but LM Studio is still off');
       if (/Prompt Maker server/.test($('#stageError').textContent)) showError('');
     } else if (cameBack) {
@@ -397,13 +398,18 @@ window.addEventListener('focus', () => {
 function renderBanner() {
   const down = state.llmOk === false;
   $('#banner').hidden = !down;
-  // With the app's server gone, nothing here can start anything: say how to bring it back.
+  // With the app's server gone, the page can't start anything itself, but the promptmaker:// link can, where
+  // the app has set it up (remembered from when the server was up).
+  const canLaunch = Boolean(state.appDown && saved.get('launcher', false));
   $('#bannerStart').hidden = Boolean(state.appDown);
+  $('#bannerLaunch').hidden = !canLaunch;
   if (!down) return;
   $('#bannerTitle').textContent = state.appDown ? "Prompt Maker's server isn't running." : "LM Studio's server is off.";
-  $('#bannerLong').textContent = state.appDown
-    ? 'It stopped, or your computer restarted. Run ./start.sh in the app folder (./start.sh --install makes it start with your computer). This page reconnects on its own.'
-    : `Nothing is answering at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Start it here, or in LM Studio → Developer. It reconnects on its own.`;
+  $('#bannerLong').textContent = !state.appDown
+    ? `Nothing is answering at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Start it here, or in LM Studio → Developer. It reconnects on its own.`
+    : canLaunch
+      ? 'It stopped, or your computer restarted. Click Start (the first time, your browser asks to open Prompt Maker: allow it). This page reconnects on its own.'
+      : 'It stopped, or your computer restarted. Open Prompt Maker from your app menu, or run ./start.sh in its folder. This page reconnects on its own.';
 }
 
 function renderLlmSelect() {
@@ -471,7 +477,7 @@ const byRecent = (a, b) => lastUsedAt(b).localeCompare(lastUsedAt(a)) || byName(
 function renderLlmPick() {
   const current = state.settings?.llmModel || '';
   const m = llmById(current);
-  $('#llmPickName').textContent = !state.llmOk ? (current ? m?.name || current : 'LM Studio offline')
+  $('#llmPickName').textContent = !state.llmOk ? (current ? m?.name || current : state.appDown ? 'Not connected' : 'LM Studio offline')
     : !current ? 'Auto: whatever is loaded'
     : m ? `${m.vision ? '👁 ' : ''}${m.name}` : `${current} (missing)`;
   if (!$('#llmMenu').hidden) renderLlmMenu();
@@ -2410,6 +2416,41 @@ function setSettingsDirty(d) {
   $('#settingsDirty').hidden = !d;
 }
 
+// ---------- settings: start-up ----------
+
+// Starting with the computer, where the app can set that up (Linux for now). Also remembers whether the
+// promptmaker:// link works here, for the offline banner's Start button.
+async function loadAutostart() {
+  const st = await api('/api/autostart').catch(() => null);
+  if (!st) return;
+  saved.set('launcher', Boolean(st.supported && st.launcher));
+  renderAutostart(st);
+}
+
+function renderAutostart(st) {
+  $('#startupCard').hidden = !st.supported;
+  $('#sAutostart').checked = st.autostart;
+  $('#sAutostartHint').textContent = st.autostart
+    ? 'It starts when you log in, turns on LM Studio\'s server, and comes back on its own if it ever stops. It\'s also in your app menu.'
+    : 'Off: start it from your app menu when you need it. If the page ever says the server isn\'t running, its Start button brings it back.';
+}
+
+$('#sAutostart').addEventListener('change', async e => {
+  const on = e.target.checked;
+  e.target.disabled = true;
+  try {
+    const st = await api('/api/autostart', { method: 'PUT', body: { enabled: on } });
+    saved.set('launcher', Boolean(st.launcher));
+    renderAutostart(st);
+    toast(st.autostart ? '🚀 Prompt Maker starts with your computer' : "🚀 Prompt Maker won't start with your computer");
+  } catch (err) {
+    e.target.checked = !on;
+    toast(err.message, true);
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
 function renderSettings() {
   const s = state.settings;
   if (!s) return;
@@ -2428,13 +2469,15 @@ function renderSettings() {
   setSettingsDirty(false);
 }
 
-$('#settingsForm').addEventListener('input', () => setSettingsDirty(true));
+// The Start-up switch saves on its own, so it never makes the form unsaved.
+const marksSettingsDirty = e => { if (e.target.id !== 'sAutostart') setSettingsDirty(true); };
+$('#settingsForm').addEventListener('input', marksSettingsDirty);
 // Where ComfyUI's output folder is, as a hint in the field (it's usually found on its own).
 function showOutputDir() {
   api('/api/comfy/output-dir').then(r => { $('#sComfyDir').placeholder = r.detected ? `found: ${r.detected}` : 'not found: enter it, or start ComfyUI on this computer'; }).catch(() => {});
 }
 $('#sComfyCleanup').addEventListener('change', e => { $('#sComfyDirField').hidden = !e.target.checked; if (e.target.checked) showOutputDir(); });
-$('#settingsForm').addEventListener('change', () => setSettingsDirty(true));
+$('#settingsForm').addEventListener('change', marksSettingsDirty);
 $('#sTest').addEventListener('click', async () => {
   const out = $('#sTestResult');
   out.hidden = false;
@@ -5071,11 +5114,16 @@ async function loadModels() {
     showView(location.hash.slice(1) || 'create', { push: false });
     history.replaceState(null, '', `#${VIEWS.find(v => isView(v))}`);
     requestAnimationFrame(sizeTheme);
+    state.booted = true;
   } catch (err) {
     showError(`Could not start: ${friendly(err)}`);
   }
   api('/api/history').then(h => { state.history = h; $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
+  loadAutostart();
   await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins(), loadRecipes()]);
   if (state.workflows.length) await loadComfyStatus();
   document.documentElement.dataset.ready = '1';
 })();
+
+// Keeps a copy of the page, so it still opens (with a Start button) when Prompt Maker's server is off.
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

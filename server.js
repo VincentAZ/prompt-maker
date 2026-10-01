@@ -7,6 +7,7 @@ import path from 'node:path';
 import * as store from './lib/store.js';
 import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
+import * as autostart from './lib/autostart.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
@@ -777,6 +778,13 @@ async function route(req, res) {
     } catch (err) {
       return sendJson(res, 200, { ok: false, url: base, error: err.message, models: [] });
     }
+  }
+
+  // Starting with the computer (Settings): on/off, and whether the offline page's Start link works here.
+  if (p === '/api/autostart' && m === 'GET') return sendJson(res, 200, await autostart.status());
+  if (p === '/api/autostart' && m === 'PUT') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await autostart.setAutostart(Boolean(body.enabled)));
   }
 
   if (p === '/api/brains' && m === 'PUT') {

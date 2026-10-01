@@ -283,6 +283,20 @@ async function main() {
   const lmsMarker = path.join(tmp, 'lms-called');
   const fakeLms = path.join(tmp, 'fake-lms');
   await fs.writeFile(fakeLms, `#!/bin/sh\necho "$@" > ${JSON.stringify(lmsMarker)}\n`, { mode: 0o755 });
+  // Start-up setup goes to temp folders and a fake systemctl, never to your real app menu or services.
+  const xdgConfig = path.join(tmp, 'xdg-config');
+  const xdgData = path.join(tmp, 'xdg-data');
+  const systemctlLog = path.join(tmp, 'systemctl.log');
+  const fakeSystemctl = path.join(tmp, 'fake-systemctl');
+  await fs.writeFile(fakeSystemctl, `#!/bin/sh
+echo "$@" >> ${JSON.stringify(systemctlLog)}
+case "$*" in
+  *--version*) echo "systemd 255" ;;
+  *is-enabled*) if [ -f ${JSON.stringify(path.join(tmp, 'enabled'))} ]; then echo enabled; else echo disabled; exit 1; fi ;;
+  *" enable "*) touch ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
+  *disable*) rm -f ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
+esac
+`, { mode: 0o755 });
   const fixture = path.join(tmp, 'fixture.png');
   await fs.writeFile(fixture, makePng(640, 400));
   const portrait = path.join(tmp, 'portrait.png');
@@ -308,7 +322,7 @@ async function main() {
   const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
   await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
 
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, XDG_MIME_BIN: '/bin/true' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
   app.stdout.on('data', d => { appLog += d; });
   app.stderr.on('data', d => { appLog += d; });
@@ -660,6 +674,49 @@ async function main() {
     await toastText('Prompt Maker is back');
     assert(await js('document.querySelector("#banner").hidden'), 'banner gone without clicking');
     assert(await js('!document.querySelector("#bannerStart").hidden'), 'the LM Studio button is back for next time');
+  });
+
+  await test('start-up: start with the computer from Settings; the offline banner can start the app', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector("#startupCard").hidden', 'Start-up card');
+    assert(!(await js('document.querySelector("#sAutostart").checked')), 'off at first');
+    await click('#sAutostart');
+    await toastText('starts with your computer');
+    const unit = await fs.readFile(path.join(xdgConfig, 'systemd', 'user', 'prompt-maker.service'), 'utf8');
+    assert(unit.includes(`ExecStart="${process.execPath}"`) && unit.includes('server.js') && unit.includes('Restart=on-failure') && unit.includes('server start'), 'service: runs the app, restarts it, turns on LM Studio');
+    const desktop = await fs.readFile(path.join(xdgData, 'applications', 'prompt-maker.desktop'), 'utf8');
+    assert(desktop.includes('Name=Prompt Maker') && desktop.includes('MimeType=x-scheme-handler/promptmaker;') && desktop.includes('start.sh" %u'), 'app-menu entry and the start link');
+    assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user enable prompt-maker.service'), 'starts at login');
+    assert(!(await visible('#settingsDirty')), 'the switch saves on its own');
+    assert((await text('#sAutostartHint')).includes('comes back on its own'), 'says what it does');
+
+    // With the server gone, the banner now has a button that starts it.
+    await js('window.realFetch = window.fetch; window.fetch = () => Promise.reject(new TypeError("Failed to fetch"))');
+    await click('#llmRefresh');
+    await waitFor('!document.querySelector("#banner").hidden', 'banner');
+    assert(await visible('#bannerLaunch'), 'Start Prompt Maker button');
+    eq(await js('document.querySelector("#bannerLaunch").getAttribute("href")'), 'promptmaker://start', 'opens the start link');
+    assert((await text('#bannerLong')).includes('Click Start'), 'tells you to click it');
+    await js('window.fetch = window.realFetch');
+    await toastText('Prompt Maker is back');
+
+    await click('#sAutostart');
+    await toastText("won't start with your computer");
+    assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user disable prompt-maker.service'), 'off at login');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('offline copy: with the server off, the page still opens, then loads for real when it is back', async () => {
+    await waitFor('navigator.serviceWorker.controller !== null', 'the page copy is kept', 10000);
+    const conditions = offline => cdp.send('Network.emulateNetworkConditions', { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    await cdp.send('Network.enable');
+    await conditions(true);
+    await js('document.documentElement.dataset.ready = ""');
+    await cdp.send('Page.reload', {});
+    await waitFor('document.querySelector("#bannerTitle")?.textContent === "Prompt Maker\'s server isn\'t running." && !document.querySelector("#banner").hidden', 'the offline page, with its banner', 10000);
+    await shot('offline-page');
+    await conditions(false);
+    await waitFor('document.documentElement.dataset.ready === "1" && document.querySelector("#banner").hidden && document.querySelectorAll(".model-card").length > 0', 'reloaded for real once the server answers', 15000);
   });
 
   await test('history: list, search, filter, favorite, open', async () => {
@@ -1902,7 +1959,7 @@ async function main() {
     await fs.copyFile(path.join(ROOT, 'playbooks', 'krea2-raw.json'), path.join(old, 'models', 'krea2-raw.json')); // an untouched built-in
     await fs.writeFile(path.join(old, 'models', 'my-model.json'), JSON.stringify({ id: 'my-model', name: 'My Model', kind: 'image', instructions: '## Mine' }));
     const home = path.join(tmp, 'home');
-    const env = { ...process.env, PORT: String(APP_PORT + 1), HOME: home, XDG_DATA_HOME: path.join(home, 'xdg'), APPDATA: path.join(home, 'appdata') };
+    const env = { ...process.env, PORT: String(APP_PORT + 1), HOME: home, XDG_DATA_HOME: path.join(home, 'xdg'), XDG_CONFIG_HOME: path.join(home, 'xdg-config'), SYSTEMCTL_BIN: fakeSystemctl, APPDATA: path.join(home, 'appdata') };
     delete env.PROMPT_MAKER_DATA;
     const srv = spawn(process.execPath, ['server.js'], { cwd: app2, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let log = '';

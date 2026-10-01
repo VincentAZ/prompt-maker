@@ -64,6 +64,7 @@
     <span class="banner-ico">🔌</span>
     <span id="bannerText"><b id="bannerTitle">LM Studio's server is off.</b> <span class="long" id="bannerLong"></span></span>
     <button type="button" id="bannerStart" class="btn small primary">▶ Start it</button>
+    <a id="bannerLaunch" class="btn small primary" href="promptmaker://start" hidden>▶ Start Prompt Maker</a>
     <button type="button" id="bannerRetry" class="btn small">Retry</button>
   </div>
 
@@ -400,6 +401,12 @@
         <p>Everything runs on your machine. Nothing leaves it.</p>
       </div>
       <form id="settingsForm" class="settings" autocomplete="off" novalidate>
+        <section class="card" id="startupCard" hidden>
+          <h2>🚀 Start-up</h2>
+          <label class="check-row"><input type="checkbox" id="sAutostart"> <span>Start Prompt Maker with my computer, and keep it running</span></label>
+          <p class="hint" id="sAutostartHint"></p>
+        </section>
+
         <section class="card">
           <h2>🔌 LM Studio</h2>
           <label class="field"><span>Local server URL</span>

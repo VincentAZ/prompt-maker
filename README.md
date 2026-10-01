@@ -145,14 +145,13 @@ On **Linux** you can use the launcher instead. It starts LM Studio's server if n
 
 To stop Prompt Maker, press `Ctrl+C` in the terminal.
 
-**Start it with your computer (Linux).** Install it as a background service once, and Prompt Maker is always there, even after a restart. It also turns on LM Studio's server, and comes back on its own if it ever stops:
+**On Linux, the first start sets everything up for you,** so you never need the terminal again:
 
-```bash
-./start.sh --install     # from now on, it starts when you log in
-./start.sh --uninstall   # back to starting it by hand
-```
+- **Prompt Maker in your app menu.** Open it from there like any other app.
+- **It starts with your computer** and keeps running in the background. It turns on LM Studio's server too, and comes back on its own if it ever stops. Switch this off or on in **Settings → Start-up**.
+- **A Start button that works even when Prompt Maker is off.** If the page ever says *Prompt Maker's server isn't running*, click **▶ Start Prompt Maker**. The first time, your browser asks to open Prompt Maker: allow it (tick *Always allow*). The page keeps a copy of itself, so it opens even while the server is off.
 
-With the service installed, `./start.sh` just opens the app in your browser. Logs: `journalctl --user -u prompt-maker -f`.
+To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it up again. Logs: `journalctl --user -u prompt-maker -f`. Windows and macOS get the same setup with their own launchers (coming).
 
 ## Quick start
 
@@ -499,7 +498,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 <details>
 <summary><b>"Prompt Maker's server isn't running" banner</b></summary>
 
-The page is open but the app behind it stopped, for example because the computer restarted. A web page can't start programs, so start it again with `./start.sh` in the app folder; the page reconnects on its own. To stop this from happening, run `./start.sh --install` once (Linux), and it starts with your computer from then on.
+The page is open but the app behind it stopped. Click **▶ Start Prompt Maker** in the banner (the first time, allow your browser to open Prompt Maker), or open Prompt Maker from your app menu. The page reconnects on its own. If neither is there, run `./start.sh` in the app folder once: it sets both up. To keep it running from now on, switch on **Settings → Start-up**.
 </details>
 
 <details>
