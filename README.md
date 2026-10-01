@@ -145,6 +145,15 @@ On **Linux** you can use the launcher instead. It starts LM Studio's server if n
 
 To stop Prompt Maker, press `Ctrl+C` in the terminal.
 
+**Start it with your computer (Linux).** Install it as a background service once, and Prompt Maker is always there, even after a restart. It also turns on LM Studio's server, and comes back on its own if it ever stops:
+
+```bash
+./start.sh --install     # from now on, it starts when you log in
+./start.sh --uninstall   # back to starting it by hand
+```
+
+With the service installed, `./start.sh` just opens the app in your browser. Logs: `journalctl --user -u prompt-maker -f`.
+
 ## Quick start
 
 1. **Pick a brain.** Use the **Brain** menu at the top right: models marked 👁 can see images, and "loaded" means it's ready right now.
@@ -486,6 +495,12 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 - **Upgrading from an older version?** Older versions kept data in `./data` inside the app folder. It moves to the data folder automatically the first time you start the new version.
 
 ## Troubleshooting
+
+<details>
+<summary><b>"Prompt Maker's server isn't running" banner</b></summary>
+
+The page is open but the app behind it stopped, for example because the computer restarted. A web page can't start programs, so start it again with `./start.sh` in the app folder; the page reconnects on its own. To stop this from happening, run `./start.sh --install` once (Linux), and it starts with your computer from then on.
+</details>
 
 <details>
 <summary><b>"LM Studio's server is off" banner</b></summary>

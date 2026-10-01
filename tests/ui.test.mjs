@@ -648,6 +648,20 @@ async function main() {
     await waitFor('document.querySelector("#banner").hidden', 'auto-reconnected without clicking', 9000);
   });
 
+  await test("app server gone → its own banner, no LM Studio button, reconnects on its own", async () => {
+    // The page can't reach Prompt Maker's server (stopped, or the computer restarted).
+    await js('window.realFetch = window.fetch; window.fetch = () => Promise.reject(new TypeError("Failed to fetch"))');
+    await click('#llmRefresh');
+    await waitFor('!document.querySelector("#banner").hidden', 'banner');
+    eq(await text('#bannerTitle'), "Prompt Maker's server isn't running.", 'says what is really down');
+    assert((await text('#bannerLong')).includes('./start.sh'), 'says how to start it');
+    assert(!(await visible('#bannerStart')), "no Start button: there's nothing to ask");
+    await js('window.fetch = window.realFetch');
+    await toastText('Prompt Maker is back');
+    assert(await js('document.querySelector("#banner").hidden'), 'banner gone without clicking');
+    assert(await js('!document.querySelector("#bannerStart").hidden'), 'the LM Studio button is back for next time');
+  });
+
   await test('history: list, search, filter, favorite, open', async () => {
     await click('.tabs button[data-view="history"]');
     await waitFor('document.querySelectorAll(".hcard").length >= 4', 'history cards');

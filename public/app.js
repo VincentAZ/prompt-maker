@@ -69,7 +69,7 @@ async function api(path, { method = 'GET', body } = {}) {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
-    throw new Error(friendly(err));
+    throw Object.assign(new Error(friendly(err)), { appDown: true }); // the Prompt Maker server itself didn't answer
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { status: res.status });
@@ -343,8 +343,10 @@ $$('.tabs button').forEach(b => b.addEventListener('click', () => showView(b.dat
 let llmLoading = null;
 function loadLlms() {
   llmLoading ??= (async () => {
-    const res = await api('/api/llms').catch(err => ({ ok: false, error: err.message, models: [] }));
+    const res = await api('/api/llms').catch(err => ({ ok: false, error: err.message, appDown: Boolean(err.appDown), models: [] }));
     const cameBack = state.llmOk === false && res.ok;
+    const appBack = state.appDown && !res.appDown;
+    state.appDown = Boolean(res.appDown);
     state.llmOk = res.ok;
     state.llmError = res.error || '';
     if (res.ok) state.llms = res.models; // offline: keep last-known names for the picker
@@ -352,7 +354,10 @@ function loadLlms() {
     renderBrains();
     renderBanner();
     renderVisionWarning();
-    if (cameBack) {
+    if (appBack) {
+      toast(res.ok ? '🔌 Prompt Maker is back' : '🔌 Prompt Maker is back, but LM Studio is still off');
+      if (/Prompt Maker server/.test($('#stageError').textContent)) showError('');
+    } else if (cameBack) {
       toast('🔌 LM Studio is back');
       if (/LM Studio/.test($('#stageError').textContent)) showError('');
     }
@@ -361,7 +366,8 @@ function loadLlms() {
   return llmLoading;
 }
 
-// While LM Studio is down (or still indexing its models), keep checking so the app catches up on its own.
+// While LM Studio or the app's own server is down (or LM Studio is still indexing its models), keep checking
+// so the page catches up on its own.
 setInterval(() => {
   if ((state.llmOk === false || (state.llmOk && !state.llms.length)) && !document.hidden && !state.busy) loadLlms();
 }, 5000);
@@ -391,7 +397,13 @@ window.addEventListener('focus', () => {
 function renderBanner() {
   const down = state.llmOk === false;
   $('#banner').hidden = !down;
-  if (down) $('#bannerLong').textContent = `Nothing is answering at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Start it here, or in LM Studio → Developer. It reconnects on its own.`;
+  // With the app's server gone, nothing here can start anything: say how to bring it back.
+  $('#bannerStart').hidden = Boolean(state.appDown);
+  if (!down) return;
+  $('#bannerTitle').textContent = state.appDown ? "Prompt Maker's server isn't running." : "LM Studio's server is off.";
+  $('#bannerLong').textContent = state.appDown
+    ? 'It stopped, or your computer restarted. Run ./start.sh in the app folder (./start.sh --install makes it start with your computer). This page reconnects on its own.'
+    : `Nothing is answering at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Start it here, or in LM Studio → Developer. It reconnects on its own.`;
 }
 
 function renderLlmSelect() {
@@ -706,7 +718,7 @@ $('#llmRefresh').addEventListener('click', async () => {
 });
 $('#bannerRetry').addEventListener('click', async () => {
   await loadLlms();
-  if (!state.llmOk) toast('🔌 Still no answer from LM Studio', true);
+  if (!state.llmOk) toast(state.appDown ? "🔌 Prompt Maker's server still isn't answering" : '🔌 Still no answer from LM Studio', true);
 });
 $('#bannerStart').addEventListener('click', e => startLmStudio(e.currentTarget));
 
