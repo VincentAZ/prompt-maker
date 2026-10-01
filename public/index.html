@@ -491,6 +491,11 @@
           <p class="hint">Shared rules sent before every model's own instructions: output format, staying faithful to the theme, and so on.</p>
           <textarea id="sMaster" class="mono" rows="16" spellcheck="false"></textarea>
           <div class="row"><button type="button" id="sResetMaster" class="btn small">↺ Reset to default</button></div>
+          <label class="check-row"><input type="checkbox" id="sAdult"> <span>🔞 Adult content: let the Brain write explicit prompts (nudity and sex between adults)</span></label>
+          <details class="assist" id="sAdultText">
+            <summary><span>What this adds to the instructions</span><small>sent after them, while it's on</small></summary>
+            <pre class="mono adult-text"></pre>
+          </details>
         </section>
 
         <div class="settings-foot">

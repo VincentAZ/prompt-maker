@@ -2686,6 +2686,8 @@ function renderSettings() {
   $('#sComfyDirField').hidden = !s.comfyCleanup;
   $('#sThinking').value = s.thinking;
   $('#sMaster').value = s.masterPrompt;
+  $('#sAdult').checked = Boolean(s.adultContent);
+  $('#sAdultText pre').textContent = s.adultSection || '';
   $('#sDataDir').textContent = s.dataDir ? `📁 Your data lives in ${s.dataDir}` : '';
   $('#sTestResult').hidden = true;
   setSettingsDirty(false);
@@ -2721,7 +2723,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultContent: $('#sAdult').checked },
     });
     renderSettings();
     toast('💾 Settings saved');

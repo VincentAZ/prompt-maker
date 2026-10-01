@@ -822,6 +822,30 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('adult content: off by default; when on, its section goes with every prompt', async () => {
+    const sent = () => lastCall().messages[0].content;
+    await type('#theme', 'a quiet harbor at dawn');
+    await click('#generateBtn');
+    await genDone();
+    assert(!sent().includes('ADULT CONTENT'), 'off by default');
+    await click('.tabs button[data-view="settings"]');
+    assert(!(await js('document.querySelector("#sAdult").checked')), 'switch off');
+    await js('document.querySelector("#sAdultText").open = true');
+    assert((await text('#sAdultText pre')).includes('18 or older'), 'you can read what it adds');
+    await click('#sAdult');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+    await click('#generateBtn');
+    await genDone();
+    assert(sent().includes('ADULT CONTENT') && sent().indexOf('ADULT CONTENT') < sent().indexOf('# TARGET MODEL'), 'sent after the master instructions, before the playbook');
+    await click('.tabs button[data-view="settings"]');
+    await click('#sAdult');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('offline copy: with the server off, the page still opens, then loads for real when it is back', async () => {
     await waitFor('navigator.serviceWorker.controller !== null', 'the page copy is kept', 10000);
     const conditions = offline => cdp.send('Network.emulateNetworkConditions', { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
