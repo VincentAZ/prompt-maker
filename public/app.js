@@ -30,6 +30,10 @@ const state = {
   editId: null,
   dirty: false,
   settingsDirty: false,
+  chain: { steps: [], renders: 1, recipeId: null }, // the Then steps being built on Create (step ⑥)
+  recipes: [], // saved chains
+  run: null, // the chain run shown above the results
+  chainActive: false, // a chain is running steps right now
   workflows: [],
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   comfy: null,
@@ -251,16 +255,35 @@ function ratioOf(s) {
 }
 const ratioDist = (a, b) => Math.abs(Math.log(a / b));
 
+// The model's aspect option closest to a shape (width / height).
+function closestAspect(m, ratio) {
+  let best = null;
+  for (const a of m?.aspectRatios || []) {
+    const ar = ratioOf(a);
+    if (ar && ratio && (!best || ratioDist(ar, ratio) < ratioDist(ratioOf(best), ratio))) best = a;
+  }
+  return best;
+}
+
+// A W×H resolution in the aspect's shape (e.g. 9:16 → 1080×1920, not 1920×1080), nearest in size to current.
+function resolutionFor(m, aspect, current) {
+  const ar = ratioOf(aspect);
+  if (!m || !ar) return null;
+  const cur = ratioOf(current);
+  if (cur && ratioDist(cur, ar) < 0.05) return current;
+  const pixels = s => s.split(/[×x]/).reduce((a, b) => a * Number(b), 1);
+  const matches = m.resolutions.filter(r => ratioOf(r) && ratioDist(ratioOf(r), ar) < 0.05);
+  if (!matches.length) return null;
+  const target = cur ? pixels(current) : pixels(matches[0]);
+  return matches.sort((a, b) => Math.abs(pixels(a) - target) - Math.abs(pixels(b) - target))[0];
+}
+
 // Sets Aspect to the model's option closest to the attached image's shape.
 function matchImageAspect() {
   const m = currentModel();
   const r = state.image?.ratio;
   if (!m || !r) return null;
-  let best = null;
-  for (const a of m.aspectRatios) {
-    const ar = ratioOf(a);
-    if (ar && (!best || ratioDist(ar, r) < ratioDist(ratioOf(best), r))) best = a;
-  }
+  const best = closestAspect(m, r);
   if (!best) return null;
   $('#aspect').value = best;
   syncResolution();
@@ -269,20 +292,10 @@ function matchImageAspect() {
   return best;
 }
 
-// Keeps a W×H resolution in step with the aspect ratio (e.g. 9:16 → 1080×1920, not 1920×1080).
+// Keeps a W×H resolution in step with the aspect ratio.
 function syncResolution() {
-  const m = currentModel();
-  const ar = ratioOf($('#aspect').value);
-  const sel = $('#resolution');
-  if (!m || !ar) return;
-  const current = ratioOf(sel.value);
-  if (current && ratioDist(current, ar) < 0.05) return;
-  const pixels = s => s.split(/[×x]/).reduce((a, b) => a * Number(b), 1);
-  const matches = m.resolutions.filter(r => ratioOf(r) && ratioDist(ratioOf(r), ar) < 0.05);
-  if (!matches.length) return;
-  const target = current ? pixels(sel.value) : pixels(matches[0]);
-  matches.sort((a, b) => Math.abs(pixels(a) - target) - Math.abs(pixels(b) - target));
-  sel.value = matches[0];
+  const r = resolutionFor(currentModel(), $('#aspect').value, $('#resolution').value);
+  if (r) $('#resolution').value = r;
 }
 
 // The role actually used: "animate" only exists for video models.
@@ -592,6 +605,7 @@ function selectModel(id, { values } = {}) {
   $('#modelDesc').textContent = m?.description || '';
   $('#modelDesc').hidden = !m?.description;
   renderWorkflowPicker();
+  renderChainEditor();
   if (!m) return;
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
   fillSelect($('#aspect'), m.aspectRatios, v.aspectRatio);
@@ -641,7 +655,7 @@ function renderRole() {
 function setVariations(n, { persist = true } = {}) {
   state.variations = n;
   setActive($('#varSeg'), n);
-  if (!state.busy) $('#genLabel').textContent = n > 1 ? `Generate ${n} takes` : 'Generate';
+  updateGenerateLabel();
   if (persist) saved.set('variations', n);
 }
 
@@ -691,23 +705,35 @@ $('#theme').addEventListener('input', e => {
 
 // source: the render this image came from, when it's the next step of a chain (kept as a link, and its
 // original file is what ComfyUI gets).
+// An image as the LLM gets it: a JPEG data URL of at most 1536px, plus its shape (width / height).
+async function readImage(blob) {
+  const bitmap = await createImageBitmap(blob);
+  const max = 1536;
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.9), ratio: bitmap.width / bitmap.height };
+}
+
+// A render as the next step's input image, stored like an upload (ComfyUI still gets the original).
+async function imageFromRender(file) {
+  const blob = await (await fetch(`/renders/${encodeURIComponent(file.file)}`)).blob();
+  const { dataUrl, ratio } = await readImage(blob);
+  const { file: name } = await api('/api/images', { method: 'POST', body: { image: dataUrl } });
+  return { file: name, ratio };
+}
+
 async function loadImageFile(file, { source = null, quiet = false } = {}) {
   if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
   let dataUrl;
   let ratio;
   try {
-    const bitmap = await createImageBitmap(file);
-    ratio = bitmap.width / bitmap.height;
-    const max = 1536;
-    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    ({ dataUrl, ratio } = await readImage(file));
   } catch {
     return toast('Could not read that image.', true);
   }
@@ -1054,9 +1080,9 @@ function adoptEntry(entry, totalSecs) {
 
 function setBusy(busy) {
   state.busy = busy;
-  $('#generateBtn').disabled = busy;
-  $('#genLabel').textContent = busy ? 'Cooking…' : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
-  $('#stopBtn').hidden = !busy;
+  $('#generateBtn').disabled = busy || state.chainActive;
+  updateGenerateLabel();
+  $('#stopBtn').hidden = !busy && !state.chainActive;
   syncNewBtn();
   $$('.take .refine button, .take .refine input, .take .chips button, .take .save-edit, .take .versions button').forEach(el => { el.disabled = busy; });
   if (!busy) state.cards.forEach(c => { if (!c.interrupted && versionsOf(c).length) { $('.prev', c.el).disabled = c.view === 0; $('.next', c.el).disabled = c.view === versionsOf(c).length - 1; } });
@@ -1065,6 +1091,17 @@ function setBusy(busy) {
 
 // Stop asks the server to cancel, so takes that already finished still arrive and are kept.
 function stop() {
+  const run = state.chainActive ? state.run : null;
+  if (run && !run.stopped) {
+    // Stopping a chain: no further steps, and its renders still in ComfyUI are cancelled.
+    run.stopped = true;
+    for (const r of state.renderRuns) {
+      if (r.runId) api(`/api/runs/${r.runId}/cancel`, { method: 'POST' }).catch(() => r.controller.abort());
+      else r.controller.abort();
+    }
+    $('#genLabel').textContent = 'Stopping…';
+    toast('■ Chain stopped. Finished steps are kept');
+  }
   if (!state.busy || state.stopping) return;
   state.stopping = true;
   $('#genLabel').textContent = 'Stopping…';
@@ -1081,7 +1118,7 @@ function stop() {
 // New swaps places with Stop while a prompt is cooking, and has nothing to do on a blank slate.
 function syncNewBtn() {
   const b = $('#newBtn');
-  b.hidden = state.busy;
+  b.hidden = state.busy || state.chainActive;
   b.disabled = !($('#theme').value.trim() || state.image || state.entry);
 }
 
@@ -1103,6 +1140,7 @@ async function newSession() {
   setThemeQuietly('');
   setImage(null);
   state.timings = {};
+  closeRun();
   renderResults(null);
   setTitle('');
   window.scrollTo({ top: 0, behavior: scrollMode() });
@@ -1126,7 +1164,16 @@ async function newSession() {
 $('#newBtn').addEventListener('click', newSession);
 
 async function generate() {
-  if (state.busy) return;
+  if (state.busy || state.chainActive) return;
+  if (state.chain.steps.length) return runChain();
+  const body = await formRequest();
+  if (!body) return;
+  closeRun();
+  await runGeneration(body, currentModel());
+}
+
+// Checks the Create form and turns it into a generate request (null, with the reason shown, if it can't run).
+async function formRequest() {
   const m = currentModel();
   const theme = $('#theme').value.trim();
   showError('');
@@ -1155,7 +1202,11 @@ async function generate() {
     ...(state.image?.source ? { source: state.image.source } : {}),
   };
   if (state.image?.source && m.kind === 'video') saved.set('animateModel', m.id);
+  return body;
+}
 
+// Writes the takes for a request into the stage, streaming. Returns the saved history entry, or null.
+async function runGeneration(body, m, { autoRender: auto = true } = {}) {
   // Placeholder entry so the stage header and meters work while streaming.
   state.entry = { ...body, modelName: m.name, modelKind: m.kind, variations: [] };
   state.timings = {};
@@ -1164,7 +1215,7 @@ async function generate() {
   $('#resultsEmpty').hidden = true;
   const list = $('#resultsList');
   list.innerHTML = '';
-  const count = state.variations;
+  const count = body.variations;
   state.cards = Array.from({ length: count }, (_, i) => createTake(i, count, m));
   state.cards.forEach(c => list.append(c.el));
   state.cards.forEach((c, i) => setStatus(c, i === 0 ? 'Warming up…' : 'Queued', i === 0));
@@ -1222,7 +1273,7 @@ async function generate() {
     savedEntry.llmName = state.entry.llmName;
     adoptEntry(savedEntry, (performance.now() - t0) / 1000);
     bumpHistoryBadge(1);
-    autoRender(state.cards);
+    if (auto) autoRender(state.cards);
   } else {
     const keep = stopped ? [] : state.cards.filter(c => c.partial);
     state.cards.filter(c => !keep.includes(c)).forEach(c => c.el.remove());
@@ -1235,6 +1286,7 @@ async function generate() {
   else if (stopped) toast(savedEntry ? `■ Stopped. Kept ${savedEntry.variations.length} finished take${savedEntry.variations.length > 1 ? 's' : ''}` : '■ Stopped');
   setTitle(failed ? '⚠️ Failed' : document.hidden && savedEntry ? '✓ Done' : '');
   loadLlms(); // a run can load a model or reveal that LM Studio went away
+  return savedEntry;
 }
 
 async function refineCard(card, instruction) {
@@ -1283,6 +1335,7 @@ async function refineCard(card, instruction) {
   if (savedEntry) {
     savedEntry.llmName = state.entry.llmName;
     state.entry = savedEntry;
+    syncRunEntry(savedEntry);
     state.timings[card.index] = (performance.now() - t0) / 1000;
     showVersion(card, savedEntry.variations[card.index].versions.length - 1);
     announce(`Refined: ${instruction}`);
@@ -1309,6 +1362,7 @@ async function saveEdit(card, { quiet = false } = {}) {
     const entry = await api(`/api/history/${state.entry.id}`, { method: 'PATCH', body: { index: card.index, text } });
     entry.llmName = state.entry.llmName;
     state.entry = entry;
+    syncRunEntry(entry);
     showVersion(card, entry.variations[card.index].versions.length - 1);
     if (!quiet) toast('💾 Saved as a new version');
   } catch (err) {
@@ -1330,7 +1384,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if ($('#wfDialog').open) return;
-  if (e.key === 'Escape' && state.busy) stop();
+  if (e.key === 'Escape' && (state.busy || state.chainActive)) stop();
 });
 
 // ---------- history ----------
@@ -1414,7 +1468,7 @@ function renderHistory() {
         </div>
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite: ${esc(title)}" title="${e.favorite ? 'Unfavorite' : 'Favorite'}">${e.favorite ? '★' : '☆'}</button>
         <div class="hbody">
-          <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
+          <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
           <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open">${esc(title)}</div>
           <p class="hprompt">${esc(first)}</p>
           <div class="hactions">
@@ -1479,8 +1533,8 @@ $('#historyList').addEventListener('click', async e => {
   }
 });
 
-async function openEntry(entry) {
-  if (state.busy) return toast('Hold on, a prompt is still cooking. Stop it or wait.', true);
+// Puts an entry's setup back into the Create form: model, dials, theme, image and takes.
+async function loadForm(entry) {
   await flushEdits();
   if (modelById(entry.modelId)) {
     selectModel(entry.modelId, { values: entry });
@@ -1489,9 +1543,17 @@ async function openEntry(entry) {
   }
   if (($('#theme').value || '') !== (entry.theme || '')) replaceTheme(entry.theme || '', { focus: false });
   if (entry.imageRole) state.imageRole = entry.imageRole;
-  setImage(entry.imageFile ? { file: entry.imageFile } : null);
+  const src = entry.source;
+  setImage(entry.imageFile ? { file: entry.imageFile, ...(src ? { source: { entryId: src.entryId, index: src.index, renderId: src.renderId, file: src.file, modelName: src.modelName, seed: src.seed } } : {}) } : null);
   setVariations(entry.variations.length, { persist: false });
   showError('');
+}
+
+async function openEntry(entry) {
+  if (state.busy || state.chainActive) return toast('Hold on, something is still cooking. Stop it or wait.', true);
+  if (entry.chain) return openRun(entry);
+  await loadForm(entry);
+  closeRun();
   state.timings = {};
   showView('create');
   renderResults(entry);
@@ -1930,6 +1992,7 @@ async function loadWorkflows() {
   state.workflowsLoaded = true;
   renderModelList();
   renderWorkflowPicker();
+  renderChainEditor();
   if (isView('models')) renderWorkflowList();
   state.cards.forEach(c => { if (!c.interrupted && state.entry?.id) renderZone(c); });
   checkWorkflowUpdates();
@@ -2201,6 +2264,7 @@ function renderTiles(card) {
   const items = takeRenders(card).slice().reverse().flatMap(r => r.files.map(f => ({ entry: state.entry, index: card.index, render: r, file: f })));
   const ar = ASPECT_CSS(state.entry?.aspectRatio);
   const video = animateTarget();
+  const picking = pickStep() != null;
   const tiles = items.map((it, n) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -2209,13 +2273,27 @@ function renderTiles(card) {
     b.setAttribute('aria-label', `Open render ${n + 1}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}`);
     b.innerHTML = `${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-meta">${it.render.seed != null ? `seed ${it.render.seed}` : ''}${it.render.secs ? ` · ${it.render.secs}s` : ''}</span>`;
     b.addEventListener('click', () => openLightbox(items, n));
-    if (it.file.kind !== 'image' || !video) return b;
+    if (it.file.kind !== 'image' || (!video && !picking)) return b;
     const cell = document.createElement('div');
     cell.className = 'rcell';
-    const go = Object.assign(document.createElement('button'), { type: 'button', className: 'rt-next', textContent: '🎬 Animate' });
-    go.title = `Make a video from this still with ${video.name}: it becomes the first frame`;
-    go.setAttribute('aria-label', `Animate render ${n + 1} with ${video.name}`);
-    go.addEventListener('click', () => continueFrom(it, { animate: true }));
+    const go = Object.assign(document.createElement('button'), { type: 'button', className: 'rt-next' });
+    if (picking) {
+      // In a chain run: choose which renders go on to the next step.
+      const on = state.run.picks.has(pickKey(it));
+      const used = continuedFrom(state.run, it);
+      go.classList.add('rt-pick');
+      go.classList.toggle('on', on);
+      go.textContent = on ? '✓ Picked' : used ? '↳ Used' : '☐ Pick';
+      go.title = used && !on ? 'This one already went on to the next step. Pick it to send it again' : 'Send this one on to the next step';
+      go.setAttribute('aria-pressed', on);
+      go.setAttribute('aria-label', `Pick render ${n + 1} for the next step`);
+      go.addEventListener('click', () => togglePick(it));
+    } else {
+      go.textContent = '🎬 Animate';
+      go.title = `Make a video from this still with ${video.name}: it becomes the first frame`;
+      go.setAttribute('aria-label', `Animate render ${n + 1} with ${video.name}`);
+      go.addEventListener('click', () => continueFrom(it, { animate: true }));
+    }
     cell.append(b, go);
     return cell;
   });
@@ -2232,8 +2310,9 @@ function runningTile(card) {
 }
 
 async function startRender(card) {
+  const entry = state.entry; // the stage may show another entry by the time this finishes (chains)
   const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
-  if (!flow || !state.entry?.id) return;
+  if (!flow || !entry?.id) return;
   if (cardDirty(card)) await saveEdit(card, { quiet: true });
   if (!state.comfy?.ok) await loadComfyStatus();
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
@@ -2267,7 +2346,7 @@ async function startRender(card) {
   setTitle('🎨 Rendering');
   try {
     await streamApi('/api/render', {
-      historyId: state.entry.id,
+      historyId: entry.id,
       index: card.index,
       versionIndex: card.view,
       workflowId: flow.id,
@@ -2301,7 +2380,7 @@ async function startRender(card) {
       } else if (ev.type === 'render') {
         done.add(i);
         card.running.delete(keys[i]);
-        const v = state.entry?.variations?.[card.index];
+        const v = entry.variations?.[card.index];
         if (v) (v.renders ||= []).push(ev.render);
         if (ev.render.seed != null) card.rb.lastSeed = ev.render.seed;
         updateSeedChip(card);
@@ -2380,6 +2459,605 @@ async function continueFrom(it, { animate }) {
     toast('🖼️ Render set as your image, linked to where it came from');
     $('#dropzone').scrollIntoView({ block: 'center', behavior: scrollMode() });
   }
+}
+
+// ---------- chains: build them on Create (step ⑥) ----------
+// Step 1 is the Create form itself; each "Then" step takes the renders of the step before as its input image.
+// state.chain = { steps: [then steps], renders: renders per take for step 1, recipeId }.
+
+const USE_LABEL = { animate: 'first frame', reference: 'reference', recreate: 'recreate' };
+const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || lo));
+const outputNoun = (m, n) => `${n} ${m?.kind === 'video' ? (n === 1 ? 'video' : 'videos') : (n === 1 ? 'still' : 'stills')}`;
+
+function saveChainState() {
+  saved.set('chain', { steps: state.chain.steps, renders: state.chain.renders, recipeId: state.chain.recipeId });
+}
+
+// The workflow a chain step renders with: the one asked for (by id, then by name), else the model's own pick
+// if it can take an image, else the first one that can.
+function chainWorkflow(modelId, ref) {
+  const flows = workflowsFor(modelId);
+  const hit = ref && (flows.find(f => f.id === ref.id) || flows.find(f => f.name === ref.name));
+  if (hit) return hit.id;
+  const active = flows.find(f => f.id === activeWorkflowId(modelId));
+  return (active?.maps.image ? active : flows.find(f => f.maps.image))?.id || null;
+}
+
+function thenStep(st = {}) {
+  const m = modelById(st.modelId) || animateTarget() || state.models[0];
+  const uses = m?.kind === 'video' ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate'];
+  const flows = m ? workflowsFor(m.id) : [];
+  return {
+    modelId: m?.id || '',
+    workflowId: flows.some(f => f.id === st.workflowId) ? st.workflowId : m ? chainWorkflow(m.id, st.workflow) : null,
+    use: uses.includes(st.use) ? st.use : uses[0],
+    direction: st.direction || '',
+    takes: clampInt(st.takes ?? 1, 1, 4),
+    renders: clampInt(st.renders ?? 1, 1, 4),
+    duration: m?.kind === 'video' ? (m.durations.includes(st.duration) ? st.duration : m.defaults.duration || m.durations[0] || '') : '',
+    gate: st.gate === 'auto' ? 'auto' : 'pick',
+    open: st.open ?? true,
+  };
+}
+
+// What stops the chain from running: { all: reason or '', steps: [reason or '' per Then step] }.
+function chainProblems() {
+  const m0 = currentModel();
+  const steps = state.chain.steps;
+  let all = '';
+  if (m0?.kind === 'video') all = `A video can't feed the next step yet, so start the chain with an image model. (Extending clips is coming.)`;
+  else if (m0 && !workflowsFor(m0.id).length) all = `Chains continue from renders: add a workflow for ${m0.name} in step 5 first.`;
+  const per = steps.map((st, i) => {
+    const m = modelById(st.modelId);
+    if (!m) return 'Pick a model for this step.';
+    const flows = workflowsFor(m.id);
+    const flow = flows.find(f => f.id === st.workflowId);
+    if (!flow) return flows.some(f => f.maps.image) ? `Pick a workflow for ${m.name}.` : `${m.name} has no workflow that takes an image yet. Add one with ＋ (it needs a Load Image node).`;
+    if (!flow.maps.image) return `“${flow.name}” has no image input, so it can't take the image from the step before. Pick an image-to-${m.kind} workflow.`;
+    if (m.kind === 'video' && i < steps.length - 1) return 'A video can\'t feed the next step yet. (Extending clips is coming.)';
+    return '';
+  });
+  return { all, steps: per };
+}
+
+function chainCost() {
+  const m0 = currentModel();
+  let n = state.variations * state.chain.renders;
+  const parts = [outputNoun(m0, n)];
+  for (const st of state.chain.steps) {
+    const m = modelById(st.modelId);
+    if (st.gate === 'pick') {
+      parts.push('you pick', outputNoun(m, 2).replace(/^2 /, ''));
+      break;
+    }
+    n *= st.takes * st.renders;
+    parts.push(outputNoun(m, n));
+  }
+  return parts.join(' → ');
+}
+
+function updateGenerateLabel() {
+  const chained = state.chain.steps.length > 0;
+  $('#genLabel').textContent = state.busy ? 'Cooking…' : state.chainActive ? 'Chain running…' : chained ? 'Run chain' : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
+  const cost = chained && !state.busy && !state.chainActive ? chainCost() : '';
+  $('#genCost').hidden = !cost;
+  $('#genCost').textContent = cost ? `⛓ ${cost}` : '';
+}
+
+function stepCardHtml(st, i, warn) {
+  const m = modelById(st.modelId);
+  const video = m?.kind === 'video';
+  const flows = m ? workflowsFor(m.id) : [];
+  const flow = flows.find(f => f.id === st.workflowId);
+  const uses = video ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate'];
+  const open = st.open || Boolean(warn);
+  const summary = [USE_LABEL[st.use], flow?.name || 'no workflow', `${st.takes} take${st.takes > 1 ? 's' : ''}${st.renders > 1 ? ` ×${st.renders}` : ''}`, video ? st.duration : ''].filter(Boolean).join(' · ');
+  const models = [...state.models].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'video' ? -1 : 1));
+  const from = i === 0 ? 'step 5' : `the step before`;
+  return `
+    <li class="chain-gate" data-i="${i}">
+      <div class="seg gate" role="radiogroup" aria-label="Between ${from} and this step">
+        <button type="button" role="radio" data-gate="pick" title="Wait while you pick which renders go on">⏸️ Let me pick</button>
+        <button type="button" role="radio" data-gate="auto" title="Send every render on straight away">⚡ Auto</button>
+      </div>
+    </li>
+    <li class="chain-card${open ? ' open' : ''}${warn ? ' bad' : ''}" data-i="${i}" style="--m:${m ? modelColor(m) : 'var(--hot)'}">
+      <div class="cc-head">
+        <button type="button" class="cc-toggle" data-act="toggle" aria-expanded="${open}">
+          <span class="cc-ico" aria-hidden="true">${kindIcon(m?.kind)}</span>
+          <span class="cc-title"><b>Then ${esc(m?.name || 'pick a model')}</b><small>${esc(summary)}</small></span>
+          <span class="cc-caret" aria-hidden="true">▾</span>
+        </button>
+        <button type="button" class="icon-btn" data-act="remove" aria-label="Remove this step" title="Remove this step">✕</button>
+      </div>
+      <div class="cc-body"${open ? '' : ' hidden'}>
+        <div class="cc-grid">
+          <label class="dial"><span>Model</span><select data-f="modelId">${models.map(x => `<option value="${esc(x.id)}"${x.id === st.modelId ? ' selected' : ''}>${kindIcon(x.kind)} ${esc(x.name)}</option>`).join('')}</select></label>
+          <label class="dial"><span>Use the image as</span><select data-f="use">${uses.map(u => `<option value="${u}"${u === st.use ? ' selected' : ''}>${USE_LABEL[u]}</option>`).join('')}</select></label>
+        </div>
+        <label class="dial"><span>${st.use === 'animate' ? 'What happens' : 'What changes'} <small class="cc-opt">optional</small></span>
+          <textarea data-f="direction" rows="2" placeholder="${st.use === 'animate' ? 'e.g. she takes a sip and laughs, slow push-in. Empty = the AI picks fitting motion' : 'e.g. make it night, add rain. Empty = keep it as is'}">${esc(st.direction)}</textarea></label>
+        <div class="dial"><span>Workflow</span>
+          <div class="cc-wf">
+            <select data-f="workflowId" aria-label="Workflow for this step"><option value="">— pick a workflow —</option>${flows.map(f => `<option value="${esc(f.id)}"${f.id === st.workflowId ? ' selected' : ''}${f.maps.image ? '' : ' disabled'}>${esc(f.name)}${f.maps.image ? '' : ' (no image input)'}</option>`).join('')}</select>
+            <button type="button" class="btn small" data-act="addwf" title="Add a workflow for ${esc(m?.name || 'this model')}" aria-label="Add a workflow">＋</button>
+          </div>
+        </div>
+        <div class="cc-grid${video ? ' three' : ''}">
+          <div class="dial"><span>Takes</span><div class="seg" data-f="takes" role="radiogroup" aria-label="Takes">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">${n}</button>`).join('')}</div></div>
+          <div class="dial"><span>Renders each</span><div class="seg" data-f="renders" role="radiogroup" aria-label="Renders per take">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div></div>
+          ${video ? `<label class="dial"><span>Duration</span><select data-f="duration">${m.durations.map(d => `<option${d === st.duration ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select></label>` : ''}
+        </div>
+        <p class="warn-line cc-warn"${warn ? '' : ' hidden'}>${esc(warn ? `⚠️ ${warn}` : '')}</p>
+      </div>
+    </li>`;
+}
+
+function renderChainEditor() {
+  const box = $('#chainBox');
+  if (!box) return;
+  const focus = document.activeElement?.closest?.('#chainBox') ? { i: document.activeElement.closest('[data-i]')?.dataset.i, sel: document.activeElement.dataset.f ? `[data-f="${document.activeElement.dataset.f}"]` : document.activeElement.dataset.act ? `[data-act="${document.activeElement.dataset.act}"]` : null } : null;
+  const steps = state.chain.steps;
+  // Fill in workflows that weren't known yet (e.g. just added with ＋).
+  steps.forEach(st => { if (!st.workflowId && st.modelId) st.workflowId = chainWorkflow(st.modelId); });
+  const m0 = currentModel();
+  const lastKind = (steps.length ? modelById(steps.at(-1).modelId) : m0)?.kind;
+  const canAdd = Boolean(m0) && lastKind !== 'video' && steps.length < 4;
+  const problems = state.workflowsLoaded ? chainProblems() : { all: '', steps: [] };
+  const recipe = state.recipes.find(r => r.id === state.chain.recipeId);
+  box.innerHTML = `
+    ${steps.length && problems.all ? `<p class="warn-line">⚠️ ${esc(problems.all)}</p>` : ''}
+    ${steps.length ? `<ol class="chain-steps">${steps.map((st, i) => stepCardHtml(st, i, problems.steps[i])).join('')}</ol>` : ''}
+    <div class="chain-bar">
+      <button type="button" class="btn small" data-act="add"${canAdd ? '' : ' disabled'} title="${canAdd ? 'Add a step that continues from the renders before it' : lastKind === 'video' ? 'A video can\'t feed the next step yet (extending clips is coming)' : 'That\'s as long as a chain gets'}">＋ Then…</button>
+      ${steps.length ? `<button type="button" class="btn small" data-act="save">💾 ${recipe ? 'Save chain' : 'Save as a chain'}</button>` : '<span class="muted small">Turn your stills into videos, or chain any steps.</span>'}
+    </div>
+    <div class="chain-save" hidden>
+      <input maxlength="80" placeholder="Name this chain, e.g. Still → Video" aria-label="Chain name" value="${esc(recipe?.name || '')}">
+      <button type="button" class="btn small primary" data-act="save-ok">Save</button>
+      <button type="button" class="btn small" data-act="save-cancel">Cancel</button>
+    </div>
+    <div class="chain-recipes">
+      <span class="cr-label">⛓ Chains</span>
+      ${state.recipes.map(r => `<span class="cr-item${r.id === state.chain.recipeId ? ' on' : ''}"><button type="button" class="chip-btn" data-recipe="${esc(r.id)}" aria-pressed="${r.id === state.chain.recipeId}" title="${esc(r.steps.map(s => modelById(s.modelId)?.name || s.modelId).join(' → '))}">${esc(r.name)}</button>${r.id === state.chain.recipeId ? `<button type="button" class="icon-btn" data-act="export" title="Export “${esc(r.name)}”" aria-label="Export this chain">⤒</button><button type="button" class="icon-btn" data-act="delete-recipe" title="Delete “${esc(r.name)}”" aria-label="Delete this chain">🗑</button>` : ''}</span>`).join('')}
+      <button type="button" class="chip-btn" data-act="import" title="Import a chain someone shared (.json)">⤓ Import</button>
+    </div>`;
+  steps.forEach((st, i) => {
+    setActive($(`.chain-gate[data-i="${i}"] .gate`, box), st.gate);
+    $$(`.chain-gate[data-i="${i}"] .gate button`, box).forEach(b => { b.classList.toggle('active', b.dataset.gate === st.gate); b.setAttribute('aria-checked', b.dataset.gate === st.gate); });
+    setActive($(`.chain-card[data-i="${i}"] [data-f="takes"]`, box), st.takes);
+    setActive($(`.chain-card[data-i="${i}"] [data-f="renders"]`, box), st.renders);
+  });
+  if (focus?.sel) $(`${focus.i != null ? `[data-i="${focus.i}"].chain-card ` : ''}${focus.sel}`, box)?.focus();
+  $('#wfpAutoRow').hidden = steps.length > 0;
+  $('#wfpRenders').hidden = !steps.length;
+  setActive($('#wfpRenders .seg'), state.chain.renders);
+  updateGenerateLabel();
+}
+
+const chainStepOf = el => state.chain.steps[Number(el.closest('[data-i]')?.dataset.i)];
+
+$('#chainBox').addEventListener('click', async e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const st = chainStepOf(b);
+  const act = b.dataset.act;
+  if (act === 'add') {
+    state.chain.steps.forEach(s => { s.open = false; });
+    state.chain.steps.push(thenStep({ open: true }));
+    saveChainState();
+    renderChainEditor();
+    $('.chain-card:last-of-type [data-f="direction"]', $('#chainBox'))?.focus();
+    return;
+  }
+  if (act === 'remove' && st) {
+    state.chain.steps.splice(state.chain.steps.indexOf(st), 1);
+  } else if (act === 'toggle' && st) {
+    st.open = !st.open;
+  } else if (act === 'addwf' && st) {
+    return openWorkflowDialog({ modelId: st.modelId });
+  } else if (act === 'save') {
+    const form = $('.chain-save', $('#chainBox'));
+    form.hidden = false;
+    $('input', form).focus();
+    $('input', form).select();
+    return;
+  } else if (act === 'save-cancel') {
+    $('.chain-save', $('#chainBox')).hidden = true;
+    return;
+  } else if (act === 'save-ok') {
+    return saveRecipe();
+  } else if (act === 'import') {
+    return $('#chainImportInput').click();
+  } else if (act === 'export') {
+    const r = state.recipes.find(x => x.id === state.chain.recipeId);
+    if (r) { download(`${r.id}.prompt-maker-chain.json`, (({ builtin, edited, ...x }) => x)(r)); toast(`⤒ Exported “${r.name}”`); }
+    return;
+  } else if (act === 'delete-recipe') {
+    const r = state.recipes.find(x => x.id === state.chain.recipeId);
+    if (!r) return;
+    return confirmClick(b, '✓?', async () => {
+      try {
+        await api(`/api/chains/${r.id}`, { method: 'DELETE' });
+        state.chain.recipeId = null;
+        await loadRecipes();
+        toast(`🗑️ Deleted the chain “${r.name}” (its steps are still here)`);
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  } else if (b.dataset.recipe) {
+    const r = state.recipes.find(x => x.id === b.dataset.recipe);
+    if (r) applyRecipe(r);
+    return;
+  } else if (b.dataset.gate && st) {
+    st.gate = b.dataset.gate;
+  } else if (b.dataset.value && st) {
+    const f = b.closest('[data-f]')?.dataset.f;
+    if (f === 'takes' || f === 'renders') st[f] = Number(b.dataset.value);
+  } else return;
+  saveChainState();
+  renderChainEditor();
+});
+$('#chainBox').addEventListener('change', e => {
+  const f = e.target.dataset.f;
+  const st = f && chainStepOf(e.target);
+  if (!st || f === 'direction') return;
+  if (f === 'modelId') Object.assign(st, thenStep({ ...st, modelId: e.target.value, workflowId: null, duration: '' }), { open: true });
+  else st[f] = e.target.value || null;
+  saveChainState();
+  renderChainEditor();
+});
+$('#chainBox').addEventListener('input', e => {
+  if (e.target.dataset.f !== 'direction') return;
+  chainStepOf(e.target).direction = e.target.value;
+  saveChainState();
+});
+// The name box sits inside the Create form: Enter saves the chain instead of submitting (= generating).
+$('#chainBox').addEventListener('keydown', e => {
+  if (!e.target.closest('.chain-save')) return;
+  if (e.key === 'Enter') { e.preventDefault(); saveRecipe(); }
+  if (e.key === 'Escape') { e.preventDefault(); $('.chain-save', $('#chainBox')).hidden = true; }
+});
+async function saveRecipe() {
+  const input = $('.chain-save input', $('#chainBox'));
+  const name = input.value.trim();
+  if (!name) return input.focus();
+  try {
+    const r = await api('/api/chains?overwrite=1', { method: 'POST', body: chainRecipe(name) });
+    state.chain.recipeId = r.id;
+    saveChainState();
+    await loadRecipes();
+    toast(`💾 Saved the chain “${r.name}”`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+$('#wfpRenders').addEventListener('click', e => {
+  const b = e.target.closest('button[data-value]');
+  if (!b) return;
+  state.chain.renders = Number(b.dataset.value);
+  saveChainState();
+  renderChainEditor();
+});
+$('#chainImportInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const r = await api('/api/chains?overwrite=1', { method: 'POST', body: JSON.parse(await file.text()) });
+    await loadRecipes();
+    applyRecipe(state.recipes.find(x => x.id === r.id) || r);
+  } catch (err) {
+    toast(`Import failed: ${err.message}`, true);
+  }
+});
+
+// The current setup as a recipe (also what a run remembers, so it can be continued later).
+function chainRecipe(name = '') {
+  const m0 = currentModel();
+  const ref = id => { const f = state.workflows.find(x => x.id === id); return f ? { id: f.id, name: f.name } : null; };
+  return {
+    name,
+    steps: [
+      { modelId: m0.id, workflow: ref(activeWorkflowId(m0.id)), takes: state.variations, renders: state.chain.renders, dials: { aspectRatio: $('#aspect').value, resolution: $('#resolution').value, length: state.length, temperature: Number($('#temperature').value) } },
+      ...state.chain.steps.map(s => ({ modelId: s.modelId, workflow: ref(s.workflowId), takes: s.takes, renders: s.renders, use: s.use, direction: s.direction, duration: s.duration, gate: s.gate })),
+    ],
+  };
+}
+
+function applyRecipe(r, { quiet = false } = {}) {
+  const [first, ...rest] = r.steps;
+  const missing = r.steps.find(s => !modelById(s.modelId));
+  if (missing) return toast(`“${r.name}” uses the model “${missing.modelId}”, which isn't in your Models.`, true);
+  const dials = first.dials || {};
+  selectModel(first.modelId, Object.keys(dials).length ? { values: { ...saved.get(prefsKey(first.modelId), {}), ...dials } } : {});
+  setVariations(first.takes);
+  const wf0 = chainWorkflow(first.modelId, first.workflow) || activeWorkflowId(first.modelId);
+  if (first.workflow && wf0) pickWorkflow(first.modelId, wf0);
+  state.chain = { recipeId: r.id || null, renders: first.renders || 1, steps: rest.map(s => thenStep({ ...s, open: false })) };
+  saveChainState();
+  renderChainEditor();
+  if (!quiet) toast(`⛓ “${r.name}” is set up. Describe the shot, then Run chain`);
+}
+
+async function loadRecipes() {
+  state.recipes = await api('/api/chains').catch(() => []);
+  if (state.chain.recipeId && !state.recipes.some(r => r.id === state.chain.recipeId)) state.chain.recipeId = null;
+  renderChainEditor();
+}
+
+// ---------- chains: running them ----------
+// state.run = { id, theme, steps: [{ modelId, workflowId, takes, renders, use?, direction?, duration?, gate? }],
+//   entries (history entries of the run), picks (renders chosen to continue), rendering (entry ids), status }
+
+// A run's step k. Then steps come from the chain on screen, so changes you make while picking (say, what
+// happens next) apply when you Continue. Step 0 and steps no longer on screen come from the run itself.
+function runStep(run, k) {
+  return (k > 0 && state.chain.steps[k - 1]) || run.steps[k];
+}
+const runLength = run => (run.steps.length ? Math.max(run.steps.length, state.chain.steps.length + 1) : 0);
+
+function setChainActive(on) {
+  state.chainActive = on;
+  setBusy(state.busy);
+}
+
+// A run's steps as the client uses them, from the recipe-shaped snapshot stored on its first entry.
+const runSteps = snapshot => snapshot.map((s, i) => (i === 0
+  ? { modelId: s.modelId, workflowId: chainWorkflow(s.modelId, s.workflow) || activeWorkflowId(s.modelId), takes: s.takes, renders: s.renders }
+  : thenStep({ ...s, open: false })));
+
+async function runChain() {
+  const { all, steps: per } = chainProblems();
+  const stepProblem = per.find(Boolean);
+  if (all || stepProblem) {
+    showError(all || `Then step ${per.indexOf(stepProblem) + 1}: ${stepProblem}`);
+    $('#chainStep').scrollIntoView({ block: 'center', behavior: scrollMode() });
+    return;
+  }
+  const body = await formRequest();
+  if (!body) return;
+  const llm = selectedLlm();
+  if (llm?.vision === false) return showError(`${llm.name} is text-only, and each Then step shows the image to the brain. Pick a vision model (👁) in the top bar.`);
+  const m0 = currentModel();
+  const recipe = chainRecipe();
+  const run = { id: crypto.randomUUID(), theme: body.theme, steps: runSteps(recipe.steps), entries: [], picks: new Map(), rendering: new Set(), status: 'running', stopped: false };
+  state.run = run;
+  body.chain = { runId: run.id, step: 0, steps: recipe.steps };
+  setChainActive(true);
+  renderRunStrip();
+  const entry = await runGeneration(body, m0, { autoRender: false });
+  if (!entry || run.stopped) return finishRun(run);
+  run.entries.push(entry);
+  renderRunStrip();
+  await renderStep(run, entry, 0);
+  await advance(run, 0);
+}
+
+// Renders a step's freshly written takes with the step's workflow. Must start while they're on the stage.
+async function renderStep(run, entry, k) {
+  const step = runStep(run, k);
+  if (state.entry !== entry) return;
+  if (step.workflowId && workflowsFor(entry.modelId).some(f => f.id === step.workflowId)) pickWorkflow(entry.modelId, step.workflowId);
+  const cards = state.cards.filter(c => c.rb && !c.interrupted);
+  run.rendering.add(entry.id);
+  renderRunStrip();
+  await Promise.all(cards.map(c => { c.rb.count = step.renders; c.rb.lockSeed = false; return startRender(c); }));
+  run.rendering.delete(entry.id);
+  renderRunStrip();
+}
+
+// The image renders a step made (what the next step can continue from).
+function stepOutputs(run, k) {
+  return run.entries.filter(e => e.chain?.step === k).flatMap(entry => entry.variations.flatMap((v, index) =>
+    (v.renders || []).flatMap(render => render.files.filter(f => f.kind === 'image').map(file => ({ entry, index, render, file })))));
+}
+const pickKey = it => `${it.render.id}|${it.file.file}`;
+const continuedFrom = (run, it) => run.entries.some(e => e.source?.renderId === it.render.id && e.source.file === it.file.file);
+
+async function advance(run, k) {
+  const next = runStep(run, k + 1);
+  if (!next) return finishRun(run, '✓ Chain done');
+  if (next.gate === 'auto') return continueWith(run, k, stepOutputs(run, k).filter(it => !continuedFrom(run, it)));
+  finishRun(run);
+  toast(`⏸️ Pick the ${outputNoun(modelById(runStep(run, k).modelId), 2).replace(/^2 /, '')} to continue with, then Continue ▶`);
+}
+
+async function continueWith(run, k, items) {
+  const step = runStep(run, k + 1);
+  const model = modelById(step?.modelId);
+  if (!model) return showError('This chain\'s next model no longer exists.');
+  const problem = state.chain.steps[k] === step && chainProblems().steps[k];
+  if (problem) return showError(`Then step ${k + 1}: ${problem}`);
+  if (!items.length) {
+    finishRun(run);
+    return toast(`Nothing to continue with: step ${k + 1} has no image renders.`, true);
+  }
+  run.status = 'running';
+  run.stopped = false;
+  items.forEach(it => run.picks.delete(pickKey(it)));
+  setChainActive(true);
+  renderRunStrip();
+  const rendering = [];
+  for (const it of items) {
+    if (run.stopped) break;
+    let img;
+    try {
+      img = await imageFromRender(it.file);
+    } catch (err) {
+      showError(`Couldn't use that render: ${friendly(err)}`);
+      break;
+    }
+    const aspect = closestAspect(model, img.ratio) || model.defaults.aspectRatio || '';
+    const body = {
+      modelId: model.id,
+      theme: step.direction.trim(),
+      imageRole: model.kind === 'video' ? step.use : step.use === 'animate' ? 'reference' : step.use,
+      aspectRatio: aspect,
+      resolution: resolutionFor(model, aspect, model.defaults.resolution) || model.defaults.resolution || '',
+      duration: model.kind === 'video' ? step.duration : '',
+      length: model.defaults.length,
+      temperature: model.defaults.temperature,
+      variations: step.takes,
+      imageFile: img.file,
+      source: { entryId: it.entry.id, index: it.index, renderId: it.render.id, file: it.file.file },
+      chain: { runId: run.id, step: k + 1 },
+    };
+    const entry = await runGeneration(body, model, { autoRender: false });
+    if (!entry) break;
+    run.entries.push(entry);
+    renderRunStrip();
+    rendering.push(renderStep(run, entry, k + 1)); // ComfyUI renders while the brain writes the next one
+  }
+  await Promise.all(rendering);
+  if (run.stopped || state.run !== run) return finishRun(run);
+  await advance(run, k + 1);
+}
+
+function finishRun(run, message) {
+  run.status = runStep(run, run.entries.reduce((k, e) => Math.max(k, e.chain?.step ?? 0), 0) + 1) ? 'waiting' : 'done';
+  setChainActive(false);
+  renderRunStrip();
+  state.cards.forEach(renderTiles);
+  if (message && !run.stopped) toast(message);
+}
+
+// A refine or a saved edit brings back a new copy of the entry: keep the run pointing at it.
+function syncRunEntry(entry) {
+  const list = state.run?.entries;
+  const i = list ? list.findIndex(e => e.id === entry.id) : -1;
+  if (i < 0) return;
+  list[i] = entry;
+  renderRunStrip();
+}
+
+function closeRun() {
+  state.run = null;
+  renderRunStrip();
+}
+
+// Shows one of the run's entries on the stage, leaving the Create form as it is.
+function showEntry(entry) {
+  if (state.busy) return toast('Hold on, a prompt is still cooking.', true);
+  state.timings = {};
+  renderResults(entry);
+  renderRunStrip();
+}
+
+// Which step of the current run the stage's entry belongs to, if a next step can continue from it.
+function pickStep() {
+  const run = state.run;
+  if (!run || !state.entry?.chain || state.entry.chain.runId !== run.id) return null;
+  const k = state.entry.chain.step;
+  return runStep(run, k + 1) && !state.chainActive ? k : null;
+}
+
+// The step Continue and Pick all act on: the one on stage if it can go on, else the newest step.
+function focusStep(run) {
+  return pickStep() ?? run.entries.reduce((k, e) => Math.max(k, e.chain?.step ?? 0), 0);
+}
+
+function togglePick(it) {
+  const run = state.run;
+  if (!run) return;
+  const key = pickKey(it);
+  if (run.picks.has(key)) run.picks.delete(key); else run.picks.set(key, it);
+  state.cards.forEach(renderTiles);
+  renderRunStrip();
+}
+
+function renderRunStrip() {
+  const el = $('#runStrip');
+  const run = state.run;
+  el.hidden = !run;
+  if (!run) return;
+  const steps = Array.from({ length: runLength(run) }, (_, k) => runStep(run, k));
+  const last = focusStep(run);
+  const next = steps[last + 1];
+  const outputs = next ? stepOutputs(run, last) : [];
+  const fresh = outputs.filter(it => !continuedFrom(run, it));
+  const pool = fresh.length ? fresh : outputs;
+  const picks = [...run.picks.values()].filter(it => it.entry.chain?.step === last);
+  const writing = state.chainActive && state.busy;
+  const status = run.status === 'running'
+    ? (writing ? `✍️ Writing step ${state.entry?.chain?.step + 1 || 1}…` : run.rendering.size ? '🎨 Rendering…' : '⛓ Running…')
+    : next ? (outputs.length ? `⏸️ Pick ${outputNoun(modelById(steps[last].modelId), 2).replace(/^2 /, '')} to continue with` : 'Waiting for renders') : '✓ Done';
+  const chip = e => {
+    const files = e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files.map(f => ({ ...f, at: r.createdAt })))).filter(f => f.kind !== 'audio');
+    const cover = files.sort((a, b) => (a.at < b.at ? 1 : -1))[0];
+    const m = modelById(e.modelId);
+    return `<button type="button" class="rs-chip${e === state.entry ? ' on' : ''}${run.rendering.has(e.id) ? ' busy' : ''}" data-id="${esc(e.id)}" style="--m:${modelColor(m || { id: e.modelId })}" aria-label="Show ${esc(e.modelName)}${e.source ? `, from take ${e.source.index + 1}` : ''}" aria-current="${e === state.entry}">${cover ? mediaTag(cover) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="">` : `<span class="rs-ico">${kindIcon(e.modelKind)}</span>`}${files.length > 1 ? `<em>${files.length}</em>` : ''}</button>`;
+  };
+  el.innerHTML = `
+    <div class="rs-head">
+      <span class="rs-title">⛓ Chain</span>
+      <span class="rs-theme" title="${esc(run.theme || '')}">${esc(run.theme || 'from an image')}</span>
+      <span class="rs-status" aria-live="polite">${esc(status)}</span>
+      <span class="spacer"></span>
+      ${next && run.status !== 'running' && outputs.length ? `${pool.length > 1 ? `<button type="button" class="btn small" data-act="pick-all">Pick all ${pool.length}</button>` : ''}<button type="button" class="btn small primary" data-act="continue"${picks.length ? '' : ' disabled'}>Continue ▶${picks.length ? ` ${picks.length}` : ''}</button>` : ''}
+      <button type="button" class="icon-btn" data-act="close" aria-label="Close the chain view" title="Close (the run stays in History)">✕</button>
+    </div>
+    <ol class="rs-steps">${steps.map((st, k) => {
+      const m = modelById(st.modelId);
+      const entries = run.entries.filter(e => e.chain?.step === k);
+      return `${k ? `<li class="rs-gate" title="${st.gate === 'auto' ? 'Every render goes on' : 'You pick which renders go on'}">${st.gate === 'auto' ? '⚡' : '⏸️'}</li>` : ''}
+        <li class="rs-step" style="--m:${m ? modelColor(m) : 'var(--hot)'}">
+          <span class="rs-label">${k + 1} · ${kindIcon(m?.kind)} ${esc(m?.name || st.modelId)}</span>
+          <div class="rs-items">${entries.map(chip).join('') || '<span class="rs-wait">…</span>'}</div>
+        </li>`;
+    }).join('')}</ol>`;
+}
+
+$('#runStrip').addEventListener('click', e => {
+  const run = state.run;
+  const b = e.target.closest('button');
+  if (!b || !run) return;
+  if (b.dataset.act === 'close') return closeRun(), state.cards.forEach(renderTiles);
+  const last = focusStep(run);
+  if (b.dataset.act === 'pick-all') {
+    const outputs = stepOutputs(run, last);
+    const fresh = outputs.filter(it => !continuedFrom(run, it));
+    (fresh.length ? fresh : outputs).forEach(it => run.picks.set(pickKey(it), it));
+    state.cards.forEach(renderTiles);
+    return renderRunStrip();
+  }
+  if (b.dataset.act === 'continue') return continueWith(run, last, [...run.picks.values()].filter(it => it.entry.chain?.step === last));
+  if (b.classList.contains('rs-chip')) {
+    const entry = run.entries.find(x => x.id === b.dataset.id);
+    if (entry && entry !== state.entry) showEntry(entry);
+  }
+});
+
+// Reopens a whole run from History: the Create form gets its first step and its chain back.
+async function openRun(entry) {
+  const all = await api('/api/history').catch(() => null);
+  if (!all) return toast('Couldn\'t load History.', true);
+  state.history = all;
+  const entries = all.filter(e => e.chain?.runId === entry.chain.runId).reverse();
+  const root = entries.find(e => e.chain.step === 0);
+  const live = entries.find(e => e.id === entry.id) || entry;
+  await loadForm(root || live);
+  if (root?.chain.steps) {
+    const [first, ...rest] = root.chain.steps;
+    const wf0 = chainWorkflow(first.modelId, first.workflow);
+    if (wf0) pickWorkflow(first.modelId, wf0);
+    // Each step as it actually ran (you can change a step while picking), from its newest entry.
+    const ran = rest.map((st, i) => {
+      const kid = entries.filter(e => e.chain.step === i + 1).at(-1);
+      if (!kid) return thenStep({ ...st, open: false });
+      const render = kid.variations.flatMap(v => v.renders || []).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)).at(-1);
+      return thenStep({ ...st, modelId: kid.modelId, direction: kid.theme || '', use: kid.imageRole || st.use, takes: kid.variations.length, duration: kid.duration || st.duration, workflowId: render?.workflowId, open: false });
+    });
+    state.chain = { recipeId: null, renders: first.renders || 1, steps: ran };
+    saveChainState();
+    renderChainEditor();
+  }
+  state.run = { id: entry.chain.runId, theme: (root || live).theme, steps: root?.chain.steps ? runSteps(root.chain.steps) : [], entries, picks: new Map(), rendering: new Set(), status: 'waiting', stopped: false };
+  if (!root?.chain.steps) state.run.steps = [...new Set(entries.map(e => e.chain.step))].map(k => ({ modelId: entries.find(e => e.chain.step === k).modelId }));
+  finishRun(state.run);
+  showView('create');
+  showEntry(live);
 }
 
 // ---------- lightbox ----------
@@ -2970,6 +3648,8 @@ async function loadModels() {
   try {
     [state.settings, state.models] = await Promise.all([api('/api/settings'), api('/api/models')]);
     state.imageRole = saved.get('imageRole', 'reference');
+    const chain = saved.get('chain', null);
+    if (chain && Array.isArray(chain.steps)) state.chain = { steps: chain.steps.filter(x => x && typeof x === 'object'), renders: clampInt(chain.renders ?? 1, 1, 4), recipeId: chain.recipeId || null };
     selectModel(saved.get('modelId', null));
     renderModelList();
     setVariations(saved.get('variations', 1));
@@ -2986,7 +3666,7 @@ async function loadModels() {
     showError(`Could not start: ${friendly(err)}`);
   }
   api('/api/history').then(h => { state.history = h; $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
-  await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins()]);
+  await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins(), loadRecipes()]);
   if (state.workflows.length) await loadComfyStatus();
   document.documentElement.dataset.ready = '1';
 })();

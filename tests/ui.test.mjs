@@ -242,6 +242,8 @@ async function main() {
   const shipped = {};
   for (const f of await fs.readdir(path.join(ROOT, 'playbooks'))) shipped[f] = await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8');
   const hadLegacyData = await fileExists(path.join(ROOT, 'data'));
+  const shippedChains = {};
+  for (const f of await fs.readdir(path.join(ROOT, 'chains'))) shippedChains[f] = await fs.readFile(path.join(ROOT, 'chains', f), 'utf8');
   await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, comfyUrl: `http://127.0.0.1:${COMFY_PORT}`, llmModel: 'mock/vision-8b' }));
   const lmsMarker = path.join(tmp, 'lms-called');
   const fakeLms = path.join(tmp, 'fake-lms');
@@ -1266,6 +1268,124 @@ async function main() {
     await click('#wfClose');
   });
 
+  await test('chains: build one on Create, pick the stills, continue to video', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="2"]');
+    eq(await count('.chain-card'), 0, 'no Then steps yet');
+    await click('#chainBox [data-act="add"]');
+    eq(await count('.chain-card'), 1, 'a Then step');
+    eq(await value('.chain-card [data-f="modelId"]'), 'ltx-2-3', 'a video model by default');
+    eq(await value('.chain-card [data-f="use"]'), 'animate', 'the still becomes the first frame');
+    eq(await js('document.querySelector(".chain-card [data-f=workflowId]").selectedOptions[0].textContent'), 'Mock I2V', 'an image-to-video workflow is picked');
+    assert(await js('document.querySelector(\'.chain-gate button[data-gate="pick"]\').classList.contains("active")'), 'you pick by default');
+    eq(await text('#genLabel'), 'Run chain', 'Generate becomes Run chain');
+    eq(await text('#genCost'), '⛓ 2 stills → you pick → videos', 'it says what it will make');
+    assert((await visible('#wfpRenders')) && !(await visible('#wfpAutoRow')), 'step 5 asks for renders per take instead');
+    await type('.chain-card [data-f="direction"]', 'a calm sea');
+    await type('#theme', 'a lighthouse in a storm');
+    await shot('38-chain-built', { full: true });
+    const before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('!document.querySelector("#runStrip").hidden', 'run strip');
+    await waitFor('document.querySelectorAll(".take .rt-pick").length === 2', 'two stills to pick from', 20000);
+    eq(comfy.prompts.length, before + 2, 'each take rendered once');
+    assert((await text('#runStrip .rs-status')).includes('Pick'), 'waiting for you');
+    assert(await js('document.querySelector(\'#runStrip [data-act="continue"]\').disabled'), 'nothing picked yet');
+    await click('.take .rt-pick');
+    eq(await text('#runStrip [data-act="continue"]'), 'Continue ▶ 1', 'one picked');
+    await type('.chain-card [data-f="direction"]', 'the waves crash against the rocks'); // decided after seeing the stills
+    await shot('39-chain-pick', { full: true });
+    await click('#runStrip [data-act="continue"]');
+    await waitFor('document.querySelectorAll("#runStrip .rs-step:last-child .rs-chip").length === 1', 'step 2 started', 15000);
+    await waitFor('document.querySelector("#runStrip .rs-status")?.textContent.includes("Done")', 'chain done', 20000);
+    await toastText('Chain done');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'the form still shows step 1');
+    assert((await text('#stageHead')).includes('LTX 2.3') && (await text('#srcLink')).includes('from Krea 2 RAW'), 'the stage shows the video step, linked to its still');
+    const asked = JSON.stringify(lastCall().messages);
+    assert(asked.includes('THEME: the waves crash against the rocks') && asked.includes('PREVIOUS STEP'), 'step 2 got the direction as changed while picking, and the still\'s prompt');
+    const all = await (await fetch(`${APP}/api/history`)).json();
+    const root = all.find(e => e.chain?.step === 0 && e.theme === 'a lighthouse in a storm');
+    const child = all.find(e => e.chain?.runId === root.chain.runId && e.chain.step === 1);
+    eq(root.chain.steps.length, 2, 'the run remembers its steps');
+    eq(child.source.entryId, root.id, 'step 2 links to step 1');
+    eq(comfy.uploads.at(-1), `prompt-maker_${child.source.file}`, 'the original still went to ComfyUI');
+    await shot('40-chain-done', { full: true });
+    await click('.take .chips button');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined the video prompt');
+    await click('#runStrip .rs-step:first-child .rs-chip');
+    await waitFor('document.querySelector("#stageHead")?.textContent.includes("Krea 2 RAW")', 'step 1 back on stage');
+    assert(await js('[...document.querySelectorAll(".take .rt-pick")].some(b => b.textContent.includes("Used"))'), 'the still that went on is marked');
+    await click('#runStrip .rs-step:last-child .rs-chip');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'the run kept the refined version');
+  });
+
+  await test('chains: auto runs straight through; save, reload, load, export, delete', async () => {
+    await click('.chain-gate button[data-gate="auto"]');
+    await click('#varSeg button[data-value="1"]');
+    eq(await text('#genCost'), '⛓ 1 still → 1 video', 'auto goes the whole way');
+    await click('#chainBox [data-act="save"]');
+    await type('.chain-save input', 'My still to video');
+    await press('Enter');
+    await toastText('Saved the chain');
+    eq(await js('document.querySelector(".cr-item.on button")?.textContent'), 'My still to video', 'listed and active');
+    const before = comfy.prompts.length;
+    await type('#theme', 'a fox in the snow');
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#runStrip .rs-status")?.textContent.includes("Done")', 'ran straight through', 25000);
+    eq(comfy.prompts.length, before + 2, 'one still and one video, no clicks');
+    await goto(`${APP}/#create`);
+    eq(await count('.chain-card'), 1, 'the chain being built survives a reload');
+    eq(await text('#genLabel'), 'Run chain', 'still a chain');
+    await click('.chain-card [data-act="remove"]');
+    eq(await count('.chain-card'), 0, 'step removed');
+    eq(await text('#genLabel'), 'Generate', 'back to a single step');
+    await click('.cr-item button[data-recipe="my-still-to-video"]');
+    await toastText('is set up');
+    eq(await count('.chain-card'), 1, 'loading the chain brings its step back');
+    assert((await value('.chain-card [data-f="direction"]')).includes('waves'), 'with its settings');
+    assert(await js('document.querySelector(\'.chain-gate button[data-gate="auto"]\').classList.contains("active")'), 'and its gate');
+    assert(await visible('.cr-item button[data-recipe="still-to-video"]'), 'the starter chains are there too');
+    await click('.cr-item.on [data-act="export"]');
+    await toastText('Exported');
+    await click('.cr-item.on [data-act="delete-recipe"]');
+    await click('.cr-item.on [data-act="delete-recipe"]');
+    await toastText('Deleted the chain');
+    assert(!(await js('!!document.querySelector(\'[data-recipe="my-still-to-video"]\')')), 'gone from the list');
+    eq(await count('.chain-card'), 1, 'its steps stay in the form');
+  });
+
+  await test('chains: starter chains find your workflows; History reopens a run', async () => {
+    await click('.cr-item button[data-recipe="still-to-video"]');
+    eq(await count('.chain-card'), 1, 'one Then step');
+    eq(await js('document.querySelector(".chain-card [data-f=workflowId]").selectedOptions[0]?.textContent'), 'Mock I2V', 'the starter chain found your image-to-video workflow');
+    eq(await text('#genCost'), '⛓ 2 stills → you pick → videos', 'two stills, then you pick');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    const idx = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("a lighthouse in a storm") && c.querySelector(".tag.chain")) + 1');
+    assert(idx > 0, 'the run is in History, marked as a chain');
+    await click(`.hcard:nth-of-type(${idx}) button.open`);
+    await waitFor('!document.querySelector("#runStrip").hidden', 'run reopened');
+    eq(await count('#runStrip .rs-step'), 2, 'both steps');
+    eq(await count('#runStrip .rs-chip'), 2, 'the still and the video');
+    eq(await value('#theme'), 'a lighthouse in a storm', 'the form gets step 1 back');
+    assert(await js('[...document.querySelectorAll(".chain-card [data-f=direction]")].some(t => t.value.includes("waves"))'), 'and the chain as it ran');
+    assert(await visible('#runStrip [data-act="continue"]'), 'a finished run can still send another still on');
+    await click('#resultsList .take:nth-of-type(2) .rt-pick');
+    await click('#runStrip [data-act="continue"]');
+    await waitFor('document.querySelectorAll("#runStrip .rs-step:last-child .rs-chip").length === 2 && document.querySelector("#runStrip .rs-status").textContent.includes("Done")', 'a second video from the other still', 20000);
+    await click('#runStrip .rs-step:first-child .rs-chip');
+    await waitFor('document.querySelectorAll(".take .rt-pick").length === 2 && [...document.querySelectorAll(".take .rt-pick")].every(b => b.textContent.includes("Used"))', 'both stills now marked as used');
+    await viewport(390, 844, true);
+    await sleep(200);
+    eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');
+    await shot('41-chain-phone', { full: true });
+    await viewport(1440, 900);
+    await click('#runStrip [data-act="close"]');
+    assert(!(await visible('#runStrip')), 'closed');
+    while (await count('.chain-card')) await click('.chain-card [data-act="remove"]');
+  });
+
   await test('security: other websites can\'t use the local API', async () => {
     const res = await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{"llmModel":"x"}' });
     eq(res.status, 403, 'cross-site write blocked');
@@ -1311,7 +1431,7 @@ async function main() {
 
   await test('storage: an old ./data folder moves out of the app folder', async () => {
     const app2 = path.join(tmp, 'old-install');
-    for (const d of ['lib', 'public', 'playbooks']) await fs.cp(path.join(ROOT, d), path.join(app2, d), { recursive: true });
+    for (const d of ['lib', 'public', 'playbooks', 'chains']) await fs.cp(path.join(ROOT, d), path.join(app2, d), { recursive: true });
     for (const f of ['server.js', 'package.json']) await fs.copyFile(path.join(ROOT, f), path.join(app2, f));
     const old = path.join(app2, 'data');
     for (const d of ['models', 'images', 'renders', 'workflows']) await fs.mkdir(path.join(old, d), { recursive: true });
@@ -1356,6 +1476,8 @@ async function main() {
     eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
     for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);
     eq(await fileExists(path.join(ROOT, 'data')), hadLegacyData, 'no data folder appears in the app folder');
+    eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'chains'))).sort()), JSON.stringify(Object.keys(shippedChains).sort()), 'no files added to or removed from chains/');
+    for (const [f, before] of Object.entries(shippedChains)) eq(await fs.readFile(path.join(ROOT, 'chains', f), 'utf8'), before, `chains/${f} unchanged`);
   });
 
   await test('no console errors', async () => {

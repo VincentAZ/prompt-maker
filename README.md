@@ -163,6 +163,7 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Then choose how to use it (below). |
 | **④ Dial it in** | Aspect ratio, resolution, duration (video), prompt length, number of takes, temperature. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
+| **⑥ Then…** | Optional. Chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
 
 **＋ New** (next to Generate) starts a new session: it clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in History.
 
@@ -267,6 +268,26 @@ Hover any still you rendered and click **🎬 Animate** (it's also in the lightb
 - **It remembers where it came from.** The video's results, History card and lightbox link back with **⬑ from Krea 2 RAW · take 1 · seed …**.
 
 You'll need an image-to-video workflow (one with a *Load Image* node) on the video model. Step ⑤ warns you if the picked workflow can't take the frame.
+
+### 4. Chains: build your own pipelines
+
+A chain runs several steps in a row, each one continuing from the renders of the step before, like a still that becomes a video. Build it in step **⑥ Then…** on the Create page:
+
+1. Set up step 1 as usual (model, theme, dials, and a workflow in step ⑤).
+2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*), **what happens** (optional; empty lets the AI choose), its workflow, takes and renders.
+3. Between steps, choose **⏸️ Let me pick** (the chain waits while you pick the best renders) or **⚡ Auto** (every render goes on).
+4. Click **Run chain**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
+
+While a chain runs, a strip above the results shows every step. Click any thumbnail to see that step's takes.
+
+- **At a ⏸️ step,** tick **☐ Pick** on the renders you like and click **Continue ▶**. Pick several to make one video from each.
+- **Change a step while you pick,** for example what happens next. Continue uses the chain as you see it.
+- **Stop (■ or Esc)** ends the chain. Finished steps are kept.
+- **Reopen a run any time from History.** Its cards are marked ⛓. You can send more stills on from it later.
+
+**💾 Save as a chain** keeps your steps, so you can run them again with a new idea. Saved chains show up under the steps, next to the starter chains *Still → Video* and *One still, 3 motions*. **⤒** exports one to share, and **⤓ Import** adds one from a file. A chain from someone else picks your matching workflows by name, or asks you to choose.
+
+> Chains continue from images for now: a video can't feed the next step yet. Extending a clip from its last frame is coming next.
 
 Every render also appears in the **Gallery** tab, with filters for images, videos and models. The newest render becomes the thumbnail of its History card.
 
@@ -392,6 +413,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── images/         # images you've used (deduplicated)
 ├── renders/        # images and videos rendered with ComfyUI
 ├── workflows/      # ComfyUI workflows you've attached, with their setup
+├── chains/         # chains you saved or edited
 └── models/         # playbooks you added or edited
 ```
 
@@ -496,6 +518,7 @@ prompt-maker/
 │   └── workflows.js        # attached workflows: auto-mapping and building the prompt to queue
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts)
 ├── playbooks/              # the built-in model playbooks (read-only to the app)
+├── chains/                 # the starter chains (read-only to the app)
 ├── tests/
 │   ├── mock-lmstudio.mjs   # fake LM Studio for tests
 │   ├── mock-comfyui.mjs    # fake ComfyUI (HTTP + WebSocket progress) for tests

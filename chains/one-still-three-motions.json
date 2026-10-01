@@ -1,0 +1,10 @@
+{
+  "format": "prompt-maker-chain",
+  "version": 1,
+  "id": "one-still-three-motions",
+  "name": "One still, 3 motions",
+  "steps": [
+    { "modelId": "krea2-raw", "workflow": null, "takes": 1, "renders": 1, "dials": {} },
+    { "modelId": "ltx-2-3", "workflow": null, "takes": 3, "renders": 1, "use": "animate", "direction": "", "duration": "", "gate": "auto" }
+  ]
+}

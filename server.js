@@ -210,6 +210,15 @@ async function resolveSource(src) {
   };
 }
 
+// Which chain run (and step) a take belongs to. Step 0 also carries the run's steps, so it can be resumed.
+function chainRef(c) {
+  if (!c || typeof c !== 'object' || !/^[\w-]{1,64}$/.test(c.runId || '')) return null;
+  const step = Math.min(9, Math.max(0, Math.round(Number(c.step) || 0)));
+  const ref = { runId: c.runId, step };
+  if (step === 0 && Array.isArray(c.steps) && c.steps.length > 1) ref.steps = c.steps.slice(0, 10).map((s, i) => store.normalizeStep(s, i));
+  return ref;
+}
+
 async function generate(req, res) {
   const body = await readBody(req);
   const settings = await store.getSettings();
@@ -228,6 +237,7 @@ async function generate(req, res) {
   }
   if (!params.theme && !imageDataUrl) throw store.httpError(400, 'Enter a theme, add an image, or both.');
   const source = imageDataUrl ? await resolveSource(body.source) : null;
+  const chain = chainRef(body.chain);
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   const llmModel = llm.id;
@@ -264,6 +274,7 @@ async function generate(req, res) {
       temperature: opts.temperature,
       imageFile,
       ...(source ? { source } : {}),
+      ...(chain ? { chain } : {}),
       variations: texts.map(text => ({ versions: [{ text, instruction: null, createdAt: now }] })),
     });
     stream.send({ type: 'saved', entry });
@@ -526,6 +537,12 @@ async function route(req, res) {
     return sendJson(res, 200, Array.isArray(body) ? saved : saved[0]);
   }
   if (p === '/api/models/draft' && m === 'POST') return draftGuide(req, res);
+  if (p === '/api/chains' && m === 'GET') return sendJson(res, 200, await store.listChains());
+  if (p === '/api/chains' && m === 'POST') return sendJson(res, 200, await store.saveChain(await readBody(req), { overwrite: url.searchParams.get('overwrite') === '1' }));
+  if ((match = p.match(/^\/api\/chains\/([\w-]+)$/)) && m === 'DELETE') {
+    await store.deleteChain(match[1]);
+    return sendJson(res, 200, { ok: true });
+  }
   if (p === '/api/models/hidden' && m === 'GET') return sendJson(res, 200, await store.hiddenBuiltins());
   if ((match = p.match(/^\/api\/models\/([\w-]+)\/reset$/)) && m === 'POST') return sendJson(res, 200, await store.resetModel(match[1]));
   if ((match = p.match(/^\/api\/models\/([\w-]+)$/))) {

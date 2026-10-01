@@ -156,11 +156,24 @@
               <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
               <p id="wfpWarn" class="warn-line" hidden></p>
               <div id="wfpStale" class="wfp-stale" hidden><span></span><button type="button" class="btn small">↻ Update</button></div>
-              <label class="switch"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
+              <label class="switch" id="wfpAutoRow"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
+              <div id="wfpRenders" class="wfp-renders" hidden>
+                <span>Renders per take</span>
+                <div class="seg" role="radiogroup" aria-label="Renders per take">
+                  <button type="button" role="radio" data-value="1">×1</button><button type="button" role="radio" data-value="2">×2</button><button type="button" role="radio" data-value="3">×3</button><button type="button" role="radio" data-value="4">×4</button>
+                </div>
+              </div>
             </div>
           </section>
 
+          <section class="step" id="chainStep">
+            <header class="step-head"><span class="num">6</span><h2>Then…</h2><span class="opt">optional · chain more steps</span></header>
+            <div id="chainBox" class="chain"></div>
+            <input type="file" id="chainImportInput" accept=".json,application/json" hidden>
+          </section>
+
           <div class="generate-bar">
+            <p id="genCost" class="gen-cost" hidden></p>
             <button type="submit" id="generateBtn" class="btn-generate">
               <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Generate</span><kbd>Ctrl ↵</kbd>
             </button>
@@ -170,6 +183,7 @@
         </form>
 
         <section class="stage" aria-label="Results">
+          <div id="runStrip" class="run-strip" role="region" aria-label="Chain run" hidden></div>
           <div id="stageHead" class="stage-head" hidden></div>
           <div id="stageError" class="error-card" role="alert" hidden></div>
           <div id="resultsList" class="takes"></div>
