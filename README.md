@@ -400,7 +400,7 @@ Each model is a single `.json` file (built-ins in `playbooks/<id>.json`, yours i
 
 ## Choosing a brain (LLM)
 
-The "brain" is the LM Studio model that writes your prompts. Pick it from the **Brain** menu at the top right:
+The "brain" is the LM Studio model that writes your prompts. Pick it from the **Brain** menu at the top right. Type a few letters to narrow the list (words in any order: `qwen 27` finds *Qwen3.8 27B…*), use ↑ ↓ and Enter, and sort it **Smart** (suggestions first), by **Last used** or by **Name**:
 
 - **👁 vision** models can see images. Text-only models still work for themes, and the app tells you if you try to use an image with one.
 - **Bigger follows the playbooks better,** especially exact length and structured formats like MiniMax's. Smaller is faster.
@@ -425,7 +425,7 @@ Open **Models** and switch to **🧠 Brains** to see every model in LM Studio. P
 - **Record:** takes it wrote for image and video models, and how many you rendered or starred.
 - **⚡ Quick check:** about 20 seconds. It writes one image prompt and one video prompt and, for vision models, names the colors in a test image. You see the time, word count and whether the prompt needed tidying. It loads the Brain in LM Studio, unloading the model there now, so it only runs when you click it.
 
-**Best for** ranks the Brains for any of your models. Renders and ⭐ count most, then refines, then the Quick check, and failures count against a Brain. The same ranking puts a **Suggested for …** group at the top of the Brain menu on Create, with the reason ("3 rendered"). There are no built-in opinions about model families: suggestions come only from your runs. A newly downloaded model shows up on its own under *Brains you haven't used or checked yet*.
+Search the cards by name and sort them by **Best fit**, **Last used** or **Name**. **Best for** ranks the Brains for any of your models. Renders and ⭐ count most, then refines, then the Quick check, and failures count against a Brain. The same ranking puts a **Suggested for …** group at the top of the Brain menu on Create, with the reason ("3 rendered"). There are no built-in opinions about model families: suggestions come only from your runs. A newly downloaded model shows up on its own under *Brains you haven't used or checked yet*.
 
 ## Settings
 

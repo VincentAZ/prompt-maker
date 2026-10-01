@@ -401,6 +401,7 @@ function renderLlmSelect() {
     const known = state.llms.find(m => m.id === current);
     sel.innerHTML = `<option value="${esc(current)}">${current ? esc(known?.name || current) : 'LM Studio offline'}</option>`;
     updateLlmDot();
+    renderLlmPick();
     return;
   }
   const label = m => {
@@ -424,7 +425,165 @@ function renderLlmSelect() {
     group('Text-only models', rest.filter(m => !m.loaded && !m.vision));
   sel.value = current;
   updateLlmDot();
+  renderLlmPick();
 }
+
+// ---------- Brain picker (top bar) ----------
+// A searchable menu over the hidden #llmSelect: type to narrow it down, sort it smart, by last used or by name.
+
+const lastUsedAt = m => [m.stats?.lastUsed, m.record?.last].filter(Boolean).sort().at(-1) || '';
+const escRe = str => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const searchWords = q => q.toLowerCase().split(/\s+/).filter(Boolean);
+let llmSort = saved.get('llmSort', 'smart');
+let llmActive = 0; // the highlighted option, picked by Enter
+
+// 0 if the Brain doesn't match the search; else higher for better matches. Every word typed must appear in its
+// name or id, in any order ("qwen 27" finds "Qwen3.8 27B …"); names that start with the search come first.
+function brainMatch(m, q) {
+  const words = searchWords(q);
+  if (!words.length) return 1;
+  const name = m.name.toLowerCase();
+  if (!words.every(w => `${name} ${m.id.toLowerCase()}`.includes(w))) return 0;
+  return name.startsWith(words[0]) ? 3 : new RegExp(`(^|[^a-z0-9])${escRe(words[0])}`).test(name) ? 2 : 1;
+}
+
+function highlight(text, q) {
+  const words = searchWords(q);
+  if (!words.length) return esc(text);
+  return text.split(new RegExp(`(${words.map(escRe).join('|')})`, 'gi')).map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join('');
+}
+
+const byName = (a, b) => a.name.localeCompare(b.name);
+const byRecent = (a, b) => lastUsedAt(b).localeCompare(lastUsedAt(a)) || byName(a, b);
+
+function renderLlmPick() {
+  const current = state.settings?.llmModel || '';
+  const m = llmById(current);
+  $('#llmPickName').textContent = !state.llmOk ? (current ? m?.name || current : 'LM Studio offline')
+    : !current ? 'Auto: whatever is loaded'
+    : m ? `${m.vision ? '👁 ' : ''}${m.name}` : `${current} (missing)`;
+  if (!$('#llmMenu').hidden) renderLlmMenu();
+}
+
+// The menu's groups for the search and sort: [{ title?, items: [brain] }]. "Auto" is { id: '' }.
+function llmMenuGroups(q, suggested) {
+  const auto = { id: '', name: 'Auto: whatever is loaded' };
+  if (q) {
+    const hits = state.llms.map(m => ({ m, score: brainMatch(m, q) })).filter(x => x.score);
+    hits.sort((a, b) => b.score - a.score || (llmSort === 'name' ? byName(a.m, b.m) : byRecent(a.m, b.m)));
+    return [{ items: hits.map(x => x.m) }];
+  }
+  if (llmSort === 'name') return [{ items: [auto, ...[...state.llms].sort(byName)] }];
+  if (llmSort === 'recent') {
+    return [
+      { items: [auto] },
+      { title: 'Last used', items: state.llms.filter(lastUsedAt).sort(byRecent) },
+      { title: 'Not used yet', items: state.llms.filter(m => !lastUsedAt(m)).sort(byName) },
+    ];
+  }
+  const ids = new Set(suggested.map(x => x.m.id));
+  const rest = state.llms.filter(m => !ids.has(m.id));
+  return [
+    { items: [auto] },
+    { title: `Suggested for ${currentModel()?.name}`, items: suggested.map(x => x.m) },
+    { title: 'Loaded now', items: rest.filter(m => m.loaded) },
+    { title: 'Vision 👁 (can see images)', items: rest.filter(m => !m.loaded && m.vision) },
+    { title: 'Text-only', items: rest.filter(m => !m.loaded && !m.vision) },
+  ];
+}
+
+function renderLlmMenu() {
+  const q = $('#llmSearch').value.trim();
+  const current = state.settings?.llmModel || '';
+  const suggested = suggestedBrains(currentModel(), Boolean(state.image));
+  const why = new Map(suggested.map(x => [x.m.id, x.why]));
+  let i = 0;
+  const option = m => {
+    const speed = m.id && brainSpeed(m);
+    const last = m.id && lastUsedAt(m);
+    const detail = !m.id ? 'Uses the model LM Studio has loaded'
+      : [why.get(m.id), m.vision ? 'sees images' : m.vision === false ? 'text-only' : '', speed && `~${fmtSecs(speed.seconds)}`, last && `used ${timeAgo(last)}`, m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join(' · ');
+    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="n">${m.vision ? '👁 ' : ''}${highlight(m.name, q)}</span><span class="d">${esc(detail)}</span></li>`;
+  };
+  const html = llmMenuGroups(q, suggested).filter(g => g.items.length)
+    .map(g => (g.title ? `<li class="grp" role="presentation">${esc(g.title)}</li>` : '') + g.items.map(option).join('')).join('');
+  $('#llmList').innerHTML = html || `<li class="none" role="presentation">No Brain matches "${esc(q)}".</li>`;
+  setLlmActive(Math.min(llmActive, i - 1));
+  $$('.llm-sort button').forEach(b => {
+    b.classList.toggle('active', b.dataset.sort === llmSort);
+    b.setAttribute('aria-checked', String(b.dataset.sort === llmSort));
+  });
+}
+
+function setLlmActive(i, scroll = true) {
+  const opts = $$('#llmList [role="option"]');
+  llmActive = Math.max(0, Math.min(i, opts.length - 1));
+  opts.forEach((o, k) => o.classList.toggle('active', k === llmActive));
+  const el = opts[llmActive];
+  $('#llmSearch').setAttribute('aria-activedescendant', el?.id || '');
+  if (scroll) el?.scrollIntoView({ block: 'nearest' });
+}
+
+function openLlmMenu() {
+  $('#llmSearch').value = '';
+  $('#llmMenu').hidden = false;
+  $('#llmPick').setAttribute('aria-expanded', 'true');
+  llmActive = 0;
+  renderLlmMenu();
+  setLlmActive(Math.max(0, $$('#llmList [role="option"]').findIndex(o => o.getAttribute('aria-selected') === 'true')));
+  $('#llmSearch').focus();
+}
+
+function closeLlmMenu({ focus = true } = {}) {
+  if ($('#llmMenu').hidden) return;
+  $('#llmMenu').hidden = true;
+  $('#llmPick').setAttribute('aria-expanded', 'false');
+  if (focus) $('#llmPick').focus();
+}
+
+function pickLlm(id) {
+  closeLlmMenu();
+  if (id !== (state.settings?.llmModel || '')) setBrain(id);
+}
+
+$('#llmPick').addEventListener('click', () => ($('#llmMenu').hidden ? openLlmMenu() : closeLlmMenu()));
+$('#llmSearch').addEventListener('input', () => {
+  llmActive = 0;
+  renderLlmMenu();
+});
+$('#llmSearch').addEventListener('keydown', e => {
+  const move = { ArrowDown: 1, ArrowUp: -1, PageDown: 8, PageUp: -8 }[e.key];
+  if (move) {
+    e.preventDefault();
+    setLlmActive(llmActive + move);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const el = $$('#llmList [role="option"]')[llmActive];
+    if (el) pickLlm(el.dataset.id);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation(); // don't also stop a run
+    closeLlmMenu();
+  } else if (e.key === 'Tab') closeLlmMenu({ focus: false });
+});
+$('#llmList').addEventListener('click', e => {
+  const el = e.target.closest('[role="option"]');
+  if (el) pickLlm(el.dataset.id);
+});
+$('#llmList').addEventListener('mousemove', e => {
+  const el = e.target.closest('[role="option"]');
+  if (el && Number(el.dataset.i) !== llmActive) setLlmActive(Number(el.dataset.i), false);
+});
+$$('.llm-sort button').forEach(b => b.addEventListener('click', () => {
+  llmSort = b.dataset.sort;
+  saved.set('llmSort', llmSort);
+  llmActive = 0;
+  renderLlmMenu();
+  $('#llmSearch').focus();
+}));
+document.addEventListener('pointerdown', e => {
+  if (!$('#llmMenu').hidden && !e.target.closest('#llmBox')) closeLlmMenu({ focus: false });
+});
 
 function selectedLlm() {
   const id = state.settings?.llmModel;
@@ -530,6 +689,7 @@ async function setBrain(id) {
     state.settings = await api('/api/settings', { method: 'PUT', body: { llmModel: id } });
     $('#llmSelect').value = id;
     updateLlmDot();
+    renderLlmPick();
     renderVisionWarning();
     renderBrains();
     const m = selectedLlm();
@@ -1736,6 +1896,7 @@ const NEW_MODEL = {
 // ---------- Brains (Models → Brains) ----------
 
 let modelsPane = saved.get('modelsPane', 'models');
+let brainSort = saved.get('brainSort', 'fit');
 function showModelsPane(pane, { push = true } = {}) {
   modelsPane = pane === 'brains' ? 'brains' : 'models';
   saved.set('modelsPane', modelsPane);
@@ -1764,22 +1925,41 @@ function renderBrains() {
   pick.value = target || '';
   const model = modelById(pick.value);
   const inUse = selectedLlm()?.id;
+  const q = $('#brainSearch').value.trim();
+  $$('.brain-sort button').forEach(b => {
+    b.classList.toggle('active', b.dataset.sort === brainSort);
+    b.setAttribute('aria-checked', String(b.dataset.sort === brainSort));
+  });
+  const order = {
+    fit: (a, b) => (b.m.id === inUse) - (a.m.id === inUse) || b.fit.score - a.fit.score || (b.m.stats?.runs || 0) - (a.m.stats?.runs || 0) || byName(a.m, b.m),
+    recent: (a, b) => byRecent(a.m, b.m),
+    name: (a, b) => byName(a.m, b.m),
+  }[brainSort] || (() => 0);
   const ranked = state.llms
+    .filter(m => brainMatch(m, q))
     .map(m => ({ m, fit: brainFit(m, model) }))
-    .sort((a, b) => (b.m.id === inUse) - (a.m.id === inUse) || b.fit.score - a.fit.score || (b.m.stats?.runs || 0) - (a.m.stats?.runs || 0) || a.m.name.localeCompare(b.m.name));
-  const fresh = ranked.filter(x => isNewBrain(x.m) && x.m.id !== inUse);
-  $('#brainList').innerHTML = ranked.filter(x => !fresh.includes(x)).map(x => brainCard(x.m, x.fit, model, inUse)).join('');
+    .sort(order);
+  // Ranked by fit, Brains with no record yet wait in a fold; searching or sorting another way shows them all.
+  const fresh = brainSort === 'fit' && !q ? ranked.filter(x => isNewBrain(x.m) && x.m.id !== inUse) : [];
+  $('#brainList').innerHTML = ranked.filter(x => !fresh.includes(x)).map(x => brainCard(x.m, x.fit, model, inUse, q)).join('');
   $('#brainListNew').innerHTML = fresh.map(x => brainCard(x.m, x.fit, model, inUse)).join('');
   $('#brainsNew').hidden = !fresh.length;
   $('#brainsNew > summary').textContent = `${fresh.length} Brain${fresh.length > 1 ? 's' : ''} you haven't used or checked yet`;
   const empty = $('#brainsEmpty');
-  empty.hidden = state.llms.length > 0;
-  empty.textContent = state.llmOk === false
-    ? 'LM Studio is not reachable, so there are no Brains to show. Start its server (see the banner at the top).'
+  empty.hidden = ranked.length > 0;
+  empty.textContent = q && state.llms.length ? `No Brain matches "${q}".`
+    : state.llmOk === false ? 'LM Studio is not reachable, so there are no Brains to show. Start its server (see the banner at the top).'
     : 'No models in LM Studio yet. Download one there and it shows up here.';
 }
 
-function brainCard(m, fit, model, inUse) {
+$('#brainSearch').addEventListener('input', renderBrains);
+$$('.brain-sort button').forEach(b => b.addEventListener('click', () => {
+  brainSort = b.dataset.sort;
+  saved.set('brainSort', brainSort);
+  renderBrains();
+}));
+
+function brainCard(m, fit, model, inUse, q = '') {
   const s = m.stats || {};
   const speed = brainSpeed(m);
   const fails = [s.room && `ran out of room ${s.room}×`, s.empty && `empty ${s.empty}×`, s.refused && `refused ${s.refused}×`].filter(Boolean).join(' · ');
@@ -1792,12 +1972,13 @@ function brainCard(m, fit, model, inUse) {
   const note = thinkNote(m);
   return `<li class="brain${m.id === inUse ? ' current' : ''}" data-id="${esc(m.id)}">
     <div class="brain-head">
-      <span class="brain-name">${esc(m.name)}</span>
+      <span class="brain-name">${highlight(m.name, q)}</span>
       ${m.id === inUse ? '<span class="tag ok">in use</span>' : ''}
       ${m.loaded ? '<span class="tag">loaded</span>' : ''}
       <span class="tag">${m.vision ? '👁 sees images' : m.vision === false ? 'text-only' : 'vision unknown'}</span>
       ${m.tools ? '<span class="tag" title="Trained for tool calling, which ✦ Ask uses">🛠 tools</span>' : ''}
       ${size ? `<span class="muted small">${esc(size)}</span>` : ''}
+      ${lastUsedAt(m) ? `<span class="muted small">· used ${timeAgo(lastUsedAt(m))}</span>` : ''}
       <span class="brain-actions">
         ${m.id === inUse ? '' : '<button type="button" class="btn small" data-act="use">▶ Use</button>'}
         ${checking ? '<button type="button" class="btn small" data-act="stop">■ Stop</button>'

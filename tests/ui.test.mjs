@@ -183,7 +183,7 @@ async function type(sel, str, { clear = true } = {}) {
 }
 
 async function press(key, { ctrl = false } = {}) {
-  const codes = { Enter: 13, Escape: 27, ' ': 32 };
+  const codes = { Enter: 13, Escape: 27, ' ': 32, ArrowDown: 40, ArrowUp: 38 };
   const base = { key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: codes[key], modifiers: ctrl ? 2 : 0 };
   await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
   if ((key === 'Enter' || key === ' ') && !ctrl) await cdp.send('Input.dispatchKeyEvent', { type: 'char', ...base, text: key === ' ' ? ' ' : '\r' });
@@ -1154,14 +1154,13 @@ async function main() {
 
     await click('.tabs button[data-view="models"]');
     await click('.models-switch button[data-pane="brains"]');
-    await waitFor('document.querySelectorAll("#brainList .brain").length > 0', 'Brain cards');
+    await waitFor('document.querySelector(\'.brain[data-id="mock/vision-8b"]\')?.textContent.includes("refused 1×")', 'Brain cards, with the refusal counted');
     eq(await js('location.hash'), '#models/brains', 'own address');
     assert(await visible('#modelsPane') === false, 'model editor hidden');
     eq(await js('document.querySelector("#brainList .brain").dataset.id'), 'mock/vision-8b', 'the Brain in use comes first');
     const card = await text('.brain[data-id="mock/vision-8b"]');
     assert(card.includes('per prompt'), 'speed from your runs');
     assert(/\d+ rendered/.test(card), 'record from History');
-    assert(card.includes('refused 1×'), 'refusal counted');
     assert(card.includes('8B · Q4_K_M · 6.2 GB') && card.includes('🛠 tools'), "LM Studio's facts");
     assert((await text('.brain[data-id="mock/fable"]')).includes('switches it off another way'), 'thinking behavior learned earlier');
     assert(!(await js('document.querySelector("#brainsNew").hidden')), 'unused Brains are folded away');
@@ -1199,6 +1198,66 @@ async function main() {
     await shot('brains');
     await click('.models-switch button[data-pane="models"]');
     eq(await js('location.hash'), '#models', 'back to the model editor');
+  });
+
+  await test('brain picker: type to find a Brain, sort by last used or name; Brains page search', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('#llmPick');
+    assert(await visible('#llmMenu'), 'menu opens');
+    eq(await js('document.activeElement.id'), 'llmSearch', 'focus in the search box');
+    await type('#llmSearch', 'think');
+    eq(await count('#llmList [role="option"]'), 1, 'narrowed to one');
+    eq(await text('#llmList [role="option"] mark'), 'Think', 'match highlighted');
+    await press('Enter');
+    await toastText('Brain: Mock Thinker 9B');
+    assert(!(await visible('#llmMenu')), 'closed after picking');
+    eq(await value('#llmSelect'), 'mock/thinker', 'Brain set');
+    eq(await text('#llmPickName'), '👁 Mock Thinker 9B', 'button shows it');
+
+    // words in any order, arrow keys move the highlight
+    await click('#llmPick');
+    await type('#llmSearch', '8b vision');
+    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id).join()'), 'mock/vision-8b', 'every word must match');
+    await type('#llmSearch', 'mock');
+    await press('ArrowDown');
+    eq(await js('document.querySelector("#llmList .active").dataset.i'), '1', 'arrow moves the highlight');
+    await type('#llmSearch', 'vision');
+    await press('Enter');
+    await toastText('Brain: Mock Vision 8B');
+
+    // last used: the Brain that just wrote comes first
+    await type('#theme', 'a kite over the dunes');
+    await click('#generateBtn');
+    await genDone();
+    await click('#llmPick');
+    await click('.llm-sort button[data-sort="recent"]');
+    eq(await js('document.querySelector("#llmList .grp").textContent'), 'Last used', 'grouped by use');
+    eq(await js('document.querySelector("#llmList .grp + [role=option]").dataset.id'), 'mock/vision-8b', 'most recent first');
+    assert((await text('#llmList [data-id="mock/vision-8b"] .d')).includes('used just now'), 'says when');
+    await type('#llmSearch', 'mo');
+    await shot('brain-picker');
+    await type('#llmSearch', '');
+    await click('.llm-sort button[data-sort="name"]');
+    const names = await js('[...document.querySelectorAll("#llmList [role=option]")].slice(1).map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
+    eq(names.join('|'), [...names].sort((a, b) => a.localeCompare(b)).join('|'), 'A to Z');
+    await click('.llm-sort button[data-sort="smart"]');
+    await press('Escape');
+    assert(!(await visible('#llmMenu')), 'Esc closes');
+
+    // Models → Brains: search and sort
+    await click('.tabs button[data-view="models"]');
+    await click('.models-switch button[data-pane="brains"]');
+    await type('#brainSearch', 'fresh');
+    eq(await js('[...document.querySelectorAll("#brainList .brain")].map(b => b.dataset.id).join()'), 'mock/fresh', 'search narrows the cards');
+    await type('#brainSearch', 'zzz');
+    assert((await text('#brainsEmpty')).includes('No Brain matches'), 'says when nothing matches');
+    await type('#brainSearch', '');
+    await click('.brain-sort button[data-sort="name"]');
+    const cards = await js('[...document.querySelectorAll("#brainList .brain .brain-name")].map(n => n.textContent)');
+    eq(cards.join('|'), [...cards].sort((a, b) => a.localeCompare(b)).join('|'), 'cards A to Z, none folded');
+    assert(await js('document.querySelector("#brainsNew").hidden'), 'no fold when sorted by name');
+    await click('.brain-sort button[data-sort="fit"]');
+    await click('.models-switch button[data-pane="models"]');
   });
 
   await test('workflows: upload an API file, pick between two, export, delete', async () => {

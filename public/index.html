@@ -43,7 +43,17 @@
     <div class="llm" id="llmBox">
       <span class="dot" id="llmDot"></span>
       <span class="llm-label">Brain</span>
-      <select id="llmSelect" aria-label="Local LLM that writes the prompts"></select>
+      <select id="llmSelect" aria-label="Local LLM that writes the prompts" hidden></select>
+      <button type="button" id="llmPick" class="llm-pick" aria-haspopup="dialog" aria-expanded="false" aria-controls="llmMenu"><span id="llmPickName"></span></button>
+      <div id="llmMenu" class="llm-menu" role="dialog" aria-label="Pick the Brain" hidden>
+        <input id="llmSearch" type="search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="llmList">
+        <div class="seg llm-sort" role="radiogroup" aria-label="Sort Brains">
+          <button type="button" data-sort="smart" role="radio" title="Suggestions first, then what's loaded, then by kind">Smart</button>
+          <button type="button" data-sort="recent" role="radio">Last used</button>
+          <button type="button" data-sort="name" role="radio">Name</button>
+        </div>
+        <ul id="llmList" class="llm-list" role="listbox" aria-label="Brains"></ul>
+      </div>
       <button type="button" id="llmRefresh" class="icon-btn" title="Refresh LM Studio model list" aria-label="Refresh model list">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
       </button>
@@ -255,6 +265,12 @@
       </div>
       <div id="brainsPane" class="brains-pane" hidden>
         <div class="brains-bar">
+          <input id="brainSearch" type="search" class="brain-search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" aria-label="Search Brains by name">
+          <div class="seg brain-sort" role="radiogroup" aria-label="Sort Brains">
+            <button type="button" data-sort="fit" role="radio">Best fit</button>
+            <button type="button" data-sort="recent" role="radio">Last used</button>
+            <button type="button" data-sort="name" role="radio">Name</button>
+          </div>
           <label class="field inline"><span>Best for</span><select id="brainTarget" aria-label="Rank Brains for this model"></select></label>
           <p class="hint">Ranked by what you rendered, starred and refined with each Brain, then by Quick check. ⚡ Quick check loads the Brain in LM Studio (unloading the one there now) and writes two test prompts: about 20 seconds.</p>
         </div>
