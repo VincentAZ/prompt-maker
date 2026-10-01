@@ -407,9 +407,9 @@ async function refreshWorkflow(existing, body) {
   const fromComfy = existing.source.startsWith('comfyui:');
   if (!body.json && !fromComfy) throw store.httpError(400, 'This workflow was uploaded from a file. Pick the new version of the file to update it.');
   const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
-  const { mapping, overrides, lost, changes } = wf.carryOver(existing, fresh.prompt, fresh.mapping);
+  const { mapping, overrides, loras, lost, changes } = wf.carryOver(existing, fresh.prompt, fresh.mapping);
   if (!mapping.prompt.length) throw store.httpError(400, 'The new version has no text input for the prompt, so it can\'t be used for rendering.');
-  const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
+  const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, loras, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
   return { ...saved, candidates: fresh.candidates, warnings: fresh.warnings, producesVideo: fresh.producesVideo, lost, changes };
 }
 
@@ -499,6 +499,7 @@ async function renderTake(req, res) {
         aspect: applied.aspect || null,
         frames: applied.frames || null,
         duration: applied.duration || null,
+        ...(applied.loras?.length ? { loras: applied.loras } : {}),
         files,
         createdAt: new Date().toISOString(),
         secs: Math.round((Date.now() - t0) / 100) / 10,
@@ -647,6 +648,14 @@ async function route(req, res) {
       return sendJson(res, 200, { ok: false, url: base, error: err.message });
     }
   }
+  if (p === '/api/comfy/loras' && m === 'GET') {
+    const settings = await store.getSettings();
+    try {
+      return sendJson(res, 200, { loras: await comfy.loraList(settings.comfyUrl) });
+    } catch (err) {
+      return sendJson(res, 200, { loras: [], error: err.message });
+    }
+  }
   if (p === '/api/comfy/workflows' && m === 'GET') {
     const settings = await store.getSettings();
     return sendJson(res, 200, await comfy.savedWorkflows(settings.comfyUrl));
@@ -674,7 +683,7 @@ async function route(req, res) {
     }
     if (m === 'PUT') {
       const body = await readBody(req);
-      return sendJson(res, 200, wf.summary(await wf.saveWorkflow({ name: body.name, mapping: body.mapping, options: body.options, overrides: body.overrides }, existing)));
+      return sendJson(res, 200, wf.summary(await wf.saveWorkflow({ name: body.name, mapping: body.mapping, options: body.options, overrides: body.overrides, loras: body.loras }, existing)));
     }
     if (m === 'DELETE') {
       await wf.deleteWorkflow(match[1]);

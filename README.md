@@ -258,6 +258,18 @@ Click any result to open the **lightbox**, where you can:
 - **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
 - or delete it.
 
+### LoRAs
+
+Step ⑤ shows the **🧬 LoRAs** of the picked workflow:
+
+- **The workflow's own LoRAs** (LoRA loader nodes, and rgthree's Power Lora Loader) are listed with a switch and a strength slider, −2 to 2, or type any value.
+  - **Switching one off** leaves it out of the render entirely, so its file isn't even loaded.
+  - **↺** puts the workflow's strength back.
+- **＋ Add LoRA** lists only the LoRAs for the selected model. Prompt Maker matches the model to its folder in ComfyUI's `models/loras` (e.g. `krea2/` for Krea 2 RAW, `LTX_2.3/` for LTX 2.3). If the match is wrong, pick the folder in the list. Search narrows it down, and the LoRA goes in at strength 1.
+- **Added LoRAs go in right after the workflow's model loader,** so there's nothing to wire up in ComfyUI.
+
+Your LoRA choices are saved with the workflow in your data folder. Every render records the LoRAs it used, shown in its lightbox.
+
 ### 3. Turn a still into a video
 
 Hover any still you rendered and click **🎬 Animate** (it's also in the lightbox):

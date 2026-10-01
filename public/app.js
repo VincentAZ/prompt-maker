@@ -35,6 +35,8 @@ const state = {
   run: null, // the chain run shown above the results
   chainActive: false, // a chain is running steps right now
   workflows: [],
+  loraList: null, // every LoRA ComfyUI has, e.g. "krea2/film_grain.safetensors" (loaded when needed)
+  loraPicker: { open: false, q: '' },
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   comfy: null,
   renderRuns: new Set(),
@@ -2064,6 +2066,197 @@ async function editWorkflow(id, { focusSampler = false } = {}) {
   }
 }
 
+// ---------- create: step 5, LoRAs ----------
+// A workflow's LoRAs: its own (switch off or re-weight them) plus ones you add from the model's LoRA folder.
+// Saved on the workflow in your data folder; renders record what they used.
+
+const loraShort = name => String(name).split('/').pop().replace(/\.(safetensors|pt|pth|ckpt|bin)$/i, '');
+const loraFolderOf = name => (name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '');
+const squash = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const activeFlow = () => state.workflows.find(f => f.id === $('#wfpSelect').value && f.modelId === state.modelId) || null;
+
+function flowLoras(flow) {
+  const l = flow?.loras || { nodes: [], tweaks: {}, added: [] };
+  const own = l.nodes.map(n => ({ ...n, ...(l.tweaks[n.key] || {}), own: true, edited: Boolean(l.tweaks[n.key]), original: n }));
+  return { own, added: l.added };
+}
+const loraCount = flow => { const { own, added } = flowLoras(flow); return own.filter(x => x.on).length + added.filter(x => x.on).length; };
+
+// The model's LoRA folder: the one you chose, else the folder whose name matches the model ("krea2" for
+// Krea 2 RAW, "LTX_2.3" for LTX 2.3), else all of them ("").
+function loraFolderFor(m) {
+  const folders = [...new Set((state.loraList || []).map(loraFolderOf).filter(Boolean))];
+  const chosen = state.settings?.loraFolders?.[m.id];
+  if (chosen !== undefined && (chosen === '' || folders.includes(chosen))) return { folder: chosen, folders, auto: false };
+  const keys = [squash(m.id), squash(m.name)];
+  const hit = folders.find(f => { const n = squash(f.split('/').pop()); return n.length > 1 && keys.some(k => k === n || k.startsWith(n) || n.startsWith(k)); });
+  return { folder: hit ?? '', folders, auto: true };
+}
+
+async function loadLoraList() {
+  const res = await api('/api/comfy/loras').catch(err => ({ loras: [], error: err.message }));
+  state.loraList = res.loras;
+  state.loraError = res.loras.length ? '' : res.error || '';
+  if (state.loraPicker.open) renderLoraPicker();
+}
+
+function renderLoraPanel() {
+  const box = $('#wfpLoras');
+  const flow = activeFlow();
+  if (!flow) { box.innerHTML = ''; return; }
+  const { own, added } = flowLoras(flow);
+  const focus = document.activeElement?.closest?.('#wfpLoras') ? { key: document.activeElement.closest('[data-key]')?.dataset.key, cls: [...document.activeElement.classList].find(c => c.startsWith('lr-')) || document.activeElement.dataset.act } : null;
+  const row = (l, key) => `
+    <li class="lora-row${l.on ? '' : ' off'}" data-key="${esc(key)}">
+      <label class="switch mini" title="${l.on ? 'On' : 'Off'}"><input type="checkbox" class="lr-on"${l.on ? ' checked' : ''} aria-label="Use ${esc(loraShort(l.name))}"><span class="track" aria-hidden="true"></span></label>
+      <span class="lr-name" title="${esc(l.name)}">${esc(loraShort(l.name))}${l.own ? '<small>in workflow</small>' : ''}</span>
+      ${l.own ? (l.edited ? `<button type="button" class="icon-btn lr-reset" data-act="lora-reset" title="Back to the workflow's ${l.original.on ? Number(l.original.strength).toFixed(2) : 'off'}" aria-label="Reset ${esc(loraShort(l.name))}">↺</button>` : '<span></span>') : `<button type="button" class="icon-btn" data-act="lora-remove" aria-label="Remove ${esc(loraShort(l.name))}" title="Remove">✕</button>`}
+      <input type="range" class="lr-range" min="-2" max="2" step="0.05" value="${Math.max(-2, Math.min(2, l.strength))}" aria-label="Strength of ${esc(loraShort(l.name))}"${l.on ? '' : ' disabled'}>
+      <input type="number" class="lr-num" min="-5" max="5" step="0.05" value="${Number(l.strength).toFixed(2)}" aria-label="Strength of ${esc(loraShort(l.name))}, exact"${l.on ? '' : ' disabled'}>
+    </li>`;
+  box.innerHTML = `
+    <div class="lora-head">
+      <span class="lora-label">🧬 LoRAs</span>
+      <span class="muted small">${own.length || added.length ? `${loraCount(flow)} on` : 'none yet'}</span>
+      <button type="button" class="chip-btn" data-act="lora-add" aria-expanded="${state.loraPicker.open}">＋ Add LoRA</button>
+    </div>
+    ${own.length || added.length ? `<ul class="lora-list">${own.map(l => row(l, l.key)).join('')}${added.map((l, i) => row(l, `+${i}`)).join('')}</ul>` : ''}
+    <div class="lora-pick"${state.loraPicker.open ? '' : ' hidden'}></div>`;
+  if (state.loraPicker.open) renderLoraPicker();
+  if (focus?.key) $(`[data-key="${CSS.escape(focus.key)}"] .${focus.cls}, [data-key="${CSS.escape(focus.key)}"] [data-act="${focus.cls}"]`, box)?.focus();
+  else if (focus?.cls === 'lora-add') $('[data-act="lora-add"]', box)?.focus();
+}
+
+function renderLoraPicker() {
+  const pick = $('#wfpLoras .lora-pick');
+  const flow = activeFlow();
+  const m = currentModel();
+  if (!pick || !flow || !m) return;
+  if (!state.loraList) {
+    pick.innerHTML = '<p class="muted small">Asking ComfyUI for your LoRAs…</p>';
+    return;
+  }
+  const { folder, folders, auto } = loraFolderFor(m);
+  const { own, added } = flowLoras(flow);
+  const taken = new Set([...own, ...added].map(l => l.name));
+  const q = state.loraPicker.q.trim().toLowerCase();
+  const items = state.loraList.filter(n => (!folder || loraFolderOf(n) === folder) && !taken.has(n) && (!q || n.toLowerCase().includes(q)));
+  const hadFocus = document.activeElement?.classList.contains('lp-search');
+  pick.innerHTML = `
+    <div class="lp-head">
+      <input type="search" class="lp-search" placeholder="Search ${folder ? `${esc(folder)}/` : 'all LoRAs'}…" aria-label="Search LoRAs" value="${esc(state.loraPicker.q)}">
+      <select class="lp-folder" aria-label="LoRA folder for ${esc(m.name)}" title="Which folder holds ${esc(m.name)}'s LoRAs">
+        <option value="">All folders</option>
+        ${folders.map(f => `<option value="${esc(f)}"${f === folder ? ' selected' : ''}>📁 ${esc(f)}</option>`).join('')}
+      </select>
+    </div>
+    ${!folder && auto && folders.length ? `<p class="muted small">No folder matched ${esc(m.name)}, so these are all your LoRAs. Pick its folder above.</p>` : ''}
+    <ul class="lp-list">${items.length
+      ? items.map(n => `<li><button type="button" data-lora="${esc(n)}" title="${esc(n)}"><span>${esc(loraShort(n))}</span>${folder ? '' : `<small>${esc(loraFolderOf(n))}</small>`}</button></li>`).join('')
+      : `<li class="lp-empty">${state.loraError ? `🔌 ${esc(state.loraError)}` : q ? 'No matches.' : `No more LoRAs in ${folder ? `${esc(folder)}/` : 'ComfyUI'}.`}</li>`}</ul>`;
+  if (hadFocus) { const s = $('.lp-search', pick); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+}
+
+// Saves the active workflow's LoRA choices (debounced for slider drags, one save at a time).
+let loraSaveTimer;
+let loraSaving = Promise.resolve();
+function saveLoras(flow, { now = false } = {}) {
+  clearTimeout(loraSaveTimer);
+  const save = async () => {
+    try {
+      const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { loras: { tweaks: flow.loras.tweaks, added: flow.loras.added } } });
+      const i = state.workflows.findIndex(f => f.id === flow.id);
+      if (i >= 0) state.workflows[i] = { ...state.workflows[i], ...updated };
+      $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
+      state.cards.forEach(updateSettingsLine);
+    } catch (err) {
+      toast(`Couldn't save the LoRAs: ${err.message}`, true);
+    }
+  };
+  const run = () => { loraSaving = loraSaving.then(save); };
+  if (now) run(); else loraSaveTimer = setTimeout(run, 350);
+}
+
+function setLora(key, change) {
+  const flow = activeFlow();
+  if (!flow) return;
+  const l = flow.loras;
+  if (key.startsWith('+')) Object.assign(l.added[Number(key.slice(1))], change);
+  else {
+    const node = l.nodes.find(n => n.key === key);
+    const next = { on: node.on, strength: node.strength, ...l.tweaks[key], ...change };
+    if (next.on === node.on && next.strength === node.strength) delete l.tweaks[key]; else l.tweaks[key] = next;
+  }
+  return flow;
+}
+
+const strengthOf = v => Math.round(Math.min(5, Math.max(-5, Number(v) || 0)) * 100) / 100;
+$('#wfpLoras').addEventListener('input', e => {
+  const key = e.target.closest('[data-key]')?.dataset.key;
+  if (e.target.classList.contains('lp-search')) { state.loraPicker.q = e.target.value; return renderLoraPicker(); }
+  if (!key || !e.target.classList.contains('lr-range')) return;
+  e.target.closest('li').querySelector('.lr-num').value = Number(e.target.value).toFixed(2);
+  saveLoras(setLora(key, { strength: strengthOf(e.target.value) }));
+});
+$('#wfpLoras').addEventListener('change', async e => {
+  const key = e.target.closest('[data-key]')?.dataset.key;
+  if (e.target.classList.contains('lp-folder')) {
+    const m = currentModel();
+    state.settings.loraFolders = { ...state.settings.loraFolders, [m.id]: e.target.value };
+    api('/api/settings', { method: 'PUT', body: { loraFolders: { [m.id]: e.target.value } } }).catch(err => toast(err.message, true));
+    return renderLoraPicker();
+  }
+  if (!key) return;
+  if (e.target.classList.contains('lr-on')) {
+    saveLoras(setLora(key, { on: e.target.checked }), { now: true });
+    renderLoraPanel();
+  } else if (e.target.classList.contains('lr-num')) {
+    const v = strengthOf(e.target.value);
+    saveLoras(setLora(key, { strength: v }), { now: true });
+    renderLoraPanel();
+  } else if (e.target.classList.contains('lr-range')) {
+    renderLoraPanel(); // shows ↺ once a workflow LoRA differs from the workflow
+  }
+});
+$('#wfpLoras').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const flow = activeFlow();
+  if (!flow) return;
+  const key = b.closest('[data-key]')?.dataset.key;
+  if (b.dataset.act === 'lora-add') {
+    state.loraPicker.open = !state.loraPicker.open;
+    renderLoraPanel();
+    if (state.loraPicker.open) {
+      if (!state.loraList || state.loraError) loadLoraList();
+      $('#wfpLoras .lp-search')?.focus();
+    }
+  } else if (b.dataset.lora) {
+    flow.loras.added.push({ name: b.dataset.lora, strength: 1, on: true });
+    state.loraPicker = { open: false, q: '' };
+    saveLoras(flow, { now: true });
+    renderLoraPanel();
+    $(`#wfpLoras [data-key="+${flow.loras.added.length - 1}"] .lr-range`)?.focus();
+    announce(`Added ${loraShort(b.dataset.lora)} at strength 1`);
+  } else if (b.dataset.act === 'lora-remove' && key) {
+    flow.loras.added.splice(Number(key.slice(1)), 1);
+    saveLoras(flow, { now: true });
+    renderLoraPanel();
+  } else if (b.dataset.act === 'lora-reset' && key) {
+    delete flow.loras.tweaks[key];
+    saveLoras(flow, { now: true });
+    renderLoraPanel();
+  }
+});
+$('#wfpLoras').addEventListener('keydown', e => {
+  if (e.key === 'Escape' && state.loraPicker.open) { e.preventDefault(); state.loraPicker = { open: false, q: '' }; renderLoraPanel(); $('#wfpLoras [data-act="lora-add"]')?.focus(); }
+  if (e.key === 'Enter' && e.target.matches('.lp-search, .lr-num')) {
+    e.preventDefault(); // inside the Create form: Enter must not generate
+    if (e.target.matches('.lp-search')) $('#wfpLoras .lp-list button')?.click();
+    else e.target.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+});
+
 // ---------- create: step 5, the workflow picker ----------
 
 const autoRenderKey = modelId => `autoRender.${modelId}`;
@@ -2081,6 +2274,7 @@ function renderWorkflowPicker() {
     sel.value = id;
     sel.title = flows.find(f => f.id === id)?.name || '';
     $('#wfpSettings').innerHTML = settingsHtml(flows.find(f => f.id === id));
+    renderLoraPanel();
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
   renderWorkflowWarning();
@@ -2226,6 +2420,7 @@ function settingsHtml(flow) {
     s.steps != null && `${s.steps} steps`,
     s.cfg != null && `CFG ${s.cfg}${Number(s.cfg) === 1 ? ' 🔒' : ''}`,
     s.seed != null && (s.seed === 'random' ? 'seed 🎲 random' : `seed ${s.seed}`),
+    loraCount(flow) && `🧬 ${loraCount(flow)} LoRA${loraCount(flow) > 1 ? 's' : ''}`,
   ].filter(Boolean);
   return bits.length ? bits.map(b => `<span>${esc(b)}</span>`).join('') : '<span>workflow defaults</span>';
 }
@@ -3102,6 +3297,7 @@ function lbRender() {
     ['Workflow', render.workflowName],
     ['Seed', render.seed ?? '—'],
     render.sampler ? ['Sampler', `${render.sampler}${render.steps ? ` · ${render.steps} steps` : ''}${render.cfg != null ? ` · CFG ${render.cfg}` : ''}`] : null,
+    render.loras?.length ? ['LoRAs', render.loras.map(l => `${loraShort(l.name)} ${Number(l.strength).toFixed(2)}`).join(', ')] : null,
     ['Size', render.size || render.aspect || '—'],
     render.frames ? ['Frames', `${render.frames}${render.duration ? ` (${render.duration})` : ''}`] : render.duration ? ['Duration', render.duration] : null,
     ['Took', render.secs ? `${render.secs}s` : '—'],

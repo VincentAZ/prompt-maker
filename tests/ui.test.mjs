@@ -261,6 +261,12 @@ async function main() {
   const turbo = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
   turbo['3'].inputs.cfg = 1; // a distilled/turbo-style workflow: CFG must stay 1
   await fs.writeFile(apiWorkflowFile, JSON.stringify(turbo));
+  // A workflow that loads a LoRA of its own between the checkpoint and the sampler.
+  const loraWorkflowFile = path.join(tmp, 'mock-lora.json');
+  const withLora = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
+  withLora['20'] = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'krea2/baked_in.safetensors', strength_model: 0.5, model: ['4', 0] }, _meta: { title: 'Baked-in LoRA' } };
+  withLora['3'].inputs.model = ['20', 0];
+  await fs.writeFile(loraWorkflowFile, JSON.stringify(withLora));
   // An image-to-video style workflow: same graph plus a Load Image node for the first frame.
   const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
   await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
@@ -1384,6 +1390,78 @@ async function main() {
     await click('#runStrip [data-act="close"]');
     assert(!(await visible('#runStrip')), 'closed');
     while (await count('.chain-card')) await click('.chain-card [data-act="remove"]');
+  });
+
+  await test('LoRAs: the workflow\'s own and yours, from the model\'s folder, with strengths', async () => {
+    const lora = sel => `#wfpLoras ${sel}`;
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#wfpAdd');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [loraWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    await type('#wfName', 'Mock LoRA flow');
+    await click('#wfSave');
+    await toastText('is ready');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Mock LoRA flow', 'picked');
+    eq(await count(lora('.lora-row')), 1, 'the workflow\'s own LoRA is listed');
+    assert((await text(lora('.lora-row'))).includes('baked_in') && (await text(lora('.lora-row'))).includes('in workflow'), 'named, and marked as part of the workflow');
+    eq(await value(lora('.lora-row .lr-num')), '0.50', 'at the workflow\'s strength');
+    await type(lora('[data-key="20"] .lr-num'), '0.8');
+    await press('Enter');
+    await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-reset')}')`, 'changed, with ↺ to go back');
+
+    await click(lora('[data-act="lora-add"]'));
+    await waitFor(`document.querySelectorAll('${lora('.lp-list button')}').length > 0`, 'the LoRA list');
+    eq(await value(lora('.lp-folder')), 'krea2', 'the model\'s folder is picked for you');
+    eq(await js(`[...document.querySelectorAll('${lora('.lp-list button')}')].map(b => b.dataset.lora).join(',')`), 'krea2/detail_slider.safetensors,krea2/film_grain.safetensors', 'only Krea LoRAs, minus the one already in');
+    await type(lora('.lp-search'), 'grain');
+    eq(await count(lora('.lp-list button')), 1, 'search narrows it');
+    await click(lora('.lp-list button'));
+    eq(await count(lora('.lora-row')), 2, 'added');
+    await type(lora('[data-key="+0"] .lr-num'), '-0.5');
+    await press('Enter');
+    await waitFor('document.querySelector("#wfpSettings").textContent.includes("2 LoRAs")', 'the chips count them');
+    await js('document.querySelector("#wfpLoras").scrollIntoView({ block: "center" })');
+    await shot('42-loras');
+
+    await type('#theme', 'a portrait in window light');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    let p = comfy.prompts.at(-1).prompt;
+    eq(p['20'].inputs.strength_model, 0.8, 'the workflow\'s LoRA re-weighted');
+    eq(p.pm_lora_1?.inputs.lora_name, 'krea2/film_grain.safetensors', 'yours went in');
+    eq(p.pm_lora_1.inputs.strength_model, -0.5, 'at your strength');
+    eq(JSON.stringify(p.pm_lora_1.inputs.model), '["4",0]', 'right after the model loader');
+    eq(JSON.stringify(p['20'].inputs.model), '["pm_lora_1",0]', 'feeding the rest of the chain');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert((await text('#lbInfo')).includes('baked_in 0.80, film_grain -0.50'), 'the lightbox lists the LoRAs it used');
+    await press('Escape');
+
+    await click(lora('[data-key="20"] .switch'));
+    await waitFor(`document.querySelector('${lora('[data-key="20"]')}').classList.contains('off')`, 'switched off');
+    const id = await value('#wfpSelect');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)})?.loras.tweaks['20']?.on === false)`, 'saved');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered again', 10000);
+    p = comfy.prompts.at(-1).prompt;
+    assert(!p['20'], 'switched off: left out of the render entirely');
+    eq(JSON.stringify(p['3'].inputs.model), '["pm_lora_1",0]', 'the sampler gets your LoRA straight');
+
+    await goto(`${APP}/#create`);
+    eq(await count(lora('.lora-row')), 2, 'kept after a reload');
+    assert(await js(`document.querySelector('${lora('[data-key="20"]')}').classList.contains('off')`), 'still off');
+    await click('.model-card[data-id="ltx-2-3"]');
+    await click(lora('[data-act="lora-add"]'));
+    await waitFor(`document.querySelectorAll('${lora('.lp-list button')}').length > 0`, 'the LTX list');
+    eq(await value(lora('.lp-folder')), 'LTX_2.3', 'LTX gets its own folder');
+    eq(await js(`[...document.querySelectorAll('${lora('.lp-list button')}')].map(b => b.dataset.lora).join(',')`), 'LTX_2.3/motion_boost.safetensors', 'and only its LoRAs');
+    await press('Escape');
+    await click('.model-card[data-id="krea2-raw"]');
   });
 
   await test('security: other websites can\'t use the local API', async () => {

@@ -26,6 +26,7 @@ export const OBJECT_INFO = {
   KSampler: { input: { required: { model: ['MODEL'], seed: ['INT', { control_after_generate: true }], steps: ['INT', { default: 20 }], cfg: ['FLOAT', { default: 8 }], sampler_name: [['euler', 'dpmpp_2m']], scheduler: [['normal', 'karras']], positive: ['CONDITIONING'], negative: ['CONDITIONING'], latent_image: ['LATENT'], denoise: ['FLOAT', { default: 1 }] } }, input_order: { required: ['model', 'seed', 'steps', 'cfg', 'sampler_name', 'scheduler', 'positive', 'negative', 'latent_image', 'denoise'] }, output: ['LATENT'], output_node: false, display_name: 'KSampler' },
   VAEDecode: { input: { required: { samples: ['LATENT'], vae: ['VAE'] } }, input_order: { required: ['samples', 'vae'] }, output: ['IMAGE'], output_node: false, display_name: 'VAE Decode' },
   SaveImage: { input: { required: { images: ['IMAGE'], filename_prefix: ['STRING', { default: 'ComfyUI' }] } }, input_order: { required: ['images', 'filename_prefix'] }, output: [], output_node: true, display_name: 'Save Image' },
+  LoraLoaderModelOnly: { input: { required: { model: ['MODEL'], lora_name: [['krea2/baked_in.safetensors']], strength_model: ['FLOAT', { default: 1, min: -100, max: 100 }] } }, input_order: { required: ['model', 'lora_name', 'strength_model'] }, output: ['MODEL'], output_node: false, display_name: 'LoraLoaderModelOnly' },
   LoadImage: { input: { required: { image: [['example.png'], { image_upload: true }] } }, input_order: { required: ['image'] }, output: ['IMAGE', 'MASK'], output_node: false, display_name: 'Load Image' },
 };
 
@@ -97,6 +98,7 @@ export function startMockComfy(port, { png }) {
     const p = url.pathname;
     if (p === '/system_stats') return json(200, { system: { comfyui_version: '0.38.0-mock' }, devices: [{ name: 'cuda:0 Mock GPU : cudaMallocAsync', vram_total: 8 * 2 ** 30, vram_free: 6 * 2 ** 30 }] });
     if (p === '/object_info') return json(200, OBJECT_INFO);
+    if (p === '/models/loras') return json(200, ['LTX_2.3/motion_boost.safetensors', 'krea2/baked_in.safetensors', 'krea2/detail_slider.safetensors', 'krea2/film_grain.safetensors', 'loose_file.safetensors']);
     if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: saved.modified }, { path: '.index.json', size: 10, modified: 0 }]);
     if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, saved.json);
     if (p === '/upload/image' && req.method === 'POST') {

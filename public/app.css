@@ -762,7 +762,7 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .cc-wf .btn { flex: none; border-radius: var(--radius-sm); }
 .chain-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .chain-save { display: flex; gap: 6px; }
-.chain-save input { flex: 1; min-width: 0; padding: 7px 12px; }
+#chainBox .chain-save input { flex: 1; min-width: 0; padding: 7px 12px; }
 .chain-recipes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .cr-label { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
 .cr-item { display: inline-flex; align-items: center; gap: 2px; }
@@ -793,3 +793,34 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 @media (max-width: 560px) {
   .rs-theme { max-width: 100%; flex-basis: 100%; order: 5; }
 }
+
+/* =================== LoRAs (step 5) =================== */
+.loras { display: flex; flex-direction: column; gap: 8px; }
+.lora-head { display: flex; align-items: center; gap: 8px; }
+.lora-label { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lora-head .chip-btn { margin-left: auto; }
+.lora-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lora-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 70px; grid-template-areas: "on name act" "range range num"; align-items: center; gap: 4px 10px; padding: 8px 8px 8px 10px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.lora-row .switch { grid-area: on; }
+.lora-row .lr-name { grid-area: name; min-width: 0; display: flex; align-items: baseline; gap: 8px; font-size: 13.5px; font-weight: 650; }
+.lora-row .lr-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lora-row .lr-name small { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); }
+.lora-row > .icon-btn, .lora-row > span:empty { grid-area: act; justify-self: end; width: 30px; height: 30px; font-size: 13px; }
+.lora-row .lr-range { grid-area: range; height: 6px; background: linear-gradient(90deg, #22d3ee, var(--panel-3) 50%, var(--m)); }
+#wfpLoras .lr-num { grid-area: num; width: 70px; padding: 5px 8px; font: 600 12.5px var(--mono); text-align: right; justify-self: end; appearance: textfield; -moz-appearance: textfield; }
+#wfpLoras .lr-num::-webkit-inner-spin-button, #wfpLoras .lr-num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.lora-row.off .lr-name { color: var(--muted); text-decoration: line-through; text-decoration-color: rgb(255 255 255 / 25%); }
+.lora-row.off .lr-range, .lora-row.off .lr-num { opacity: 0.4; }
+.switch.mini .track { width: 30px; height: 18px; }
+.switch.mini .track::after { width: 12px; height: 12px; }
+.switch.mini input:checked + .track::after { transform: translateX(12px); }
+.lora-pick { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: rgb(0 0 0 / 22%); border: 1px solid var(--line-2); }
+.lp-head { display: flex; gap: 6px; }
+#wfpLoras .lp-search { flex: 1; min-width: 0; padding: 7px 11px; font-size: 13.5px; }
+.lp-head .lp-folder { width: auto; max-width: 45%; padding: 7px 30px 7px 10px; font-size: 13px; }
+.lp-list { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.lp-list button { width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text); text-align: left; font-size: 13.5px; }
+.lp-list button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-list button small { margin-left: auto; flex: none; color: var(--muted); font-size: 11.5px; }
+.lp-list button:hover, .lp-list button:focus-visible { background: color-mix(in srgb, var(--m) 16%, transparent); }
+.lp-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
