@@ -291,12 +291,17 @@ async function main() {
   await fs.writeFile(fakeSystemctl, `#!/bin/sh
 echo "$@" >> ${JSON.stringify(systemctlLog)}
 case "$*" in
+  *is-active*prompt-maker-comfyui*) if [ -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ]; then echo active; else echo inactive; exit 3; fi ;;
+  *"stop prompt-maker-comfyui"*) rm -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ;;
   *--version*) echo "systemd 255" ;;
   *is-enabled*) if [ -f ${JSON.stringify(path.join(tmp, 'enabled'))} ]; then echo enabled; else echo disabled; exit 1; fi ;;
   *" enable "*) touch ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
   *disable*) rm -f ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
 esac
 `, { mode: 0o755 });
+  const systemdRunLog = path.join(tmp, 'systemd-run.log');
+  const fakeSystemdRun = path.join(tmp, 'fake-systemd-run');
+  await fs.writeFile(fakeSystemdRun, `#!/bin/sh\n[ "$1" = --version ] && exit 0\necho "$@" >> ${JSON.stringify(systemdRunLog)}\ntouch ${JSON.stringify(path.join(tmp, 'comfy-active'))}\n`, { mode: 0o755 });
   const fixture = path.join(tmp, 'fixture.png');
   await fs.writeFile(fixture, makePng(640, 400));
   const portrait = path.join(tmp, 'portrait.png');
@@ -322,7 +327,7 @@ esac
   const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
   await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
 
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, XDG_MIME_BIN: '/bin/true' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
   app.stdout.on('data', d => { appLog += d; });
   app.stderr.on('data', d => { appLog += d; });
@@ -678,7 +683,7 @@ esac
 
   await test('start-up: start with the computer from Settings; the offline banner can start the app', async () => {
     await click('.tabs button[data-view="settings"]');
-    await waitFor('!document.querySelector("#startupCard").hidden', 'Start-up card');
+    await waitFor('!document.querySelector("#startupOpts").hidden', 'start-up switches');
     assert(!(await js('document.querySelector("#sAutostart").checked')), 'off at first');
     await click('#sAutostart');
     await toastText('starts with your computer');
@@ -703,6 +708,59 @@ esac
     await click('#sAutostart');
     await toastText("won't start with your computer");
     assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user disable prompt-maker.service'), 'off at login');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('services: see what runs; start and stop ComfyUI and LM Studio from Settings', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'ComfyUI shown running');
+    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('1 model loaded'), 'LM Studio running, with what it has loaded');
+
+    // ComfyUI's folder (normally found on its own)
+    const comfyDir = path.join(tmp, 'ComfyUI');
+    await fs.mkdir(path.join(comfyDir, 'comfy'), { recursive: true });
+    await fs.writeFile(path.join(comfyDir, 'main.py'), '');
+    await type('#sComfyFolder', comfyDir);
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+
+    // Started some other way (here: not a ComfyUI process at all), it's left alone, with a clear message.
+    await click('.svc[data-svc="comfy"] [data-act="comfy-stop"]');
+    await toastText('not as a program Prompt Maker can stop');
+
+    // Off → ▶ Start runs it from its folder, in the background, and the page waits for it to answer.
+    await comfy.stop();
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector(\'[data-act="comfy-start"]\').hidden', 'Start button when off');
+    assert((await text('#svcComfyHow')).includes(comfyDir), 'says where it starts from');
+    await click('[data-act="comfy-start"]');
+    await toastText('Starting ComfyUI');
+    const started = await fs.readFile(systemdRunLog, 'utf8');
+    assert(started.includes('--unit=prompt-maker-comfyui.service') && started.includes(`--working-directory=${comfyDir}`) && started.includes('main.py') && started.includes(`--port ${COMFY_PORT}`), `runs main.py in its folder on the right port: ${started}`);
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Starting")', 'shown starting');
+    await comfy.start(); // ComfyUI answers
+    await toastText('ComfyUI is running');
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'shown running');
+
+    // ■ Stop stops what Prompt Maker started.
+    await click('[data-act="comfy-stop"]');
+    await comfy.stop(); // it goes away
+    await toastText('ComfyUI is off');
+    assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user stop prompt-maker-comfyui.service'), 'stopped its service');
+    await comfy.start();
+
+    // LM Studio: unload everything, server off.
+    await click('[data-act="lms-stop"]');
+    for (let i = 0; i < 80 && (await fs.readFile(lmsMarker, 'utf8').catch(() => '')).trim() !== 'server stop'; i++) await sleep(100);
+    eq((await fs.readFile(lmsMarker, 'utf8')).trim(), 'server stop', 'lms server stop, after unloading');
+
+    // Stopping Prompt Maker (or everything) asks for a second click first.
+    await click('#stopAllBtn');
+    eq(await text('#stopAllBtn'), 'Click again to stop everything', 'asks to confirm');
+    await type('#sComfyFolder', '');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
     await click('.tabs button[data-view="create"]');
   });
 

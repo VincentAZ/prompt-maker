@@ -8,6 +8,7 @@ import * as store from './lib/store.js';
 import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
+import * as services from './lib/services.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
@@ -449,6 +450,41 @@ async function assistantChat(req, res) {
   stream.end();
 }
 
+// ---------- services (Settings → Services) ----------
+
+const comfyUp = settings => comfy.status(settings.comfyUrl).then(() => true, () => false);
+
+// What's running, and whether each can be started or stopped from here. Seeing ComfyUI run also teaches the app
+// how you start it (folder, Python, options), so its Start button does the same.
+async function servicesStatus() {
+  const settings = await store.getSettings();
+  const [llms, comfyStatus, proc, unitActive, app, onService] = await Promise.all([
+    listLlms(settings.lmStudioUrl).catch(() => null),
+    comfy.status(settings.comfyUrl).catch(() => null),
+    services.comfyProcess(settings.comfyUrl),
+    services.comfyUnitActive(),
+    autostart.status(),
+    services.underService(),
+  ]);
+  if (proc) {
+    const learned = { dir: proc.dir, python: proc.python, pre: proc.pre, args: proc.args };
+    if (JSON.stringify(learned) !== JSON.stringify(settings.comfyLaunch)) Object.assign(settings, await store.updateSettings({ comfyLaunch: learned }));
+  }
+  const launch = await services.comfyLaunch(settings);
+  return {
+    app: { service: onService, autostart: app.autostart, supported: app.supported },
+    lms: { running: Boolean(llms), loaded: llms ? llms.filter(m => m.loaded).length : 0, local: services.isLocalUrl(settings.lmStudioUrl) },
+    comfy: {
+      running: Boolean(comfyStatus),
+      starting: !comfyStatus && unitActive,
+      gpu: comfyStatus?.gpu || '',
+      local: services.isLocalUrl(settings.comfyUrl),
+      autostart: settings.comfyAutostart,
+      launch: launch.dir ? { dir: launch.dir, command: [launch.python, ...launch.pre, 'main.py', ...launch.args].join(' '), from: launch.from } : null,
+    },
+  };
+}
+
 // ---------- Brains ----------
 
 // What the app knows about a Brain beyond LM Studio's facts (see store.getBrainNotes).
@@ -787,6 +823,25 @@ async function route(req, res) {
     return sendJson(res, 200, await autostart.setAutostart(Boolean(body.enabled)));
   }
 
+  // Settings → Services: what's running, and start / stop buttons for each.
+  if (p === '/api/services' && m === 'GET') return sendJson(res, 200, await servicesStatus());
+  if ((match = p.match(/^\/api\/services\/(comfy|lms|app|all)\/(start|stop)$/)) && m === 'POST') {
+    const [, what, action] = match;
+    const settings = await store.getSettings();
+    if (what === 'comfy' && action === 'start') return sendJson(res, 200, { ok: true, launch: await services.startComfy(settings) });
+    if (what === 'comfy') await services.stopComfy(settings, () => comfyUp(settings));
+    else if (what === 'lms' && action === 'start') await startServer(settings.lmStudioUrl);
+    else if (what === 'lms') await services.stopLmStudio();
+    else if (what === 'all' && action === 'stop') {
+      // Everything, then this server: frees the GPU. What fails to stop (e.g. a ComfyUI started elsewhere) doesn't block the rest.
+      await services.stopComfy(settings, () => comfyUp(settings)).catch(() => {});
+      if (services.isLocalUrl(settings.lmStudioUrl)) await services.stopLmStudio().catch(() => {});
+      await services.stopApp();
+    } else if (what === 'app' && action === 'stop') await services.stopApp();
+    else throw store.httpError(400, 'Nothing to do.');
+    return sendJson(res, 200, { ok: true });
+  }
+
   if (p === '/api/brains' && m === 'PUT') {
     const body = await readBody(req);
     if (!body.id) throw store.httpError(400, 'Which Brain?');
@@ -956,6 +1011,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
+server.listen(PORT, HOST, async () => {
   console.log(`Prompt Maker running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  // "Start ComfyUI too" (Settings → Services): bring it up along with Prompt Maker, unless it's already running.
+  const settings = await store.getSettings().catch(() => null);
+  if (settings?.comfyAutostart && !(await comfyUp(settings))) {
+    services.startComfy(settings).then(() => console.log('Starting ComfyUI…'), err => console.warn(`Couldn't start ComfyUI: ${err.message}`));
+  }
 });

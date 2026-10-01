@@ -940,6 +940,18 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .dn-hint { grid-area: hint; font-size: 12px; color: var(--muted); }
 
 .check-row { display: flex; align-items: center; gap: 10px; font-weight: 650; cursor: pointer; }
+
+/* Settings → Services */
+#servicesCard { display: flex; flex-direction: column; gap: 12px; }
+.svc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.svc { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius-md); background: var(--panel-2); border: 1px solid var(--line); }
+.svc-text { display: flex; flex-direction: column; gap: 1px; flex: 1 1 200px; min-width: 0; }
+.svc-state { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+.svc-acts { display: flex; gap: 6px; }
+.svc .dot.warn { animation: blink 1.4s infinite; }
+#svcComfyHow code { white-space: normal; overflow-wrap: anywhere; }
+#startupOpts { display: flex; flex-direction: column; gap: 8px; }
+.comfy-start { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--hot); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; }
 .check-row input { width: 18px; height: 18px; accent-color: var(--hot); }
 
 /* =================== seed (step 5) =================== */

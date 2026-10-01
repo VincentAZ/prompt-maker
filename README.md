@@ -148,8 +148,18 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 **On Linux, the first start sets everything up for you,** so you never need the terminal again:
 
 - **Prompt Maker in your app menu.** Open it from there like any other app.
-- **It starts with your computer** and keeps running in the background. It turns on LM Studio's server too, and comes back on its own if it ever stops. Switch this off or on in **Settings → Start-up**.
+- **It starts with your computer** and keeps running in the background. It turns on LM Studio's server too, and comes back on its own if it ever stops. Switch this off or on in **Settings → Services**.
 - **A Start button that works even when Prompt Maker is off.** If the page ever says *Prompt Maker's server isn't running*, click **▶ Start Prompt Maker**. The first time, your browser asks to open Prompt Maker: allow it (tick *Always allow*). The page keeps a copy of itself, so it opens even while the server is off.
+
+**Start and stop everything from Settings → Services,** with no terminal:
+
+| Row | What you can do |
+|---|---|
+| **Prompt Maker** | ■ Stop it (the page then offers ▶ Start Prompt Maker) |
+| **LM Studio** | ▶ Start its server, or ■ Stop it, which first unloads every model to free the GPU |
+| **ComfyUI** | ▶ Start it, or ■ Stop it. It starts from its folder, the way Prompt Maker last saw you run it, or with live previews on (`--preview-method auto`); change the folder or the options under **ComfyUI** in Settings. Tick *Start ComfyUI along with it* to have it come up with Prompt Maker |
+
+**■ Stop everything (frees the GPU)** stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker. On Create, *ComfyUI offline* has a **▶ Start it** link too.
 
 To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it up again. Logs: `journalctl --user -u prompt-maker -f`. Windows and macOS get the same setup with their own launchers (coming).
 
@@ -498,7 +508,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 <details>
 <summary><b>"Prompt Maker's server isn't running" banner</b></summary>
 
-The page is open but the app behind it stopped. Click **▶ Start Prompt Maker** in the banner (the first time, allow your browser to open Prompt Maker), or open Prompt Maker from your app menu. The page reconnects on its own. If neither is there, run `./start.sh` in the app folder once: it sets both up. To keep it running from now on, switch on **Settings → Start-up**.
+The page is open but the app behind it stopped. Click **▶ Start Prompt Maker** in the banner (the first time, allow your browser to open Prompt Maker), or open Prompt Maker from your app menu. The page reconnects on its own. If neither is there, run `./start.sh` in the app folder once: it sets both up. To keep it running from now on, switch on *Start Prompt Maker with my computer* in **Settings → Services**.
 </details>
 
 <details>
@@ -548,7 +558,7 @@ Another copy is probably running. Open http://127.0.0.1:5317, or start on anothe
 <details>
 <summary><b>"Can't reach ComfyUI"</b></summary>
 
-Start ComfyUI (for example `python main.py` in its folder) and check the URL in **Settings → ComfyUI → Test connection**. The render bar shows *ComfyUI offline* while it's down, and reconnects on its own.
+Click **▶ Start it** next to *ComfyUI offline* (or **▶ Start** in **Settings → Services**). If Prompt Maker can't find ComfyUI, enter its folder under **Settings → ComfyUI**. Also check the URL with **Test connection**. The render bar reconnects on its own once ComfyUI answers.
 </details>
 
 <details>

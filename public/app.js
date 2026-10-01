@@ -330,6 +330,7 @@ function showView(name, { push = true } = {}) {
   if (name === 'gallery') loadGallery();
   if (name === 'settings' && !state.settingsDirty) renderSettings();
   if (name === 'settings') showOutputDir();
+  if (name === 'settings') loadServices();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
     if (state.models.length) editModel(state.modelId || state.models[0].id); else newModel();
   } else if (name === 'models') renderWorkflowList(); // workflows may have changed elsewhere (e.g. in ComfyUI)
@@ -2416,7 +2417,8 @@ function setSettingsDirty(d) {
   $('#settingsDirty').hidden = !d;
 }
 
-// ---------- settings: start-up ----------
+// ---------- settings: services ----------
+// What's running (Prompt Maker, LM Studio, ComfyUI), with Start and Stop buttons, and starting with the computer.
 
 // Starting with the computer, where the app can set that up (Linux for now). Also remembers whether the
 // promptmaker:// link works here, for the offline banner's Start button.
@@ -2428,7 +2430,7 @@ async function loadAutostart() {
 }
 
 function renderAutostart(st) {
-  $('#startupCard').hidden = !st.supported;
+  $('#startupOpts').hidden = !st.supported;
   $('#sAutostart').checked = st.autostart;
   $('#sAutostartHint').textContent = st.autostart
     ? 'It starts when you log in, turns on LM Studio\'s server, and comes back on its own if it ever stops. It\'s also in your app menu.'
@@ -2451,6 +2453,120 @@ $('#sAutostart').addEventListener('change', async e => {
   }
 });
 
+$('#sComfyAutostart').addEventListener('change', async e => {
+  try {
+    state.settings = await api('/api/settings', { method: 'PUT', body: { comfyAutostart: e.target.checked } });
+    toast(e.target.checked ? '🎨 ComfyUI starts along with Prompt Maker' : "🎨 ComfyUI won't start on its own");
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    toast(err.message, true);
+  }
+});
+
+let servicesPoll = null;
+async function loadServices() {
+  const st = await api('/api/services').catch(() => null);
+  if (st) renderServices(st);
+  return st;
+}
+
+function renderServices(st) {
+  state.services = st;
+  const row = (name, { dot, text, start, stop }) => {
+    const el = $(`.svc[data-svc="${name}"]`);
+    $('.dot', el).className = `dot ${dot}`;
+    $('.svc-state', el).textContent = text;
+    if (start !== undefined) $(`[data-act="${name}-start"]`, el).hidden = !start;
+    if (stop !== undefined) $(`[data-act="${name}-stop"]`, el).hidden = !stop;
+  };
+  row('app', { dot: 'ok', text: st.app.service ? 'Running in the background' : 'Running' });
+  const { lms, comfy } = st;
+  row('lms', lms.running
+    ? { dot: 'ok', text: `Running · ${lms.loaded ? `${lms.loaded} model${lms.loaded > 1 ? 's' : ''} loaded` : 'no model loaded'}`, start: false, stop: lms.local }
+    : { dot: 'bad', text: lms.local ? 'Off' : 'Off (it runs on another computer)', start: lms.local, stop: false });
+  const busy = $('.svc[data-svc="comfy"]').dataset.busy;
+  row('comfy', comfy.running
+    ? { dot: 'ok', text: `Running${comfy.gpu ? ` · ${comfy.gpu}` : ''}`, start: false, stop: comfy.local && !busy }
+    : comfy.starting || busy === 'start'
+      ? { dot: 'warn', text: 'Starting… (up to a minute)', start: false, stop: false }
+      : { dot: 'bad', text: !comfy.local ? 'Off (it runs on another computer)' : comfy.launch ? 'Off' : "Off · not found on this computer: enter its folder under ComfyUI below", start: comfy.local && Boolean(comfy.launch), stop: false });
+  const how = comfy.local && comfy.launch;
+  $('#svcComfyHow').hidden = !how;
+  if (how) {
+    const from = { learned: 'the way you last ran it', found: 'with live previews on', set: 'with your settings below' }[comfy.launch.from] || '';
+    $('#svcComfyHow').innerHTML = `ComfyUI starts from <code>${esc(comfy.launch.dir)}</code>${from ? `, ${from}` : ''}. <span class="muted" title="${esc(comfy.launch.command)}">ⓘ command</span>`;
+  }
+  $('#sComfyAutostart').checked = comfy.autostart;
+  $('#sComfyAutostart').closest('label').hidden = !comfy.local || !comfy.launch;
+  $('#sComfyFolder').placeholder = comfy.launch?.from && comfy.launch.from !== 'set' ? `found: ${comfy.launch.dir}` : 'found automatically';
+  // Keep watching while ComfyUI is on its way up.
+  clearTimeout(servicesPoll);
+  if ((comfy.starting || busy === 'start') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
+}
+
+// Starts ComfyUI, then watches until it answers (or gives up after three minutes).
+async function startComfyUi() {
+  const row = $('.svc[data-svc="comfy"]');
+  row.dataset.busy = 'start';
+  if (state.services) renderServices(state.services);
+  try {
+    await api('/api/services/comfy/start', { method: 'POST' });
+    toast('🎨 Starting ComfyUI… (up to a minute)');
+    for (let i = 0; i < 90; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const st = await loadComfyStatus();
+      if (st?.ok) {
+        toast('🎨 ComfyUI is running');
+        break;
+      }
+      if (i === 89) toast("ComfyUI didn't answer within three minutes. Check its window or log.", true);
+    }
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    delete row.dataset.busy;
+    await loadServices();
+  }
+}
+
+async function serviceAction(btn) {
+  const act = btn.dataset.act;
+  if (act === 'comfy-start') return startComfyUi();
+  if (act === 'app-stop' || btn.id === 'stopAllBtn') {
+    const all = btn.id === 'stopAllBtn';
+    return confirmClick(btn, all ? 'Click again to stop everything' : 'Click again to stop', async () => {
+      btn.disabled = true;
+      await api(`/api/services/${all ? 'all' : 'app'}/stop`, { method: 'POST' }).catch(() => {});
+      toast(all ? '■ Stopped everything. Start Prompt Maker again from your app menu.' : '■ Prompt Maker stopped. Start it again from your app menu, or the button above.');
+      setTimeout(loadLlms, 1500); // shows the "isn't running" banner, with its Start button
+      btn.disabled = false;
+    });
+  }
+  const [what, action] = act.split('-');
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = action === 'start' ? 'Starting…' : 'Stopping…';
+  try {
+    await api(`/api/services/${what}/${action}`, { method: 'POST' });
+    toast({ 'lms-start': '🔌 LM Studio is on', 'lms-stop': '■ LM Studio is off, and its models are unloaded', 'comfy-stop': '■ ComfyUI is off' }[act]);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+    await Promise.all([loadServices(), loadLlms(), loadComfyStatus()]);
+  }
+}
+
+$('#servicesCard').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act], #stopAllBtn');
+  if (btn && !btn.disabled) serviceAction(btn);
+});
+// Create's "ComfyUI offline" has a Start link too.
+$('#comfyState').addEventListener('click', e => {
+  if (e.target.closest('.comfy-start')) startComfyUi();
+});
+
 function renderSettings() {
   const s = state.settings;
   if (!s) return;
@@ -2461,6 +2577,8 @@ function renderSettings() {
   $('#sComfyResult').hidden = true;
   $('#sComfyCleanup').checked = Boolean(s.comfyCleanup);
   $('#sComfyDir').value = s.comfyOutputDir || '';
+  $('#sComfyFolder').value = s.comfyDir || '';
+  $('#sComfyArgs').value = s.comfyArgs || '';
   $('#sComfyDirField').hidden = !s.comfyCleanup;
   $('#sThinking').value = s.thinking;
   $('#sMaster').value = s.masterPrompt;
@@ -2470,7 +2588,7 @@ function renderSettings() {
 }
 
 // The Start-up switch saves on its own, so it never makes the form unsaved.
-const marksSettingsDirty = e => { if (e.target.id !== 'sAutostart') setSettingsDirty(true); };
+const marksSettingsDirty = e => { if (!['sAutostart', 'sComfyAutostart'].includes(e.target.id)) setSettingsDirty(true); };
 $('#settingsForm').addEventListener('input', marksSettingsDirty);
 // Where ComfyUI's output folder is, as a hint in the field (it's usually found on its own).
 function showOutputDir() {
@@ -2499,7 +2617,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value },
     });
     renderSettings();
     toast('💾 Settings saved');
@@ -2995,7 +3113,8 @@ function renderComfyState() {
   const c = state.comfy;
   el.hidden = !c || !workflowsFor(state.modelId).length;
   if (el.hidden) return;
-  el.innerHTML = `<span class="dot ${c.ok ? 'ok' : 'bad'}"></span>${c.ok ? 'ComfyUI ready' : 'ComfyUI offline'}`;
+  const startable = !c.ok && state.services?.comfy?.local !== false;
+  el.innerHTML = `<span class="dot ${c.ok ? 'ok' : 'bad'}"></span>${c.ok ? 'ComfyUI ready' : 'ComfyUI offline'}${startable ? '<button type="button" class="comfy-start">▶ Start it</button>' : ''}`;
   el.title = c.ok ? `ComfyUI ${c.version || ''}${c.gpu ? ` on ${c.gpu}` : ''}`.trim() : c.error || '';
 }
 

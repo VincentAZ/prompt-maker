@@ -401,10 +401,32 @@
         <p>Everything runs on your machine. Nothing leaves it.</p>
       </div>
       <form id="settingsForm" class="settings" autocomplete="off" novalidate>
-        <section class="card" id="startupCard" hidden>
-          <h2>🚀 Start-up</h2>
-          <label class="check-row"><input type="checkbox" id="sAutostart"> <span>Start Prompt Maker with my computer, and keep it running</span></label>
-          <p class="hint" id="sAutostartHint"></p>
+        <section class="card" id="servicesCard">
+          <h2>🖥 Services</h2>
+          <ul class="svc-list">
+            <li class="svc" data-svc="app">
+              <span class="dot ok"></span>
+              <span class="svc-text"><b>Prompt Maker</b><span class="svc-state">Running</span></span>
+              <span class="svc-acts"><button type="button" class="btn small" data-act="app-stop">■ Stop</button></span>
+            </li>
+            <li class="svc" data-svc="lms">
+              <span class="dot"></span>
+              <span class="svc-text"><b>LM Studio</b><span class="svc-state">…</span></span>
+              <span class="svc-acts"><button type="button" class="btn small primary" data-act="lms-start" hidden>▶ Start</button><button type="button" class="btn small" data-act="lms-stop" hidden>■ Stop</button></span>
+            </li>
+            <li class="svc" data-svc="comfy">
+              <span class="dot"></span>
+              <span class="svc-text"><b>ComfyUI</b><span class="svc-state">…</span></span>
+              <span class="svc-acts"><button type="button" class="btn small primary" data-act="comfy-start" hidden>▶ Start</button><button type="button" class="btn small" data-act="comfy-stop" hidden>■ Stop</button></span>
+            </li>
+          </ul>
+          <p class="hint" id="svcComfyHow"></p>
+          <div id="startupOpts">
+            <label class="check-row"><input type="checkbox" id="sAutostart"> <span>Start Prompt Maker with my computer, and keep it running</span></label>
+            <label class="check-row"><input type="checkbox" id="sComfyAutostart"> <span>Start ComfyUI along with it</span></label>
+            <p class="hint" id="sAutostartHint"></p>
+          </div>
+          <div class="row"><button type="button" class="btn small danger" id="stopAllBtn" title="Stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker">■ Stop everything (frees the GPU)</button></div>
         </section>
 
         <section class="card">
@@ -413,7 +435,7 @@
             <div class="row"><input id="sUrl" placeholder="http://127.0.0.1:1234"><button type="button" id="sTest" class="btn small">Test connection</button></div>
           </label>
           <p id="sTestResult" class="test-result" hidden></p>
-          <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start the server in LM Studio's <b>Developer</b> tab, or run <code>lms server start</code>. Choose the LLM (“Brain”) in the top bar. Image input needs a vision model marked 👁.</p>
+          <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start and stop LM Studio's server in <b>Services</b> above. Choose the LLM (“Brain”) in the top bar. Image input needs a vision model marked 👁.</p>
         </section>
 
         <section class="card">
@@ -425,7 +447,11 @@
           <label class="check-row"><input type="checkbox" id="sComfyCleanup"> <span>After copying a render, delete it from ComfyUI's output folder</span></label>
           <label class="field" id="sComfyDirField"><span>ComfyUI output folder <small>only if ComfyUI was started with <code>--output-directory</code></small></span><input id="sComfyDir" placeholder="found automatically"></label>
           <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer.</p>
-          <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI as usual (e.g. <code>python main.py</code>), then attach workflows to a model in the <b>Models</b> tab. For live previews while rendering, start ComfyUI with <code>--preview-method auto</code>.</p>
+          <div class="grid-3">
+            <label class="field"><span>ComfyUI folder <small>to start it from Services</small></span><input id="sComfyFolder" placeholder="found automatically"></label>
+            <label class="field"><span>Start options</span><input id="sComfyArgs" class="mono" placeholder="as you last ran it"></label>
+          </div>
+          <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI in <b>Services</b> above (or as usual), then attach workflows to a model in the <b>Models</b> tab. Prompt Maker starts it the way it last saw it running, or with live previews on (<code>--preview-method auto</code>).</p>
         </section>
 
         <section class="card">
