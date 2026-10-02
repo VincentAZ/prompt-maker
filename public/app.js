@@ -489,29 +489,82 @@ function renderLlmPick() {
 }
 
 // The menu's groups for the search and sort: [{ title?, items: [brain] }]. "Auto" is { id: '' }.
-// Filters for the Brain menu and Models → Brains: one at a time.
+// Filters for the Brain menu and Models → Brains. Pick any number of traits (a Brain needs all of them) and any
+// number of providers (a Brain from any of them); nothing picked shows every Brain.
 const isUncensored = m => /uncensor|abliterat|heretic|nsfw|unfilter|unalign|dolphin|lewd|erotic|\bderestrict/i.test(`${m.name} ${m.id}`);
-const BRAIN_FILTERS = {
-  all: { label: 'All', test: () => true },
+const BRAIN_TRAITS = {
   vision: { label: '👁 Vision', test: m => m.vision },
   uncensored: { label: '🔓 Uncensored', test: isUncensored },
-  local: { label: '💻 Local', test: m => !m.cloud },
-  cloud: { label: '☁️ Cloud', test: m => m.cloud },
   loaded: { label: '⚡ Loaded', test: m => !m.cloud && m.loaded },
 };
-const filterChips = (current, attr) => Object.entries(BRAIN_FILTERS)
-  .map(([key, f]) => [key, f, key === 'all' ? state.llms.length : state.llms.filter(f.test).length])
-  .filter(([key, , n]) => key === 'all' || n || key === current)
-  .map(([key, f, n]) => `<button type="button" role="radio" ${attr}="${key}" aria-checked="${key === current}" class="${key === current ? 'active' : ''}">${f.label} <span class="n">${n}</span></button>`).join('');
-let llmFilter = saved.get('llmFilter', 'all');
-if (!BRAIN_FILTERS[llmFilter]) llmFilter = 'all';
+const providerOf = m => (m.cloud ? m.providerId || m.cloud : 'local');
+// [{ key, label, n }]: LM Studio first, then each cloud provider by name.
+function brainProviders() {
+  const by = new Map();
+  for (const m of state.llms) {
+    const key = providerOf(m);
+    if (!by.has(key)) by.set(key, { key, label: m.cloud ? `☁️ ${m.cloud}` : '💻 LM Studio', n: 0 });
+    by.get(key).n++;
+  }
+  return [...by.values()].sort((a, b) => (b.key === 'local') - (a.key === 'local') || a.label.localeCompare(b.label));
+}
+function loadBrainFilter(key) {
+  const f = saved.get(key, {});
+  return {
+    traits: Array.isArray(f?.traits) ? f.traits.filter(t => BRAIN_TRAITS[t]) : [],
+    providers: Array.isArray(f?.providers) ? f.providers.filter(p => typeof p === 'string') : [],
+  };
+}
+const isFiltered = f => f.traits.length > 0 || f.providers.length > 0;
+const brainFilterTest = f => m => f.traits.every(t => BRAIN_TRAITS[t].test(m)) && (!f.providers.length || f.providers.includes(providerOf(m)));
+function brainFilterLabel(f) {
+  const names = new Map(brainProviders().map(p => [p.key, p.label]));
+  return [...f.traits.map(t => BRAIN_TRAITS[t].label), f.providers.map(p => names.get(p) || p).join(' or ')].filter(Boolean).join(' + ');
+}
+// Trait chips, then provider checkboxes (only when there's more than one provider to choose from).
+function brainFilterControls(f) {
+  const chip = (attrs, on, label, n) => `<button type="button" ${attrs} aria-pressed="${on}" class="${on ? 'active' : ''}">${label} <span class="n">${n}</span></button>`;
+  const traits = chip('data-all', !isFiltered(f), 'All', state.llms.length) + Object.entries(BRAIN_TRAITS)
+    .map(([key, t]) => [key, t, state.llms.filter(t.test).length])
+    .filter(([key, , n]) => n || f.traits.includes(key))
+    .map(([key, t, n]) => chip(`data-trait="${key}"`, f.traits.includes(key), t.label, n)).join('');
+  const providers = brainProviders();
+  for (const key of f.providers) if (!providers.some(p => p.key === key)) providers.push({ key, label: key, n: 0 }); // removed, but still ticked
+  const boxes = providers.length < 2 ? '' : `<div class="brain-providers" role="group" aria-label="Providers">${providers.map(p =>
+    `<label><input type="checkbox" data-provider="${esc(p.key)}"${f.providers.includes(p.key) ? ' checked' : ''}> ${esc(p.label)} <span class="n">${p.n}</span></label>`).join('')}</div>`;
+  return `<div class="brain-traits" role="group" aria-label="Show only">${traits}</div>${boxes}`;
+}
+// Wires a filter box: changes `f` in place, saves it under `key`, then calls `done`.
+function wireBrainFilter(box, f, key, done) {
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.matches('[data-all]')) {
+      f.traits = [];
+      f.providers = [];
+    } else if (b.dataset.trait) {
+      const t = b.dataset.trait;
+      f.traits = f.traits.includes(t) ? f.traits.filter(x => x !== t) : [...f.traits, t];
+    } else return;
+    saved.set(key, f);
+    done();
+  });
+  box.addEventListener('change', e => {
+    const p = e.target.dataset.provider;
+    if (p === undefined) return;
+    f.providers = e.target.checked ? [...f.providers, p] : f.providers.filter(x => x !== p);
+    saved.set(key, f);
+    done();
+  });
+}
+const llmFilter = loadBrainFilter('llmFilters');
 
 function llmMenuGroups(q, suggested) {
   const auto = { id: '', name: 'Auto: whatever is loaded' };
-  const pool = state.llms.filter(BRAIN_FILTERS[llmFilter].test);
+  const pool = state.llms.filter(brainFilterTest(llmFilter));
   const current = state.settings?.llmModel || '';
-  const inUse = llmFilter === 'all' && !q ? pool.filter(m => m.id === current) : [];
-  const head = llmFilter === 'all' ? [{ items: [auto] }, { title: 'In use', items: inUse }] : [];
+  const inUse = !isFiltered(llmFilter) && !q ? pool.filter(m => m.id === current) : [];
+  const head = !isFiltered(llmFilter) ? [{ items: [auto] }, { title: 'In use', items: inUse }] : [];
   const others = pool.filter(m => !inUse.includes(m));
   if (q) {
     const hits = pool.map(m => ({ m, score: brainMatch(m, q) })).filter(x => x.score);
@@ -554,13 +607,14 @@ function renderLlmMenu() {
   };
   const html = llmMenuGroups(q, suggested).filter(g => g.items.length)
     .map(g => (g.title ? `<li class="grp" role="presentation">${esc(g.title)}</li>` : '') + g.items.map(option).join('')).join('');
-  $('#llmList').innerHTML = html || `<li class="none" role="presentation">No Brain matches "${esc(q)}".</li>`;
+  const none = `No Brain matches${q ? ` "${q}"` : ''}${isFiltered(llmFilter) ? ` ${brainFilterLabel(llmFilter)}` : ''}.`;
+  $('#llmList').innerHTML = html || `<li class="none" role="presentation">${esc(none)}</li>`;
   setLlmActive(Math.min(llmActive, i - 1));
   $$('.llm-sort button').forEach(b => {
     b.classList.toggle('active', b.dataset.sort === llmSort);
     b.setAttribute('aria-checked', String(b.dataset.sort === llmSort));
   });
-  $('#llmFilters').innerHTML = filterChips(llmFilter, 'data-filter');
+  $('#llmFilters').innerHTML = brainFilterControls(llmFilter);
 }
 
 function setLlmActive(i, scroll = true) {
@@ -622,11 +676,7 @@ $('#llmList').addEventListener('mousemove', e => {
   const el = e.target.closest('[role="option"]');
   if (el && Number(el.dataset.i) !== llmActive) setLlmActive(Number(el.dataset.i), false);
 });
-$('#llmFilters').addEventListener('click', e => {
-  const b = e.target.closest('[data-filter]');
-  if (!b) return;
-  llmFilter = b.dataset.filter;
-  saved.set('llmFilter', llmFilter);
+wireBrainFilter($('#llmFilters'), llmFilter, 'llmFilters', () => {
   llmActive = 0;
   renderLlmMenu();
   $('#llmSearch').focus();
@@ -1961,8 +2011,7 @@ const NEW_MODEL = {
 
 let modelsPane = saved.get('modelsPane', 'models');
 let brainSort = saved.get('brainSort', 'fit');
-let brainFilter = saved.get('brainFilter', 'all');
-if (!BRAIN_FILTERS[brainFilter]) brainFilter = 'all';
+const brainFilter = loadBrainFilter('brainFilters');
 function showModelsPane(pane, { push = true } = {}) {
   modelsPane = pane === 'brains' ? 'brains' : 'models';
   saved.set('modelsPane', modelsPane);
@@ -2001,33 +2050,27 @@ function renderBrains() {
     recent: (a, b) => byRecent(a.m, b.m),
     name: (a, b) => byName(a.m, b.m),
   }[brainSort] || (() => 0);
-  $('#brainFilters').innerHTML = filterChips(brainFilter, 'data-filter');
+  $('#brainFilters').innerHTML = brainFilterControls(brainFilter);
   const ranked = state.llms
-    .filter(BRAIN_FILTERS[brainFilter].test)
+    .filter(brainFilterTest(brainFilter))
     .filter(m => brainMatch(m, q))
     .map(m => ({ m, fit: brainFit(m, model) }))
     .sort(order);
   // Ranked by fit, Brains with no record yet wait in a fold; searching or sorting another way shows them all.
-  const fresh = brainSort === 'fit' && !q && brainFilter === 'all' ? ranked.filter(x => isNewBrain(x.m) && x.m.id !== inUse) : [];
+  const fresh = brainSort === 'fit' && !q && !isFiltered(brainFilter) ? ranked.filter(x => isNewBrain(x.m) && x.m.id !== inUse) : [];
   $('#brainList').innerHTML = ranked.filter(x => !fresh.includes(x)).map(x => brainCard(x.m, x.fit, model, inUse, q)).join('');
   $('#brainListNew').innerHTML = fresh.map(x => brainCard(x.m, x.fit, model, inUse)).join('');
   $('#brainsNew').hidden = !fresh.length;
   $('#brainsNew > summary').textContent = `${fresh.length} Brain${fresh.length > 1 ? 's' : ''} you haven't used or checked yet`;
   const empty = $('#brainsEmpty');
   empty.hidden = ranked.length > 0;
-  empty.textContent = (q || brainFilter !== 'all') && state.llms.length ? `No Brain matches${q ? ` "${q}"` : ''}${brainFilter !== 'all' ? ` in ${BRAIN_FILTERS[brainFilter].label}` : ''}.`
+  empty.textContent = (q || isFiltered(brainFilter)) && state.llms.length ? `No Brain matches${q ? ` "${q}"` : ''}${isFiltered(brainFilter) ? ` ${brainFilterLabel(brainFilter)}` : ''}.`
     : state.llmOk === false ? 'LM Studio is not reachable, so there are no Brains to show. Start its server (see the banner at the top).'
     : 'No models in LM Studio yet. Download one there and it shows up here.';
 }
 
 $('#brainSearch').addEventListener('input', renderBrains);
-$('#brainFilters').addEventListener('click', e => {
-  const b = e.target.closest('[data-filter]');
-  if (!b) return;
-  brainFilter = b.dataset.filter;
-  saved.set('brainFilter', brainFilter);
-  renderBrains();
-});
+wireBrainFilter($('#brainFilters'), brainFilter, 'brainFilters', renderBrains);
 $$('.brain-sort button').forEach(b => b.addEventListener('click', () => {
   brainSort = b.dataset.sort;
   saved.set('brainSort', brainSort);

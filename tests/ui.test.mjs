@@ -789,6 +789,19 @@ esac
     const cloudId = await js('[...document.querySelectorAll("#llmSelect option")].find(o => o.value.endsWith(":mock/text-only"))?.value');
     assert(cloudId?.startsWith('cloud:'), 'its models are Brains now');
 
+    // The Brain menu gets a checkbox per provider: tick one or more to see only their Brains.
+    await click('.tabs button[data-view="create"]');
+    await click('#llmPick');
+    eq(await js('[...document.querySelectorAll("#llmFilters .brain-providers label")].map(l => l.textContent.replace(/ \\d+$/, "").trim()).join("|")'), '💻 LM Studio|☁️ Test Cloud', 'LM Studio first, then each provider');
+    await click('#llmFilters .brain-providers input:not([data-provider="local"])');
+    assert(await js('[...document.querySelectorAll("#llmList [role=option]")].every(o => o.dataset.id.startsWith("cloud:"))'), 'only that provider\'s Brains');
+    await click('#llmFilters [data-provider="local"]');
+    const ids = await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id)');
+    assert(ids.includes('mock/text-only') && ids.includes(cloudId), 'two providers: Brains from either');
+    await click('#llmFilters [data-all]');
+    eq(await js('document.querySelectorAll("#llmFilters .brain-providers input:checked").length'), 0, 'All unticks them');
+    await press('Escape');
+
     // Switching to it asks first. Nope keeps the local Brain.
     await click('.tabs button[data-view="create"]');
     await choose('#llmSelect', cloudId);
@@ -1493,12 +1506,17 @@ esac
     const names = await js('[...document.querySelectorAll("#llmList .grp:last-of-type ~ [role=option]")].map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
     eq(names.join('|'), [...names].sort((a, b) => a.localeCompare(b)).join('|'), 'A to Z');
     await click('.llm-sort button[data-sort="smart"]');
-    // Filters: one at a time, with counts.
-    await click('#llmFilters [data-filter="vision"]');
+    // Filters: any number at once, with counts; All clears them.
+    await click('#llmFilters [data-trait="vision"]');
     assert(await js('[...document.querySelectorAll("#llmList [role=option]")].every(o => o.querySelector(".n").textContent.startsWith("👁"))'), 'vision only');
     assert(!(await js('!!document.querySelector(\'#llmList [data-id="mock/text-only"]\')')), 'text-only Brains hidden');
-    assert(/Vision \d+/.test(await text('#llmFilters [data-filter="vision"]')), 'with a count');
-    await click('#llmFilters [data-filter="all"]');
+    assert(/Vision \d+/.test(await text('#llmFilters [data-trait="vision"]')), 'with a count');
+    await click('#llmFilters [data-trait="loaded"]');
+    eq(await js('[...document.querySelectorAll("#llmFilters [aria-pressed=true]")].map(b => b.dataset.trait).join("|")'), 'vision|loaded', 'two at once');
+    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id).join("|")'), 'mock/vision-8b', 'only Brains that are both');
+    eq(await js('document.querySelector("#llmFilters").scrollWidth <= document.querySelector("#llmFilters").clientWidth'), true, 'the filters wrap instead of running off the menu');
+    await click('#llmFilters [data-all]');
+    eq(await js('document.querySelectorAll("#llmFilters [data-trait][aria-pressed=true]").length'), 0, 'All clears them');
     await press('Escape');
     assert(!(await visible('#llmMenu')), 'Esc closes');
 

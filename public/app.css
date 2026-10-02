@@ -187,7 +187,7 @@ fieldset legend { padding: 0 6px; }
   display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: var(--radius-md);
   background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow);
 }
-.llm-menu input { width: 100%; }
+.llm-menu > input { width: 100%; }
 .llm-sort button { padding: 5px 4px; font-size: 13px; }
 .llm-list { list-style: none; margin: 0; padding: 0; max-height: min(60vh, 520px); overflow-y: auto; overscroll-behavior: contain; }
 .llm-list .grp { padding: 8px 8px 4px; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
@@ -1034,13 +1034,17 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
   .take:not(:hover):not(:focus-within) .chips { display: none; }
 }
 
-/* Brain filters (menu and Models → Brains) */
-.brain-filters { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
-.brain-filters::-webkit-scrollbar { display: none; }
-.brain-filters button { flex: none; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text-2); font-size: 12.5px; font-weight: 650; cursor: pointer; white-space: nowrap; }
-.brain-filters button .n { opacity: 0.6; font-weight: 600; margin-left: 2px; }
-.brain-filters button:hover { color: var(--text); }
-.brain-filters button.active { background: var(--text); color: var(--ink); border-color: var(--text); }
+/* Brain filters (menu and Models → Brains): trait chips, then provider checkboxes; both wrap */
+.brain-filters { display: flex; flex-direction: column; gap: 6px; }
+.brain-traits, .brain-providers { display: flex; flex-wrap: wrap; gap: 6px; }
+.brain-traits button { padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text-2); font-size: 12.5px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.brain-filters .n { opacity: 0.6; font-weight: 600; margin-left: 2px; }
+.brain-traits button:hover { color: var(--text); }
+.brain-traits button.active { background: var(--text); color: var(--ink); border-color: var(--text); }
+.brain-providers { gap: 4px 14px; padding: 0 2px; }
+.brain-providers label { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.brain-providers label:hover { color: var(--text); }
+.brain-providers input { margin: 0; accent-color: var(--text); }
 .brains-bar .brain-filters { flex-basis: 100%; }
 .llm-menu { width: min(480px, calc(100vw - 32px)); }
 .llm-list .grp { position: sticky; top: 0; z-index: 1; background: var(--panel-2); }
