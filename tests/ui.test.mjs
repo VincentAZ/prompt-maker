@@ -144,10 +144,19 @@ async function click(sel) {
     if (!again.err && Math.abs(again.x - box.x) < 1 && Math.abs(again.y - box.y) < 1) { box = again; break; }
   }
   if (box.err) throw new Error(`click(${sel}): ${box.err}`);
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await cdp.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+  // A click is lost when the page redraws the element between press and release (a person would click again).
+  for (let attempt = 0; ; attempt++) {
+    const before = await js('window.__input?.clicks ?? -1');
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await cdp.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+    }
+    await sleep(40);
+    if (before < 0 || attempt === 1 || (await js('window.__input?.clicks ?? -1').catch(() => -1)) !== before) break; // -1: the page is changing (navigation)
+    console.log(`      (a click on ${sel} never reached the page: clicking again)`);
+    const again = await locate(sel);
+    if (again.err) throw new Error(`click(${sel}): ${again.err}`);
+    box = again;
   }
-  await sleep(40);
 }
 
 // Where to click an element (its center), after scrolling it into view; or why it can't be clicked.
@@ -185,10 +194,15 @@ async function type(sel, str, { clear = true } = {}) {
 async function press(key, { ctrl = false } = {}) {
   const codes = { Enter: 13, Escape: 27, ' ': 32, ArrowDown: 40, ArrowUp: 38 };
   const base = { key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: codes[key], modifiers: ctrl ? 2 : 0 };
-  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
-  if ((key === 'Enter' || key === ' ') && !ctrl) await cdp.send('Input.dispatchKeyEvent', { type: 'char', ...base, text: key === ' ' ? ' ' : '\r' });
-  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
-  await sleep(40);
+  for (let attempt = 0; ; attempt++) {
+    const before = await js('window.__input?.keys ?? -1');
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+    if ((key === 'Enter' || key === ' ') && !ctrl) await cdp.send('Input.dispatchKeyEvent', { type: 'char', ...base, text: key === ' ' ? ' ' : '\r' });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+    await sleep(40);
+    if (before < 0 || attempt === 1 || (await js('window.__input?.keys ?? -1').catch(() => -1)) !== before) break; // -1: the page is changing (navigation)
+    console.log(`      (${key} never reached the page: pressing again)`);
+  }
 }
 
 async function choose(sel, val) {
@@ -265,6 +279,8 @@ async function test(name, fn) {
   } catch (err) {
     results.push({ name, ok: false, err: err.message });
     console.log(`  ✗ ${name}\n      ${err.message}`);
+    const toasts = await js('(window.__toasts || []).slice(-4).map(t => `${((Date.now() - t.at) / 1000).toFixed(1)}s ago: ${t.text}`)').catch(() => []);
+    if (toasts?.length) console.log(`      last toasts: ${toasts.join(' | ')}`);
     await shot(`FAIL-${name}`).catch(() => {});
   }
 }
@@ -350,6 +366,16 @@ esac
   if (!target) throw new Error('Chrome did not start');
   cdp = await Cdp.connect(target.webSocketDebuggerUrl);
   await Promise.all(['Page.enable', 'Runtime.enable', 'Log.enable', 'DOM.enable'].map(m => cdp.send(m)));
+  // Every toast, in order, with when it showed: there's one toast slot, and a later toast replaces the one before.
+  // And every click and key press that reached the page, so a lost one can be told apart from one the app ignored.
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__toasts = [];
+    window.__input = { clicks: 0, keys: 0 };
+    addEventListener('click', () => { window.__input.clicks++; }, true);
+    addEventListener('keydown', () => { window.__input.keys++; }, true);
+    document.addEventListener('DOMContentLoaded', () => {
+      const t = document.querySelector('#toast');
+      if (t) new MutationObserver(() => { if (!t.hidden) window.__toasts.push({ text: t.textContent, at: Date.now() }); }).observe(t, { attributes: true, attributeFilter: ['hidden'] });
+    });` });
   // Reloading with unsaved Settings asks "Leave site?" (on purpose); the tests always leave.
   cdp.on('Page.javascriptDialogOpening', () => cdp.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}));
   cdp.on('Runtime.exceptionThrown', p => problems.push(`exception: ${p.exceptionDetails.exception?.description || p.exceptionDetails.text}`));
