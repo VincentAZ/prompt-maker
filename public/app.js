@@ -1238,6 +1238,8 @@ function createTake(index, count, model) {
       <button type="submit" title="Refine (Enter)" aria-label="Refine ${esc(name)}">➜</button>
     </form>
     <div class="chips" hidden>${chips.map(([e, c]) => `<button type="button" class="chip-btn" data-instr="${esc(c)}">${e} ${esc(c)}</button>`).join('')}</div>`;
+  el.dataset.panel = 'take';
+  decoratePanel(el);
   const card = { el, index, view: 0, model, running: new Map(), rb: null };
   const ta = $('.prompt-text', el);
 
@@ -3358,6 +3360,9 @@ function updateSettingsLine(card) {
   if (!line || !flow) return;
   const stale = state.wfStale.has(flow.id);
   line.innerHTML = `${stale ? '<button type="button" class="chip-btn rb-stale" title="This workflow was saved again in ComfyUI after you added it">↻ Changed in ComfyUI · Update</button>' : ''}${settingsHtml(flow)}`;
+  // The details are in step ⑤ already: on the take they live in the ⚙ button's tooltip.
+  const tune = $('.rb-tune', card.el);
+  if (tune) tune.title = `Sampler settings: ${[...line.querySelectorAll(':scope > span')].map(x => x.textContent).join(', ')}. Click to change.`;
   $('.rb-stale', line)?.addEventListener('click', () => updateWorkflow(flow.id));
 }
 
@@ -5370,6 +5375,83 @@ document.addEventListener('keydown', e => {
 });
 window.addEventListener('resize', () => document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`));
 
+// ---------- collapsible panels ----------
+// Anything with data-panel="key" folds down to its header plus a one-line summary, by its ▾ button or a click on
+// the header. Remembered per panel (takes aren't: they come and go). data-default="collapsed" starts folded.
+
+const panelState = saved.get('panels', {});
+const shorten = (s, n = 90) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+const PANEL_SUMMARY = {
+  'create-model': () => { const m = currentModel(); return m ? `${m.kind === 'video' ? '🎬' : '📷'} ${m.name}` : ''; },
+  'create-theme': () => shorten($('#theme').value.trim()) || 'Nothing yet',
+  'create-image': () => (state.image ? `🖼️ Image attached · ${effectiveRole()}` : 'No image'),
+  'create-dials': () => [
+    !$('#aspectField').hidden && $('#aspect').value, !$('#resolutionField').hidden && $('#resolution').value,
+    !$('#durationField').hidden && $('#duration').value, `${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`,
+    `${state.variations} take${state.variations > 1 ? 's' : ''}`, `temp ${$('#temperature').value}`,
+  ].filter(Boolean).join(' · '),
+  'create-render': () => (workflowsFor(state.modelId).length ? `${activeFlow()?.name || ''}${$('#wfpAuto').checked ? ' · ⚡ auto-render' : ''}` : 'No workflow yet'),
+  'create-render-adv': () => [
+    !$('#wfpSeed').hidden && `🎲 ${$('#wfpSeed [role="radio"].active')?.textContent.trim() || 'seed'}`,
+    !$('#wfpDenoise').hidden && `denoise ${$('#wfpDenoise .dn-val')?.textContent || ''}`,
+    `🧬 ${$$('#wfpLoras .lora-row:not(.off)').length} LoRA${$$('#wfpLoras .lora-row:not(.off)').length === 1 ? '' : 's'} on`,
+  ].filter(Boolean).join(' · '),
+  'create-chain': () => (state.chain?.steps?.length > 1 ? `⛓ ${state.chain.steps.length - 1} more step${state.chain.steps.length > 2 ? 's' : ''}` : 'No more steps'),
+  take: el => shorten(($('.prompt-text', el)?.value || '').replace(/\s+/g, ' ').trim(), 140),
+  'set-services': () => state.services ? `LM Studio ${state.services.lms.running ? 'on' : 'off'} · ComfyUI ${state.services.comfy.running ? 'on' : 'off'}` : '',
+  'set-lmstudio': () => $('#sUrl').value,
+  'set-cloud': () => (state.providers?.length ? state.providers.map(p => `☁️ ${p.name}`).join(' · ') : 'None: 100% offline'),
+  'set-comfy': () => $('#sComfyUrl').value,
+  'set-thinking': () => `Thinking ${THINKING_LABELS[$('#sThinking').value] || ''} · max ${$('#sMax').value} tokens`,
+  'set-master': () => `${$('#sMaster').value.trim() === (state.settings?.defaultMasterPrompt || '').trim() ? 'Default' : 'Customized'}${$('#sAdult').checked ? ' · 🔞 adult content on' : ''}`,
+  'models-workflows': () => { const n = workflowsFor(state.editId).length; return `${n} workflow${n === 1 ? '' : 's'}`; },
+  'models-defaults': () => [$('#dAspect').value, $('#dRes').value, $('#dLen').value, $('#dTemp').value && `temp ${$('#dTemp').value}`].filter(Boolean).join(' · '),
+  'models-lengths': () => [$('#lShort').value, $('#lMed').value, $('#lLong').value].filter(Boolean).join(' · '),
+};
+
+function decoratePanel(el) {
+  if (el._sum) return;
+  const head = el.querySelector(':scope > .step-head, :scope > .panel-head, :scope > .take-head, :scope > .wf-head, :scope > h2, :scope > legend');
+  if (!head) return;
+  head.classList.add('panel-toggle');
+  el._btn = Object.assign(document.createElement('button'), { type: 'button', className: 'collapse-btn' });
+  (head.querySelector(':scope > .head-actions, :scope > .take-actions') || head).append(el._btn); // with the header's buttons, so it never wraps alone
+  el._sum = Object.assign(document.createElement('p'), { className: 'panel-summary' });
+  head.after(el._sum);
+  const key = el.dataset.panel;
+  setPanel(el, key in panelState ? panelState[key] : el.dataset.default === 'collapsed', false);
+}
+
+function setPanel(el, collapsed, remember = true) {
+  el.classList.toggle('collapsed', collapsed);
+  el._btn.setAttribute('aria-expanded', String(!collapsed));
+  el._btn.setAttribute('aria-label', collapsed ? 'Expand' : 'Collapse');
+  el._btn.title = collapsed ? 'Expand' : 'Collapse';
+  if (remember && el.dataset.panel !== 'take') {
+    panelState[el.dataset.panel] = collapsed;
+    saved.set('panels', panelState);
+  }
+  updatePanelSummary(el);
+}
+
+function updatePanelSummary(el) {
+  if (!el.classList.contains('collapsed')) return;
+  try { el._sum.textContent = PANEL_SUMMARY[el.dataset.panel]?.(el) || ''; } catch { el._sum.textContent = ''; }
+}
+const refreshPanelSummaries = () => $$('[data-panel].collapsed').forEach(updatePanelSummary);
+let summaryTimer = null;
+const soonRefreshSummaries = () => { clearTimeout(summaryTimer); summaryTimer = setTimeout(refreshPanelSummaries, 120); };
+for (const type of ['input', 'change', 'click']) document.addEventListener(type, soonRefreshSummaries, true);
+
+document.addEventListener('click', e => {
+  const head = e.target.closest('.panel-toggle');
+  if (!head) return;
+  // Buttons and fields in a header do their own thing; only the ▾ button or the header itself folds.
+  if (!e.target.closest('.collapse-btn') && e.target.closest('button, a, input, select, textarea, label, [role="radio"], [contenteditable]')) return;
+  const el = head.parentElement;
+  setPanel(el, !el.classList.contains('collapsed'));
+});
+
 // ---------- boot ----------
 
 async function loadModels() {
@@ -5381,6 +5463,7 @@ async function loadModels() {
 }
 
 (async function boot() {
+  $$('[data-panel]').forEach(decoratePanel);
   try {
     [state.settings, state.models] = await Promise.all([api('/api/settings'), api('/api/models')]);
     state.imageRole = saved.get('imageRole', 'reference');

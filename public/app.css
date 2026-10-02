@@ -996,3 +996,39 @@ dialog.img-pick { width: min(980px, calc(100vw - 32px)); }
 .adult-examples > .btn { align-self: flex-start; margin-top: 8px; }
 .link-btn { padding: 0; border: 0; background: none; color: var(--hot); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; }
 .adult-examples > .hint { margin-bottom: 8px; }
+
+/* ---------- collapsible panels ---------- */
+.panel-toggle { cursor: pointer; }
+h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 8px; }
+.collapse-btn {
+  margin-left: auto; flex: none; width: 28px; height: 28px; display: grid; place-items: center; padding: 0;
+  border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer;
+}
+.collapse-btn::before { content: ""; width: 7px; height: 7px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-2px) rotate(45deg); transition: transform 0.15s; }
+.collapsed > .panel-toggle .collapse-btn::before { transform: translateY(1px) rotate(-135deg); }
+.collapse-btn:hover { color: var(--text); background: var(--panel-3); }
+:is(.head-actions, .take-actions) > .collapse-btn { margin-left: 0; }
+.panel-summary { display: none; margin: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-panel].collapsed > .panel-summary { display: block; }
+[data-panel].collapsed > :not(.panel-toggle):not(.panel-summary) { display: none !important; }
+.wf-head.panel-toggle .hint { display: block; }
+[data-panel].collapsed > .wf-head .hint { display: none; }
+
+/* ---------- decluttered Create ---------- */
+/* Image roles: a compact switch; the line under it says what the picked one does. */
+.roles { gap: 6px; }
+.role { flex-direction: row; justify-content: center; gap: 6px; padding: 8px 10px; }
+.role-ico { font-size: 16px; }
+.role small { display: none; }
+/* Step ⑤ Advanced: seed, denoise and LoRAs in one fold. */
+.wfp-adv { display: flex; flex-direction: column; gap: 10px; padding: 8px 10px 10px 12px; border-radius: 12px; border: 1px dashed var(--line-2); }
+.wfp-adv.collapsed { padding-bottom: 8px; }
+.wfp-adv > .panel-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.wfp-adv > .panel-head .opt { color: var(--muted); font-size: 12.5px; }
+/* On a take, the sampler details live in the ⚙ tooltip (step ⑤ shows them). */
+.rb-settings > span { display: none; }
+.rb-settings:not(:has(.rb-stale)) { display: none; }
+/* Tweak chips show on the take you're working on. */
+@media (hover: hover) {
+  .take:not(:hover):not(:focus-within) .chips { display: none; }
+}

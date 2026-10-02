@@ -246,6 +246,8 @@ async function toastText(expected = '') {
 }
 
 const fileExists = p => fs.access(p).then(() => true, () => false);
+// Unfolds a collapsible panel (data-panel="key") if it's folded.
+const openPanel = key => js(`(() => { const el = document.querySelector('[data-panel="${key}"]'); if (el?.classList.contains('collapsed')) el._btn.click(); })()`);
 
 function assert(cond, msg) { if (!cond) throw new Error(`Assertion failed: ${msg}`); }
 function eq(actual, expected, msg) { if (actual !== expected) throw new Error(`${msg}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`); }
@@ -424,6 +426,7 @@ esac
   });
 
   await test('refine with a quick chip + version paging', async () => {
+    await click('.take:nth-child(1) .refine input');
     await click('.take:nth-child(1) .chips button[data-instr="Shorter"]');
     await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v2/2"', 'v2/2');
     assert((await value('.take:nth-child(1) .prompt-text')).startsWith('Revised to be shorter'), 'refined text shown');
@@ -438,6 +441,7 @@ esac
   await test('refine an older version (no fake manual edit)', async () => {
     await click('.take:nth-child(1) .versions .prev');
     eq(await text('.take:nth-child(1) .vlabel'), 'v1/2', 'viewing v1');
+    await click('.take:nth-child(1) .refine input');
     await click('.take:nth-child(1) .chips button[data-instr="More detailed"]');
     await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v3/3"', 'v3/3 (not v4/4)');
     assert((await text('.take:nth-child(1) .change')).includes('More detailed'), 'latest is the refine');
@@ -847,6 +851,29 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('panels fold to a one-line summary, and stay folded after a reload', async () => {
+    await click('.tabs button[data-view="create"]');
+    await type('#theme', 'a lighthouse keeper making tea at dawn');
+    await click('[data-panel="create-theme"] .collapse-btn');
+    assert(!(await visible('#theme')), 'step 2 folded');
+    eq(await text('[data-panel="create-theme"] .panel-summary'), 'a lighthouse keeper making tea at dawn', 'shows what it holds');
+    await click('[data-panel="create-dials"] .step-head h2'); // the header itself folds too
+    assert((await text('[data-panel="create-dials"] .panel-summary')).includes('temp'), 'dials summary');
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
+    assert(await js('document.querySelector(\'[data-panel="create-theme"]\').classList.contains("collapsed")'), 'remembered after a reload');
+    assert(await js('!document.querySelector(\'[data-panel="create-model"]\').classList.contains("collapsed")'), 'the others as you left them');
+    await click('[data-panel="create-theme"] .collapse-btn');
+    await click('[data-panel="create-dials"] .collapse-btn');
+    assert(await visible('#theme'), 'unfolded');
+    // Settings cards fold too.
+    await click('.tabs button[data-view="settings"]');
+    await click('[data-panel="set-thinking"] h2');
+    assert((await text('[data-panel="set-thinking"] .panel-summary')).startsWith('Thinking'), 'Settings card summary');
+    await click('[data-panel="set-thinking"] .collapse-btn');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('offline copy: with the server off, the page still opens, then loads for real when it is back', async () => {
     await waitFor('navigator.serviceWorker.controller !== null', 'the page copy is kept', 10000);
     const conditions = offline => cdp.send('Network.emulateNetworkConditions', { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -1179,6 +1206,7 @@ esac
   });
 
   await test('seed: random, keep it, fixed, ×2, +1, −1, the setup and the lightbox agree', async () => {
+    await openPanel('create-render-adv');
     const seedOf = (k = -1) => comfy.prompts.at(k).prompt['3'].inputs.seed;
     const renderOnce = async n => {
       const before = await count('.take .rtile img');
@@ -1571,6 +1599,7 @@ esac
     eq(comfy.prompts.length, before + 1, 'one render queued by itself');
     eq(comfy.prompts.at(-1).prompt['6'].inputs.text, await value('.take .prompt-text'), 'the new take was sent');
     before = comfy.prompts.length;
+    await click('.take .refine input');
     await click('.take .chips button');
     await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'refined take rendered too', 12000);
     eq(comfy.prompts.length, before + 1, 'refining renders again');
@@ -1755,6 +1784,7 @@ esac
     eq(child.source.entryId, root.id, 'step 2 links to step 1');
     eq(comfy.uploads.at(-1), `prompt-maker_${child.source.file}`, 'the original still went to ComfyUI');
     await shot('40-chain-done', { full: true });
+    await click('.take .refine input');
     await click('.take .chips button');
     await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined the video prompt');
     await click('#runStrip .rs-step:first-child .rs-chip');
@@ -1831,6 +1861,7 @@ esac
   });
 
   await test('LoRAs: the workflow\'s own and yours, from the model\'s folder, with strengths', async () => {
+    await openPanel('create-render-adv');
     const lora = sel => `#wfpLoras ${sel}`;
     await click('.tabs button[data-view="create"]');
     await click('.model-card[data-id="krea2-raw"]');
@@ -1982,6 +2013,7 @@ esac
   });
 
   await test('denoise: shown for image-to-image workflows, saved on the workflow', async () => {
+    await openPanel('create-render-adv');
     await click('.tabs button[data-view="create"]');
     await click('.model-card[data-id="krea2-raw"]');
     assert(!(await visible('#wfpDenoise')), 'no denoise for a text-to-image workflow');

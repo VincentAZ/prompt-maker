@@ -199,6 +199,8 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 
 **Prompt length** (*short / medium / long*) means something different for each model. For example, "medium" is about 70–120 words for Krea and about 160–260 for MiniMax. Every take shows its word count against that target.
 
+**Keep it tidy:** every step on Create, every card in Settings and Models, and every take folds down to a one-line summary. Click its header or the ▾ button; Prompt Maker remembers what you folded. Seed, denoise and LoRAs live under step ⑤ → **Advanced**.
+
 ### ✦ The assistant
 
 Click **✦ Ask** in the top bar (or press **Ctrl+K**) on any page. The assistant runs on your **Brain** (the same LM Studio model, so it stays offline) and knows its way around the app:

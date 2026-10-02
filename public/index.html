@@ -73,13 +73,13 @@
     <section id="view-create" class="view" aria-label="Create">
       <div class="create">
         <form id="createForm" class="director" autocomplete="off" novalidate>
-          <section class="step">
+          <section class="step" data-panel="create-model">
             <header class="step-head"><span class="num">1</span><h2>Pick your model</h2></header>
             <div id="modelChips" class="model-grid" role="radiogroup" aria-label="Target model"></div>
             <p id="modelDesc" class="model-desc"></p>
           </section>
 
-          <section class="step">
+          <section class="step" data-panel="create-theme">
             <header class="step-head">
               <span class="num">2</span><h2>Describe the shot</h2><span class="opt" id="themeOpt"></span>
               <span class="head-actions">
@@ -90,7 +90,7 @@
             <textarea id="theme" class="theme" rows="3" aria-label="Theme"></textarea>
           </section>
 
-          <section class="step">
+          <section class="step" data-panel="create-image">
             <header class="step-head"><span class="num">3</span><h2>Add an image</h2><span class="opt">optional</span></header>
             <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Add an image: drop, paste or browse">
               <input type="file" id="imageInput" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden>
@@ -119,7 +119,7 @@
             <p id="roleHint" class="hint" hidden></p>
           </section>
 
-          <section class="step">
+          <section class="step" data-panel="create-dials">
             <header class="step-head"><span class="num">4</span><h2>Dial it in</h2></header>
             <div class="dials">
               <label class="dial" id="aspectField"><span>Aspect</span><select id="aspect"></select><em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">🖼️ from image</em></label>
@@ -152,7 +152,7 @@
             </div>
           </section>
 
-          <section class="step" id="renderStep">
+          <section class="step" id="renderStep" data-panel="create-render">
             <header class="step-head">
               <span class="num">5</span><h2>Render it</h2><span class="opt">optional</span>
               <span class="head-actions"><span id="comfyState" class="comfy-state" hidden></span></span>
@@ -168,9 +168,12 @@
                 <button type="button" id="wfpAdd" class="btn small" title="Add another workflow" aria-label="Add another workflow">＋</button>
               </div>
               <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
-              <div id="wfpSeed" class="wfp-seed" role="group" aria-label="Seed" hidden></div>
-              <div id="wfpDenoise" class="wfp-denoise" hidden></div>
-              <div id="wfpLoras" class="loras" role="group" aria-label="LoRAs"></div>
+              <div class="wfp-adv" data-panel="create-render-adv" data-default="collapsed">
+                <div class="panel-head"><b>Advanced</b><span class="opt">seed, denoise, LoRAs</span></div>
+                <div id="wfpSeed" class="wfp-seed" role="group" aria-label="Seed" hidden></div>
+                <div id="wfpDenoise" class="wfp-denoise" hidden></div>
+                <div id="wfpLoras" class="loras" role="group" aria-label="LoRAs"></div>
+              </div>
               <p id="wfpWarn" class="warn-line" hidden></p>
               <div id="wfpStale" class="wfp-stale" hidden><span></span><button type="button" class="btn small">↻ Update</button></div>
               <label class="switch" id="wfpAutoRow"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
@@ -183,7 +186,7 @@
             </div>
           </section>
 
-          <section class="step" id="chainStep">
+          <section class="step" id="chainStep" data-panel="create-chain">
             <header class="step-head"><span class="num">6</span><h2>Then…</h2><span class="opt">optional · chain more steps</span></header>
             <div id="chainBox" class="chain"></div>
             <input type="file" id="chainImportInput" accept=".json,application/json" hidden>
@@ -295,7 +298,7 @@
         </aside>
 
         <div class="models-main">
-        <section class="card wf-card" id="wfCard" aria-labelledby="wfTitle">
+        <section class="card wf-card" id="wfCard" aria-labelledby="wfTitle" data-panel="models-workflows">
           <div class="wf-head">
             <div>
               <h2 id="wfTitle">🎨 ComfyUI workflows <span class="tag">optional</span></h2>
@@ -373,7 +376,7 @@
             <label class="field video-only"><span>Durations <small>comma-separated</small></span><input id="mDur" placeholder="5s, 10s"></label>
           </div>
 
-          <fieldset>
+          <fieldset data-panel="models-defaults">
             <legend>Defaults</legend>
             <div class="grid-5">
               <label class="field"><span>Aspect</span><select id="dAspect"></select></label>
@@ -384,7 +387,7 @@
             </div>
           </fieldset>
 
-          <fieldset>
+          <fieldset data-panel="models-lengths">
             <legend>What short, medium and long mean for this model</legend>
             <div class="grid-3">
               <label class="field"><span>Short</span><input id="lShort" placeholder="≈40–70 words"></label>
@@ -409,7 +412,7 @@
         <p>Prompt Maker runs 100% offline: nothing leaves your machine, unless you choose a ☁️ cloud Brain.</p>
       </div>
       <form id="settingsForm" class="settings" autocomplete="off" novalidate>
-        <section class="card" id="servicesCard">
+        <section class="card" id="servicesCard" data-panel="set-services">
           <h2>🖥 Services</h2>
           <ul class="svc-list">
             <li class="svc" data-svc="app">
@@ -437,7 +440,7 @@
           <div class="row"><button type="button" class="btn small danger" id="stopAllBtn" title="Stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker">■ Stop everything (frees the GPU)</button></div>
         </section>
 
-        <section class="card">
+        <section class="card" data-panel="set-lmstudio">
           <h2>🔌 LM Studio</h2>
           <label class="field"><span>Local server URL</span>
             <div class="row"><input id="sUrl" placeholder="http://127.0.0.1:1234"><button type="button" id="sTest" class="btn small">Test connection</button></div>
@@ -446,7 +449,7 @@
           <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start and stop LM Studio's server in <b>Services</b> above. Choose the LLM (“Brain”) in the top bar. Image input needs a vision model marked 👁.</p>
         </section>
 
-        <section class="card" id="cloudCard">
+        <section class="card" id="cloudCard" data-panel="set-cloud">
           <h2>☁️ Cloud Brains <span class="tag">optional</span></h2>
           <p class="hint">Prompt Maker runs 100% offline. If a local model isn't good enough, add a cloud provider with your own API key: its models then show up in the Brain menu, marked ☁️. Whatever you write with a cloud Brain is sent to that provider, and Prompt Maker asks before you switch to one.</p>
           <ul id="providerList" class="svc-list"></ul>
@@ -460,7 +463,7 @@
           <div class="row"><button type="button" id="cpReset" class="btn small" hidden>Ask again before every cloud Brain</button></div>
         </section>
 
-        <section class="card">
+        <section class="card" data-panel="set-comfy">
           <h2>🎨 ComfyUI <span class="tag">optional</span></h2>
           <label class="field"><span>Local ComfyUI URL</span>
             <div class="row"><input id="sComfyUrl" placeholder="http://127.0.0.1:8188"><button type="button" id="sComfyTest" class="btn small">Test connection</button></div>
@@ -476,7 +479,7 @@
           <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI in <b>Services</b> above (or as usual), then attach workflows to a model in the <b>Models</b> tab. Prompt Maker starts it the way it last saw it running, or with live previews on (<code>--preview-method auto</code>).</p>
         </section>
 
-        <section class="card">
+        <section class="card" data-panel="set-thinking">
           <h2>🧠 How the brain thinks</h2>
           <div class="grid-3">
             <label class="field"><span>Thinking</span>
@@ -494,7 +497,7 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card" data-panel="set-master">
           <h2>📜 Master instructions</h2>
           <p class="hint">Shared rules sent before every model's own instructions: output format, staying faithful to the theme, and so on.</p>
           <textarea id="sMaster" class="mono" rows="16" spellcheck="false"></textarea>
