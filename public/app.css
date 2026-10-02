@@ -1004,8 +1004,9 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
   margin-left: auto; flex: none; width: 28px; height: 28px; display: grid; place-items: center; padding: 0;
   border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer;
 }
-.collapse-btn::before { content: ""; width: 7px; height: 7px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-2px) rotate(45deg); transition: transform 0.15s; }
-.collapsed > .panel-toggle .collapse-btn::before { transform: translateY(1px) rotate(-135deg); }
+/* Open: ▴ (fold it). Folded: ▾ (open it). */
+.collapse-btn::before { content: ""; width: 7px; height: 7px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(1px) rotate(-135deg); transition: transform 0.15s; }
+.collapsed > .panel-toggle .collapse-btn::before, .collapsed > .panel-toggle > * > .collapse-btn::before { transform: translateY(-2px) rotate(45deg); }
 .collapse-btn:hover { color: var(--text); background: var(--panel-3); }
 :is(.head-actions, .take-actions) > .collapse-btn { margin-left: 0; }
 .panel-summary { display: none; margin: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1044,3 +1045,11 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .llm-menu { width: min(480px, calc(100vw - 32px)); }
 .llm-list .grp { position: sticky; top: 0; z-index: 1; background: var(--panel-2); }
 .llm-list .badge { font-size: 12px; }
+
+/* Model card sections */
+.model-form .sub { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); min-width: 0; }
+.model-form .sub.collapsed { padding-bottom: 10px; }
+.sub > .panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14.5px; }
+.sub > .panel-head small { color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.sub > .panel-head .collapse-btn { margin-left: auto; }
+.model-form.collapsed { gap: 8px; }

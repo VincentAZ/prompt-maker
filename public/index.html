@@ -310,7 +310,7 @@
           </div>
           <ul id="wfList" class="wf-list"></ul>
         </section>
-        <form id="modelForm" class="card model-form" autocomplete="off" novalidate>
+        <form id="modelForm" class="card model-form" autocomplete="off" novalidate data-panel="models-form">
           <div class="form-head">
             <span id="mSwatch" class="swatch"></span>
             <h2 id="modelFormTitle">Model</h2>
@@ -326,60 +326,66 @@
           </div>
           <p id="modelFormMsg" class="notice" hidden></p>
 
-          <div class="grid-4">
-            <label class="field wide"><span>Name</span><input id="mName" placeholder="e.g. Krea 2 RAW"></label>
-            <label class="field"><span>Kind</span>
-              <select id="mKind"><option value="image">📷 Image model</option><option value="video">🎬 Video model</option></select>
-            </label>
-            <label class="field"><span>Color</span><input id="mColor" type="color" value="#ff4d8d"></label>
-          </div>
-          <label class="field"><span>Short description <small>shown under the model picker</small></span><input id="mDesc" placeholder="What makes this model tick, in one line"></label>
-          <p class="muted small">ID: <code id="mId">—</code> <span id="mOrigin" class="muted">· saved in your data folder, never in the app's folder</span></p>
-
-          <label class="field"><span>Instructions for the AI <small>markdown · this is the model's playbook</small></span>
-            <textarea id="mInstr" class="mono" rows="18" spellcheck="false"></textarea>
-          </label>
-
-          <details class="assist" id="assist">
-            <summary><span>✨ Draft the instructions from pasted docs</span><small>uses your local LLM</small></summary>
-            <p class="hint">Paste the model's official prompting guide, a Reddit write-up or your own notes. Nothing gets replaced until you click <b>Use this draft</b>.</p>
-            <textarea id="draftDocs" rows="6" placeholder="Paste documentation here…"></textarea>
-            <div class="row">
-              <button type="button" id="draftBtn" class="btn small primary">✨ Draft instructions</button>
-              <button type="button" id="draftStop" class="btn small" hidden>■ Stop</button>
-              <span id="draftStatus" class="muted small"></span>
+          <section class="sub" data-panel="model-basics">
+            <div class="panel-head"><b>Name, kind &amp; description</b></div>
+            <div class="grid-4">
+              <label class="field wide"><span>Name</span><input id="mName" placeholder="e.g. Krea 2 RAW"></label>
+              <label class="field"><span>Kind</span>
+                <select id="mKind"><option value="image">📷 Image model</option><option value="video">🎬 Video model</option></select>
+              </label>
+              <label class="field"><span>Color</span><input id="mColor" type="color" value="#ff4d8d"></label>
             </div>
-            <div id="draftResultWrap" hidden>
-              <textarea id="draftResult" class="mono" rows="12" spellcheck="false"></textarea>
+            <label class="field"><span>Short description <small>shown under the model picker</small></span><input id="mDesc" placeholder="What makes this model tick, in one line"></label>
+            <p class="muted small">ID: <code id="mId">—</code> <span id="mOrigin" class="muted">· saved in your data folder, never in the app's folder</span></p>
+          </section>
+
+          <section class="sub" data-panel="model-instructions">
+            <div class="panel-head"><b>Instructions for the AI</b><small>markdown · this is the model's playbook</small></div>
+            <textarea id="mInstr" class="mono" rows="18" spellcheck="false" aria-label="Instructions for the AI"></textarea>
+            <details class="assist" id="assist">
+              <summary><span>✨ Draft the instructions from pasted docs</span><small>uses your local LLM</small></summary>
+              <p class="hint">Paste the model's official prompting guide, a Reddit write-up or your own notes. Nothing gets replaced until you click <b>Use this draft</b>.</p>
+              <textarea id="draftDocs" rows="6" placeholder="Paste documentation here…"></textarea>
               <div class="row">
-                <button type="button" id="draftUse" class="btn small primary">Use this draft</button>
-                <button type="button" id="draftAppend" class="btn small">Append to instructions</button>
+                <button type="button" id="draftBtn" class="btn small primary">✨ Draft instructions</button>
+                <button type="button" id="draftStop" class="btn small" hidden>■ Stop</button>
+                <span id="draftStatus" class="muted small"></span>
               </div>
-            </div>
-          </details>
+              <div id="draftResultWrap" hidden>
+                <textarea id="draftResult" class="mono" rows="12" spellcheck="false"></textarea>
+                <div class="row">
+                  <button type="button" id="draftUse" class="btn small primary">Use this draft</button>
+                  <button type="button" id="draftAppend" class="btn small">Append to instructions</button>
+                </div>
+              </div>
+            </details>
+          </section>
 
-          <div class="field">
-            <span>Example prompts <small>gold-standard prompts the AI copies the style of, never the content</small></span>
+          <section class="sub" data-panel="model-examples">
+            <div class="panel-head"><b>Example prompts</b><small>gold-standard prompts the AI copies the style of, never the content</small></div>
             <p class="hint">Add your own here: paste 2–5 of your best prompts for this model, each one complete and exactly as you'd paste it into the model. The Brain copies their style, structure and length. They're saved in your data folder, on this computer only.</p>
             <div id="examplesList" class="examples"></div>
             <button type="button" id="addExampleBtn" class="btn small">＋ Add example</button>
-          </div>
+          </section>
 
-          <details class="field adult-examples">
-            <summary><span>🔞 Adult examples <span id="adultExamplesCount" class="tag"></span> <small>used only while Settings → Adult content is on</small></span></summary>
+          <section class="sub adult-examples" data-panel="model-adult" data-default="collapsed">
+            <div class="panel-head"><b>🔞 Adult examples</b><span id="adultExamplesCount" class="tag"></span><small>used only while Settings → Adult content is on</small></div>
             <p class="hint">None come with the app. If you make adult content, add your own explicit example prompts for this model here, written the way this model likes them. They're only sent to the Brain while <b>Settings → 🔞 Adult content</b> is on, so your other prompts never see them. Saved in your data folder, on this computer only.</p>
             <div id="adultExamplesList" class="examples"></div>
             <button type="button" id="addAdultExampleBtn" class="btn small">＋ Add adult example</button>
-          </details>
+          </section>
 
-          <div class="grid-3">
-            <label class="field"><span>Aspect ratios <small>comma-separated</small></span><input id="mAspects" placeholder="1:1, 16:9, 9:16"></label>
-            <label class="field"><span>Resolutions <small>comma-separated</small></span><input id="mRes" placeholder="1024×1024, 1920×1080"></label>
-            <label class="field video-only"><span>Durations <small>comma-separated</small></span><input id="mDur" placeholder="5s, 10s"></label>
-          </div>
+          <section class="sub" data-panel="model-sizes">
+            <div class="panel-head"><b>Sizes</b><small>what step ④ offers</small></div>
+            <div class="grid-3">
+              <label class="field"><span>Aspect ratios <small>comma-separated</small></span><input id="mAspects" placeholder="1:1, 16:9, 9:16"></label>
+              <label class="field"><span>Resolutions <small>comma-separated</small></span><input id="mRes" placeholder="1024×1024, 1920×1080"></label>
+              <label class="field video-only"><span>Durations <small>comma-separated</small></span><input id="mDur" placeholder="5s, 10s"></label>
+            </div>
+          </section>
 
-          <fieldset data-panel="models-defaults">
-            <legend>Defaults</legend>
+          <section class="sub" data-panel="models-defaults">
+            <div class="panel-head"><b>Defaults</b><small>what step ④ starts with</small></div>
             <div class="grid-5">
               <label class="field"><span>Aspect</span><select id="dAspect"></select></label>
               <label class="field"><span>Resolution</span><select id="dRes"></select></label>
@@ -387,18 +393,21 @@
               <label class="field"><span>Length</span><select id="dLen"><option value="short">Short</option><option value="medium">Medium</option><option value="long">Long</option></select></label>
               <label class="field"><span>Temperature</span><input id="dTemp" type="number" min="0" max="2" step="0.05"></label>
             </div>
-          </fieldset>
+          </section>
 
-          <fieldset data-panel="models-lengths">
-            <legend>What short, medium and long mean for this model</legend>
+          <section class="sub" data-panel="models-lengths">
+            <div class="panel-head"><b>Lengths</b><small>what short, medium and long mean for this model</small></div>
             <div class="grid-3">
               <label class="field"><span>Short</span><input id="lShort" placeholder="≈40–70 words"></label>
               <label class="field"><span>Medium</span><input id="lMed" placeholder="≈80–130 words"></label>
               <label class="field"><span>Long</span><input id="lLong" placeholder="≈150–220 words"></label>
             </div>
-          </fieldset>
+          </section>
 
-          <label class="field"><span>Sources <small>one per line, for your reference</small></span><textarea id="mSources" rows="3" class="mono"></textarea></label>
+          <section class="sub" data-panel="model-sources" data-default="collapsed">
+            <div class="panel-head"><b>Sources</b><small>one per line, for your reference</small></div>
+            <textarea id="mSources" rows="3" class="mono" aria-label="Sources"></textarea>
+          </section>
           <p class="muted small" id="mUpdated"></p>
         </form>
 

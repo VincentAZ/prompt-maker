@@ -866,6 +866,18 @@ esac
     await click('[data-panel="create-theme"] .collapse-btn');
     await click('[data-panel="create-dials"] .collapse-btn');
     assert(await visible('#theme'), 'unfolded');
+    // The model card and its sections fold too.
+    await click('.tabs button[data-view="models"]');
+    await waitFor('document.querySelector("#mName").value', 'a model open');
+    await click('[data-panel="model-instructions"] .collapse-btn');
+    assert(!(await visible('#mInstr')), 'instructions folded');
+    assert(/\d+ words · \d+ sections/.test(await text('[data-panel="model-instructions"] .panel-summary')), 'says how long they are');
+    assert(await js('document.querySelector(\'[data-panel="model-adult"]\').classList.contains("collapsed")'), 'adult examples start folded');
+    await click('#modelForm .form-head .collapse-btn');
+    assert(!(await visible('#mName')) && (await text('[data-panel="models-form"] > .panel-summary')).length > 0, 'the whole card folds to its name');
+    await click('#modelForm .form-head .collapse-btn');
+    await click('[data-panel="model-instructions"] .collapse-btn');
+    assert(await visible('#mInstr'), 'unfolded');
     // Settings cards fold too.
     await click('.tabs button[data-view="settings"]');
     await click('[data-panel="set-thinking"] h2');
@@ -2132,7 +2144,7 @@ esac
         const overflow = await js('document.documentElement.scrollWidth - innerWidth');
         const culprit = overflow > 1 ? await js(`[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1 && e.offsetParent).slice(-4).map(e => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\\s+/).join('.') : '') + ' r=' + Math.round(e.getBoundingClientRect().right)).join(' | ')`) : '';
         assert(overflow <= 1, `${view} at ${w}px scrolls sideways by ${overflow}px: ${culprit}`);
-        await shot(`r-${w}-${view}`, { full: view === 'create' });
+        await shot(`r-${w}-${view}`, { full: view === 'create' || view === 'models' });
         if (view === 'brains') await js(`document.querySelector('.models-switch button[data-pane="models"]').click()`);
       }
     }

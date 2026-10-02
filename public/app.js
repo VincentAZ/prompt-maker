@@ -2224,6 +2224,7 @@ function fillModelForm(m, isNew) {
   $('#draftStatus').textContent = '';
   formMessage('');
   setDirty(isNew && Boolean(m.name));
+  refreshPanelSummaries();
 }
 
 function readModelForm() {
@@ -2314,7 +2315,8 @@ $('#sAdultExamples').addEventListener('click', () => {
   showView('models/models');
   if (!state.dirty && state.modelId) editModel(state.modelId);
   const box = $('.adult-examples');
-  box.open = true;
+  setPanel($('#modelForm'), false);
+  setPanel(box, false);
   box.scrollIntoView({ block: 'center', behavior: 'smooth' });
 });
 $('#addAdultExampleBtn').addEventListener('click', () => { addExample('', '#adultExamplesList'); markDirty(); $$('#adultExamplesList textarea').at(-1).focus(); });
@@ -5449,17 +5451,24 @@ const PANEL_SUMMARY = {
   'set-thinking': () => `Thinking ${THINKING_LABELS[$('#sThinking').value] || ''} · max ${$('#sMax').value} tokens`,
   'set-master': () => `${$('#sMaster').value.trim() === (state.settings?.defaultMasterPrompt || '').trim() ? 'Default' : 'Customized'}${$('#sAdult').checked ? ' · 🔞 adult content on' : ''}`,
   'models-workflows': () => { const n = workflowsFor(state.editId).length; return `${n} workflow${n === 1 ? '' : 's'}`; },
+  'models-form': () => `${$('#mKind').value === 'video' ? '🎬' : '📷'} ${$('#mName').value || 'New model'}`,
+  'model-basics': () => [$('#mName').value, $('#mKind').value, $('#mDesc').value].filter(Boolean).join(' · '),
+  'model-instructions': () => { const t = $('#mInstr').value.trim(); return t ? `${(t.match(/\S+/g) || []).length} words · ${(t.match(/^#{1,3} .*/gm) || []).length} sections` : 'Empty: the Brain writes without a guide'; },
+  'model-examples': () => { const n = $$('#examplesList textarea').filter(t => t.value.trim()).length; return n ? `${n} example${n > 1 ? 's' : ''}` : 'None yet'; },
+  'model-adult': () => { const n = $$('#adultExamplesList textarea').filter(t => t.value.trim()).length; return n ? `${n} adult example${n > 1 ? 's' : ''}` : 'None'; },
+  'model-sizes': () => [$('#mAspects').value, $('#mRes').value, $('#mKind').value === 'video' && $('#mDur').value].filter(Boolean).join(' · ') || 'None set',
+  'model-sources': () => { const n = $('#mSources').value.split('\n').filter(x => x.trim()).length; return n ? `${n} source${n > 1 ? 's' : ''}` : 'None'; },
   'models-defaults': () => [$('#dAspect').value, $('#dRes').value, $('#dLen').value, $('#dTemp').value && `temp ${$('#dTemp').value}`].filter(Boolean).join(' · '),
   'models-lengths': () => [$('#lShort').value, $('#lMed').value, $('#lLong').value].filter(Boolean).join(' · '),
 };
 
 function decoratePanel(el) {
   if (el._sum) return;
-  const head = el.querySelector(':scope > .step-head, :scope > .panel-head, :scope > .take-head, :scope > .wf-head, :scope > h2, :scope > legend');
+  const head = el.querySelector(':scope > .step-head, :scope > .panel-head, :scope > .take-head, :scope > .wf-head, :scope > .form-head, :scope > h2, :scope > legend');
   if (!head) return;
   head.classList.add('panel-toggle');
   el._btn = Object.assign(document.createElement('button'), { type: 'button', className: 'collapse-btn' });
-  (head.querySelector(':scope > .head-actions, :scope > .take-actions') || head).append(el._btn); // with the header's buttons, so it never wraps alone
+  (head.querySelector(':scope > .head-actions, :scope > .take-actions, :scope > .form-actions') || head).append(el._btn); // with the header's buttons, so it never wraps alone
   el._sum = Object.assign(document.createElement('p'), { className: 'panel-summary' });
   head.after(el._sum);
   const key = el.dataset.panel;
