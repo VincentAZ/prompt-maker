@@ -832,6 +832,7 @@ esac
     assert(!(await js('document.querySelector("#sAdult").checked')), 'switch off');
     await js('document.querySelector("#sAdultText").open = true');
     assert((await text('#sAdultText pre')).includes('18 or older'), 'you can read what it adds');
+    assert((await text('#settingsForm')).includes('none come with the app'), 'says where adult examples go');
     await click('#sAdult');
     await click('#settingsForm button[type="submit"]');
     await toastText('Settings saved');

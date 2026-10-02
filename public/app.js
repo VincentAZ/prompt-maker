@@ -2156,6 +2156,7 @@ function fillModelForm(m, isNew) {
   m.examples.forEach(x => addExample(x));
   $('#adultExamplesList').innerHTML = '';
   (m.adultExamples || []).forEach(x => addExample(x, '#adultExamplesList'));
+  $('#adultExamplesCount').textContent = m.adultExamples?.length || 'none yet';
   $('#mAspects').value = m.aspectRatios.join(', ');
   $('#mRes').value = m.resolutions.join(', ');
   $('#mDur').value = m.durations.join(', ');
@@ -2262,6 +2263,14 @@ $('#modelForm').addEventListener('input', e => {
 });
 $('#mKind').addEventListener('change', e => $('#modelForm').classList.toggle('is-video', e.target.value === 'video'));
 $('#addExampleBtn').addEventListener('click', () => { addExample(); markDirty(); $$('#examplesList textarea').at(-1).focus(); });
+// Settings → Adult content: straight to the current model's adult examples.
+$('#sAdultExamples').addEventListener('click', () => {
+  showView('models/models');
+  if (!state.dirty && state.modelId) editModel(state.modelId);
+  const box = $('.adult-examples');
+  box.open = true;
+  box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+});
 $('#addAdultExampleBtn').addEventListener('click', () => { addExample('', '#adultExamplesList'); markDirty(); $$('#adultExamplesList textarea').at(-1).focus(); });
 
 $('#modelForm').addEventListener('submit', async e => {

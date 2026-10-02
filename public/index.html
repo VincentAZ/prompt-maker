@@ -355,12 +355,14 @@
 
           <div class="field">
             <span>Example prompts <small>gold-standard prompts the AI copies the style of, never the content</small></span>
+            <p class="hint">Add your own here: paste 2–5 of your best prompts for this model, each one complete and exactly as you'd paste it into the model. The Brain copies their style, structure and length. They're saved in your data folder, on this computer only.</p>
             <div id="examplesList" class="examples"></div>
             <button type="button" id="addExampleBtn" class="btn small">＋ Add example</button>
           </div>
 
           <details class="field adult-examples">
-            <summary><span>🔞 Adult examples <small>used only while Settings → Adult content is on</small></span></summary>
+            <summary><span>🔞 Adult examples <span id="adultExamplesCount" class="tag"></span> <small>used only while Settings → Adult content is on</small></span></summary>
+            <p class="hint">None come with the app. If you make adult content, add your own explicit example prompts for this model here, written the way this model likes them. They're only sent to the Brain while <b>Settings → 🔞 Adult content</b> is on, so your other prompts never see them. Saved in your data folder, on this computer only.</p>
             <div id="adultExamplesList" class="examples"></div>
             <button type="button" id="addAdultExampleBtn" class="btn small">＋ Add adult example</button>
           </details>
@@ -498,6 +500,7 @@
           <textarea id="sMaster" class="mono" rows="16" spellcheck="false"></textarea>
           <div class="row"><button type="button" id="sResetMaster" class="btn small">↺ Reset to default</button></div>
           <label class="check-row"><input type="checkbox" id="sAdult"> <span>🔞 Adult content: let the Brain write explicit prompts (nudity and sex between adults)</span></label>
+          <p class="hint">Off by default. It works better with example prompts: none come with the app, so add your own for each model in <b>Models → a model → 🔞 Adult examples</b>. <button type="button" id="sAdultExamples" class="link-btn">Open the Models page →</button></p>
           <details class="assist" id="sAdultText">
             <summary><span>What this adds to the instructions</span><small>sent after them, while it's on</small></summary>
             <pre class="mono adult-text"></pre>

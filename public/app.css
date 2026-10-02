@@ -994,3 +994,5 @@ dialog.img-pick { width: min(980px, calc(100vw - 32px)); }
 .adult-examples > summary span { font-weight: 700; font-size: 13.5px; color: var(--text-2); }
 .adult-examples[open] > summary { margin-bottom: 8px; }
 .adult-examples > .btn { align-self: flex-start; margin-top: 8px; }
+.link-btn { padding: 0; border: 0; background: none; color: var(--hot); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; }
+.adult-examples > .hint { margin-bottom: 8px; }
