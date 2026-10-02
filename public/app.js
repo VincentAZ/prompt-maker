@@ -4808,6 +4808,18 @@ const TOOLS = [
   T('clear_chain', 'Remove every step from step 6, back to a single step.'),
   T('load_chain', 'Load a saved chain by name.', { name: S('Chain name') }, ['name']),
   T('continue_chain', 'In a chain run that is waiting, send renders on to the next step.', { takes: { type: 'array', items: { type: 'integer' }, description: 'Take numbers whose renders go on; leave out for all of them' } }),
+  T('read_playbook', 'Read a model\'s playbook: its instructions for the Brain, description, aspect ratios, resolutions, durations, length targets and example prompts.', { model: S('Model name; default: the current model') }),
+  T('edit_playbook', 'Change a model\'s playbook and save it (the user can undo). Only the fields given change. Use it when the user asks you to write, fix or fill in a playbook.', {
+    model: S('Model name; default: the current model'),
+    instructions: S('The full new instructions (markdown), replacing the old ones'),
+    description: S('One line shown under the model picker'),
+    aspect_ratios: { type: 'array', items: { type: 'string' }, description: 'e.g. ["1:1", "16:9", "9:16"]' },
+    resolutions: { type: 'array', items: { type: 'string' }, description: 'e.g. ["1024×1024", "1920×1080"]' },
+    durations: { type: 'array', items: { type: 'string' }, description: 'Video only, e.g. ["5s", "10s"]' },
+    length_guide: { type: 'object', properties: { short: S('e.g. "≈40–70 words"'), medium: S('…'), long: S('…') }, description: 'What short, medium and long mean' },
+    add_examples: { type: 'array', items: { type: 'string' }, description: 'Complete example prompts to add' },
+  }),
+  T('undo_playbook_edit', 'Put back the playbook as it was before your last edit_playbook.'),
   T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
   T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
 ];
@@ -4879,7 +4891,41 @@ function findLora(flow, q) {
   return all.find(x => squash(loraShort(x.l.name)) === s) || all.find(x => squash(x.l.name).includes(s)) || null;
 }
 
+// Saves a playbook the way the Models editor does, and refreshes what's on screen.
+async function savePlaybook(model) {
+  const saved = await api(`/api/models/${model.id}`, { method: 'PUT', body: model });
+  await loadModels();
+  if (state.editId === saved.id && !state.dirty) fillModelForm(saved, false);
+  return saved;
+}
+
 const TOOL_IMPL = {
+  read_playbook: async ({ model }) => {
+    const m = await api(`/api/models/${needModel(model).id}`);
+    return { summary: `Read the ${m.name} playbook`, name: m.name, kind: m.kind, description: m.description, instructions: m.instructions, aspect_ratios: m.aspectRatios, resolutions: m.resolutions, durations: m.durations, length_guide: m.lengthGuide, examples: m.examples };
+  },
+  edit_playbook: async ({ model, instructions, description, aspect_ratios: aspects, resolutions, durations, length_guide: lengths, add_examples: examples }) => {
+    const before = await api(`/api/models/${needModel(model).id}`);
+    const next = structuredClone(before);
+    const changed = [];
+    if (typeof instructions === 'string' && instructions.trim()) { next.instructions = instructions.trim(); changed.push('instructions'); }
+    if (typeof description === 'string') { next.description = description.trim(); changed.push('description'); }
+    if (Array.isArray(aspects)) { next.aspectRatios = aspects; changed.push('aspect ratios'); }
+    if (Array.isArray(resolutions)) { next.resolutions = resolutions; changed.push('resolutions'); }
+    if (Array.isArray(durations)) { next.durations = durations; changed.push('durations'); }
+    if (lengths && typeof lengths === 'object') { next.lengthGuide = { ...next.lengthGuide, ...lengths }; changed.push('lengths'); }
+    if (Array.isArray(examples) && examples.length) { next.examples = [...(next.examples || []), ...examples]; changed.push(`${examples.length} example${examples.length > 1 ? 's' : ''}`); }
+    if (!changed.length) throw new Error('Nothing to change: give the new instructions, description, sizes or examples.');
+    const saved = await savePlaybook(next);
+    as.undoPlaybook = before;
+    return { summary: `Saved the ${saved.name} playbook: ${changed.join(', ')}`, saved: changed };
+  },
+  undo_playbook_edit: async () => {
+    if (!as.undoPlaybook) throw new Error('There is no playbook edit to undo.');
+    const saved = await savePlaybook(as.undoPlaybook);
+    as.undoPlaybook = null;
+    return { summary: `Put the ${saved.name} playbook back as it was` };
+  },
   get_state: () => ({ summary: 'Looked at the Create page', ...assistantState() }),
   list_models: () => ({ summary: `${state.models.length} models`, models: state.models.map(m => ({ name: m.name, kind: m.kind, description: m.description, aspects: m.aspectRatios, resolutions: m.resolutions, durations: m.durations })) }),
   list_workflows: ({ model }) => {

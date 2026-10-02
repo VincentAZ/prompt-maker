@@ -49,6 +49,8 @@ function assistantTurn(body) {
     : /\bhow\b/.test(said) ? [{ calls: [['read_guide', { topic: said }]] }, { text: results.includes('Add LoRA') ? 'In step ⑤, click **＋ Add LoRA** and pick one from your model\'s folder.' : 'I couldn\'t find that in the guide.' }]
     : /\blora\b/.test(said) ? [{ calls: [['add_lora', { name: 'detail', strength: 0.6 }]] }, { text: 'Added it at 0.6.' }]
     : /bogus/.test(said) ? [{ calls: [['set_model', { model: 'nonexistent' }]] }, { text: results.includes('"error"') ? 'There\'s no model by that name.' : 'Done.' }]
+    : /fix the playbook/.test(said) ? [{ calls: [['edit_playbook', { model: 'krea', description: 'Edited by the assistant', resolutions: ['1024×1024', '1536×1024'] }]] }, { text: results.includes('Saved the') ? 'Saved it. Say undo to put it back.' : 'That failed.' }]
+    : /\bundo\b/.test(said) ? [{ calls: [['undo_playbook_edit', {}]] }, { text: results.includes('back as it was') ? 'Put it back.' : 'That failed.' }]
     : /tag fallback/.test(said) ? [{ text: '<tool_call>{"name": "set_theme", "arguments": {"text": "from a tag"}}</tool_call>' }, { text: 'Theme set.' }]
     : [{ text: 'I can help with that.' }];
   return script[Math.min(round, script.length - 1)];

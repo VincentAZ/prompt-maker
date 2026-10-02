@@ -1962,6 +1962,21 @@ esac
     await click('#asClear');
     await click('#asClear');
     assert(await visible('.as-hello'), 'cleared');
+    // It can write a playbook for you, and undo it.
+    const before = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    await type('#asInput', 'fix the playbook for krea');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('Saved the Krea 2 RAW'), 'saved, and says what changed');
+    let after = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    eq(after.description, 'Edited by the assistant', 'the playbook changed');
+    eq(after.instructions.trim(), before.instructions.trim(), 'fields it was not given stay');
+    await type('#asInput', 'undo that');
+    await press('Enter');
+    await idle();
+    after = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    eq(after.description, before.description, 'undo puts it back');
+    eq(JSON.stringify(after.resolutions), JSON.stringify(before.resolutions), 'all of it');
     await press('Escape');
     assert(await js('document.querySelector("#assistant").hidden && document.activeElement === document.querySelector("#askBtn")'), 'Esc closes it');
   });
