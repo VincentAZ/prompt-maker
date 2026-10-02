@@ -1350,9 +1350,12 @@ function keepPrevious(entry) {
   renderPrevStrip();
 }
 
+// Render tiles still running, per entry, so a run that left the stage keeps showing its progress.
+const liveTiles = new WeakMap();
+
 function renderPrevStrip() {
   const box = $('#prevStrip');
-  const shown = state.prev.filter(e => e.id !== state.entry?.id && e.variations?.some(v => v.renders?.length));
+  const shown = state.prev.filter(e => e.id !== state.entry?.id && (liveTiles.get(e)?.size || e.variations?.some(v => v.renders?.length)));
   box.hidden = !shown.length;
   box.innerHTML = shown.length ? '<div class="prev-title">Earlier runs, to compare</div>' : '';
   for (const entry of shown) {
@@ -1362,6 +1365,7 @@ function renderPrevStrip() {
     const tags = [entry.modelName, `🌡 ${Number(entry.temperature).toFixed(2)}`, entry.duration, entry.batch && `🎞 ${entry.batch}`].filter(Boolean);
     row.innerHTML = `<div class="prev-head">${tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}<span class="spacer"></span><button type="button" class="btn small prev-open">Open</button><button type="button" class="icon-btn prev-x" aria-label="Stop showing this run">✕</button></div><div class="prev-tiles"></div>`;
     const ar = ASPECT_CSS(entry.aspectRatio);
+    liveTiles.get(entry)?.forEach(t => { t.style.setProperty('--ar', ar); $('.prev-tiles', row).append(t); });
     items.slice(0, 8).forEach((it, n) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -3833,6 +3837,8 @@ async function startRender(card, { quiet = false } = {}) {
   const keys = Array.from({ length: count }, (_, i) => `${Date.now()}-${i}`);
   const tiles = keys.map(() => runningTile(card));
   keys.forEach((k, i) => card.running.set(k, tiles[i]));
+  if (!liveTiles.has(entry)) liveTiles.set(entry, new Set());
+  tiles.forEach(t => liveTiles.get(entry).add(t));
   // Newest first: the tile for render 1 goes first.
   renderTiles(card);
   const cancelRun = () => {
@@ -3889,6 +3895,7 @@ async function startRender(card, { quiet = false } = {}) {
       } else if (ev.type === 'render') {
         done.add(i);
         card.running.delete(keys[i]);
+        liveTiles.get(entry)?.delete(tiles[i]);
         const v = entry.variations?.[card.index];
         if (v) (v.renders ||= []).push(ev.render);
         renderTiles(card);
@@ -3913,6 +3920,8 @@ async function startRender(card, { quiet = false } = {}) {
     if (err.name !== 'AbortError') failed = friendly(err);
   }
   state.renderRuns.delete(run);
+  tiles.forEach(t => liveTiles.get(entry)?.delete(t));
+  if (entry !== state.entry) renderPrevStrip();
   card.rb.newSeed = false;
   refreshSeeds(); // increment / decrement moved the workflow's next seed on
   // Clear tiles that never finished (stopped); keep failed ones briefly so the reason is visible.
