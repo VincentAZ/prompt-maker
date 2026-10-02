@@ -890,7 +890,8 @@ esac
     await click('.tabs button[data-view="settings"]');
     assert(!(await js('document.querySelector("#sAdult").checked')), 'switch off');
     await js('document.querySelector("#sAdultText").open = true');
-    assert((await text('#sAdultText pre')).includes('18 or older'), 'you can read what it adds');
+    assert((await value('#sAdultPrompt')).includes('18 or older'), 'you can read what it adds');
+    await type('#sAdultPrompt', 'ADULT CONTENT (custom)\nMY OWN ADULT RULE');
     assert((await text('#settingsForm')).includes('none come with the app'), 'says where adult examples go');
     await click('#sAdult');
     await click('#settingsForm button[type="submit"]');
@@ -899,7 +900,10 @@ esac
     await click('#generateBtn');
     await genDone();
     assert(sent().includes('ADULT CONTENT') && sent().indexOf('ADULT CONTENT') < sent().indexOf('# TARGET MODEL'), 'sent after the master instructions, before the playbook');
+    assert(sent().includes('MY OWN ADULT RULE'), 'your edited text is what gets sent');
     await click('.tabs button[data-view="settings"]');
+    await click('#sResetAdult');
+    assert((await value('#sAdultPrompt')).includes('18 or older'), 'adult text reset');
     await click('#sAdult');
     await click('#settingsForm button[type="submit"]');
     await toastText('Settings saved');
@@ -1396,14 +1400,10 @@ esac
     await click('.tabs button[data-view="gallery"]');
     await waitFor('document.querySelectorAll(".gtile").length >= 3', 'gallery tiles');
     eq(await text('#galleryCount'), String(await count('.gtile')), 'count');
-    await shot('25-gallery', { full: true });
-    await click('.gtile');
-    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
-    await click('[data-lb="open"]');
     // Newest first, left to right: the second render sits beside the first, not under it.
     const [a, b] = await js('[...document.querySelectorAll(".gtile")].slice(0, 2).map(t => t.getBoundingClientRect()).map(r => [r.left, r.top])');
     assert(b[0] > a[0] && b[1] === a[1], `second tile is beside the first (${a} → ${b})`);
-    await waitFor('document.querySelector("#view-create").classList.contains("active")', 'back on Create');
+    await shot('25-gallery', { full: true });
     // A render whose file was moved away leaves the layout instead of showing a blank tile.
     await js('document.querySelector(".gtile:last-child img").src = "/renders/moved-away.png"');
     await waitFor('document.querySelectorAll(".gtile[hidden]").length === 1', 'missing render left out');
@@ -1411,6 +1411,10 @@ esac
     for (let n = problems.length - 1; n >= 0; n--) if (problems[n].includes('moved-away.png')) problems.splice(n, 1);
     await click('#galleryKinds [data-kind=""]');
     await waitFor('!document.querySelectorAll(".gtile[hidden]").length', 'drawn fresh, every tile tried again');
+    await click('.gtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="open"]');
+    await waitFor('document.querySelector("#view-create").classList.contains("active")', 'back on Create');
     eq(await value('#theme'), 'a lighthouse at dusk', 'entry restored');
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
   });

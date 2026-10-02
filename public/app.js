@@ -2858,7 +2858,7 @@ function renderSettings() {
   $('#sThinking').value = s.thinking;
   $('#sMaster').value = s.masterPrompt;
   $('#sAdult').checked = Boolean(s.adultContent);
-  $('#sAdultText pre').textContent = s.adultSection || '';
+  $('#sAdultPrompt').value = s.adultPrompt || '';
   $('#sDataDir').textContent = s.dataDir ? `📁 Your data lives in ${s.dataDir}` : '';
   $('#sTestResult').hidden = true;
   setSettingsDirty(false);
@@ -2889,12 +2889,17 @@ $('#sResetMaster').addEventListener('click', () => {
   setSettingsDirty(true);
   toast('↺ Default restored. Click Save to keep it.');
 });
+$('#sResetAdult').addEventListener('click', () => {
+  $('#sAdultPrompt').value = state.settings.defaultAdultPrompt;
+  setSettingsDirty(true);
+  toast('↺ Default restored. Click Save to keep it.');
+});
 $('#settingsForm').addEventListener('submit', async e => {
   e.preventDefault();
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultContent: $('#sAdult').checked },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultPrompt: $('#sAdultPrompt').value, adultContent: $('#sAdult').checked },
     });
     renderSettings();
     toast('💾 Settings saved');
@@ -4674,12 +4679,12 @@ function renderGallery() {
   const items = all.filter(it => (!state.galleryKind || it.file.kind === state.galleryKind) && (!state.galleryModel || it.entry.modelId === state.galleryModel));
   $('#galleryCount').textContent = all.length ? all.length : '';
   const grid = $('#galleryGrid');
+  grid.style.height = '';
   if (!items.length) {
     const none = !all.length;
     grid.innerHTML = `<div class="empty">
       <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
       <h3>${none ? 'No renders yet' : 'Nothing matches'}</h3>
-  grid.style.height = '';
       <p>${none ? 'Attach a ComfyUI workflow to a model (Models tab), then hit <b>▶ Render</b> on any take. Every image and video lands here.' : 'Try another filter.'}</p>
       ${none ? '<div class="try"><button type="button" class="btn primary" data-go="models">🎨 Set up a workflow</button></div>' : ''}</div>`;
     $('[data-go]', grid)?.addEventListener('click', () => showView('models/models'));
@@ -4696,13 +4701,8 @@ function renderGallery() {
     b.addEventListener('click', () => openLightbox(items, n, { fromGallery: true }));
     grid.append(b);
   });
-}
-
-$('#galleryKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryKind = b.dataset.kind; renderGallery(); } });
-$('#galleryModels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryModel = b.dataset.id; renderGallery(); } });
-
   layoutGallery();
-// ---------- models → workflows ----------
+}
 
 // Masonry in reading order: each tile, newest first, goes into whichever column is shortest,
 // so the next render sits beside the last one rather than below it. Tiles stay in DOM order
@@ -4745,6 +4745,11 @@ $('#galleryGrid').addEventListener('error', e => {
 }, true);
 let galleryWidth = 0;
 new ResizeObserver(([e]) => { if (e.contentRect.width !== galleryWidth) { galleryWidth = e.contentRect.width; relayoutGallery(); } }).observe($('#galleryGrid'));
+
+$('#galleryKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryKind = b.dataset.kind; renderGallery(); } });
+$('#galleryModels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryModel = b.dataset.id; renderGallery(); } });
+
+// ---------- models → workflows ----------
 
 const MAP_CHIPS = [['prompt', '✍️ Prompt'], ['image', '🖼️ Image'], ['size', '📐 Size'], ['duration', '⏱️ Duration'], ['seed', '🎲 Seed']];
 
@@ -5819,7 +5824,7 @@ const PANEL_SUMMARY = {
   'set-cloud': () => (state.providers?.length ? state.providers.map(p => `☁️ ${p.name}`).join(' · ') : 'None: 100% offline'),
   'set-comfy': () => $('#sComfyUrl').value,
   'set-thinking': () => `Thinking ${THINKING_LABELS[$('#sThinking').value] || ''} · max ${$('#sMax').value} tokens`,
-  'set-master': () => `${$('#sMaster').value.trim() === (state.settings?.defaultMasterPrompt || '').trim() ? 'Default' : 'Customized'}${$('#sAdult').checked ? ' · 🔞 adult content on' : ''}`,
+  'set-master': () => `${$('#sMaster').value.trim() === (state.settings?.defaultMasterPrompt || '').trim() ? 'Default' : 'Customized'}${$('#sAdult').checked ? ` · 🔞 adult content on${$('#sAdultPrompt').value.trim() === (state.settings?.defaultAdultPrompt || '').trim() ? '' : ' (customized)'}` : ''}`,
   'models-workflows': () => { const n = workflowsFor(state.editId).length; return `${n} workflow${n === 1 ? '' : 's'}`; },
   'models-form': () => `${$('#mKind').value === 'video' ? '🎬' : '📷'} ${$('#mName').value || 'New model'}`,
   'model-basics': () => [$('#mName').value, $('#mKind').value, $('#mDesc').value].filter(Boolean).join(' · '),

@@ -803,7 +803,7 @@ async function route(req, res) {
   }
 
   // Both responses carry the defaults the Settings page needs (e.g. for "Reset to default").
-  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, adultSection: ADULT_CONTENT, dataDir: store.DATA_DIR });
+  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR });
   if (p === '/api/settings' && m === 'GET') return sendJson(res, 200, settingsView(await store.getSettings()));
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);

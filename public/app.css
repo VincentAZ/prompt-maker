@@ -1009,7 +1009,7 @@ dialog.img-pick { width: min(980px, calc(100vw - 32px)); }
 .cloud-dialog-acts { justify-content: flex-end; }
 .tag.cloud { background: rgb(120 170 255 / 14%); color: #9cc2ff; }
 .cloud-dialog .modal-body > .cloud-dialog-acts { flex-direction: row; justify-content: flex-end; gap: 8px; padding: 0; }
-.adult-text { white-space: pre-wrap; font-size: 12.5px; line-height: 1.5; margin: 10px 0 0; padding: 12px; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line); max-height: 360px; overflow-y: auto; }
+#sAdultText textarea { margin-top: 10px; }
 .adult-examples > summary { cursor: pointer; list-style: none; }
 .adult-examples > summary span { font-weight: 700; font-size: 13.5px; color: var(--text-2); }
 .adult-examples[open] > summary { margin-bottom: 8px; }
