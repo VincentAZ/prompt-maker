@@ -1400,7 +1400,17 @@ esac
     await click('.gtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await click('[data-lb="open"]');
+    // Newest first, left to right: the second render sits beside the first, not under it.
+    const [a, b] = await js('[...document.querySelectorAll(".gtile")].slice(0, 2).map(t => t.getBoundingClientRect()).map(r => [r.left, r.top])');
+    assert(b[0] > a[0] && b[1] === a[1], `second tile is beside the first (${a} → ${b})`);
     await waitFor('document.querySelector("#view-create").classList.contains("active")', 'back on Create');
+    // A render whose file was moved away leaves the layout instead of showing a blank tile.
+    await js('document.querySelector(".gtile:last-child img").src = "/renders/moved-away.png"');
+    await waitFor('document.querySelectorAll(".gtile[hidden]").length === 1', 'missing render left out');
+    // The browser logs that 404 itself; it's the point of this check, not a problem.
+    for (let n = problems.length - 1; n >= 0; n--) if (problems[n].includes('moved-away.png')) problems.splice(n, 1);
+    await click('#galleryKinds [data-kind=""]');
+    await waitFor('!document.querySelectorAll(".gtile[hidden]").length', 'drawn fresh, every tile tried again');
     eq(await value('#theme'), 'a lighthouse at dusk', 'entry restored');
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
   });

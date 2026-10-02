@@ -693,10 +693,11 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 .lb-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* =================== Gallery =================== */
-.gallery { columns: 4 260px; column-gap: 14px; }
-.gtile { break-inside: avoid; margin: 0 0 14px; position: relative; display: block; width: 100%; padding: 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: #07060b; cursor: zoom-in; animation: rise 0.3s ease both; }
+.gallery { --g-cols: 4; --g-min: 260; --g-gap: 14; position: relative; }
+.gtile { position: absolute; display: block; width: 100%; padding: 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: #07060b; cursor: zoom-in; animation: rise 0.3s ease both; }
 .gtile:hover { border-color: var(--m); }
-.gtile img, .gtile video { display: block; width: 100%; height: auto; }
+.gtile[hidden] { display: none; }
+.gtile img, .gtile video { display: block; width: 100%; height: auto; aspect-ratio: auto 1 / 1; }
 .gtile .g-cap { position: absolute; inset: auto 0 0 0; padding: 30px 12px 10px; background: linear-gradient(to top, rgb(0 0 0 / 85%), transparent); text-align: left; opacity: 0; transition: opacity 0.15s; }
 .gtile:hover .g-cap, .gtile:focus-visible .g-cap { opacity: 1; }
 .g-cap b { display: block; font-size: 13.5px; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -788,7 +789,7 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
   .map-row .map-ctl { grid-column: 1 / -1; }
   .wf-head { flex-direction: column; }
   .lb-stage { padding: 14px 50px; }
-  .gallery { columns: 2 140px; column-gap: 10px; }
+  .gallery { --g-cols: 2; --g-min: 140; --g-gap: 10; }
   .wf-row .wf-actions { margin-left: 0; }
 }
 

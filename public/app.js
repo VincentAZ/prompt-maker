@@ -4679,6 +4679,7 @@ function renderGallery() {
     grid.innerHTML = `<div class="empty">
       <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
       <h3>${none ? 'No renders yet' : 'Nothing matches'}</h3>
+  grid.style.height = '';
       <p>${none ? 'Attach a ComfyUI workflow to a model (Models tab), then hit <b>▶ Render</b> on any take. Every image and video lands here.' : 'Try another filter.'}</p>
       ${none ? '<div class="try"><button type="button" class="btn primary" data-go="models">🎨 Set up a workflow</button></div>' : ''}</div>`;
     $('[data-go]', grid)?.addEventListener('click', () => showView('models/models'));
@@ -4700,7 +4701,50 @@ function renderGallery() {
 $('#galleryKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryKind = b.dataset.kind; renderGallery(); } });
 $('#galleryModels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryModel = b.dataset.id; renderGallery(); } });
 
+  layoutGallery();
 // ---------- models → workflows ----------
+
+// Masonry in reading order: each tile, newest first, goes into whichever column is shortest,
+// so the next render sits beside the last one rather than below it. Tiles stay in DOM order
+// (for Tab and screen readers); only their position is set here.
+function layoutGallery() {
+  const grid = $('#galleryGrid');
+  const tiles = $$('.gtile:not([hidden])', grid);
+  if (!tiles.length) return;
+  const css = getComputedStyle(grid);
+  const gap = +css.getPropertyValue('--g-gap') || 14;
+  const min = +css.getPropertyValue('--g-min') || 260;
+  const width = grid.clientWidth;
+  const cols = Math.max(1, Math.min(+css.getPropertyValue('--g-cols') || 4, Math.floor((width + gap) / (min + gap))));
+  const colW = (width - gap * (cols - 1)) / cols;
+  const heights = Array(cols).fill(0);
+  for (const t of tiles) t.style.width = `${colW}px`;
+  for (const t of tiles) {
+    const c = heights.indexOf(Math.min(...heights));
+    t.style.left = `${c * (colW + gap)}px`;
+    t.style.top = `${heights[c]}px`;
+    heights[c] += t.offsetHeight + gap;
+  }
+  grid.style.height = `${Math.max(...heights) - gap}px`;
+}
+
+// Until a picture loads its tile is a square; once its real size is known, place everything again.
+let galleryFrame = 0;
+function relayoutGallery() {
+  cancelAnimationFrame(galleryFrame);
+  galleryFrame = requestAnimationFrame(layoutGallery);
+}
+$('#galleryGrid').addEventListener('load', relayoutGallery, true);
+$('#galleryGrid').addEventListener('loadedmetadata', relayoutGallery, true);
+// A render whose file was moved or deleted outside the app quietly leaves the layout.
+$('#galleryGrid').addEventListener('error', e => {
+  const tile = e.target.closest?.('.gtile');
+  if (!tile || tile.hidden) return;
+  tile.hidden = true;
+  relayoutGallery();
+}, true);
+let galleryWidth = 0;
+new ResizeObserver(([e]) => { if (e.contentRect.width !== galleryWidth) { galleryWidth = e.contentRect.width; relayoutGallery(); } }).observe($('#galleryGrid'));
 
 const MAP_CHIPS = [['prompt', '✍️ Prompt'], ['image', '🖼️ Image'], ['size', '📐 Size'], ['duration', '⏱️ Duration'], ['seed', '🎲 Seed']];
 
