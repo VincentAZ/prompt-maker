@@ -1077,3 +1077,11 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .sub > .panel-head small { color: var(--muted); font-size: 12.5px; font-weight: 500; }
 .sub > .panel-head .collapse-btn { margin-left: auto; }
 .model-form.collapsed { gap: 8px; }
+
+/* Earlier runs kept above the stage, to compare renders */
+.prev-strip { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; margin-bottom: 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); min-width: 0; }
+.prev-title { font-size: 12px; font-weight: 800; opacity: 0.7; }
+.prev-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.prev-head .spacer { flex: 1; }
+.prev-tiles { display: flex; gap: 8px; overflow-x: auto; padding-top: 6px; }
+.prev-tiles .rtile { flex: 0 0 auto; height: 160px; width: auto; }

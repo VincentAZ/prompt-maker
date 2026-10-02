@@ -6,6 +6,7 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const scrollMode = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
 const state = {
+  prev: [], // earlier runs kept on the stage so their renders can be compared with the new one
   models: [],
   settings: null,
   llms: [],
@@ -1340,6 +1341,43 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   $('#copyAllBtn')?.addEventListener('click', e => copyText(takesText(state.cards.filter(c => !c.interrupted).map(c => $('.prompt-text', c.el).value.trim())), e.currentTarget));
 }
 
+// ---------- create: previous runs ----------
+
+// A new Generate replaces the stage, so the run it replaces (with its renders) stays above it to compare.
+function keepPrevious(entry) {
+  if (!entry?.id) return;
+  state.prev = [entry, ...state.prev.filter(e => e.id !== entry.id)].slice(0, 3);
+  renderPrevStrip();
+}
+
+function renderPrevStrip() {
+  const box = $('#prevStrip');
+  const shown = state.prev.filter(e => e.id !== state.entry?.id && e.variations?.some(v => v.renders?.length));
+  box.hidden = !shown.length;
+  box.innerHTML = shown.length ? '<div class="prev-title">Earlier runs, to compare</div>' : '';
+  for (const entry of shown) {
+    const items = entry.variations.flatMap((v, index) => (v.renders || []).slice().reverse().flatMap(r => r.files.map(f => ({ entry, index, render: r, file: f }))));
+    const row = document.createElement('div');
+    row.className = 'prev-row';
+    const tags = [entry.modelName, `🌡 ${Number(entry.temperature).toFixed(2)}`, entry.duration, entry.batch && `🎞 ${entry.batch}`].filter(Boolean);
+    row.innerHTML = `<div class="prev-head">${tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}<span class="spacer"></span><button type="button" class="btn small prev-open">Open</button><button type="button" class="icon-btn prev-x" aria-label="Stop showing this run">✕</button></div><div class="prev-tiles"></div>`;
+    const ar = ASPECT_CSS(entry.aspectRatio);
+    items.slice(0, 8).forEach((it, n) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `rtile${it.file.kind === 'audio' ? ' audio' : ''}`;
+      b.style.setProperty('--ar', ar);
+      b.setAttribute('aria-label', `Open earlier render ${n + 1}`);
+      b.innerHTML = `${mediaTag(it.file, { hover: true })}<span class="rt-meta">Take ${it.index + 1}${it.render.seed != null ? ` · seed ${it.render.seed}` : ''}</span>`;
+      b.addEventListener('click', () => openLightbox(items, n));
+      $('.prev-tiles', row).append(b);
+    });
+    $('.prev-open', row).addEventListener('click', () => { if (state.busy) return showEntry(entry); keepPrevious(state.entry); showEntry(entry); });
+    $('.prev-x', row).addEventListener('click', () => { state.prev = state.prev.filter(e => e !== entry); renderPrevStrip(); });
+    box.append(row);
+  }
+}
+
 // Opens the take a chained entry came from.
 async function openSource(src) {
   const parent = await api('/api/history').then(h => { state.history = h; return h.find(e => e.id === src.entryId); }).catch(() => null);
@@ -1512,6 +1550,7 @@ function showVersion(card, i) {
 
 function renderResults(entry, { totalSecs } = {}) {
   state.entry = entry;
+  renderPrevStrip();
   const list = $('#resultsList');
   list.innerHTML = '';
   state.cards = [];
@@ -1684,6 +1723,7 @@ async function formRequest() {
 
 // Writes the takes for a request into the stage, streaming. Returns the saved history entry, or null.
 async function runGeneration(body, m, { autoRender: auto = true } = {}) {
+  keepPrevious(state.entry);
   // Placeholder entry so the stage header and meters work while streaming.
   state.entry = { ...body, modelName: m.name, modelKind: m.kind, variations: [] };
   state.timings = {};
@@ -3852,6 +3892,7 @@ async function startRender(card, { quiet = false } = {}) {
         const v = entry.variations?.[card.index];
         if (v) (v.renders ||= []).push(ev.render);
         renderTiles(card);
+        if (entry !== state.entry) renderPrevStrip();
         announce(`Render ${i + 1} of ${count} done`);
         if (state.batchRun) {
           state.batchRun.done++;
