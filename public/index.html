@@ -47,6 +47,7 @@
       <button type="button" id="llmPick" class="llm-pick" aria-haspopup="dialog" aria-expanded="false" aria-controls="llmMenu"><span id="llmPickName"></span></button>
       <div id="llmMenu" class="llm-menu" role="dialog" aria-label="Pick the Brain" hidden>
         <input id="llmSearch" type="search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="llmList">
+        <div id="llmFilters" class="brain-filters" role="radiogroup" aria-label="Show only"></div>
         <div class="seg llm-sort" role="radiogroup" aria-label="Sort Brains">
           <button type="button" data-sort="smart" role="radio" title="Suggestions first, then what's loaded, then by kind">Smart</button>
           <button type="button" data-sort="recent" role="radio">Last used</button>
@@ -270,6 +271,7 @@
       <div id="brainsPane" class="brains-pane" hidden>
         <div class="brains-bar">
           <input id="brainSearch" type="search" class="brain-search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" aria-label="Search Brains by name">
+          <div id="brainFilters" class="brain-filters" role="radiogroup" aria-label="Show only"></div>
           <div class="seg brain-sort" role="radiogroup" aria-label="Sort Brains">
             <button type="button" data-sort="fit" role="radio">Best fit</button>
             <button type="button" data-sort="recent" role="radio">Last used</button>

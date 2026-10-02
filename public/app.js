@@ -489,26 +489,49 @@ function renderLlmPick() {
 }
 
 // The menu's groups for the search and sort: [{ title?, items: [brain] }]. "Auto" is { id: '' }.
+// Filters for the Brain menu and Models → Brains: one at a time.
+const isUncensored = m => /uncensor|abliterat|heretic|nsfw|unfilter|unalign|dolphin|lewd|erotic|\bderestrict/i.test(`${m.name} ${m.id}`);
+const BRAIN_FILTERS = {
+  all: { label: 'All', test: () => true },
+  vision: { label: '👁 Vision', test: m => m.vision },
+  uncensored: { label: '🔓 Uncensored', test: isUncensored },
+  local: { label: '💻 Local', test: m => !m.cloud },
+  cloud: { label: '☁️ Cloud', test: m => m.cloud },
+  loaded: { label: '⚡ Loaded', test: m => !m.cloud && m.loaded },
+};
+const filterChips = (current, attr) => Object.entries(BRAIN_FILTERS)
+  .map(([key, f]) => [key, f, key === 'all' ? state.llms.length : state.llms.filter(f.test).length])
+  .filter(([key, , n]) => key === 'all' || n || key === current)
+  .map(([key, f, n]) => `<button type="button" role="radio" ${attr}="${key}" aria-checked="${key === current}" class="${key === current ? 'active' : ''}">${f.label} <span class="n">${n}</span></button>`).join('');
+let llmFilter = saved.get('llmFilter', 'all');
+if (!BRAIN_FILTERS[llmFilter]) llmFilter = 'all';
+
 function llmMenuGroups(q, suggested) {
   const auto = { id: '', name: 'Auto: whatever is loaded' };
+  const pool = state.llms.filter(BRAIN_FILTERS[llmFilter].test);
+  const current = state.settings?.llmModel || '';
+  const inUse = llmFilter === 'all' && !q ? pool.filter(m => m.id === current) : [];
+  const head = llmFilter === 'all' ? [{ items: [auto] }, { title: 'In use', items: inUse }] : [];
+  const others = pool.filter(m => !inUse.includes(m));
   if (q) {
-    const hits = state.llms.map(m => ({ m, score: brainMatch(m, q) })).filter(x => x.score);
+    const hits = pool.map(m => ({ m, score: brainMatch(m, q) })).filter(x => x.score);
     hits.sort((a, b) => b.score - a.score || (llmSort === 'name' ? byName(a.m, b.m) : byRecent(a.m, b.m)));
     return [{ items: hits.map(x => x.m) }];
   }
-  if (llmSort === 'name') return [{ items: [auto, ...[...state.llms].sort(byName)] }];
+  if (llmSort === 'name') return [...head, { title: inUse.length ? 'All Brains' : '', items: [...others].sort(byName) }];
   if (llmSort === 'recent') {
     return [
-      { items: [auto] },
-      { title: 'Last used', items: state.llms.filter(lastUsedAt).sort(byRecent) },
-      { title: 'Not used yet', items: state.llms.filter(m => !lastUsedAt(m)).sort(byName) },
+      ...head,
+      { title: 'Last used', items: others.filter(lastUsedAt).sort(byRecent) },
+      { title: 'Not used yet', items: others.filter(m => !lastUsedAt(m)).sort(byName) },
     ];
   }
-  const ids = new Set(suggested.map(x => x.m.id));
-  const rest = state.llms.filter(m => !ids.has(m.id));
+  const fitting = suggested.filter(x => others.includes(x.m));
+  const ids = new Set(fitting.map(x => x.m.id));
+  const rest = others.filter(m => !ids.has(m.id));
   return [
-    { items: [auto] },
-    { title: `Suggested for ${currentModel()?.name}`, items: suggested.map(x => x.m) },
+    ...head,
+    { title: `Suggested for ${currentModel()?.name}`, items: fitting.map(x => x.m) },
     { title: 'Loaded now', items: rest.filter(m => !m.cloud && m.loaded) },
     { title: 'Vision 👁 (can see images)', items: rest.filter(m => !m.cloud && !m.loaded && m.vision) },
     { title: 'Text-only', items: rest.filter(m => !m.cloud && !m.loaded && !m.vision) },
@@ -527,7 +550,7 @@ function renderLlmMenu() {
     const last = m.id && lastUsedAt(m);
     const detail = !m.id ? 'Uses the model LM Studio has loaded'
       : [why.get(m.id), m.cloud && `cloud: ${m.cloud}`, m.vision ? 'sees images' : m.vision === false ? 'text-only' : '', speed && `~${fmtSecs(speed.seconds)}`, last && `used ${timeAgo(last)}`, !m.cloud && m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join(' · ');
-    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="n">${m.id ? brainIcon(m) : ''}${highlight(m.name, q)}</span><span class="d">${esc(detail)}</span></li>`;
+    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="n">${m.id ? brainIcon(m) : ''}${highlight(m.name, q)}${m.id && isUncensored(m) ? ' <span class="badge" title="Uncensored">🔓</span>' : ''}</span><span class="d">${esc(detail)}</span></li>`;
   };
   const html = llmMenuGroups(q, suggested).filter(g => g.items.length)
     .map(g => (g.title ? `<li class="grp" role="presentation">${esc(g.title)}</li>` : '') + g.items.map(option).join('')).join('');
@@ -537,6 +560,7 @@ function renderLlmMenu() {
     b.classList.toggle('active', b.dataset.sort === llmSort);
     b.setAttribute('aria-checked', String(b.dataset.sort === llmSort));
   });
+  $('#llmFilters').innerHTML = filterChips(llmFilter, 'data-filter');
 }
 
 function setLlmActive(i, scroll = true) {
@@ -597,6 +621,15 @@ $('#llmList').addEventListener('click', e => {
 $('#llmList').addEventListener('mousemove', e => {
   const el = e.target.closest('[role="option"]');
   if (el && Number(el.dataset.i) !== llmActive) setLlmActive(Number(el.dataset.i), false);
+});
+$('#llmFilters').addEventListener('click', e => {
+  const b = e.target.closest('[data-filter]');
+  if (!b) return;
+  llmFilter = b.dataset.filter;
+  saved.set('llmFilter', llmFilter);
+  llmActive = 0;
+  renderLlmMenu();
+  $('#llmSearch').focus();
 });
 $$('.llm-sort button').forEach(b => b.addEventListener('click', () => {
   llmSort = b.dataset.sort;
@@ -1928,6 +1961,8 @@ const NEW_MODEL = {
 
 let modelsPane = saved.get('modelsPane', 'models');
 let brainSort = saved.get('brainSort', 'fit');
+let brainFilter = saved.get('brainFilter', 'all');
+if (!BRAIN_FILTERS[brainFilter]) brainFilter = 'all';
 function showModelsPane(pane, { push = true } = {}) {
   modelsPane = pane === 'brains' ? 'brains' : 'models';
   saved.set('modelsPane', modelsPane);
@@ -1966,24 +2001,33 @@ function renderBrains() {
     recent: (a, b) => byRecent(a.m, b.m),
     name: (a, b) => byName(a.m, b.m),
   }[brainSort] || (() => 0);
+  $('#brainFilters').innerHTML = filterChips(brainFilter, 'data-filter');
   const ranked = state.llms
+    .filter(BRAIN_FILTERS[brainFilter].test)
     .filter(m => brainMatch(m, q))
     .map(m => ({ m, fit: brainFit(m, model) }))
     .sort(order);
   // Ranked by fit, Brains with no record yet wait in a fold; searching or sorting another way shows them all.
-  const fresh = brainSort === 'fit' && !q ? ranked.filter(x => isNewBrain(x.m) && x.m.id !== inUse) : [];
+  const fresh = brainSort === 'fit' && !q && brainFilter === 'all' ? ranked.filter(x => isNewBrain(x.m) && x.m.id !== inUse) : [];
   $('#brainList').innerHTML = ranked.filter(x => !fresh.includes(x)).map(x => brainCard(x.m, x.fit, model, inUse, q)).join('');
   $('#brainListNew').innerHTML = fresh.map(x => brainCard(x.m, x.fit, model, inUse)).join('');
   $('#brainsNew').hidden = !fresh.length;
   $('#brainsNew > summary').textContent = `${fresh.length} Brain${fresh.length > 1 ? 's' : ''} you haven't used or checked yet`;
   const empty = $('#brainsEmpty');
   empty.hidden = ranked.length > 0;
-  empty.textContent = q && state.llms.length ? `No Brain matches "${q}".`
+  empty.textContent = (q || brainFilter !== 'all') && state.llms.length ? `No Brain matches${q ? ` "${q}"` : ''}${brainFilter !== 'all' ? ` in ${BRAIN_FILTERS[brainFilter].label}` : ''}.`
     : state.llmOk === false ? 'LM Studio is not reachable, so there are no Brains to show. Start its server (see the banner at the top).'
     : 'No models in LM Studio yet. Download one there and it shows up here.';
 }
 
 $('#brainSearch').addEventListener('input', renderBrains);
+$('#brainFilters').addEventListener('click', e => {
+  const b = e.target.closest('[data-filter]');
+  if (!b) return;
+  brainFilter = b.dataset.filter;
+  saved.set('brainFilter', brainFilter);
+  renderBrains();
+});
 $$('.brain-sort button').forEach(b => b.addEventListener('click', () => {
   brainSort = b.dataset.sort;
   saved.set('brainSort', brainSort);

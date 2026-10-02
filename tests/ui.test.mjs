@@ -1471,16 +1471,22 @@ esac
     await genDone();
     await click('#llmPick');
     await click('.llm-sort button[data-sort="recent"]');
-    eq(await js('document.querySelector("#llmList .grp").textContent'), 'Last used', 'grouped by use');
-    eq(await js('document.querySelector("#llmList .grp + [role=option]").dataset.id'), 'mock/vision-8b', 'most recent first');
+    eq(await js('[...document.querySelectorAll("#llmList .grp")].map(g => g.textContent).join("|")'), 'In use|Last used|Not used yet', 'the Brain in use on top, then grouped by use');
+    eq(await js('document.querySelector("#llmList .grp + [role=option]").dataset.id'), 'mock/vision-8b', 'in use: the current Brain');
     assert((await text('#llmList [data-id="mock/vision-8b"] .d')).includes('used just now'), 'says when');
     await type('#llmSearch', 'mo');
     await shot('brain-picker');
     await type('#llmSearch', '');
     await click('.llm-sort button[data-sort="name"]');
-    const names = await js('[...document.querySelectorAll("#llmList [role=option]")].slice(1).map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
+    const names = await js('[...document.querySelectorAll("#llmList .grp:last-of-type ~ [role=option]")].map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
     eq(names.join('|'), [...names].sort((a, b) => a.localeCompare(b)).join('|'), 'A to Z');
     await click('.llm-sort button[data-sort="smart"]');
+    // Filters: one at a time, with counts.
+    await click('#llmFilters [data-filter="vision"]');
+    assert(await js('[...document.querySelectorAll("#llmList [role=option]")].every(o => o.querySelector(".n").textContent.startsWith("👁"))'), 'vision only');
+    assert(!(await js('!!document.querySelector(\'#llmList [data-id="mock/text-only"]\')')), 'text-only Brains hidden');
+    assert(/Vision \d+/.test(await text('#llmFilters [data-filter="vision"]')), 'with a count');
+    await click('#llmFilters [data-filter="all"]');
     await press('Escape');
     assert(!(await visible('#llmMenu')), 'Esc closes');
 
@@ -2042,7 +2048,7 @@ esac
     assert(await visible('#sComfyDirField'), 'then shown');
     await waitFor(`document.querySelector('#sComfyDir').placeholder.includes(${q(path.join(comfyRoot, 'output'))})`, 'the output folder is found on its own');
     await click('#settingsForm button[type="submit"]');
-    await toastText('Settings saved');
+    await waitFor('document.querySelector("#settingsDirty").hidden', 'saved'); // (another toast can cover "Settings saved")
     await click('.tabs button[data-view="create"]');
     await type('#theme', 'a red fox in fresh snow');
     await click('#generateBtn');

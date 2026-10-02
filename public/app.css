@@ -1032,3 +1032,15 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 @media (hover: hover) {
   .take:not(:hover):not(:focus-within) .chips { display: none; }
 }
+
+/* Brain filters (menu and Models → Brains) */
+.brain-filters { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.brain-filters::-webkit-scrollbar { display: none; }
+.brain-filters button { flex: none; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text-2); font-size: 12.5px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.brain-filters button .n { opacity: 0.6; font-weight: 600; margin-left: 2px; }
+.brain-filters button:hover { color: var(--text); }
+.brain-filters button.active { background: var(--text); color: var(--ink); border-color: var(--text); }
+.brains-bar .brain-filters { flex-basis: 100%; }
+.llm-menu { width: min(480px, calc(100vw - 32px)); }
+.llm-list .grp { position: sticky; top: 0; z-index: 1; background: var(--panel-2); }
+.llm-list .badge { font-size: 12px; }
