@@ -20,6 +20,7 @@ const PORT = Number(process.env.PORT) || 5317;
 const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const MAX_BODY = 30 * 1024 * 1024;
+const BATCH_MAX = 50; // takes per request and renders per take (a batch is either)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -299,7 +300,7 @@ async function generate(req, res) {
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   const llmModel = llm.id;
-  const count = Math.min(4, Math.max(1, Math.round(Number(body.variations) || 1)));
+  const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.variations) || 1)));
   const opts = sampling(settings, body.temperature ?? model.defaults.temperature, llm);
 
   const stream = startStream(res, llm, count, Boolean(imageDataUrl));
@@ -670,7 +671,7 @@ async function renderTake(req, res) {
     const ext = name.split('.').pop().toLowerCase();
     imageName = await comfy.uploadImage(base, buf, `prompt-maker_${name}`, IMAGE_MIME[ext] || 'image/png');
   }
-  const count = Math.min(4, Math.max(1, Math.round(Number(body.count) || 1)));
+  const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });

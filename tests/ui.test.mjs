@@ -1413,6 +1413,61 @@ esac
     await click('#varSeg button[data-value="1"]');
   });
 
+  await test('batch: one prompt rendered N times, or a different prompt each; Stop ends it', async () => {
+    await openPanel('create-render');
+    assert(await visible('#batchRow'), 'Batch shows once the model has a workflow');
+    assert(!(await visible('#batchMode')), 'one run: nothing more to choose');
+    await click('#batchSeg button[data-value="4"]');
+    assert(await visible('#batchMode'), 'asks: one prompt, or a different one each');
+    eq(await text('#genLabel'), 'Generate a batch of 4', 'Generate says so');
+    assert(await js('[...document.querySelectorAll("#varSeg button")].every(b => b.disabled)'), 'Takes are set by the batch');
+    assert(!(await visible('#wfpAutoRow')), 'a batch always renders: no auto-render switch');
+
+    // One prompt, four renders, a new seed each.
+    await click('#batchMode button[data-value="same"]');
+    eq(await text('#genCost'), '🎞 1 prompt × 4 renders', 'what it will do');
+    await js('document.querySelector("#renderStep").scrollIntoView({ block: "center" })');
+    await shot('batch');
+    await type('#theme', 'a paper boat in the rain');
+    let before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('/Rendering batch/.test(document.querySelector("#genLabel").textContent)', 'batch progress on the button');
+    await genDone();
+    eq(await count('.take'), 1, 'one prompt written');
+    eq(await count('.take .rtile img'), 4, 'rendered four times');
+    let sent = comfy.prompts.slice(before);
+    eq(sent.length, 4, 'four renders queued');
+    eq(new Set(sent.map(p => p.prompt['6'].inputs.text)).size, 1, 'all of the same prompt');
+    eq(new Set(sent.map(p => p.prompt['3'].inputs.seed)).size, 4, 'a new seed each');
+    await toastText('Batch done: 4 of 4');
+
+    // A different prompt each: three takes, one render each. Any number can be typed.
+    await click('#batchMode button[data-value="different"]');
+    await type('#batchN', '3');
+    eq(await text('#genLabel'), 'Generate a batch of 3', 'typed runs count');
+    before = comfy.prompts.length;
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('.take'), 3, 'three prompts written');
+    eq(await count('.take .rtile img'), 3, 'each rendered once');
+    sent = comfy.prompts.slice(before);
+    eq(new Set(sent.map(p => p.prompt['6'].inputs.text)).size, 3, 'each render has its own prompt');
+
+    // Stop: what's running is cancelled, nothing new starts, finished renders stay.
+    await click('#batchSeg button[data-value="8"]');
+    before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'the batch started rendering', 15000);
+    await click('#stopBtn');
+    await genDone();
+    assert(comfy.prompts.length - before < 8, 'the rest never started');
+    await toastText('Batch stopped');
+
+    await click('#batchSeg button[data-value="1"]');
+    eq(await text('#genLabel'), 'Generate', 'one run: a plain Generate again');
+    assert(!(await js('document.querySelector("#varSeg button").disabled')), 'Takes are yours again');
+  });
+
   await test('history cards show the latest render', async () => {
     await click('.tabs button[data-view="history"]');
     await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');

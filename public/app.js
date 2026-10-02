@@ -34,6 +34,8 @@ const state = {
   recipes: [], // saved chains
   run: null, // the chain run shown above the results
   chainActive: false, // a chain is running steps right now
+  batch: { runs: 1, mode: 'same' }, // step ⑤ Batch: runs > 1 renders a batch ("same" prompt, or a "different" one each)
+  batchRun: null, // { stopped, total, done } while a batch renders
   workflows: [],
   loraList: null, // every LoRA ComfyUI has, e.g. "krea2/film_grain.safetensors" (loaded when needed)
   loraPicker: { open: false, q: '' },
@@ -1543,9 +1545,9 @@ function adoptEntry(entry, totalSecs) {
 
 function setBusy(busy) {
   state.busy = busy;
-  $('#generateBtn').disabled = busy || state.chainActive;
+  $('#generateBtn').disabled = busy || state.chainActive || Boolean(state.batchRun);
   updateGenerateLabel();
-  $('#stopBtn').hidden = !busy && !state.chainActive;
+  $('#stopBtn').hidden = !busy && !state.chainActive && !state.batchRun;
   syncNewBtn();
   $$('.take .refine button, .take .refine input, .take .chips button, .take .save-edit, .take .versions button').forEach(el => { el.disabled = busy; });
   if (!busy) state.cards.forEach(c => { if (!c.interrupted && versionsOf(c).length) { $('.prev', c.el).disabled = c.view === 0; $('.next', c.el).disabled = c.view === versionsOf(c).length - 1; } });
@@ -1565,6 +1567,16 @@ function stop() {
     $('#genLabel').textContent = 'Stopping…';
     toast('■ Chain stopped. Finished steps are kept');
   }
+  const batch = state.batchRun;
+  if (batch && !batch.stopped) {
+    // Stopping a batch: nothing new starts, and its renders still in ComfyUI are cancelled. Finished ones stay.
+    batch.stopped = true;
+    for (const r of state.renderRuns) {
+      if (r.runId) api(`/api/runs/${r.runId}/cancel`, { method: 'POST' }).catch(() => r.controller.abort());
+      else r.controller.abort();
+    }
+    $('#genLabel').textContent = 'Stopping…';
+  }
   if (!state.busy || state.stopping) return;
   state.stopping = true;
   $('#genLabel').textContent = 'Stopping…';
@@ -1581,7 +1593,7 @@ function stop() {
 // New swaps places with Stop while a prompt is cooking, and has nothing to do on a blank slate.
 function syncNewBtn() {
   const b = $('#newBtn');
-  b.hidden = state.busy || state.chainActive;
+  b.hidden = state.busy || state.chainActive || Boolean(state.batchRun);
   b.disabled = !($('#theme').value.trim() || state.image || state.entry);
 }
 
@@ -1627,12 +1639,15 @@ async function newSession() {
 $('#newBtn').addEventListener('click', newSession);
 
 async function generate() {
-  if (state.busy || state.chainActive) return;
+  if (state.busy || state.chainActive || state.batchRun) return;
   if (state.chain.steps.length) return runChain();
   const body = await formRequest();
   if (!body) return;
   closeRun();
-  await runGeneration(body, currentModel());
+  const batch = batchOn() ? { ...state.batch } : null;
+  if (batch) body.variations = batch.mode === 'different' ? batch.runs : 1;
+  const entry = await runGeneration(body, currentModel(), { autoRender: !batch });
+  if (batch && entry) await runBatch(batch);
 }
 
 // Checks the Create form and turns it into a generate request (null, with the reason shown, if it can't run).
@@ -1847,7 +1862,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if ($('#wfDialog').open) return;
-  if (e.key === 'Escape' && (state.busy || state.chainActive)) stop();
+  if (e.key === 'Escape' && (state.busy || state.chainActive || state.batchRun)) stop();
 });
 
 // ---------- history ----------
@@ -3346,6 +3361,7 @@ function renderWorkflowPicker() {
     renderLoraPanel();
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
+  renderBatch();
   renderWorkflowWarning();
   renderStaleNotice();
   renderComfyState();
@@ -3396,6 +3412,78 @@ function autoRender(cards) {
   const m = modelById(state.entry?.modelId);
   if (!m || !saved.get(autoRenderKey(m.id), false) || !workflowsFor(m.id).length) return;
   cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); });
+}
+
+// ---------- batch (step ⑤) ----------
+// A batch is several runs from one Generate: one prompt rendered N times (a new seed each), or N different prompts
+// rendered once each. It needs a workflow; a chain has its own takes and renders, so a batch is off while one is set up.
+
+const BATCH_MAX = 50; // the server allows as many
+function batchOn() {
+  return state.batch.runs > 1 && workflowsFor(state.modelId).length > 0 && !state.chain.steps.length;
+}
+
+function renderBatch() {
+  const { runs, mode } = state.batch;
+  const on = batchOn();
+  $('#batchRow').hidden = !workflowsFor(state.modelId).length || state.chain.steps.length > 0;
+  $('#wfpAutoRow').hidden = state.chain.steps.length > 0 || on; // a batch always renders
+  setActive($('#batchSeg'), runs);
+  if (document.activeElement !== $('#batchN')) $('#batchN').value = runs;
+  $('#batchMode').hidden = runs < 2;
+  setActive($('#batchMode'), mode);
+  const what = currentModel()?.kind === 'video' ? 'video' : 'image';
+  $('#batchHint').hidden = runs < 2;
+  $('#batchHint').textContent = mode === 'same'
+    ? `Writes 1 prompt and renders it ${runs} times, a new seed each time: ${runs} ${what}s of one prompt.`
+    : `Writes ${runs} different prompts and renders each one once: ${runs} ${what}s, all different.`;
+  // Takes (step ④): the batch decides how many prompts get written.
+  $('#varSeg').classList.toggle('locked', on);
+  $$('#varSeg button').forEach(b => { b.disabled = on; });
+  $('#varSeg').title = on ? 'Set by Batch in step 5' : '';
+  updateGenerateLabel();
+}
+
+function setBatch(change) {
+  state.batch = { ...state.batch, ...change };
+  saved.set('batch', state.batch);
+  renderBatch();
+}
+$('#batchSeg').addEventListener('click', e => {
+  const b = e.target.closest('button[data-value]');
+  if (b) setBatch({ runs: Number(b.dataset.value) });
+});
+$('#batchN').addEventListener('input', e => { if (Number(e.target.value) >= 1) setBatch({ runs: clampInt(e.target.value, 1, BATCH_MAX) }); });
+$('#batchN').addEventListener('change', e => { setBatch({ runs: clampInt(e.target.value, 1, BATCH_MAX) }); e.target.value = state.batch.runs; });
+$('#batchMode').addEventListener('click', e => {
+  const b = e.target.closest('button[data-value]');
+  if (b) setBatch({ mode: b.dataset.value });
+});
+
+// Renders the batch's freshly written takes. One take at a time: each render keeps a stream open, and the browser
+// only allows a few per server, so 20 at once would stall the page.
+async function runBatch(batch) {
+  const cards = state.cards.filter(c => c.rb && !c.interrupted);
+  if (!cards.length) return;
+  const run = { stopped: false, total: batch.mode === 'same' ? batch.runs : cards.length, done: 0 };
+  state.batchRun = run;
+  setBusy(false); // shows ■ Stop for the batch
+  if (batch.mode === 'same') {
+    cards[0].rb.count = batch.runs;
+    await startRender(cards[0], { quiet: true });
+  } else {
+    for (const c of cards) {
+      if (run.stopped) break;
+      c.rb.count = 1;
+      await startRender(c, { quiet: true });
+      if (!state.comfy?.ok) break; // ComfyUI went away: the error is on screen, the rest would fail the same way
+    }
+  }
+  state.batchRun = null;
+  setBusy(false);
+  setTitle(document.hidden && run.done ? '✓ Rendered' : '');
+  if (run.stopped) toast(`■ Batch stopped. ${run.done} of ${run.total} finished, and they're kept`);
+  else if (run.done) toast(`🎞 Batch done: ${run.done} of ${run.total} rendered`);
 }
 
 let comfyLoading = null;
@@ -3580,7 +3668,7 @@ function runningTile(card) {
   return t;
 }
 
-async function startRender(card) {
+async function startRender(card, { quiet = false } = {}) {
   const entry = state.entry; // the stage may show another entry by the time this finishes (chains)
   const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
   if (!flow || !entry?.id) return;
@@ -3655,6 +3743,10 @@ async function startRender(card) {
         if (v) (v.renders ||= []).push(ev.render);
         renderTiles(card);
         announce(`Render ${i + 1} of ${count} done`);
+        if (state.batchRun) {
+          state.batchRun.done++;
+          updateGenerateLabel();
+        }
       } else if (ev.type === 'error') {
         failed = ev.message;
         const t = tiles[i];
@@ -3686,7 +3778,7 @@ async function startRender(card) {
       tiles.filter(t => t.classList.contains('failed')).forEach(t => box.prepend(t));
       box.hidden = !box.children.length;
     }
-  } else if (!done.size) toast('■ Render stopped');
+  } else if (quiet) { /* a batch says it once, at the end */ } else if (!done.size) toast('■ Render stopped');
   else toast(`🎨 ${done.size} render${done.size > 1 ? 's' : ''} ready`);
   setTitle(document.hidden && done.size ? '✓ Rendered' : '');
   loadComfyStatus();
@@ -3809,10 +3901,16 @@ function chainCost() {
 
 function updateGenerateLabel() {
   const chained = state.chain.steps.length > 0;
-  $('#genLabel').textContent = state.busy ? 'Cooking…' : state.chainActive ? 'Chain running…' : chained ? 'Run chain' : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
-  const cost = chained && !state.busy && !state.chainActive ? chainCost() : '';
+  const batch = !chained && batchOn() ? state.batch : null;
+  const run = state.batchRun;
+  $('#genLabel').textContent = state.busy ? 'Cooking…' : state.chainActive ? 'Chain running…'
+    : run ? (run.stopped ? 'Stopping…' : `Rendering batch: ${run.done} of ${run.total}`)
+    : chained ? 'Run chain' : batch ? `Generate a batch of ${batch.runs}` : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
+  const chainLine = chained && !state.busy && !state.chainActive ? chainCost() : '';
+  const cost = chainLine ? `⛓ ${chainLine}`
+    : batch && !state.busy && !run ? `🎞 ${batch.mode === 'same' ? `1 prompt × ${batch.runs} renders` : `${batch.runs} prompts × 1 render`}` : '';
   $('#genCost').hidden = !cost;
-  $('#genCost').textContent = cost ? `⛓ ${cost}` : '';
+  $('#genCost').textContent = cost;
 }
 
 function stepCardHtml(st, i, warn) {
@@ -3900,10 +3998,10 @@ function renderChainEditor() {
     setActive($(`.chain-card[data-i="${i}"] [data-f="renders"]`, box), st.renders);
   });
   if (focus?.sel) $(`${focus.i != null ? `[data-i="${focus.i}"].chain-card ` : ''}${focus.sel}`, box)?.focus();
-  $('#wfpAutoRow').hidden = steps.length > 0;
   $('#wfpRenders').hidden = !steps.length;
   setActive($('#wfpRenders .seg'), state.chain.renders);
-  updateGenerateLabel();
+  renderBatch(); // a chain turns the batch off, and hides auto-render
+
 }
 
 const chainStepOf = el => state.chain.steps[Number(el.closest('[data-i]')?.dataset.i)];
@@ -4935,7 +5033,7 @@ const TOOLS = [
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
-  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('e.g. "1920×1080"'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild') }),
+  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('e.g. "1920×1080"'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), batch: I('Batch: runs per Generate, 1–50 (needs a workflow; 1 = no batch). Each run is rendered'), batch_prompts: E(['same', 'different'], 'Batch: "same" = one prompt rendered each run with a new seed; "different" = a different prompt per run') }),
   T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate'], 'animate = first frame of a video (video models only)') }, ['role']),
   T('clear_image', 'Remove the image from step 3.'),
   T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (step 5).', { name: S('Workflow name') }, ['name']),
@@ -4947,7 +5045,7 @@ const TOOLS = [
   T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in History.'),
   T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 6). Waits until they are written.'),
   T('refine_take', 'Change a take with an instruction, e.g. "golden hour" or "shorter".', { take: I('Take number, starting at 1'), instruction: S('What to change') }, ['take', 'instruction']),
-  T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–4; default 1') }),
+  T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–50; default 1') }),
   T('animate_render', 'Make a still render the first frame of a video: switches to the video model and attaches the still. Then use set_theme for what happens, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
     steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate'], 'How it uses the image; animate = first frame'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'auto'], 'pick = wait for the user to choose renders; auto = all go on') }, required: ['model'] } },
@@ -4994,7 +5092,7 @@ function needCard(n) {
   return card;
 }
 function notBusy() {
-  if (state.busy || state.chainActive) throw new Error('Something is still running. Wait for it, or press Stop.');
+  if (state.busy || state.chainActive || state.batchRun) throw new Error('Something is still running. Wait for it, or press Stop.');
 }
 const pick = (options, q) => {
   const s = squash(q);
@@ -5020,6 +5118,7 @@ function assistantState() {
     comfyui: state.comfy ? (state.comfy.ok ? 'ready' : 'offline') : 'unknown',
     workflow: flow && { name: flow.name, takesImage: flow.maps.image, others: workflowsFor(m.id).filter(f => f.id !== flow.id).map(f => f.name), autoRender: saved.get(autoRenderKey(m.id), false) },
     loras: flow ? [...flowLoras(flow).own.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on, inWorkflow: true })), ...flowLoras(flow).added.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on }))] : [],
+    batch: batchOn() ? { runs: state.batch.runs, prompts: state.batch.mode } : null,
     chain: state.chain.steps.length ? state.chain.steps.map(s => ({ model: modelById(s.modelId)?.name, use: s.use, whatHappens: s.direction, gate: s.gate, takes: s.takes })) : null,
     chainRun: state.run ? { status: state.run.status, steps: state.run.entries.length } : null,
     takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, start: $('.prompt-text', c.el).value.slice(0, 140) })) : [],
@@ -5130,6 +5229,11 @@ const TOOL_IMPL = {
     if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
     choose('resolution', '#resolution', options('#resolution'), 'resolution');
     if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');
+    if (args.batch != null || args.batch_prompts) {
+      if (!workflowsFor(m.id).length) throw new Error(`A batch renders every run, and ${m.name} has no workflow yet.`);
+      setBatch({ ...(args.batch != null ? { runs: clampInt(args.batch, 1, BATCH_MAX) } : {}), ...(['same', 'different'].includes(args.batch_prompts) ? { mode: args.batch_prompts } : {}) });
+      done.push(state.batch.runs > 1 ? `batch of ${state.batch.runs} (${state.batch.mode === 'same' ? 'one prompt' : 'a different prompt each'})` : 'no batch');
+    }
     if (['short', 'medium', 'long'].includes(args.length)) { state.length = args.length; setActive($('#lengthSeg'), state.length); done.push(`${args.length} length`); }
     if (args.takes != null) { setVariations(clampInt(args.takes, 1, 4)); done.push(`${state.variations} take${state.variations > 1 ? 's' : ''}`); }
     if (args.temperature != null) { setTemperature(Math.min(2, Math.max(0, Number(args.temperature) || 0))); done.push(`temperature ${Number($('#temperature').value).toFixed(2)}`); }
@@ -5229,7 +5333,8 @@ const TOOL_IMPL = {
     if (!state.entry?.id || state.entry === before) throw new Error(stageError() || 'Nothing was generated.');
     const takes = state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, text: $('.prompt-text', c.el).value }));
     if (state.run) return { summary: `Chain ${state.run.status === 'done' ? 'done' : state.run.status === 'waiting' ? 'waiting for picks' : 'ran'}`, run: state.run.status, takes };
-    return { summary: `Wrote ${takes.length} take${takes.length > 1 ? 's' : ''} for ${state.entry.modelName}`, takes };
+    const rendered = state.cards.reduce((n, c) => n + takeRenders(c).length, 0);
+    return { summary: `Wrote ${takes.length} take${takes.length > 1 ? 's' : ''} for ${state.entry.modelName}${batchOn() ? `, batch rendered ${rendered}` : ''}`, takes };
   },
   refine_take: async ({ take, instruction }) => {
     notBusy();
@@ -5244,7 +5349,7 @@ const TOOL_IMPL = {
     if (!cards.length) throw new Error('There are no takes to render. Generate first.');
     if (!cards.every(c => c.rb)) throw new Error(`${currentModel()?.name || 'This model'} has no workflow to render with. Add one in step 5.`);
     const before = cards.reduce((n, c) => n + takeRenders(c).length, 0);
-    await Promise.all(cards.map(c => { c.rb.count = clampInt(count ?? 1, 1, 4); return startRender(c); }));
+    await Promise.all(cards.map(c => { c.rb.count = clampInt(count ?? 1, 1, BATCH_MAX); return startRender(c); }));
     const made = cards.reduce((n, c) => n + takeRenders(c).length, 0) - before;
     if (!made) throw new Error(stageError() || 'The render didn\'t come back.');
     return { summary: `Rendered ${made} file${made > 1 ? 's' : ''}` };
@@ -5618,6 +5723,8 @@ async function loadModels() {
     [state.settings, state.models] = await Promise.all([api('/api/settings'), api('/api/models')]);
     state.imageRole = saved.get('imageRole', 'reference');
     const chain = saved.get('chain', null);
+    const batch = saved.get('batch', null);
+    state.batch = { runs: clampInt(batch?.runs ?? 1, 1, BATCH_MAX), mode: batch?.mode === 'different' ? 'different' : 'same' };
     if (chain && Array.isArray(chain.steps)) state.chain = { steps: chain.steps.filter(x => x && typeof x === 'object'), renders: clampInt(chain.renders ?? 1, 1, 4), recipeId: chain.recipeId || null };
     selectModel(saved.get('modelId', null));
     renderModelList();

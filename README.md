@@ -278,11 +278,16 @@ Step **⑤ Render it** on the Create page is your control center:
 - **Pick the workflow** your takes render with. Prompt Maker remembers it for each model.
 - **⚙ Edit** changes its name, inputs and sampler settings; the chips under it show what it will use (sampler, steps, CFG, seed), and clicking them jumps to those settings. **＋** adds another workflow. **Delete workflow** is in the edit dialog.
 - **Auto-render every new prompt** sends each new or refined take to ComfyUI as soon as it's written.
+- **Batch** runs several renders from one **Generate**, for images and videos alike. Pick **1, 2, 4, 8** or type any number up to 50, then choose:
+  - **🔁 One prompt**: writes one prompt and renders it that many times, a new seed each time.
+  - **🔀 A different prompt each**: writes that many different prompts and renders each one once.
+
+  The button says what will happen (*1 prompt × 8 renders*) and counts along while it renders. Renders go to ComfyUI one after another. **■ Stop** (or `Esc`) cancels the rest and keeps the ones that finished. While a batch is set, it decides the number of takes; a chain (step ⑥) has its own takes and renders, so Batch hides while you build one.
 
 Every take also has a **🎨 Render** bar:
 
 - **The workflow menu** is the same choice as step ⑤; change either one. **⚙** opens its sampler settings.
-- **×1–×4**: render several at once, each with its own seed.
+- **×1–×4**: render several at once, each with its own seed. (For more, use **Batch** in step ⑤.)
 - **🎲 New seed / 🔒 Seed**: lock the last seed to try prompt tweaks on the same composition.
 - **▶ Render**: live progress shows on the tile (queue position, node, step, %), with previews if ComfyUI was started with `--preview-method auto`. **✕** cancels.
 - **🎨 Render all** does every take in one go.
