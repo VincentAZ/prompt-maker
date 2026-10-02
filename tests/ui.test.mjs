@@ -1439,25 +1439,34 @@ esac
     await click('#varSeg button[data-value="1"]');
   });
 
-  await test('batch: one prompt rendered N times, or a different prompt each; Stop ends it', async () => {
+  await test('batches: named, each its own count and prompts; run one or all in order; Stop; saved', async () => {
     await openPanel('create-render');
-    assert(await visible('#batchRow'), 'Batch shows once the model has a workflow');
-    assert(!(await visible('#batchMode')), 'one run: nothing more to choose');
-    await click('#batchSeg button[data-value="4"]');
-    assert(await visible('#batchMode'), 'asks: one prompt, or a different one each');
-    eq(await text('#genLabel'), 'Generate a batch of 4', 'Generate says so');
+    await openPanel('create-render-batch');
+    assert(await visible('#batchBox'), 'Batch shows once the model has a workflow');
+    eq(await value('#batchPick'), '', 'no batch at first');
+
+    // A new batch: you name it, pick how many images and how its prompts work.
+    await click('#batchAdd');
+    eq(await js('document.activeElement.classList.contains("b-name")'), true, 'ready to be named');
+    await type('#batchList li:nth-child(1) .b-name', 'Hero shots');
+    await press('Enter');
+    await type('#batchList li:nth-child(1) .b-count input', '4');
+    await press('Enter');
+    eq(await text('#batchList li:nth-child(1) .b-count span'), 'images', 'counted in images for an image model');
+    await click('#batchList li:nth-child(1) [data-mode="same"]');
+    eq(await text('#batchPick option:checked'), '🎞 Hero shots · 4 images, one prompt', 'picked, and says what it is');
+    eq(await text('#genLabel'), 'Generate “Hero shots”', 'Generate runs it');
+    eq(await text('#genCost'), '🎞 4 images, one prompt', 'what it will do');
     assert(await js('[...document.querySelectorAll("#varSeg button")].every(b => b.disabled)'), 'Takes are set by the batch');
     assert(!(await visible('#wfpAutoRow')), 'a batch always renders: no auto-render switch');
-
-    // One prompt, four renders, a new seed each.
-    await click('#batchMode button[data-value="same"]');
-    eq(await text('#genCost'), '🎞 1 prompt × 4 renders', 'what it will do');
     await js('document.querySelector("#renderStep").scrollIntoView({ block: "center" })');
     await shot('batch');
+
+    // One prompt, four renders, a new seed each; the History entry carries the batch's name.
     await type('#theme', 'a paper boat in the rain');
     let before = comfy.prompts.length;
     await click('#generateBtn');
-    await waitFor('/Rendering batch/.test(document.querySelector("#genLabel").textContent)', 'batch progress on the button');
+    await waitFor('/Hero shots/.test(document.querySelector("#genLabel").textContent)', 'progress on the button');
     await genDone();
     eq(await count('.take'), 1, 'one prompt written');
     eq(await count('.take .rtile img'), 4, 'rendered four times');
@@ -1465,22 +1474,37 @@ esac
     eq(sent.length, 4, 'four renders queued');
     eq(new Set(sent.map(p => p.prompt['6'].inputs.text)).size, 1, 'all of the same prompt');
     eq(new Set(sent.map(p => p.prompt['3'].inputs.seed)).size, 4, 'a new seed each');
-    await toastText('Batch done: 4 of 4');
+    await toastText('“Hero shots” done: 4 images');
+    assert((await text('#stageHead')).includes('🎞 Hero shots'), 'the takes say which batch they came from');
 
-    // A different prompt each: three takes, one render each. Any number can be typed.
-    await click('#batchMode button[data-value="different"]');
-    await type('#batchN', '3');
-    eq(await text('#genLabel'), 'Generate a batch of 3', 'typed runs count');
+    // A second batch with its own choice: a different prompt each.
+    await click('#batchAdd');
+    await type('#batchList li:nth-child(2) .b-name', 'Explore');
+    await press('Enter');
+    await type('#batchList li:nth-child(2) .b-count input', '3');
+    await press('Enter');
+    await click('#batchList li:nth-child(2) [data-mode="different"]');
+    eq(await js('[...document.querySelectorAll("#batchList [data-mode].active")].map(b => b.dataset.mode).join("|")'), 'same|different', 'each batch keeps its own choice');
+
+    // All batches, one after another: each its own takes and History entry.
+    await choose('#batchPick', '*');
+    eq(await text('#genLabel'), 'Generate all 2 batches', 'Generate runs them all');
+    eq(await text('#genCost'), '🎞 2 batches · 7 images', 'how much in all');
     before = comfy.prompts.length;
     await click('#generateBtn');
     await genDone();
-    eq(await count('.take'), 3, 'three prompts written');
-    eq(await count('.take .rtile img'), 3, 'each rendered once');
     sent = comfy.prompts.slice(before);
-    eq(new Set(sent.map(p => p.prompt['6'].inputs.text)).size, 3, 'each render has its own prompt');
+    eq(sent.length, 7, '4 + 3 renders');
+    eq(new Set(sent.slice(4).map(p => p.prompt['6'].inputs.text)).size, 3, '“Explore”: a different prompt each');
+    eq(await count('.take'), 3, 'the stage shows the last batch');
+    await toastText('All 2 batches done: 7 images');
+    const tagged = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).slice(0, 2).map(e => e.batch).join('|');
+    eq(tagged, 'Explore|Hero shots', 'one History entry per batch, named after it');
 
     // Stop: what's running is cancelled, nothing new starts, finished renders stay.
-    await click('#batchSeg button[data-value="8"]');
+    await type('#batchList li:nth-child(2) .b-count input', '8');
+    await press('Enter');
+    await choose('#batchPick', await js('document.querySelector("#batchList li:nth-child(2)").dataset.id'));
     before = comfy.prompts.length;
     await click('#generateBtn');
     await waitFor('!!document.querySelector(".take .rtile.running")', 'the batch started rendering', 15000);
@@ -1489,8 +1513,18 @@ esac
     assert(comfy.prompts.length - before < 8, 'the rest never started');
     await toastText('Batch stopped');
 
-    await click('#batchSeg button[data-value="1"]');
-    eq(await text('#genLabel'), 'Generate', 'one run: a plain Generate again');
+    // Saved: still there after a reload. Delete, with undo.
+    await goto(`${APP}/#create`);
+    eq(await js('[...document.querySelectorAll("#batchList .b-name")].map(i => i.value).join("|")'), 'Hero shots|Explore', 'batches are saved');
+    eq(await text('#genLabel'), 'Generate “Explore”', 'and so is the pick');
+    await openPanel('create-render-batch');
+    await click('#batchList li:nth-child(2) .b-del');
+    eq(await count('#batchList li'), 1, 'deleted');
+    eq(await value('#batchPick'), '', 'its pick went with it');
+    await click('#toast .toast-act');
+    await waitFor('document.querySelectorAll("#batchList li").length === 2', 'undo brings it back');
+    await choose('#batchPick', '');
+    eq(await text('#genLabel'), 'Generate', 'no batch: a plain Generate again');
     assert(!(await js('document.querySelector("#varSeg button").disabled')), 'Takes are yours again');
   });
 

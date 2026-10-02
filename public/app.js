@@ -34,8 +34,8 @@ const state = {
   recipes: [], // saved chains
   run: null, // the chain run shown above the results
   chainActive: false, // a chain is running steps right now
-  batch: { runs: 1, mode: 'same' }, // step ⑤ Batch: runs > 1 renders a batch ("same" prompt, or a "different" one each)
-  batchRun: null, // { stopped, total, done } while a batch renders
+  batchPick: '', // what Generate runs (step ⑤ Batch): '' no batch, a saved batch's id, or '*' every batch in order
+  batchRun: null, // while batches run: { list, index, name, total, done, allDone, stopped }
   workflows: [],
   loraList: null, // every LoRA ComfyUI has, e.g. "krea2/film_grain.safetensors" (loaded when needed)
   loraPicker: { open: false, q: '' },
@@ -1330,7 +1330,7 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   const via = entry.llmName || state.llms.find(l => l.id === entry.llmModel)?.name || entry.llmModel;
   const takes = entry.variations?.length || 0;
   head.style.setProperty('--m', m ? modelColor(m) : 'var(--hot)');
-  head.innerHTML = `<span class="tag model">${kindIcon(entry.modelKind)} ${esc(entry.modelName)}</span>${entry.source ? `<button type="button" class="tag src-link" id="srcLink" title="Open the take this came from">⬑ from ${esc(takeLabel(entry.source))}</button>` : ''}${tags}
+  head.innerHTML = `<span class="tag model">${kindIcon(entry.modelKind)} ${esc(entry.modelName)}</span>${entry.batch ? `<span class="tag batch" title="From the batch “${esc(entry.batch)}”">🎞 ${esc(entry.batch)}</span>` : ''}${entry.source ? `<button type="button" class="tag src-link" id="srcLink" title="Open the take this came from">⬑ from ${esc(takeLabel(entry.source))}</button>` : ''}${tags}
     ${via ? `<span class="via">${running ? 'rolling on' : 'written by'} ${esc(via)}${totalSecs ? ` in ${totalSecs.toFixed(1)}s` : ''}</span>` : ''}
     ${!running && takes > 1 && entry.id && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn">🎨 Render all ${takes}</button>` : ''}
     ${!running && takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn">📋 Copy all ${takes} takes</button>` : ''}`;
@@ -1641,13 +1641,12 @@ $('#newBtn').addEventListener('click', newSession);
 async function generate() {
   if (state.busy || state.chainActive || state.batchRun) return;
   if (state.chain.steps.length) return runChain();
+  const list = pickedBatches();
+  if (list.length) return runBatches(list);
   const body = await formRequest();
   if (!body) return;
   closeRun();
-  const batch = batchOn() ? { ...state.batch } : null;
-  if (batch) body.variations = batch.mode === 'different' ? batch.runs : 1;
-  const entry = await runGeneration(body, currentModel(), { autoRender: !batch });
-  if (batch && entry) await runBatch(batch);
+  await runGeneration(body, currentModel());
 }
 
 // Checks the Create form and turns it into a generate request (null, with the reason shown, if it can't run).
@@ -1906,7 +1905,7 @@ function renderHistory() {
   const items = state.history.filter(e =>
     (!state.historyFilter || e.modelId === state.historyFilter) &&
     (!state.historyFav || e.favorite) &&
-    (!q || [e.theme, e.modelName, ...e.variations.flatMap(v => v.versions.map(x => x.text))].join('\n').toLowerCase().includes(q)));
+    (!q || [e.theme, e.modelName, e.batch, ...e.variations.flatMap(v => v.versions.map(x => x.text))].join('\n').toLowerCase().includes(q)));
   $('#historyCount').textContent = state.history.length ? (items.length === state.history.length ? state.history.length : `${items.length} of ${state.history.length}`) : '';
   const list = $('#historyList');
   // Remember keyboard focus across the re-render.
@@ -1946,7 +1945,7 @@ function renderHistory() {
         </div>
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite: ${esc(title)}" title="${e.favorite ? 'Unfavorite' : 'Favorite'}">${e.favorite ? '★' : '☆'}</button>
         <div class="hbody">
-          <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
+          <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.batch ? `<span class="tag batch" title="From the batch “${esc(e.batch)}”">🎞 ${esc(e.batch)}</span>` : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
           <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open">${esc(title)}</div>
           <p class="hprompt">${esc(first)}</p>
           <div class="hactions">
@@ -3415,75 +3414,181 @@ function autoRender(cards) {
 }
 
 // ---------- batch (step ⑤) ----------
-// A batch is several runs from one Generate: one prompt rendered N times (a new seed each), or N different prompts
-// rendered once each. It needs a workflow; a chain has its own takes and renders, so a batch is off while one is set up.
+// Your saved batches. Each stands on its own: a name, how many images or videos, and whether they all come from one
+// prompt (a new seed each) or each from its own prompt. Generate runs no batch, one of them, or all of them in order.
+// Batches render, so they need a workflow; a chain has its own takes and renders, so they're off while one is set up.
 
 const BATCH_MAX = 50; // the server allows as many
+const batches = () => state.settings?.batches || [];
+const batchAvailable = () => workflowsFor(state.modelId).length > 0 && !state.chain.steps.length;
+const outputWord = (n, kind = currentModel()?.kind) => `${kind === 'video' ? 'video' : 'image'}${n === 1 ? '' : 's'}`;
+const batchLine = b => `${b.count} ${outputWord(b.count)}, ${b.mode === 'same' ? 'one prompt' : 'a different prompt each'}`;
+const cut = (str, n) => (str.length > n ? `${str.slice(0, n - 1)}…` : str);
+
+// The batches the next Generate runs, in order ([] = none).
+function pickedBatches() {
+  if (!batchAvailable()) return [];
+  if (state.batchPick === '*') return batches();
+  const b = batches().find(x => x.id === state.batchPick);
+  return b ? [b] : [];
+}
 function batchOn() {
-  return state.batch.runs > 1 && workflowsFor(state.modelId).length > 0 && !state.chain.steps.length;
+  return pickedBatches().length > 0;
 }
 
 function renderBatch() {
-  const { runs, mode } = state.batch;
-  const on = batchOn();
-  $('#batchRow').hidden = !workflowsFor(state.modelId).length || state.chain.steps.length > 0;
+  const list = batches();
+  if (state.batchPick === '*' && list.length < 2) state.batchPick = list[0]?.id || '';
+  if (state.batchPick && state.batchPick !== '*' && !list.some(b => b.id === state.batchPick)) state.batchPick = '';
+  const picked = pickedBatches();
+  const on = picked.length > 0;
+  $('#batchBox').hidden = !batchAvailable();
   $('#wfpAutoRow').hidden = state.chain.steps.length > 0 || on; // a batch always renders
-  setActive($('#batchSeg'), runs);
-  if (document.activeElement !== $('#batchN')) $('#batchN').value = runs;
-  $('#batchMode').hidden = runs < 2;
-  setActive($('#batchMode'), mode);
-  const what = currentModel()?.kind === 'video' ? 'video' : 'image';
-  $('#batchHint').hidden = runs < 2;
-  $('#batchHint').textContent = mode === 'same'
-    ? `Writes 1 prompt and renders it ${runs} times, a new seed each time: ${runs} ${what}s of one prompt.`
-    : `Writes ${runs} different prompts and renders each one once: ${runs} ${what}s, all different.`;
-  // Takes (step ④): the batch decides how many prompts get written.
+  const pick = $('#batchPick');
+  pick.innerHTML = '<option value="">No batch: just the takes from step 4</option>'
+    + list.map(b => `<option value="${esc(b.id)}">🎞 ${esc(b.name)} · ${esc(batchLine(b))}</option>`).join('')
+    + (list.length > 1 ? `<option value="*">🎞 All ${list.length} batches, one after another</option>` : '');
+  pick.value = state.batchPick;
+  pick.disabled = !list.length;
+  renderBatchRows(new Set(picked.map(b => b.id)));
+  const total = picked.reduce((n, b) => n + b.count, 0);
+  $('#batchHint').textContent = !list.length ? 'Make a batch: name it, say how many images or videos, and whether they share one prompt or each get their own.'
+    : picked.length > 1 ? `Generate runs all ${picked.length} batches, one after another: ${total} ${outputWord(total)} in all.`
+      : on ? `Generate runs “${picked[0].name}”: ${picked[0].mode === 'same' ? `1 prompt, rendered ${total} times with a new seed each` : `${total} different prompts, each rendered once`}.`
+        : 'Pick a batch above and Generate runs it.';
+  // Takes (step ④): a batch decides how many prompts get written.
   $('#varSeg').classList.toggle('locked', on);
   $$('#varSeg button').forEach(b => { b.disabled = on; });
-  $('#varSeg').title = on ? 'Set by Batch in step 5' : '';
+  $('#varSeg').title = on ? 'Set by the batch in step 5' : '';
   updateGenerateLabel();
 }
 
-function setBatch(change) {
-  state.batch = { ...state.batch, ...change };
-  saved.set('batch', state.batch);
+// One row per batch. Not redrawn while you type in one (that would lose the cursor); a redraw keeps button focus.
+function renderBatchRows(picked) {
+  const box = $('#batchList');
+  const active = document.activeElement;
+  if (box.contains(active) && active.matches('input')) {
+    $$('li', box).forEach(li => li.classList.toggle('on', picked.has(li.dataset.id)));
+    return;
+  }
+  const keep = box.contains(active) ? { id: active.closest('li')?.dataset.id, sel: active.dataset.mode ? `[data-mode="${active.dataset.mode}"]` : '.b-del' } : null;
+  box.innerHTML = batches().map(b => `
+    <li data-id="${esc(b.id)}" class="${picked.has(b.id) ? 'on' : ''}">
+      <input type="text" class="b-name" value="${esc(b.name)}" maxlength="60" spellcheck="false" aria-label="Batch name">
+      <label class="b-count"><input type="number" min="1" max="${BATCH_MAX}" step="1" inputmode="numeric" value="${b.count}" aria-label="How many ${outputWord(2)} in ${esc(b.name)}"> <span>${outputWord(b.count)}</span></label>
+      <div class="seg b-mode" role="radiogroup" aria-label="Prompts in ${esc(b.name)}">${[['same', '🔁 One prompt'], ['different', '🔀 A different prompt each']].map(([v, label]) =>
+        `<button type="button" role="radio" data-mode="${v}" aria-checked="${b.mode === v}" class="${b.mode === v ? 'active' : ''}">${label}</button>`).join('')}</div>
+      <button type="button" class="icon-btn b-del" aria-label="Delete the batch ${esc(b.name)}" title="Delete this batch">✕</button>
+    </li>`).join('');
+  if (keep?.id) $(`li[data-id="${CSS.escape(keep.id)}"] ${keep.sel}`, box)?.focus();
+}
+
+let batchSaving = Promise.resolve();
+function saveBatches(list) {
+  state.settings.batches = list;
+  renderBatch();
+  batchSaving = batchSaving
+    .then(() => api('/api/settings', { method: 'PUT', body: { batches: list } }))
+    .then(s => { if (state.settings.batches === list) { state.settings.batches = s.batches; renderBatch(); } })
+    .catch(err => toast(`Couldn't save your batches: ${err.message}`, true));
+  return batchSaving;
+}
+const updateBatch = (id, change) => saveBatches(batches().map(b => (b.id === id ? { ...b, ...change } : b)));
+const batchOf = el => batches().find(b => b.id === el.closest('li')?.dataset.id);
+
+function setBatchPick(value) {
+  state.batchPick = value;
+  saved.set('batchPick', value);
   renderBatch();
 }
-$('#batchSeg').addEventListener('click', e => {
-  const b = e.target.closest('button[data-value]');
-  if (b) setBatch({ runs: Number(b.dataset.value) });
+$('#batchPick').addEventListener('change', e => setBatchPick(e.target.value));
+$('#batchAdd').addEventListener('click', () => {
+  const list = batches();
+  let n = list.length + 1;
+  while (list.some(b => b.name === `Batch ${n}`)) n++;
+  const b = { id: `b${Date.now().toString(36)}`, name: `Batch ${n}`, count: 4, mode: 'same' };
+  state.batchPick = b.id; // a new batch is the one you're about to run
+  saved.set('batchPick', b.id);
+  saveBatches([...list, b]);
+  const name = $(`#batchList li[data-id="${b.id}"] .b-name`);
+  name?.focus();
+  name?.select();
 });
-$('#batchN').addEventListener('input', e => { if (Number(e.target.value) >= 1) setBatch({ runs: clampInt(e.target.value, 1, BATCH_MAX) }); });
-$('#batchN').addEventListener('change', e => { setBatch({ runs: clampInt(e.target.value, 1, BATCH_MAX) }); e.target.value = state.batch.runs; });
-$('#batchMode').addEventListener('click', e => {
-  const b = e.target.closest('button[data-value]');
-  if (b) setBatch({ mode: b.dataset.value });
+$('#batchList').addEventListener('input', e => {
+  if (e.target.matches('.b-count input')) $('span', e.target.closest('.b-count')).textContent = outputWord(Number(e.target.value) || 0);
+});
+$('#batchList').addEventListener('change', e => {
+  const b = batchOf(e.target);
+  if (!b) return;
+  if (e.target.matches('.b-name')) {
+    const name = e.target.value.trim() || b.name;
+    e.target.value = name;
+    if (name !== b.name) updateBatch(b.id, { name });
+  } else if (e.target.matches('.b-count input')) {
+    const count = clampInt(e.target.value, 1, BATCH_MAX);
+    e.target.value = count;
+    if (count !== b.count) updateBatch(b.id, { count });
+  }
+});
+// Enter in a batch's name or count keeps it, instead of submitting the form (= Generate).
+$('#batchList').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); e.target.blur(); }
+});
+$('#batchList').addEventListener('click', e => {
+  const b = batchOf(e.target);
+  if (!b) return;
+  const mode = e.target.closest('[data-mode]');
+  if (mode && mode.dataset.mode !== b.mode) return updateBatch(b.id, { mode: mode.dataset.mode });
+  if (!e.target.closest('.b-del')) return;
+  const before = batches();
+  const pickBefore = state.batchPick;
+  saveBatches(before.filter(x => x.id !== b.id));
+  toast(`🗑 Deleted the batch “${b.name}”`, false, { label: '↶ Undo', run: () => { saveBatches(before); setBatchPick(pickBefore); toast('↶ The batch is back'); } });
 });
 
-// Renders the batch's freshly written takes. One take at a time: each render keeps a stream open, and the browser
-// only allows a few per server, so 20 at once would stall the page.
-async function runBatch(batch) {
-  const cards = state.cards.filter(c => c.rb && !c.interrupted);
-  if (!cards.length) return;
-  const run = { stopped: false, total: batch.mode === 'same' ? batch.runs : cards.length, done: 0 };
+// Runs batches one after another. Each is its own Generate: its own takes and History entry, named after it.
+async function runBatches(list) {
+  const m = currentModel();
+  const run = { list, index: 0, name: '', total: 0, done: 0, allDone: 0, stopped: false };
   state.batchRun = run;
-  setBusy(false); // shows ■ Stop for the batch
-  if (batch.mode === 'same') {
-    cards[0].rb.count = batch.runs;
-    await startRender(cards[0], { quiet: true });
-  } else {
-    for (const c of cards) {
-      if (run.stopped) break;
-      c.rb.count = 1;
-      await startRender(c, { quiet: true });
-      if (!state.comfy?.ok) break; // ComfyUI went away: the error is on screen, the rest would fail the same way
-    }
+  for (const [i, b] of list.entries()) {
+    if (run.stopped) break;
+    Object.assign(run, { index: i, name: b.name, total: b.count, done: 0 });
+    const body = await formRequest();
+    if (!body) break;
+    body.variations = b.mode === 'different' ? b.count : 1;
+    body.batch = b.name;
+    closeRun();
+    const entry = await runGeneration(body, m, { autoRender: false });
+    if (!entry || run.stopped) break;
+    await renderBatchTakes(b, run);
+    if (!state.comfy?.ok) break; // ComfyUI went away: the error is on screen, the rest would fail the same way
   }
   state.batchRun = null;
   setBusy(false);
-  setTitle(document.hidden && run.done ? '✓ Rendered' : '');
-  if (run.stopped) toast(`■ Batch stopped. ${run.done} of ${run.total} finished, and they're kept`);
-  else if (run.done) toast(`🎞 Batch done: ${run.done} of ${run.total} rendered`);
+  setTitle(document.hidden && run.allDone ? '✓ Rendered' : '');
+  const made = `${run.allDone} ${outputWord(run.allDone, m?.kind)}`;
+  if (run.stopped) toast(`■ Batch stopped. ${made} finished, and they're kept`);
+  else if (run.allDone) toast(`🎞 ${list.length > 1 ? `All ${list.length} batches` : `“${list[0].name}”`} done: ${made}`);
+}
+
+// One prompt: its take renders that many times. A prompt each: one take at a time (each render keeps a stream
+// open, and the browser only allows a few per server, so 20 at once would stall the page).
+async function renderBatchTakes(b, run) {
+  const cards = state.cards.filter(c => c.rb && !c.interrupted);
+  if (!cards.length) return;
+  setBusy(false); // ■ Stop stays, for the batch
+  if (b.mode === 'same') {
+    cards[0].rb.count = b.count;
+    await startRender(cards[0], { quiet: true });
+    return;
+  }
+  for (const c of cards) {
+    if (run.stopped) break;
+    c.rb.count = 1;
+    await startRender(c, { quiet: true });
+    if (!state.comfy?.ok) break;
+  }
 }
 
 let comfyLoading = null;
@@ -3745,6 +3850,7 @@ async function startRender(card, { quiet = false } = {}) {
         announce(`Render ${i + 1} of ${count} done`);
         if (state.batchRun) {
           state.batchRun.done++;
+          state.batchRun.allDone++;
           updateGenerateLabel();
         }
       } else if (ev.type === 'error') {
@@ -3901,14 +4007,17 @@ function chainCost() {
 
 function updateGenerateLabel() {
   const chained = state.chain.steps.length > 0;
-  const batch = !chained && batchOn() ? state.batch : null;
+  const list = chained ? [] : pickedBatches();
   const run = state.batchRun;
-  $('#genLabel').textContent = state.busy ? 'Cooking…' : state.chainActive ? 'Chain running…'
-    : run ? (run.stopped ? 'Stopping…' : `Rendering batch: ${run.done} of ${run.total}`)
-    : chained ? 'Run chain' : batch ? `Generate a batch of ${batch.runs}` : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
+  const which = run && (run.list.length > 1 ? `Batch ${run.index + 1}/${run.list.length}` : `“${cut(run.name, 22)}”`);
+  $('#genLabel').textContent = run ? (run.stopped ? 'Stopping…' : state.busy ? `${which}: writing…` : `${which}: ${run.done} of ${run.total} rendered`)
+    : state.busy ? 'Cooking…' : state.chainActive ? 'Chain running…'
+      : chained ? 'Run chain' : list.length > 1 ? `Generate all ${list.length} batches` : list.length ? `Generate “${cut(list[0].name, 22)}”`
+        : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
+  const total = list.reduce((n, b) => n + b.count, 0);
   const chainLine = chained && !state.busy && !state.chainActive ? chainCost() : '';
   const cost = chainLine ? `⛓ ${chainLine}`
-    : batch && !state.busy && !run ? `🎞 ${batch.mode === 'same' ? `1 prompt × ${batch.runs} renders` : `${batch.runs} prompts × 1 render`}` : '';
+    : list.length && !state.busy && !run ? `🎞 ${list.length > 1 ? `${list.length} batches · ${total} ${outputWord(total)}` : batchLine(list[0])}` : '';
   $('#genCost').hidden = !cost;
   $('#genCost').textContent = cost;
 }
@@ -5033,7 +5142,7 @@ const TOOLS = [
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
-  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('e.g. "1920×1080"'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), batch: I('Batch: runs per Generate, 1–50 (needs a workflow; 1 = no batch). Each run is rendered'), batch_prompts: E(['same', 'different'], 'Batch: "same" = one prompt rendered each run with a new seed; "different" = a different prompt per run') }),
+  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('e.g. "1920×1080"'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
   T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate'], 'animate = first frame of a video (video models only)') }, ['role']),
   T('clear_image', 'Remove the image from step 3.'),
   T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (step 5).', { name: S('Workflow name') }, ['name']),
@@ -5118,7 +5227,8 @@ function assistantState() {
     comfyui: state.comfy ? (state.comfy.ok ? 'ready' : 'offline') : 'unknown',
     workflow: flow && { name: flow.name, takesImage: flow.maps.image, others: workflowsFor(m.id).filter(f => f.id !== flow.id).map(f => f.name), autoRender: saved.get(autoRenderKey(m.id), false) },
     loras: flow ? [...flowLoras(flow).own.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on, inWorkflow: true })), ...flowLoras(flow).added.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on }))] : [],
-    batch: batchOn() ? { runs: state.batch.runs, prompts: state.batch.mode } : null,
+    batches: batches().map(b => ({ name: b.name, count: b.count, prompts: b.mode })),
+    batch_runs: pickedBatches().map(b => b.name), // what Generate runs: none, one batch, or all in order
     chain: state.chain.steps.length ? state.chain.steps.map(s => ({ model: modelById(s.modelId)?.name, use: s.use, whatHappens: s.direction, gate: s.gate, takes: s.takes })) : null,
     chainRun: state.run ? { status: state.run.status, steps: state.run.entries.length } : null,
     takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, start: $('.prompt-text', c.el).value.slice(0, 140) })) : [],
@@ -5229,10 +5339,20 @@ const TOOL_IMPL = {
     if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
     choose('resolution', '#resolution', options('#resolution'), 'resolution');
     if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');
-    if (args.batch != null || args.batch_prompts) {
-      if (!workflowsFor(m.id).length) throw new Error(`A batch renders every run, and ${m.name} has no workflow yet.`);
-      setBatch({ ...(args.batch != null ? { runs: clampInt(args.batch, 1, BATCH_MAX) } : {}), ...(['same', 'different'].includes(args.batch_prompts) ? { mode: args.batch_prompts } : {}) });
-      done.push(state.batch.runs > 1 ? `batch of ${state.batch.runs} (${state.batch.mode === 'same' ? 'one prompt' : 'a different prompt each'})` : 'no batch');
+    if (args.batch) {
+      const want = String(args.batch).trim().toLowerCase();
+      if (want === 'off' || want === 'none') setBatchPick('');
+      else {
+        if (!workflowsFor(m.id).length) throw new Error(`A batch renders everything it makes, and ${m.name} has no workflow yet.`);
+        if (want === 'all' && batches().length > 1) setBatchPick('*');
+        else {
+          const b = batches().find(x => x.name.toLowerCase() === want) || batches().find(x => x.name.toLowerCase().includes(want));
+          if (!b) throw new Error(`There's no batch “${args.batch}”. ${batches().length ? `The batches are: ${batches().map(x => x.name).join(', ')}.` : 'None are saved yet: make one in step 5 → Batch.'}`);
+          setBatchPick(b.id);
+        }
+      }
+      const l = pickedBatches();
+      done.push(!l.length ? 'no batch' : l.length > 1 ? `all ${l.length} batches` : `batch “${l[0].name}”`);
     }
     if (['short', 'medium', 'long'].includes(args.length)) { state.length = args.length; setActive($('#lengthSeg'), state.length); done.push(`${args.length} length`); }
     if (args.takes != null) { setVariations(clampInt(args.takes, 1, 4)); done.push(`${state.variations} take${state.variations > 1 ? 's' : ''}`); }
@@ -5334,7 +5454,7 @@ const TOOL_IMPL = {
     const takes = state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, text: $('.prompt-text', c.el).value }));
     if (state.run) return { summary: `Chain ${state.run.status === 'done' ? 'done' : state.run.status === 'waiting' ? 'waiting for picks' : 'ran'}`, run: state.run.status, takes };
     const rendered = state.cards.reduce((n, c) => n + takeRenders(c).length, 0);
-    return { summary: `Wrote ${takes.length} take${takes.length > 1 ? 's' : ''} for ${state.entry.modelName}${batchOn() ? `, batch rendered ${rendered}` : ''}`, takes };
+    return { summary: `Wrote ${takes.length} take${takes.length > 1 ? 's' : ''} for ${state.entry.modelName}${state.entry.batch ? ` (batch “${state.entry.batch}”), rendered ${rendered}` : ''}`, takes };
   },
   refine_take: async ({ take, instruction }) => {
     notBusy();
@@ -5644,6 +5764,10 @@ const PANEL_SUMMARY = {
     !$('#wfpDenoise').hidden && `denoise ${$('#wfpDenoise .dn-val')?.textContent || ''}`,
     `🧬 ${$$('#wfpLoras .lora-row:not(.off)').length} LoRA${$$('#wfpLoras .lora-row:not(.off)').length === 1 ? '' : 's'} on`,
   ].filter(Boolean).join(' · '),
+  'create-render-batch': () => {
+    const l = pickedBatches();
+    return !batches().length ? 'No batches yet' : l.length > 1 ? `🎞 All ${l.length} batches, in order` : l.length ? `🎞 ${l[0].name} · ${batchLine(l[0])}` : `Off · ${batches().length} saved`;
+  },
   'create-chain': () => (state.chain?.steps?.length > 1 ? `⛓ ${state.chain.steps.length - 1} more step${state.chain.steps.length > 2 ? 's' : ''}` : 'No more steps'),
   take: el => shorten(($('.prompt-text', el)?.value || '').replace(/\s+/g, ' ').trim(), 140),
   'set-services': () => state.services ? `LM Studio ${state.services.lms.running ? 'on' : 'off'} · ComfyUI ${state.services.comfy.running ? 'on' : 'off'}` : '',
@@ -5723,8 +5847,7 @@ async function loadModels() {
     [state.settings, state.models] = await Promise.all([api('/api/settings'), api('/api/models')]);
     state.imageRole = saved.get('imageRole', 'reference');
     const chain = saved.get('chain', null);
-    const batch = saved.get('batch', null);
-    state.batch = { runs: clampInt(batch?.runs ?? 1, 1, BATCH_MAX), mode: batch?.mode === 'different' ? 'different' : 'same' };
+    state.batchPick = String(saved.get('batchPick', '') || '');
     if (chain && Array.isArray(chain.steps)) state.chain = { steps: chain.steps.filter(x => x && typeof x === 'object'), renders: clampInt(chain.renders ?? 1, 1, 4), recipeId: chain.recipeId || null };
     selectModel(saved.get('modelId', null));
     renderModelList();

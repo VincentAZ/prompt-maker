@@ -178,18 +178,12 @@
               <p id="wfpWarn" class="warn-line" hidden></p>
               <div id="wfpStale" class="wfp-stale" hidden><span></span><button type="button" class="btn small">↻ Update</button></div>
               <label class="switch" id="wfpAutoRow"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
-              <div id="batchRow" class="batch" role="group" aria-labelledby="batchLabel" hidden>
-                <div class="batch-runs">
-                  <span id="batchLabel">Batch</span>
-                  <div class="seg" id="batchSeg" role="radiogroup" aria-label="Runs">
-                    <button type="button" role="radio" data-value="1">1</button><button type="button" role="radio" data-value="2">2</button><button type="button" role="radio" data-value="4">4</button><button type="button" role="radio" data-value="8">8</button>
-                  </div>
-                  <label class="batch-n"><input type="number" id="batchN" min="1" max="50" step="1" inputmode="numeric" aria-label="Number of runs, 1 to 50"> runs</label>
-                </div>
-                <div class="seg batch-mode" id="batchMode" role="radiogroup" aria-label="Prompts in the batch" hidden>
-                  <button type="button" role="radio" data-value="same">🔁 One prompt</button><button type="button" role="radio" data-value="different">🔀 A different prompt each</button>
-                </div>
-                <p id="batchHint" class="hint" hidden></p>
+              <div id="batchBox" class="wfp-batch" data-panel="create-render-batch" data-default="collapsed" hidden>
+                <div class="panel-head"><b>Batch</b><span class="opt">named batches of images or videos</span></div>
+                <label class="batch-pick"><span>Generate runs</span><select id="batchPick" aria-label="What Generate runs"></select></label>
+                <ul id="batchList" class="batch-list" aria-label="Your batches"></ul>
+                <button type="button" id="batchAdd" class="btn small">＋ New batch</button>
+                <p id="batchHint" class="hint"></p>
               </div>
               <div id="wfpRenders" class="wfp-renders" hidden>
                 <span>Renders per take</span>

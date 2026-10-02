@@ -798,15 +798,23 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .wfp-renders { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; color: var(--text-2); }
 .wfp-renders .seg { padding: 2px; }
 .wfp-renders .seg button { padding: 4px 10px; font-size: 13px; }
-/* Batch (step 5): how many runs, and one prompt or a different one each */
-.batch { display: flex; flex-direction: column; gap: 8px; }
-.batch-runs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; font-weight: 700; color: var(--text-2); }
-.batch .seg { padding: 2px; }
-.batch .seg button { padding: 4px 10px; font-size: 13px; }
-.batch-n { display: inline-flex; align-items: center; gap: 6px; }
-.batch-n input { width: 64px; padding: 5px 8px; text-align: center; }
-.batch-mode button { white-space: nowrap; }
-.batch .hint { margin: 0; font-size: 12.5px; }
+/* Batch (step 5): your named batches, each with its own count and prompt choice */
+.wfp-batch { display: flex; flex-direction: column; gap: 10px; padding: 8px 10px 10px 12px; border-radius: 12px; border: 1px dashed var(--line-2); }
+.wfp-batch.collapsed { padding-bottom: 8px; }
+.wfp-batch > .panel-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.wfp-batch > .panel-head .opt { color: var(--muted); font-size: 12.5px; }
+.batch-pick { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; color: var(--text-2); }
+.batch-pick select { flex: 1; min-width: 0; }
+.batch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.batch-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); }
+.batch-list li.on { border-color: var(--m); box-shadow: 0 0 0 1px var(--m) inset; }
+.batch-list .b-name { flex: 1 1 140px; min-width: 0; padding: 6px 9px; font-weight: 700; }
+.batch-list .b-count { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 650; color: var(--text-2); }
+.batch-list .b-count input { width: 64px; padding: 5px 8px; text-align: center; }
+.batch-list .seg { padding: 2px; flex: 1 1 auto; }
+.batch-list .seg button { padding: 4px 8px; font-size: 12.5px; white-space: nowrap; }
+.batch-list .b-del { flex: none; }
+.wfp-batch .hint { margin: 0; font-size: 12.5px; }
 .seg.locked { opacity: 0.45; }
 .seg.locked button { cursor: not-allowed; }
 

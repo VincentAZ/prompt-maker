@@ -278,11 +278,12 @@ Step **⑤ Render it** on the Create page is your control center:
 - **Pick the workflow** your takes render with. Prompt Maker remembers it for each model.
 - **⚙ Edit** changes its name, inputs and sampler settings; the chips under it show what it will use (sampler, steps, CFG, seed), and clicking them jumps to those settings. **＋** adds another workflow. **Delete workflow** is in the edit dialog.
 - **Auto-render every new prompt** sends each new or refined take to ComfyUI as soon as it's written.
-- **Batch** runs several renders from one **Generate**, for images and videos alike. Pick **1, 2, 4, 8** or type any number up to 50, then choose:
-  - **🔁 One prompt**: writes one prompt and renders it that many times, a new seed each time.
-  - **🔀 A different prompt each**: writes that many different prompts and renders each one once.
+- **Batch** (folds open like Advanced) holds your saved batches, for images and videos alike. Each one stands on its own:
+  - **a name** you give it, e.g. *Hero shots* or *Explore*,
+  - **how many** images or videos (any number up to 50),
+  - **🔁 One prompt** (one prompt, rendered that many times with a new seed each) or **🔀 A different prompt each** (that many different prompts, each rendered once).
 
-  The button says what will happen (*1 prompt × 8 renders*) and counts along while it renders. Renders go to ComfyUI one after another. **■ Stop** (or `Esc`) cancels the rest and keeps the ones that finished. While a batch is set, it decides the number of takes; a chain (step ⑥) has its own takes and renders, so Batch hides while you build one.
+  **Generate runs** picks what the next **Generate** does: no batch, one of your batches, or **all of them, one after another**. Each batch is its own run, with its own takes and its own History entry, tagged 🎞 with its name (search History by it). The button says what will happen and counts along while it renders. **■ Stop** (or `Esc`) cancels the rest and keeps what finished. **✕** deletes a batch (with **↶ Undo**). While a batch is picked, it decides the number of takes; a chain (step ⑥) has its own takes and renders, so Batch hides while you build one.
 
 Every take also has a **🎨 Render** bar:
 

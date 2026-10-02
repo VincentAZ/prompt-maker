@@ -20,7 +20,7 @@ const PORT = Number(process.env.PORT) || 5317;
 const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
 const MAX_BODY = 30 * 1024 * 1024;
-const BATCH_MAX = 50; // takes per request and renders per take (a batch is either)
+const BATCH_MAX = store.BATCH_MAX; // takes per request and renders per take (a batch is either)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -297,6 +297,7 @@ async function generate(req, res) {
   if (!params.theme && !imageDataUrl) throw store.httpError(400, 'Enter a theme, add an image, or both.');
   const source = imageDataUrl ? await resolveSource(body.source) : null;
   const chain = chainRef(body.chain);
+  const batch = typeof body.batch === 'string' ? body.batch.trim().slice(0, 60) : ''; // the saved batch this run belongs to
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   const llmModel = llm.id;
@@ -340,6 +341,7 @@ async function generate(req, res) {
       imageFile,
       ...(source ? { source } : {}),
       ...(chain ? { chain } : {}),
+      ...(batch ? { batch } : {}),
       variations: texts.map(text => ({ versions: [{ text, instruction: null, createdAt: now }] })),
     });
     stream.send({ type: 'saved', entry });
