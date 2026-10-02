@@ -272,7 +272,7 @@ function resolutionFor(m, aspect, current) {
   const ar = ratioOf(aspect);
   if (!m || !ar) return null;
   const cur = ratioOf(current);
-  if (cur && ratioDist(cur, ar) < 0.05) return current;
+  if (cur && ratioDist(cur, ar) < 0.05 && m.resolutions.includes(current)) return current;
   const pixels = s => s.split(/[×x]/).reduce((a, b) => a * Number(b), 1);
   const matches = m.resolutions.filter(r => ratioOf(r) && ratioDist(ratioOf(r), ar) < 0.05);
   if (!matches.length) return null;
@@ -280,12 +280,47 @@ function resolutionFor(m, aspect, current) {
   return matches.sort((a, b) => Math.abs(pixels(a) - target) - Math.abs(pixels(b) - target))[0];
 }
 
-// Sets Aspect to the model's option closest to the attached image's shape.
+// A shape as a short ratio: 0.684 → "13:19"; "1.46:1" when no small one fits.
+function ratioLabel(r) {
+  for (let q = 1; q <= 32; q++) {
+    const p = Math.round(r * q);
+    if (p >= 1 && p <= 64 && ratioDist(p / q, r) < 0.005) return `${p}:${q}`;
+  }
+  return `${r.toFixed(2)}:1`;
+}
+
+// A video's first frame sets its shape, so a video model gets the image's own ratio when none of its presets fits.
+function ownAspect(m, ratio) {
+  if (m?.kind !== 'video' || !ratio || !m.aspectRatios.length) return null;
+  return m.aspectRatios.some(a => ratioOf(a) && ratioDist(ratioOf(a), ratio) < 0.01) ? null : ratioLabel(ratio);
+}
+
+// The Resolution choices for an Aspect: the model's own, or for an image's own ratio, its W×H sizes redrawn in that
+// shape (same pixel counts, multiples of 32). Models with "768p"/"2K" sizes keep theirs; the size follows the ratio.
+function sizeChoices(m, aspect) {
+  const ar = ratioOf(aspect);
+  if (!m || !ar || m.aspectRatios.includes(aspect)) return m?.resolutions || [];
+  const snap = v => Math.max(32, Math.round(v / 32) * 32);
+  const sizes = m.resolutions.map(r => /^(\d+)\s*[×x]\s*(\d+)$/.exec(r)).filter(Boolean).map(x => Number(x[1]) * Number(x[2]))
+    .sort((a, b) => a - b).map(px => `${snap(Math.sqrt(px * ar))}×${snap(Math.sqrt(px / ar))}`);
+  return sizes.length ? [...new Set(sizes)] : m.resolutions;
+}
+
+// Fills Aspect with the model's presets, plus the attached image's own ratio when it needs one.
+function fillAspect(m, value) {
+  const own = ownAspect(m, state.image?.ratio);
+  fillSelect($('#aspect'), own ? [...m.aspectRatios, own] : m.aspectRatios, value);
+  if (own) $(`#aspect option[value="${own}"]`).textContent = `${own} 🖼️`; // the image icon, like the "from image" note
+}
+
+// Sets Aspect to the attached image's shape: its own ratio on a video model, else the model's closest option.
 function matchImageAspect() {
   const m = currentModel();
   const r = state.image?.ratio;
   if (!m || !r) return null;
-  const best = closestAspect(m, r);
+  const own = ownAspect(m, r);
+  if (own) fillAspect(m, own);
+  const best = own || closestAspect(m, r);
   if (!best) return null;
   $('#aspect').value = best;
   syncResolution();
@@ -294,10 +329,17 @@ function matchImageAspect() {
   return best;
 }
 
-// Keeps a W×H resolution in step with the aspect ratio.
+// Keeps the resolution in step with the aspect ratio (and its choices, for an image's own ratio).
 function syncResolution() {
-  const r = resolutionFor(currentModel(), $('#aspect').value, $('#resolution').value);
-  if (r) $('#resolution').value = r;
+  const m = currentModel();
+  if (!m) return;
+  const sel = $('#resolution');
+  const aspect = $('#aspect').value;
+  const choices = sizeChoices(m, aspect);
+  const cur = sel.value; // its size picks the nearest new one
+  if (choices.join() !== [...sel.options].map(o => o.value).join()) fillSelect(sel, choices, cur);
+  const r = resolutionFor({ ...m, resolutions: choices }, aspect, cur);
+  if (r) sel.value = r;
 }
 
 // The role actually used: "animate" only exists for video models.
@@ -942,9 +984,11 @@ const prefsKey = id => `prefs.${id}`;
 function savePrefs() {
   const m = currentModel();
   if (!m) return;
+  const own = !m.aspectRatios.includes($('#aspect').value); // the image's own ratio: belongs to the image, not the model
+  const before = own ? saved.get(prefsKey(m.id), {}) : null;
   saved.set(prefsKey(m.id), {
-    aspectRatio: $('#aspect').value,
-    resolution: $('#resolution').value,
+    aspectRatio: own ? before.aspectRatio : $('#aspect').value,
+    resolution: own ? before.resolution : $('#resolution').value,
     duration: $('#duration').value,
     length: state.length,
     temperature: Number($('#temperature').value),
@@ -963,8 +1007,8 @@ function selectModel(id, { values } = {}) {
   renderChainEditor();
   if (!m) return;
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
-  fillSelect($('#aspect'), m.aspectRatios, v.aspectRatio);
-  fillSelect($('#resolution'), m.resolutions, v.resolution);
+  fillAspect(m, v.aspectRatio);
+  fillSelect($('#resolution'), sizeChoices(m, $('#aspect').value), v.resolution);
   fillSelect($('#duration'), m.durations, v.duration);
   $('#aspectField').hidden = !m.aspectRatios.length;
   $('#resolutionField').hidden = !m.resolutions.length;
@@ -1114,11 +1158,20 @@ function setImage(img) {
   state.image = img;
   const preview = $('#imagePreview');
   if (img) {
-    preview.onload = () => { if (state.image === img && !img.ratio) img.ratio = preview.naturalWidth / preview.naturalHeight; };
+    preview.onload = () => {
+      if (state.image !== img || img.ratio) return;
+      img.ratio = preview.naturalWidth / preview.naturalHeight;
+      if (ownAspect(currentModel(), img.ratio)) matchImageAspect(); // restored without its shape: a video needs it
+    };
     preview.src = img.dataUrl || `/images/${img.file}`;
   } else {
     preview.removeAttribute('src');
     $('#aspectNote').hidden = true;
+    const m = currentModel();
+    if (m && !m.aspectRatios.includes($('#aspect').value)) { // the image's own ratio goes with it
+      fillAspect(m, closestAspect(m, ratioOf($('#aspect').value)));
+      syncResolution();
+    }
   }
   $('.dz-empty').hidden = Boolean(img);
   $('.dz-preview').hidden = !img;
@@ -4107,13 +4160,13 @@ async function continueWith(run, k, items) {
       showError(`Couldn't use that render: ${friendly(err)}`);
       break;
     }
-    const aspect = closestAspect(model, img.ratio) || model.defaults.aspectRatio || '';
+    const aspect = ownAspect(model, img.ratio) || closestAspect(model, img.ratio) || model.defaults.aspectRatio || '';
     const body = {
       modelId: model.id,
       theme: step.direction.trim(),
       imageRole: model.kind === 'video' ? step.use : step.use === 'animate' ? 'reference' : step.use,
       aspectRatio: aspect,
-      resolution: resolutionFor(model, aspect, model.defaults.resolution) || model.defaults.resolution || '',
+      resolution: resolutionFor({ ...model, resolutions: sizeChoices(model, aspect) }, aspect, model.defaults.resolution) || model.defaults.resolution || '',
       duration: model.kind === 'video' ? step.duration : '',
       length: model.defaults.length,
       temperature: model.defaults.temperature,
@@ -5072,9 +5125,10 @@ const TOOL_IMPL = {
       $(sel).value = v;
       done.push(`${label} ${v}`);
     };
-    choose('aspect', '#aspect', m.aspectRatios, 'aspect');
+    const options = sel => [...$(sel).options].map(o => o.value); // includes the image's own ratio, if any
+    choose('aspect', '#aspect', options('#aspect'), 'aspect');
     if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
-    choose('resolution', '#resolution', m.resolutions, 'resolution');
+    choose('resolution', '#resolution', options('#resolution'), 'resolution');
     if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');
     if (['short', 'medium', 'long'].includes(args.length)) { state.length = args.length; setActive($('#lengthSeg'), state.length); done.push(`${args.length} length`); }
     if (args.takes != null) { setVariations(clampInt(args.takes, 1, 4)); done.push(`${state.variations} take${state.variations > 1 ? 's' : ''}`); }

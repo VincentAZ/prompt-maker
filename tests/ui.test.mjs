@@ -493,8 +493,12 @@ esac
     assert(await visible('#aspectNote'), '"from image" note');
     await toastText('aspect set to 3:2');
     await click('.model-card[data-id="ltx-2-3"]');
-    eq(await value('#aspect'), '16:9', 'LTX follows the image too');
-    eq(await value('#resolution'), '1920×1080', 'LTX resolution is landscape');
+    // A video's first frame sets its shape: no LTX preset fits 1.6, so it gets the image's own ratio.
+    eq(await value('#aspect'), '8:5', 'LTX takes the image\'s own ratio');
+    eq(await text('#aspect option:checked'), '8:5 🖼️', 'and says so');
+    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '1216×768|1280×800|1824×1152|2432×1504|3648×2272', 'its sizes, redrawn in that shape');
+    eq(await value('#resolution'), '1824×1152', 'the one nearest the 1080p it had');
+    assert(await visible('#aspectNote'), '"from image" note on the video model too');
     assert(await visible('#roleBlock [data-value="animate"]'), 'animate for video model');
     assert(await visible('#durationField'), 'duration shown for video');
     await click('#roleBlock [data-value="animate"]');
@@ -510,13 +514,25 @@ esac
     await shot('04-image-animate', { full: true });
   });
 
-  await test('portrait image flips to 9:16; manual change wins', async () => {
+  await test('portrait image on a video model: its own shape; manual change wins; Krea snaps to a preset', async () => {
     await setFiles('#imageInput', [portrait]);
-    await waitFor('document.querySelector("#aspect").value === "9:16"', 'portrait aspect');
-    eq(await value('#resolution'), '1080×1920', 'portrait resolution of the same size');
+    await waitFor('document.querySelector("#aspect").value === "4:7"', 'portrait aspect: 400×700 is 4:7, not quite 9:16');
+    eq(await value('#resolution'), '1088×1920', 'portrait resolution of about the same size');
+    eq(await js('[...document.querySelectorAll("#aspect option")].filter(o => o.textContent.includes("🖼️")).length'), 1, 'only the new image\'s ratio is offered');
+    await choose('#aspect', '9:16');
+    eq(await value('#resolution'), '1080×1920', 'back on a preset: the preset sizes');
     await choose('#aspect', '1:1');
     eq(await value('#resolution'), '1024×1024', 'resolution follows a manual aspect change');
     assert(!(await visible('#aspectNote')), 'note cleared after a manual change');
+    const prefs = () => js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).aspectRatio');
+    eq(await prefs(), '1:1', 'a preset is remembered for the model');
+    await choose('#aspect', '4:7');
+    eq(await prefs(), '1:1', 'the image\'s own ratio is not: it belongs to the image');
+    await click('.model-card[data-id="krea2-raw"]');
+    eq(await value('#aspect'), '9:16', 'an image model snaps to its closest preset');
+    eq(await js('[...document.querySelectorAll("#aspect option")].some(o => o.textContent.includes("🖼️"))'), false, 'no own ratio offered there');
+    await click('.model-card[data-id="ltx-2-3"]');
+    eq(await value('#aspect'), '4:7', 'back on the video model: the image\'s shape again');
     await choose('#aspect', '9:16');
   });
 
