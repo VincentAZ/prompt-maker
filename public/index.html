@@ -109,7 +109,7 @@
                 <button type="button" id="dzGallery" class="chip-btn dz-gallery">🖼️ Pick from your Gallery</button>
               </div>
               <div class="dz-preview" hidden>
-                <img id="imagePreview" alt="Your image">
+                <button type="button" id="imageZoom" class="dz-zoom" title="See it full screen" aria-label="See your image full screen"><img id="imagePreview" alt="Your image"></button>
                 <span id="dzSource" class="dz-source" hidden></span>
                 <div class="dz-actions">
                   <button type="button" id="imageGallery" class="btn small glass" title="Pick another image from your Gallery">Gallery</button>
@@ -633,8 +633,21 @@
         <h2 id="imgPickTitle">Pick an image from your Gallery</h2>
         <button type="button" class="icon-btn" id="imgPickClose" aria-label="Close">✕</button>
       </header>
-      <div id="imgPickModels" class="filter-chips ip-filters" role="group" aria-label="Filter by model"></div>
+      <div class="ip-bar">
+        <div id="imgPickModels" class="filter-chips ip-filters" role="group" aria-label="Filter by model"></div>
+        <label class="ip-size" title="Thumbnail size">🔍<input type="range" id="imgPickSize" min="110" max="480" step="10" value="140" aria-label="Thumbnail size"></label>
+      </div>
       <div id="imgPickGrid" class="ip-grid"></div>
+    </div>
+  </dialog>
+
+  <dialog id="imgView" class="img-view" aria-label="Image viewer">
+    <div class="iv-stage" id="ivStage"><img id="ivImg" alt=""></div>
+    <div class="iv-bar">
+      <span class="muted small">Click the image for actual size · Esc to close</span>
+      <span class="spacer"></span>
+      <button type="button" id="ivUse" class="btn small primary" hidden>🖼️ Use this image</button>
+      <button type="button" id="ivClose" class="btn small">✕ Close</button>
     </div>
   </dialog>
 

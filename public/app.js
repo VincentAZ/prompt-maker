@@ -1259,7 +1259,7 @@ function renderImagePicker() {
     : '';
   const shown = items.filter(it => !picker.model || it.entry.modelId === picker.model);
   $('#imgPickGrid').innerHTML = shown.length
-    ? shown.map(it => `<button type="button" class="ip-tile" data-n="${items.indexOf(it)}" style="--m:${modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId })}" aria-label="Use ${esc(it.entry.theme || 'this image')} (${esc(it.entry.modelName)}${it.render.seed != null ? `, seed ${it.render.seed}` : ''})"><img src="/renders/${encodeURIComponent(it.file.file)}" alt="" loading="lazy"><span class="ip-cap">${esc(it.entry.theme || 'From an image')}</span></button>`).join('')
+    ? shown.map(it => `<div class="ip-cell"><button type="button" class="ip-tile" data-n="${items.indexOf(it)}" style="--m:${modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId })}" aria-label="Use ${esc(it.entry.theme || 'this image')} (${esc(it.entry.modelName)}${it.render.seed != null ? `, seed ${it.render.seed}` : ''})"><img src="/renders/${encodeURIComponent(it.file.file)}" alt="" loading="lazy"><span class="ip-cap">${esc(it.entry.theme || 'From an image')}</span></button><button type="button" class="ip-zoom" data-n="${items.indexOf(it)}" title="Look closer" aria-label="Look closer at ${esc(it.entry.theme || 'this image')}">🔍</button></div>`).join('')
     : `<p class="muted">${items.length ? 'No images from this model yet.' : 'No image renders yet. Render a take with ComfyUI and it shows up here.'}</p>`;
 }
 
@@ -1282,11 +1282,48 @@ $('#imgPickModels').addEventListener('click', e => {
   renderImagePicker();
 });
 $('#imgPickGrid').addEventListener('click', e => {
+  const z = e.target.closest('.ip-zoom');
+  if (z) {
+    const it = picker.items[Number(z.dataset.n)];
+    return openImageView(`/renders/${encodeURIComponent(it.file.file)}`, () => { $('#imgPick').close(); useRenderAsImage(it); });
+  }
   const b = e.target.closest('.ip-tile');
   if (!b) return;
   $('#imgPick').close();
   useRenderAsImage(picker.items[Number(b.dataset.n)]);
 });
+
+// Thumbnail size in the picker: drag the 🔍 slider; it's remembered.
+const setPickSize = px => $('#imgPick').style.setProperty('--ip-size', `${px}px`);
+try { const v = Number(localStorage.getItem('imgPickSize')); if (v) { $('#imgPickSize').value = v; setPickSize(v); } } catch {}
+$('#imgPickSize').addEventListener('input', e => {
+  setPickSize(e.target.value);
+  try { localStorage.setItem('imgPickSize', e.target.value); } catch {}
+});
+
+// A plain full-screen viewer for one image (step 3's image, a picker tile). Click the image for actual size.
+let ivUse = null;
+function openImageView(src, onUse = null) {
+  ivUse = onUse;
+  $('#ivImg').src = src;
+  $('#ivStage').classList.remove('actual');
+  $('#ivUse').hidden = !onUse;
+  $('#imgView').showModal();
+  $('#ivClose').focus();
+}
+$('#ivStage').addEventListener('click', e => {
+  if (e.target.id !== 'ivImg') return $('#imgView').close();
+  const st = $('#ivStage'), img = e.target;
+  const r = img.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+  st.classList.toggle('actual');
+  if (st.classList.contains('actual')) { // keep the spot you clicked under the pointer
+    st.scrollLeft = fx * img.offsetWidth - st.clientWidth / 2;
+    st.scrollTop = fy * img.offsetHeight - st.clientHeight / 2;
+  }
+});
+$('#ivClose').addEventListener('click', () => $('#imgView').close());
+$('#ivUse').addEventListener('click', () => { $('#imgView').close(); ivUse?.(); });
+$('#imageZoom').addEventListener('click', () => { if ($('#imagePreview').src) openImageView($('#imagePreview').src); });
 
 // ---------- create: takes (results) ----------
 

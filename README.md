@@ -180,7 +180,7 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 |---|---|
 | **① Pick your model** | The generator you're writing for. Its color follows you across the app. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
-| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Then choose how to use it (below). |
+| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). |
 | **④ Dial it in** | Aspect ratio, resolution, duration (video), prompt length, number of takes, temperature. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
 | **⑥ Then…** | Optional. Chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
