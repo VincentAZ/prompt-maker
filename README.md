@@ -229,6 +229,7 @@ Everything you generate is saved automatically:
 
 - **Find things:** search themes and prompts, filter by model, or show only ★ favorites.
 - **Pick up where you left off:** click a card to reopen it with its image and settings, and keep refining.
+- **Delete is for good.** Deleting a card removes its prompts, its input image (unless another card uses the same one) and its renders, along with ComfyUI's copies of them: the files in its output folder, the image uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. Quotes of it in the assistant chat become "[deleted]", and a video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render or image no History card uses anymore.
 
 ### Keyboard shortcuts
 
@@ -364,7 +365,12 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 
 > Chains continue from images for now: a video can't feed the next step yet. Extending a clip from its last frame is coming next.
 
-Every render also appears in the **Gallery** tab, with filters for images, videos and models. The newest render becomes the thumbnail of its History card.
+Every render also appears in the **Gallery** tab, with filters for images, videos, ♥ favorites and models. The newest render becomes the thumbnail of its History card.
+
+- **♡ Favorite** a render from its lightbox; it gets a ♥ on its Gallery tile.
+- After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
+- **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
+- **Earlier runs** (the runs above a new one, to compare renders) are kept across reloads too.
 
 > **Tip:** if a workflow runs its own prompt-writing LLM node (some LTX workflows do), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.
 
@@ -456,11 +462,13 @@ Search the cards by name and sort them by **Best fit**, **Last used** or **Name*
 
 ## Settings
 
+Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
+
 | Setting | Default | What it does |
 |---|---|---|
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
 | **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
-| **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. |
+| **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. Deleting from History removes ComfyUI's copies whether this is on or not, so set the folder in that case even with this off. |
 | **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. It's the default for every Brain; a Brain can have its own level on **Models → Brains**. |
 | **Top P** | 0.95 | Nucleus sampling. Temperature is set for each run on the Create page. |
 | **Max tokens** | 4096 | The cap on each answer. Raise it if you turn thinking on. |
@@ -482,6 +490,7 @@ Search the cards by name and sort them by **Best fit**, **Last used** or **Name*
 - **It refuses anything else.** The LM Studio and ComfyUI URLs must be this computer or a local-network address; internet URLs are rejected.
 - **Nothing external loads.** The page's Content-Security-Policy blocks external scripts, fonts and trackers, and the fonts are bundled.
 - **Nothing else is sent anywhere.** No accounts, no telemetry, no analytics.
+- **Deleted means gone.** Deleting from History leaves nothing behind on this computer, in Prompt Maker or in ComfyUI (see [History](#history)), and renders aren't kept in the browser's cache.
 - **Localhost only by default.** The web server binds to `127.0.0.1`, so other devices can't reach it.
 - **Protected from websites you visit.** Requests from other websites (cross-site requests) and DNS-rebinding tricks are rejected, so a web page can't quietly drive your local Prompt Maker.
 
