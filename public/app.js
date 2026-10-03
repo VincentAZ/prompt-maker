@@ -2063,7 +2063,7 @@ $('#historyList').addEventListener('click', async e => {
 // Every copy of an entry the page holds: the stage, History, earlier runs and the chain run each may have their own.
 const copiesOf = id => new Set([state.entry, ...state.history, ...state.prev, ...(state.run?.entries || [])].filter(e => e?.id === id));
 
-// A deleted render leaves every view at once, so no thumbnail of it stays on screen.
+// A deleted (or re-starred) render changes every view at once, so no stale thumbnail stays on screen.
 function forgetRender(updated) {
   for (const e of copiesOf(updated.id)) e.variations.forEach((v, i) => { v.renders = (updated.variations[i]?.renders || []).slice(); });
   if (state.entry?.id === updated.id) state.cards.forEach(renderTiles);
@@ -4655,7 +4655,25 @@ function closeLightbox() {
   $('#lightbox').hidden = true;
   $('#lbStage').innerHTML = '';
   document.body.style.overflow = '';
+  const seen = lb.items[lb.index];
+  if (lb.fromGallery && seen) {
+    // The Gallery marks the render you looked at last (you may have browsed on from the one you opened).
+    state.gallerySeen = galleryKey(seen);
+    const tile = markSeen();
+    if (tile) {
+      tile.focus({ preventScroll: true });
+      tile.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+  }
   lb.returnFocus?.focus?.();
+}
+
+const galleryKey = it => `${it.render.id}/${it.file.file}`;
+function markSeen() {
+  let hit = null;
+  $$('#galleryGrid .gtile').forEach(t => { const on = t.dataset.key === state.gallerySeen; t.classList.toggle('seen', on); if (on) hit = t; });
+  return hit;
 }
 
 function stepLightbox(d) {
@@ -4695,10 +4713,22 @@ function lbRender() {
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
       ${lb.fromGallery ? '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>' : '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>'}
+      <button type="button" class="btn small fav${render.favorite ? ' on' : ''}" data-lb="fav" aria-pressed="${Boolean(render.favorite)}" title="${render.favorite ? 'Remove from favorites' : 'Add to favorites (Gallery → ♥ Favorites)'}">${render.favorite ? '♥ Favorite' : '♡ Favorite'}</button>
       <button type="button" class="btn small danger" data-lb="delete">🗑 Delete</button>
     </div>
     <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · Esc to close</p>`;
   $('[data-lb="copy"]', $('#lbInfo')).addEventListener('click', e => copyText(render.text, e.currentTarget));
+  $('[data-lb="fav"]', $('#lbInfo')).addEventListener('click', async () => {
+    try {
+      const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'PATCH', body: { favorite: !render.favorite } });
+      forgetRender(updated); // every copy of the entry gets the new state
+      it.render = updated.variations[it.index].renders.find(r => r.id === render.id) || render;
+      lbRender();
+      $('[data-lb="fav"]', $('#lbInfo'))?.focus();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
   $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); openEntry(entry); });
   $('[data-lb="animate"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: true }); });
   $('[data-lb="use"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false }); });
@@ -4763,7 +4793,7 @@ function renderGallery() {
   if (state.galleryModel && !models.some(([id]) => id === state.galleryModel)) state.galleryModel = '';
   $('#galleryModels').innerHTML = models.length > 1 ? [['', 'All models'], ...models].map(([id, name]) => `<button type="button" class="chip-btn" data-id="${esc(id)}" aria-pressed="${state.galleryModel === id}" style="--m:${id ? modelColor(modelById(id) || { id }) : 'var(--text-2)'}">${esc(name)}</button>`).join('') : '';
   $$('#galleryKinds button').forEach(b => b.setAttribute('aria-pressed', b.dataset.kind === state.galleryKind));
-  const items = all.filter(it => (!state.galleryKind || it.file.kind === state.galleryKind) && (!state.galleryModel || it.entry.modelId === state.galleryModel));
+  const items = all.filter(it => (!state.galleryKind || it.file.kind === state.galleryKind || (state.galleryKind === 'fav' && it.render.favorite)) && (!state.galleryModel || it.entry.modelId === state.galleryModel));
   $('#galleryCount').textContent = all.length ? all.length : '';
   const grid = $('#galleryGrid');
   grid.style.height = '';
@@ -4782,12 +4812,14 @@ function renderGallery() {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'gtile';
+    b.dataset.key = galleryKey(it);
     b.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
     b.setAttribute('aria-label', `Open render: ${it.entry.theme || 'from an image'}`);
-    b.innerHTML = `${it.file.kind === 'audio' ? '<div class="rtile audio" style="aspect-ratio:1">🔊</div>' : mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="g-cap"><b>${esc(it.entry.theme || 'From an image')}</b><span>${esc(it.entry.modelName)} · ${esc(it.render.workflowName)}</span></span>`;
+    b.innerHTML = `${it.file.kind === 'audio' ? '<div class="rtile audio" style="aspect-ratio:1">🔊</div>' : mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}${it.render.favorite ? '<span class="g-fav" aria-label="Favorite">♥</span>' : ''}<span class="g-cap"><b>${esc(it.entry.theme || 'From an image')}</b><span>${esc(it.entry.modelName)} · ${esc(it.render.workflowName)}</span></span>`;
     b.addEventListener('click', () => openLightbox(items, n, { fromGallery: true }));
     grid.append(b);
   });
+  markSeen();
   layoutGallery();
 }
 

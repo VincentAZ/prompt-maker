@@ -1419,6 +1419,33 @@ esac
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
   });
 
+  await test('render: favorite from the lightbox, find it in the Gallery', async () => {
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="fav"]');
+    await waitFor('document.querySelector(\'[data-lb="fav"]\').getAttribute("aria-pressed") === "true"', 'starred');
+    const favs = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.favorite);
+    eq(favs.length, 1, 'saved on the render');
+    await press('Escape');
+    await click('.tabs button[data-view="gallery"]');
+    await click('#galleryKinds button[data-kind="fav"]');
+    await waitFor('document.querySelectorAll("#galleryGrid .gtile").length === 1 && !!document.querySelector("#galleryGrid .g-fav")', 'only the favorite, with its heart');
+    await click('#galleryGrid .gtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="fav"]');
+    await waitFor('document.querySelector(\'[data-lb="fav"]\').getAttribute("aria-pressed") === "false"', 'unstarred');
+    await press('Escape');
+    await click('#galleryKinds button[data-kind=""]');
+    await click('#galleryGrid .gtile:nth-of-type(2)');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await press('ArrowRight');
+    await press('Escape');
+    eq(await count('#galleryGrid .gtile.seen'), 1, 'the Gallery marks the render you looked at last');
+    assert(await js('document.querySelector("#galleryGrid .gtile:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
+    assert(await js('document.activeElement === document.querySelector("#galleryGrid .gtile.seen")'), 'and focus is back on it');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('render: delete from the lightbox', async () => {
     const before = await count('.take .rtile img');
     await click('.take .rtile');

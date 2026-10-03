@@ -1083,6 +1083,14 @@ async function route(req, res) {
     }
   }
   if (p === '/api/render' && m === 'POST') return renderTake(req, res);
+  if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'PATCH') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await store.updateHistory(match[1], e => {
+      const r = e.variations.flatMap(v => v.renders || []).find(x => x.id === match[2]);
+      if (!r) throw store.httpError(404, 'Render not found.');
+      if (typeof body.favorite === 'boolean') r.favorite = body.favorite;
+    }));
+  }
   if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'DELETE') {
     return sendJson(res, 200, await deleteOneRender(match[1], match[2]));
   }
