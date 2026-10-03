@@ -56,7 +56,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - 🪞 **Recreate**: describe it so the model can reproduce it.
   - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
 - **Image alone.** Leave the theme empty and it suggests a prompt from the image.
-- **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you.
+- **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you. A model file your ComfyUI lacks is one **⬇ Download** away, and a video's black bars one **✂️ Crop** away.
 - **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length.
   - Uploading an image **matches the aspect ratio to it** automatically.
   - Each model remembers your last choices.
@@ -219,10 +219,12 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 [Wan Animate 2](https://github.com/Wan-Video/Wan-Animate-2) makes a **character image** perform the moves of a **motion video**: a dance, a walk, a fight scene. The character keeps its look from the image, the moves come from the video, and the **setting, light and camera angle come from your theme**. Pick **Wan Animate 2** in step ① and step ③ becomes **Character & motion**:
 
 - **🧍 Character:** drop, paste or pick an image, like any image. A clear, full shot of one character works best.
-- **🕺 Motion video:** drop a video on the page, **browse**, or **🎞️ Pick a video from your Gallery** (any video you rendered). MP4, WebM, MOV and MKV work, up to 500 MB. It plays in step ③, and **Aspect** (step ④) follows its shape.
+- **🕺 Motion video:** drop a video on the page, **browse**, or **🎞️ Pick a video from your Gallery** (any video you rendered). MP4, WebM, MOV and MKV work, up to 500 MB. It plays in step ③.
+  - **The clip takes your character's shape**, as in Wan-AI's own code: **Aspect** (step ④) follows the character image, and ComfyUI crops the motion video to it at the center. (Until you add a character, Aspect follows the video.) When the two differ a lot, step ③ says which sides of the video get cropped: keep the moves near the middle, or use a character image in the video's shape.
   - Frame it like your character: full body to full body. A close-up character with a full-body dance (or the other way round) is the most common cause of a bad result.
+  - **⬛ Black bars** (a webcam or screen recording inside a wider frame, a letterboxed film) would count as part of the video. Step ③ spots them and offers **✂️ Crop the bars**: a copy with just the picture, sound kept.
   - The clip is as long as the video, and its frames are used one for one. Step ③ shows its length, shape and frame rate. Above 30 fps (many phones film at 60 or 120), it takes that much longer to render: **Use a 24 fps copy** swaps in a copy at 24 fps, with the sound kept.
-  - **Phone videos (H.265/HEVC)** often don't play in the browser. ComfyUI uses them as they are; for the page, Prompt Maker makes a small upright preview, so you still see it, Aspect still matches it, and the Brain still sees the moves. The preview and the 24 fps copy need [ffmpeg](https://ffmpeg.org) on this computer (most Linux systems have it). Without it, the video still renders; the Brain then goes by your theme for the moves.
+  - **Phone videos (H.265/HEVC)** often don't play in the browser. ComfyUI uses them as they are; for the page, Prompt Maker makes a small upright preview, so you still see it, Aspect still matches it, and the Brain still sees the moves. The preview, the 24 fps copy and the crop need [ffmpeg](https://ffmpeg.org) on this computer (most Linux systems have it). Without it, the video still renders; the Brain then goes by your theme for the moves.
 - **② The theme** says where the character is and from where the camera sees it: *"on a rooftop at dusk, low angle, three-quarter view"*. Leave it empty and the AI picks a setting that suits the character.
 
 **What the Brain writes.** The prompt is in Wan Animate 2's own format: a `Character appearance description:` line (looks only: no actions or emotions), a `Background description:` line (the place, the light, the camera), and a `Motion:` line naming the moves. A 👁 vision Brain sees your character and a **contact sheet of the motion video** (6 frames in order, with their times), so it describes the character faithfully and names the motion from the video. A text-only Brain still works: it goes by your theme.
@@ -234,7 +236,11 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 | **Wan Animate 2: Motion Transfer** | The full model with the LightX2V LoRA (6 steps). It follows the whole motion video, however long, in 81-frame pieces. |
 | **Wan Animate 2 Distilled: Motion Transfer** | The distilled model (10 steps). It makes the first 81 frames of the motion video. |
 
-Prompt Maker sets them up for you: the look and setting go to the prompt, the **Motion** line to the pose prompt, your character to *Load Image*, the motion video to *Load Video*, and the size from step ④. It also **fixes a mistake in ComfyUI's template**: its pose window starts and ends at 0, which leaves the motion video unused; Prompt Maker sets the end to 1.0 and says so in the setup. Your own Wan Animate 2 workflows work too (from ComfyUI or a file).
+Prompt Maker sets them up for you: the look and setting go to the prompt, the **Motion** line to the pose prompt, your character to *Load Image*, the motion video to *Load Video*, and the size from step ④. It also **fixes a mistake in ComfyUI's template**: its pose window starts and ends at 0, which leaves the motion video unused; Prompt Maker sets the end to 1.0 and says so in the setup. The templates also save a side-by-side of the render and the motion video; Prompt Maker leaves that out, so only your render lands in the Gallery. While a long video renders in pieces, the progress line says which piece it's on.
+
+Your own Wan Animate 2 (or SCAIL) workflows work too, from ComfyUI or a file. One that **renders in pieces** (copies of the same part, each making the next stretch of the video) gets the same prompt and size in every piece, and if it also saves its first piece on its own, only the full video is kept. The setup says so.
+
+**Models it needs.** Each template needs five model files in ComfyUI (the Wan Animate 2 model, a LoRA, the text encoder, a CLIP vision model and the VAE). If your ComfyUI lacks one, step ⑤ names it and where it goes, with **⬇ Download** (see [Missing models](#missing-models)). A file that sits in a subfolder (`checkpoints/wan-2.1/sam3.1….safetensors` where the workflow says `sam3.1….safetensors`) is found there on its own.
 
 The setup's **🎛️ Sampler** settings add Wan Animate 2's own controls:
 
@@ -322,7 +328,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
    | ⏱️ **Duration** | Seconds, or a frame count worked out from the frame rate (with 8n+1 or 4n+1 rounding for LTX and Wan-style models). |
    | 🎲 **Seed** | A fresh random seed every render, unless you lock it. |
 
-   Anything you don't map stays exactly as the workflow has it. Add as many workflows per model as you like, for example a fast draft workflow and a slow hi-res one.
+   Anything you don't map stays exactly as the workflow has it. Add as many workflows per model as you like, for example a fast draft workflow and a slow hi-res one. If the workflow loads a model file your ComfyUI doesn't have, the setup says which (see [Missing models](#missing-models)).
 
 5. Tune the **🎛️ Sampler** settings if you like. Prompt Maker shows the workflow's own **seed, steps, CFG, sampler and scheduler** (every sampler in it, two-stage ones included), plus Wan Animate 2's pose and character strengths, and lets you change any of them; **↺** puts a value back.
    - A **CFG of 1 is locked**, because distilled, turbo and lightning models need it. **🔒 unlock** is there if you really mean it.
@@ -358,6 +364,16 @@ Click any result to open the **lightbox**, where you can:
 - **render again** with a new seed,
 - **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
 - or delete it.
+
+### Missing models
+
+A workflow can load a model file your ComfyUI doesn't have yet: a checkpoint, a LoRA, a CLIP vision model… ComfyUI would refuse it. Prompt Maker checks before every render, so nothing is half-done:
+
+- **Step ⑤ says which files are missing** for the picked workflow, and the ComfyUI folder each goes in (`models/clip_vision`, say). A render started anyway stops with the same list.
+- **⬇ Download** gets one (or **⬇ Download all**) straight into that folder, with a progress bar. It uses the link the workflow carries: ComfyUI's templates and most shared workflows list a download link for each model. It runs in Prompt Maker's server, so it goes on through a reload; **✕** stops it. As soon as it's done, the notice goes and the workflow renders.
+- **Only from Hugging Face**, and only when you click. A link to another site is shown for you to open yourself, and a workflow with no link for a file says so: get it there (or where the workflow came from) and put it in that folder.
+- **A file in a subfolder** (the workflow says `sam3.1.safetensors`, your ComfyUI has `wan-2.1/sam3.1.safetensors`) is found there, with nothing to do.
+- **ComfyUI skipping part of a workflow** (an output that fails its checks) also stops the render, with ComfyUI's reasons in short. Before, the render ran without its result.
 
 ### Seed
 
@@ -431,6 +447,7 @@ Every render also appears in the **Gallery** tab, with filters for images, video
 - **🎨 Rendering** in the top bar shows while anything renders, with how many are left. Click it for every render still going, from any take (also ones you moved off the stage, started in another tab, or before a reload): its live preview and progress, **Open** to bring its take back with live tiles, **✕ Cancel**, and **Cancel all**.
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
 - **Earlier runs** (the runs above a new one, to compare renders) are kept across reloads too.
+- **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Gallery, History, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
 
 > **Tip:** if a workflow runs its own prompt-writing LLM node (some LTX workflows do), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.
 
@@ -557,6 +574,7 @@ Settings also shows your data folder and the **version** you run (with the exact
 - **It refuses anything else.** The LM Studio and ComfyUI URLs must be this computer or a local-network address; internet URLs are rejected.
 - **Nothing external loads.** The page's Content-Security-Policy blocks external scripts, fonts and trackers, and the fonts are bundled.
 - **Nothing else is sent anywhere.** No accounts, no telemetry, no analytics.
+- **Model downloads only when you click.** **⬇ Download** (for a model file a workflow needs, see [Missing models](#missing-models)) fetches that one file from Hugging Face into ComfyUI's models folder. Nothing is downloaded otherwise, and no other site.
 - **Deleted means gone.** Deleting from History leaves nothing behind on this computer, in Prompt Maker or in ComfyUI (see [History](#history)), and renders aren't kept in the browser's cache.
 - **Localhost only by default.** The web server binds to `127.0.0.1`, so other devices can't reach it.
 - **Protected from websites you visit.** Requests from other websites (cross-site requests) and DNS-rebinding tricks are rejected, so a web page can't quietly drive your local Prompt Maker.
@@ -579,7 +597,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── history.json    # every generation, its versions and its renders
 ├── images/         # images you've used (deduplicated), and the frames the Brain saw of each motion video
 ├── videos/         # motion videos for character animation (deduplicated), and browser previews of H.265 ones
-├── renders/        # images and videos rendered with ComfyUI
+├── renders/        # images and videos rendered with ComfyUI (move one out and it leaves the app; put it back and it returns)
 ├── workflows/      # ComfyUI workflows you've attached, with their setup
 ├── chains/         # chains you saved or edited
 ├── providers.json  # cloud providers you added, with your API keys (readable by you only)
@@ -652,6 +670,18 @@ Click **▶ Start it** next to *ComfyUI offline* (or **▶ Start** in **Settings
 </details>
 
 <details>
+<summary><b>"Your ComfyUI doesn't have a model this workflow needs"</b></summary>
+
+The workflow loads a model file that isn't in ComfyUI's models folders. Click **⬇ Download** in step ⑤ (see [Missing models](#missing-models)). Without a download link, get the file where the workflow came from and put it in the folder step ⑤ names; the notice goes on its own.
+</details>
+
+<details>
+<summary><b>"ComfyUI would skip part of this workflow"</b></summary>
+
+ComfyUI checked the workflow and found a part it can't run (it names the node and why, often a missing model or a value it doesn't accept). It would have run the rest without the result, so Prompt Maker stopped the render instead. Fix what it names (in ComfyUI if it's in the workflow itself), then **↻ Update** the workflow in step ⑤.
+</details>
+
+<details>
 <summary><b>"This workflow uses nodes your ComfyUI doesn't have"</b></summary>
 
 The workflow needs custom nodes that aren't installed. In ComfyUI, open **Manager → Install Missing Custom Nodes**, restart, then add the workflow again.
@@ -706,7 +736,8 @@ prompt-maker/
 │   ├── comfy.js            # ComfyUI client: status, saved workflows, queue, live progress, downloads
 │   ├── comfy-convert.js    # saved (editor) workflows → API format, incl. subgraphs & bypass
 │   ├── workflows.js        # attached workflows: auto-mapping and building the prompt to queue
-│   └── videotools.js       # optional ffmpeg help for motion videos: what's in one, browser previews, 24 fps copies
+│   ├── models.js           # the model files a workflow loads: missing ones, ones in a subfolder, downloads
+│   └── videotools.js       # optional ffmpeg help for motion videos: what's in one, browser previews, 24 fps and cropped copies
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts)
 ├── playbooks/              # the built-in model playbooks (read-only to the app)
 ├── chains/                 # the starter chains (read-only to the app)

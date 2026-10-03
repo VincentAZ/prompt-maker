@@ -42,6 +42,8 @@ const state = {
   loraList: null, // every LoRA ComfyUI has, e.g. "krea2/film_grain.safetensors" (loaded when needed)
   loraPicker: { open: false, q: '' },
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
+  wfMissing: new Map(), // workflow id → model files it needs that ComfyUI doesn't have
+  downloads: [], // model downloads into ComfyUI (running in the server)
   comfy: null,
   renderRuns: new Set(),
   galleryKind: '',
@@ -86,7 +88,7 @@ async function streamApi(path, body, onEvent, signal) {
   const res = await fetch(path, body === undefined ? { signal } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `${res.status} ${res.statusText}`);
+    throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), data.missing ? { missing: data.missing } : {});
   }
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = '';
@@ -312,9 +314,10 @@ function sizeChoices(m, aspect) {
 }
 
 // Fills Aspect with the model's presets, plus the attached image's own ratio when it needs one.
-// The shape the clip takes: a motion video's on a character-animation model, else the attached image's.
-const shapeRatio = (m = currentModel()) => (m?.motionVideo && state.video?.ratio) || state.image?.ratio || null;
-const shapeIcon = (m = currentModel()) => (m?.motionVideo && state.video?.ratio ? '🕺' : '🖼️');
+// The shape the clip takes: the attached image's. On a character-animation model that's the character's, as in
+// Wan-AI's own code (the motion video is cropped to it, at the center); the motion video's until there's a character.
+const shapeRatio = (m = currentModel()) => state.image?.ratio || (m?.motionVideo && state.video?.ratio) || null;
+const shapeIcon = (m = currentModel()) => (!state.image?.ratio && m?.motionVideo && state.video?.ratio ? '🕺' : '🖼️');
 
 function fillAspect(m, value) {
   const own = ownAspect(m, shapeRatio(m));
@@ -335,8 +338,8 @@ function matchImageAspect() {
   syncResolution();
   $('#aspectNote').hidden = false;
   const fromVideo = shapeIcon(m) === '🕺';
-  $('#aspectNote').textContent = fromVideo ? '🕺 from video' : '🖼️ from image';
-  $('#aspectNote').title = fromVideo ? 'Picked to match your motion video\'s shape' : 'Picked to match your image\'s shape';
+  $('#aspectNote').textContent = fromVideo ? '🕺 from video' : m.motionVideo ? '🧍 from character' : '🖼️ from image';
+  $('#aspectNote').title = fromVideo ? 'Picked to match your motion video\'s shape' : m.motionVideo ? 'Picked to match your character image\'s shape: Wan Animate 2 makes the clip in that shape' : 'Picked to match your image\'s shape';
   savePrefs();
   return best;
 }
@@ -1218,6 +1221,7 @@ function setImage(img) {
   saved.set('imageSource', img?.source || null);
   renderSourceBadge();
   renderRole();
+  renderMotionHint(); // says when the character and the video differ in shape
   syncNewBtn();
 }
 
@@ -1395,8 +1399,9 @@ async function loadVideoFile(file, { quiet = false } = {}) {
     setVideo({
       file: name, preview: prep.preview || null, sheet, seconds: Math.round(seconds * 100) / 100, frames: sheet ? SHEET_FRAMES : 0,
       width, height, ratio: width && height ? width / height : null, fps: prep.info?.fps || null, ffmpeg: prep.ffmpeg, url: playable ? url : null,
+      bars: prep.info?.bars || null,
     });
-    const aspect = matchImageAspect();
+    const aspect = shapeIcon() === '🕺' ? matchImageAspect() : null; // with a character, the clip takes its shape
     if (quiet) return;
     toast(`🕺 Motion video added${seconds ? ` · ${secsLabel(seconds)}` : ''}${aspect ? ` · aspect set to ${aspect} to match` : ''}${sheet ? '' : ' · no preview in this browser'}`, !sheet);
     announce(`Motion video added${seconds ? `, ${secsLabel(seconds)} long` : ''}.${aspect ? ` Aspect ratio set to ${aspect} to match it.` : ''}`);
@@ -1406,17 +1411,19 @@ async function loadVideoFile(file, { quiet = false } = {}) {
   }
 }
 
-// Swaps the motion video for a copy at 24 fps (made by ffmpeg), so a fast phone video doesn't take 5× as long.
-async function retimeVideo(btn) {
+// Swaps the motion video for a copy made by ffmpeg: at 24 fps (so a fast phone video doesn't take 5× as long), or
+// without its black bars (crop).
+async function videoCopy(btn, kind) {
   const v = state.video;
   if (!v?.file) return;
   btn.disabled = true;
-  btn.textContent = '⏳ Making a 24 fps copy…';
+  btn.textContent = kind === 'crop' ? '⏳ Cropping…' : '⏳ Making a 24 fps copy…';
   try {
-    const r = await api(`/api/videos/${encodeURIComponent(v.file)}/retime`, { method: 'POST', body: { fps: 24 } });
+    const r = await api(`/api/videos/${encodeURIComponent(v.file)}/${kind}`, { method: 'POST', body: kind === 'retime' ? { fps: 24 } : {} });
     const blob = await (await fetch(`/videos/${encodeURIComponent(r.file)}`)).blob();
     await loadVideoFile(new File([blob], `${r.file}`, { type: 'video/mp4' }), { quiet: true });
-    toast('🕺 Now using a 24 fps copy of your motion video');
+    const aspect = $('#aspect').value;
+    toast(kind === 'crop' ? `✂️ Now using your motion video without its black bars · aspect ${aspect}` : '🕺 Now using a 24 fps copy of your motion video');
   } catch (err) {
     toast(`Couldn't make the copy: ${err.message}`, true);
     btn.disabled = false;
@@ -1443,7 +1450,7 @@ function setVideo(v) {
     ? `🕺 ${[v.seconds ? secsLabel(v.seconds) : '', v.width && v.height ? `${v.width}×${v.height}` : '', v.fps ? `${Math.round(v.fps)} fps` : ''].filter(Boolean).join(' · ') || 'Motion video'}`
     : '⏳ Reading the video…';
   renderMotionHint();
-  saved.set('video', v?.file ? { file: v.file, preview: v.preview, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, ratio: v.ratio, fps: v.fps, ffmpeg: v.ffmpeg } : null);
+  saved.set('video', v?.file ? { file: v.file, preview: v.preview, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, ratio: v.ratio, fps: v.fps, ffmpeg: v.ffmpeg, bars: v.bars || null } : null);
   if (!v && old) {
     const m = currentModel();
     if (m?.motionVideo && !m.aspectRatios.includes($('#aspect').value)) { // the video's own ratio goes with it
@@ -1464,13 +1471,24 @@ function renderMotionHint() {
   if (v?.file && !v.sheet) {
     parts.push(`🙈 This browser can't show this video (H.265 from a phone, probably), so the Brain can't see the moves: describe them in the theme. ComfyUI still uses it as it is.${v.ffmpeg === false ? ' With ffmpeg installed, Prompt Maker makes a preview.' : ''}`);
   }
+  const img = state.image?.ratio;
+  if (v?.ratio && img && ratioDist(v.ratio, img) > 0.2 && currentModel()?.motionVideo) {
+    parts.push(`📐 Your character is ${img < v.ratio ? 'taller' : 'wider'} than the video. Wan Animate 2 makes the clip in your character's shape, so the video's ${img < v.ratio ? 'sides are' : 'top and bottom are'} cropped at the center: keep the moves near the middle, or use a character image in the video's shape.`);
+  }
+  if (v?.bars) {
+    parts.push(`⬛ Black bars: the picture is ${v.bars.width}×${v.bars.height} inside a ${v.width}×${v.height} frame. Wan Animate 2 would take the bars as part of the video, and its shape too.`);
+  }
   if (v?.fps > 32) {
     parts.push(`⚠️ ${Math.round(v.fps)} fps: Wan Animate 2 uses every frame, so this takes about ${Math.round(v.fps / 24)}× as long as at 24 fps.`);
   }
   hint.innerHTML = parts.length ? parts.map(esc).join(' ') : 'The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.';
+  if (v?.bars && v.ffmpeg) {
+    hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoCrop">✂️ Crop the bars</button>');
+    $('#videoCrop').addEventListener('click', e => videoCopy(e.currentTarget, 'crop'));
+  }
   if (v?.fps > 32 && v.ffmpeg) {
     hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoRetime">Use a 24 fps copy</button>');
-    $('#videoRetime').addEventListener('click', e => retimeVideo(e.currentTarget));
+    $('#videoRetime').addEventListener('click', e => videoCopy(e.currentTarget, 'retime'));
   }
 }
 
@@ -4106,6 +4124,8 @@ function renderWorkflowPicker() {
   renderBatch();
   renderWorkflowWarning();
   renderStaleNotice();
+  renderModelNotice();
+  if (flows.length) checkWorkflowModels(activeWorkflowId(m.id));
   renderComfyState();
 }
 
@@ -4130,6 +4150,92 @@ function renderStaleNotice() {
   if (!box.hidden) $('span', box).textContent = `“${flow.name}” was changed in ComfyUI. This copy is older.`;
 }
 $('#wfpStale button').addEventListener('click', () => updateWorkflow($('#wfpSelect').value));
+
+// ---------- create: step 5, model files the workflow needs ----------
+// A workflow can load a model file ComfyUI doesn't have (a CLIP vision model, say): ComfyUI then refuses it. Step 5
+// says which, and downloads it into ComfyUI's models folder (from the link the workflow carries) with one click.
+
+const checkedModels = new Map(); // workflow id → when ComfyUI was last asked
+function checkWorkflowModels(id, { fresh = false } = {}) {
+  if (!id || !state.comfy?.ok || (!fresh && Date.now() - (checkedModels.get(id) || 0) < 60_000)) return;
+  checkedModels.set(id, Date.now());
+  api(`/api/workflows/${encodeURIComponent(id)}/models${fresh ? '?fresh=1' : ''}`)
+    .then(r => { if (r.checked) noteMissingModels(id, r.missing); })
+    .catch(() => checkedModels.delete(id));
+}
+
+function noteMissingModels(id, missing) {
+  state.wfMissing.set(id, missing || []);
+  renderModelNotice();
+}
+
+const sizeLabel = b => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`);
+const downloadFor = m => state.downloads.find(d => d.file === m.file && d.folder === m.folder);
+
+function renderModelNotice() {
+  const box = $('#wfpModels');
+  const flow = state.workflows.find(f => f.id === $('#wfpSelect').value && f.modelId === state.modelId);
+  const missing = flow && !$('#wfpBox').hidden ? state.wfMissing.get(flow.id) || [] : [];
+  box.hidden = !missing.length;
+  if (!missing.length) return box.replaceChildren();
+  const row = m => {
+    const d = downloadFor(m);
+    const where = `<span class="mm-where">→ ComfyUI/models/${esc(m.folder || '…')}</span>`;
+    let act;
+    if (d?.state === 'running') act = `<span class="mm-prog"><span class="mm-bar" style="width:${d.total ? Math.round((d.received / d.total) * 100) : 0}%"></span></span><span class="mm-pct">${d.total ? `${Math.round((d.received / d.total) * 100)}% of ${sizeLabel(d.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="mm-cancel" data-id="${esc(d.id)}" aria-label="Stop downloading ${esc(m.file)}">✕</button>`;
+    else if (d?.state === 'done') act = '<span class="mm-ok">✓ Downloaded</span>';
+    else if (m.download) act = `${d?.state === 'error' ? `<span class="mm-err">${esc(d.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mm-get" data-file="${esc(m.file)}">${d?.state === 'error' ? '↻ Try again' : '⬇ Download'}</button>`;
+    else if (/^https?:\/\//.test(m.url || '')) act = `<span class="mm-none">Get it from <a href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(m.url).hostname)}</a> (the workflow's link) and put it in that folder.</span>`;
+    else act = '<span class="mm-none">No download link in the workflow: get it where the workflow came from.</span>';
+    return `<li><code title="${esc(m.name)}">${esc(m.file)}</code>${where}<span class="mm-act">${act}</span></li>`;
+  };
+  const many = missing.filter(m => m.download && downloadFor(m)?.state !== 'running' && downloadFor(m)?.state !== 'done').length > 1;
+  box.innerHTML = `<p>⚠️ Your ComfyUI doesn't have ${missing.length === 1 ? 'a model file' : `${missing.length} model files`} “${esc(flow.name)}” needs, so ComfyUI would refuse it:</p>
+    <ul>${missing.map(row).join('')}</ul>
+    ${missing.some(m => m.download) ? `<p class="hint">Downloads come from Hugging Face (the link in the workflow) and go straight into ComfyUI's models folder.${many ? ' <button type="button" class="btn small" data-act="mm-all">⬇ Download all</button>' : ''}</p>` : ''}`;
+}
+
+async function downloadModels(list) {
+  for (const m of list) {
+    try {
+      const d = await api('/api/comfy/downloads', { method: 'POST', body: { name: m.name, folder: m.folder, url: m.url } });
+      state.downloads = [...state.downloads.filter(x => x.id !== d.id), d];
+    } catch (err) {
+      toast(`Couldn't download ${m.file}: ${err.message}`, true);
+    }
+  }
+  renderModelNotice();
+  pollDownloads();
+}
+
+$('#wfpModels').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const missing = state.wfMissing.get($('#wfpSelect').value) || [];
+  if (b.dataset.act === 'mm-get') downloadModels(missing.filter(m => m.file === b.dataset.file));
+  else if (b.dataset.act === 'mm-all') downloadModels(missing.filter(m => m.download && !['running', 'done'].includes(downloadFor(m)?.state)));
+  else if (b.dataset.act === 'mm-cancel') api(`/api/comfy/downloads/${b.dataset.id}/cancel`, { method: 'POST' }).then(pollDownloads, () => {});
+});
+
+// Follows the downloads (they run in Prompt Maker's server, so they go on through a reload) until they're done.
+let downloadTimer = 0;
+async function pollDownloads() {
+  clearTimeout(downloadTimer);
+  const list = await api('/api/comfy/downloads').catch(() => null);
+  if (!list) return;
+  const wasRunning = d => state.downloads.some(o => o.id === d.id && o.state === 'running');
+  const finished = list.filter(d => d.state === 'done' && wasRunning(d));
+  const failed = list.filter(d => d.state === 'error' && wasRunning(d) && d.error !== 'Cancelled');
+  state.downloads = list;
+  if (finished.length) {
+    toast(`✓ ${finished.map(d => d.file).join(', ')} ${finished.length > 1 ? 'are' : 'is'} in ComfyUI now`);
+    announce(`Downloaded ${finished.map(d => d.file).join(', ')}.`);
+    for (const id of state.wfMissing.keys()) checkWorkflowModels(id, { fresh: true });
+  }
+  for (const d of failed) toast(`Download of ${d.file} failed: ${d.error}`, true);
+  renderModelNotice();
+  if (list.some(d => d.state === 'running')) downloadTimer = setTimeout(pollDownloads, 1000);
+}
 
 function renderComfyState() {
   const el = $('#comfyState');
@@ -4346,7 +4452,11 @@ function loadComfyStatus() {
       state.cards.forEach(updateRenderStatus);
       renderComfyState();
       if (cameBack) toast('🎨 ComfyUI is connected');
-      if (st.ok) checkWorkflowUpdates();
+      if (st.ok) {
+        checkWorkflowUpdates();
+        const m = currentModel();
+        if (m && workflowsFor(m.id).length) checkWorkflowModels(activeWorkflowId(m.id));
+      }
       return st;
     });
   return comfyLoading;
@@ -4414,10 +4524,42 @@ function pumpPosters() {
         finish(c.toDataURL('image/jpeg', 0.82));
       } catch { finish(null); }
     }, { once: true });
-    v.addEventListener('error', () => finish(null), { once: true });
+    v.addEventListener('error', () => { finish(null); renderMaybeGone(file); }, { once: true });
     v.src = `/renders/${encodeURIComponent(file)}`;
   }
 }
+
+// A render whose file was moved or deleted outside the app while the page shows it leaves quietly, wherever it is.
+// (The server already leaves such renders out of what it sends; this covers what's on screen when it happens.)
+// A video tile only loads its file when hovered, so its still (above) is what notices.
+const goneFiles = new Set();
+async function renderMaybeGone(file) {
+  if (!file || goneFiles.has(file)) return;
+  const res = await fetch(`/renders/${encodeURIComponent(file)}`, { headers: { Range: 'bytes=0-0' } }).catch(() => null);
+  if (res?.status !== 404 || goneFiles.has(file)) return; // there after all (a browser that can't play it, say)
+  goneFiles.add(file);
+  const seen = new Set();
+  let held = false;
+  for (const e of [state.entry, ...state.history, ...state.prev, ...(state.run?.entries || [])]) {
+    if (!e?.variations || seen.has(e)) continue;
+    seen.add(e);
+    for (const v of e.variations) {
+      if (!v.renders?.some(r => (r.files || []).some(f => f.file === file))) continue;
+      held = true;
+      for (const r of v.renders) r.files = (r.files || []).filter(f => f.file !== file);
+      v.renders = v.renders.filter(r => r.files.length);
+    }
+  }
+  if (!held) return;
+  state.cards.forEach(c => { if (!c.interrupted) renderTiles(c); });
+  renderPrevStrip();
+  if (isView('gallery')) renderGallery();
+  if (isView('history')) renderHistory();
+}
+document.addEventListener('error', e => {
+  const src = (e.target?.getAttribute?.('src') || '').split('?')[0];
+  if (src.startsWith('/renders/')) renderMaybeGone(decodeURIComponent(src.slice('/renders/'.length)));
+}, true);
 
 const fileOf = v => decodeURIComponent(v.getAttribute('src').split('/').pop());
 const posterSeen = new IntersectionObserver(entries => {
@@ -4597,7 +4739,11 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
   if (!setup) saved.set(`wf.${card.model.id}`, flow.id);
   const body = { historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : {}) };
-  return followRender(card, entry, { count: card.rb.count, flowName: flow.name, quiet, open: (onEvent, signal) => streamApi('/api/render', body, onEvent, signal) });
+  const open = (onEvent, signal) => streamApi('/api/render', body, onEvent, signal).catch(err => {
+    if (err.missing) noteMissingModels(flow.id, err.missing); // step ⑤ offers to download them
+    throw err;
+  });
+  return followRender(card, entry, { count: card.rb.count, flowName: flow.name, quiet, open });
 }
 
 // Renders run on in Prompt Maker's server when the page reloads or closes. A page showing the entry picks them up
@@ -5231,9 +5377,9 @@ async function continueWith(run, k, items) {
       showError(`Couldn't use that render: ${friendly(err)}`);
       break;
     }
-    // A character animation takes the motion video's shape (and the video itself, from step 3).
+    // A character animation takes the character's shape (and the motion video from step 3, cropped to it).
     const motion = model.motionVideo ? videoForRequest() : null;
-    const shape = motion ? state.video.ratio || img.ratio : img.ratio;
+    const shape = img.ratio || (motion && state.video.ratio);
     const aspect = ownAspect(model, shape) || closestAspect(model, shape) || model.defaults.aspectRatio || '';
     const body = {
       modelId: model.id,
@@ -5707,7 +5853,7 @@ $('#wfList').addEventListener('click', async e => {
       openWorkflowDialog({ edit: data });
     } else if (btn.dataset.act === 'export') {
       const w = await api(`/api/workflows/${id}`);
-      download(`${slug(w.name) || 'workflow'}.prompt-maker.json`, { format: 'prompt-maker-workflow', version: 1, name: w.name, prompt: w.prompt, mapping: w.mapping, options: w.options });
+      download(`${slug(w.name) || 'workflow'}.prompt-maker.json`, { format: 'prompt-maker-workflow', version: 1, name: w.name, prompt: w.prompt, mapping: w.mapping, options: w.options, models: w.models || [] });
       toast('⤒ Workflow exported');
     } else if (btn.dataset.act === 'delete') {
       confirmClick(btn, 'Sure?', async () => {
@@ -6079,7 +6225,7 @@ $('#wfSave').addEventListener('click', async () => {
     const overrides = readOverrides();
     if (dlg.editId) await api(`/api/workflows/${dlg.editId}`, { method: 'PUT', body: { name, mapping, options, overrides } });
     else {
-      const added = await api('/api/workflows', { method: 'POST', body: { modelId: dlg.modelId, name, source: data.source, sourceModified: data.sourceModified, prompt: data.prompt, mapping, options, overrides } });
+      const added = await api('/api/workflows', { method: 'POST', body: { modelId: dlg.modelId, name, source: data.source, sourceModified: data.sourceModified, prompt: data.prompt, models: data.models || [], mapping, options, overrides } });
       saved.set(`wf.${dlg.modelId}`, added.id); // a workflow you just added is the one you want next
     }
     $('#wfDialog').close();
@@ -7549,6 +7695,7 @@ async function loadModels() {
   if (state.workflows.length) await loadComfyStatus();
   await resumeAfterReload();
   pollRenders();
+  pollDownloads(); // model downloads keep going through a reload
   loadJobs();
   if (saved.get('assistantOpen', true) && innerWidth >= 1100) await openAssistant(true, { focus: false });
   document.documentElement.dataset.ready = '1';

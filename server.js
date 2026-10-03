@@ -17,6 +17,7 @@ import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testIm
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
+import * as models from './lib/models.js';
 import { convertUiWorkflow, isApiWorkflow, isUiWorkflow, pruneToOutputs, ConvertError } from './lib/comfy-convert.js';
 
 const PORT = Number(process.env.PORT) || 5317;
@@ -435,7 +436,7 @@ async function refine(req, res) {
       v.versions.push({ text, instruction, createdAt: now });
     });
     stream.send({ type: 'done', index: body.index, text });
-    stream.send({ type: 'saved', entry: saved });
+    stream.send({ type: 'saved', entry: await store.withPresentFiles(saved) });
   } catch (err) {
     if (err.outcome) await recordRun(llm, err.outcome);
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
@@ -656,6 +657,7 @@ async function prepareWorkflow(body) {
   }
   let prompt;
   const info = await comfy.objectInfo(settings.comfyUrl).catch(() => null);
+  const links = preset ? models.sanitizeLinks(preset.models) : models.modelLinks(json);
   if (isApiWorkflow(json)) {
     prompt = json;
   } else if (isUiWorkflow(json)) {
@@ -670,16 +672,20 @@ async function prepareWorkflow(body) {
     throw store.httpError(400, 'This doesn\'t look like a ComfyUI workflow. In ComfyUI use Workflow → Save, or Workflow → Export (API).');
   }
   const fixed = wf.repair(prompt);
+  if (fixed.length && info) prompt = pruneToOutputs(prompt, info);
   const analysis = wf.analyze(prompt, info);
+  const { missing } = models.checkModels(prompt, info, links);
   return {
     name: name || 'Workflow',
     source,
     sourceModified,
     prompt,
+    models: links,
+    missing,
     mapping: preset?.mapping || analysis.mapping,
     options: preset?.options || analysis.options,
     candidates: analysis.candidates,
-    warnings: [...fixed, ...analysis.warnings],
+    warnings: [...fixed, ...analysis.warnings, ...(missing.length ? [models.describeMissing(missing).replace('in step ⑤', 'in step ⑤ once this is saved')] : [])],
     producesVideo: analysis.producesVideo,
     nodes: Object.keys(prompt).length,
   };
@@ -693,7 +699,7 @@ async function refreshWorkflow(existing, body) {
   const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : template ? { template, templateTitle: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
   const { mapping, overrides, loras, lost, changes } = wf.carryOver(existing, fresh.prompt, fresh.mapping);
   if (!mapping.prompt.length) throw store.httpError(400, 'The new version has no text input for the prompt, so it can\'t be used for rendering.');
-  const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, loras, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
+  const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, loras, models: fresh.models, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
   return { ...saved, candidates: fresh.candidates, warnings: fresh.warnings, producesVideo: fresh.producesVideo, lost, changes };
 }
 
@@ -771,6 +777,44 @@ async function deleteOneRender(entryId, renderId) {
   return entry;
 }
 
+// Download links for a workflow's model files: saved with it, or read again from where it came from (workflows added
+// before Prompt Maker kept them).
+async function workflowLinks(workflow, base) {
+  if (workflow.models?.length) return workflow.models;
+  const src = workflow.source || '';
+  const json = src.startsWith('comfyui:') ? await comfy.readSavedWorkflow(base, src.slice('comfyui:'.length)).catch(() => null)
+    : src.startsWith('comfytemplate:') ? await comfy.readTemplate(base, src.slice('comfytemplate:'.length)).catch(() => null)
+      : null;
+  return json && isUiWorkflow(json) ? models.modelLinks(json) : [];
+}
+
+// The model files a workflow needs that ComfyUI doesn't have (with their download links), as the render would use
+// it: a LoRA switched off doesn't count. fresh: ask ComfyUI again (a model was just added). Returns { info, missing, fixes }.
+async function workflowModels(workflow, base, { fresh = false } = {}) {
+  let info = await comfy.objectInfo(base, { fresh }).catch(() => null);
+  if (!info) return { info, missing: [], fixes: [], checked: false };
+  let probe;
+  try {
+    probe = wf.buildPrompt(workflow, { text: '' }, info).prompt;
+  } catch {
+    probe = workflow.prompt;
+  }
+  let check = models.checkModels(probe, info);
+  if (check.missing.length && !fresh) { // maybe added since Prompt Maker last asked
+    info = await comfy.objectInfo(base, { fresh: true }).catch(() => info);
+    check = models.checkModels(probe, info);
+  }
+  if (check.missing.length) check = models.checkModels(probe, info, await workflowLinks(workflow, base));
+  return { info, ...check, checked: true };
+}
+
+// Stops a render before anything is sent when ComfyUI lacks a model file the workflow loads. Returns /object_info.
+async function checkWorkflowModels(workflow, base) {
+  const { info, missing } = await workflowModels(workflow, base);
+  if (missing.length) throw Object.assign(store.httpError(400, models.describeMissing(missing)), { missingModels: missing });
+  return info;
+}
+
 async function renderTake(req, res) {
   const body = await readBody(req);
   const settings = await store.getSettings();
@@ -790,7 +834,7 @@ async function renderTake(req, res) {
   }
   const base = settings.comfyUrl;
   await comfy.status(base);
-  const info = await comfy.objectInfo(base).catch(() => null);
+  const info = await checkWorkflowModels(workflow, base);
   let imageName = null;
   if (workflow.mapping.image && entry.imageFile) {
     // A take started from a render sends that original file (full size, lossless), not the smaller copy the LLM saw.
@@ -829,6 +873,7 @@ async function renderTake(req, res) {
         duration: entry.duration,
         seed,
       }, info);
+      models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
       promptId = await comfy.queuePrompt(base, prompt, clientId);
       stream.signal.addEventListener('abort', onAbort, { once: true });
       stream.send({ type: 'queued', i, applied });
@@ -1117,7 +1162,23 @@ async function route(req, res) {
     const info = await videotools.probe(file);
     let preview = null;
     if (body.preview && ffmpeg) preview = path.basename(await videotools.preview(file).catch(err => { console.warn(`Couldn't make a preview of ${match[1]}: ${err.message}`); return ''; })) || null;
-    return sendJson(res, 200, { ffmpeg, info, preview });
+    const bars = info ? await videotools.bars(file, info).catch(() => null) : null;
+    return sendJson(res, 200, { ffmpeg, info: info && bars ? { ...info, bars } : info, preview });
+  }
+  // A copy without the black bars around the picture (they'd be part of the moves, and set the video's shape).
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/crop$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
+    const box = await videotools.bars(file, await videotools.probe(file));
+    if (!box) throw store.httpError(400, 'This video has no black bars to crop.');
+    const tmp = await videotools.crop(file, box);
+    try {
+      const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
+      return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
   }
   // A copy at a lower frame rate (Wan Animate 2 uses every frame: 120 fps takes 5× as long as 24).
   if ((match = p.match(/^\/api\/videos\/([\w.]+)\/retime$/)) && m === 'POST') {
@@ -1162,12 +1223,12 @@ async function route(req, res) {
     return sendJson(res, 200, { ok: true });
   }
 
-  if (p === '/api/history' && m === 'GET') return sendJson(res, 200, await store.listHistory());
+  if (p === '/api/history' && m === 'GET') return sendJson(res, 200, await store.withPresentFiles(await store.listHistory()));
   if ((match = p.match(/^\/api\/history\/([\w-]+)$/))) {
     const id = match[1];
     if (m === 'GET') {
       const entry = await store.getHistory(id);
-      return entry ? sendJson(res, 200, entry) : sendJson(res, 404, { error: 'Not found' });
+      return entry ? sendJson(res, 200, await store.withPresentFiles(entry)) : sendJson(res, 404, { error: 'Not found' });
     }
     if (m === 'PATCH') {
       const body = await readBody(req);
@@ -1179,7 +1240,7 @@ async function route(req, res) {
           if (text && text !== v.versions.at(-1).text) v.versions.push({ text, instruction: '(manual edit)', createdAt: new Date().toISOString() });
         }
       });
-      return sendJson(res, 200, entry);
+      return sendJson(res, 200, await store.withPresentFiles(entry));
     }
     if (m === 'DELETE') return sendJson(res, 200, await deleteTake(id));
   }
@@ -1224,6 +1285,21 @@ async function route(req, res) {
     if (!(await store.getModel(body.modelId || ''))) throw store.httpError(400, 'Save the model first.');
     return sendJson(res, 200, wf.summary(await wf.saveWorkflow(body)));
   }
+  // What model files the workflow needs that ComfyUI doesn't have (step ⑤ offers to download them).
+  if ((match = p.match(/^\/api\/workflows\/([\w-]+)\/models$/)) && m === 'GET') {
+    const existing = await wf.getWorkflow(match[1]);
+    if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
+    const settings = await store.getSettings();
+    const { missing, fixes, checked } = await workflowModels(existing, settings.comfyUrl, { fresh: url.searchParams.has('fresh') });
+    return sendJson(res, 200, { checked, missing, fixes: fixes.length });
+  }
+  if (p === '/api/comfy/downloads' && m === 'GET') return sendJson(res, 200, models.listDownloads());
+  if (p === '/api/comfy/downloads' && m === 'POST') {
+    const settings = await store.getSettings();
+    const body = await readBody(req);
+    return sendJson(res, 200, await models.startDownload(await comfy.modelFolders(settings.comfyUrl), { name: body.name, folder: body.folder, url: body.url }));
+  }
+  if ((match = p.match(/^\/api\/comfy\/downloads\/([\w-]+)\/cancel$/)) && m === 'POST') return sendJson(res, 200, { ok: models.cancelDownload(match[1]) });
   if ((match = p.match(/^\/api\/workflows\/([\w-]+)\/refresh$/)) && m === 'POST') {
     const existing = await wf.getWorkflow(match[1]);
     if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
@@ -1269,14 +1345,14 @@ async function route(req, res) {
   }
   if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'PATCH') {
     const body = await readBody(req);
-    return sendJson(res, 200, await store.updateHistory(match[1], e => {
+    return sendJson(res, 200, await store.withPresentFiles(await store.updateHistory(match[1], e => {
       const r = e.variations.flatMap(v => v.renders || []).find(x => x.id === match[2]);
       if (!r) throw store.httpError(404, 'Render not found.');
       if (typeof body.favorite === 'boolean') r.favorite = body.favorite;
-    }));
+    })));
   }
   if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'DELETE') {
-    return sendJson(res, 200, await deleteOneRender(match[1], match[2]));
+    return sendJson(res, 200, await store.withPresentFiles(await deleteOneRender(match[1], match[2])));
   }
   if (p.startsWith('/renders/') && m === 'GET') {
     const file = within(store.RENDERS_DIR, decodeURIComponent(p.slice('/renders/'.length)));
@@ -1314,7 +1390,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     if (status === 500) console.error(err);
-    if (!res.headersSent) sendJson(res, status, { error: err.message || 'Server error' });
+    if (!res.headersSent) sendJson(res, status, { error: err.message || 'Server error', ...(err.missingModels ? { missing: err.missingModels } : {}) });
     else res.end();
   }
 });

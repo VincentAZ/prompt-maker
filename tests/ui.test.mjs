@@ -8,8 +8,10 @@ import path from 'node:path';
 import os from 'node:os';
 import zlib from 'node:zlib';
 import { startMock } from './mock-lmstudio.mjs';
-import { startMockComfy, SAVED_WORKFLOW, OBJECT_INFO } from './mock-comfyui.mjs';
+import { startMockComfy, SAVED_WORKFLOW, OBJECT_INFO, MODEL_BYTES } from './mock-comfyui.mjs';
 import { convertUiWorkflow, pruneToOutputs } from '../lib/comfy-convert.js';
+import * as wfLib from '../lib/workflows.js';
+import * as modelsLib from '../lib/models.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const APP_PORT = Number(process.env.APP_PORT) || 5399;
@@ -328,7 +330,7 @@ esac
   const mock = startMock(MOCK_PORT);
   await mock.start();
   const comfyRoot = path.join(tmp, 'ComfyUI');
-  for (const d of ['output', 'input', 'custom_nodes']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
+  for (const d of ['output', 'input', 'custom_nodes', 'models/checkpoints']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
   const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot });
   await comfy.start();
   const apiWorkflowFile = path.join(tmp, 'mock-api.json');
@@ -345,7 +347,14 @@ esac
   const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
   await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
 
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  // A saved workflow whose checkpoint ComfyUI doesn't have yet, with the download link ComfyUI's templates carry.
+  const bigModelWorkflowFile = path.join(tmp, 'needs-big-model.json');
+  const bigModel = structuredClone(SAVED_WORKFLOW);
+  Object.assign(bigModel.nodes.find(n => n.type === 'CheckpointLoaderSimple'), { widgets_values: ['big_model.safetensors'], properties: { models: [{ name: 'big_model.safetensors', url: `http://127.0.0.1:${COMFY_PORT}/hf/big_model.safetensors`, directory: 'checkpoints' }] } });
+  await fs.writeFile(bigModelWorkflowFile, JSON.stringify(bigModel));
+
+  // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
+  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
   app.stdout.on('data', d => { appLog += d; });
   app.stderr.on('data', d => { appLog += d; });
@@ -2778,7 +2787,8 @@ esac
     })()`);
     await waitFor('document.querySelector("#mzInfo").textContent.startsWith("🕺")', 'the motion video is stored', 15000);
     await toastText('Motion video added');
-    eq(await value('#aspect'), '9:16', 'the aspect follows the motion video');
+    eq(await value('#aspect'), '4:7', 'the clip takes the character\'s shape, as in Wan-AI\'s own code (the video is cropped to it)');
+    assert(!(await text('#motionHint')).includes('📐'), 'the shapes are close: nothing to warn about');
     assert(!(await visible('#wfpWarn')), 'nothing missing anymore');
     await shot('47-wan-step3');
 
@@ -2805,7 +2815,7 @@ esac
     eq(sent['2'].inputs.file, `prompt-maker_${entry.video.file}`, 'the motion video goes to ComfyUI');
     assert(comfy.uploads.includes(`prompt-maker_${entry.video.file}`) && await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.video.file}`)), 'uploaded to its input folder');
     eq(sent['10:106'].inputs.pose_end_percent, 1, 'the pose window is fixed in what is sent');
-    eq(`${sent['10:106'].inputs.width}×${sent['10:106'].inputs.height}`, '480×848', '480p in the video\'s shape');
+    eq(`${sent['10:106'].inputs.width}×${sent['10:106'].inputs.height}`, '480×848', '480p in the character\'s shape');
     await click('.take .rtile img');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     assert(await visible('[data-lb="character"]'), 'a still can become a character for Wan Animate 2');
@@ -2834,6 +2844,166 @@ esac
     if (await visible('.dz-preview')) await click('#imageClear');
     await click('.model-card[data-id="krea2-raw"]');
     assert(await js('document.querySelector("#motionBlock").hidden'), 'other models don\'t ask for a motion video');
+  });
+
+  await test('workflows: a video made in pieces gets the same prompt and size in each; extra saves are left out; a model in a subfolder is found', async () => {
+    // Two copies of one part (a long video in pieces), each with its own prompt and size inputs, joined by a Batch node.
+    const piece = n => ({
+      [`${n}:1`]: { class_type: 'CLIPTextEncode', inputs: { text: 'a dancer', clip: ['9', 1] }, _meta: { title: 'CLIP Text Encode (Prompt)' } },
+      [`${n}:2`]: { class_type: 'CLIPTextEncode', inputs: { text: 'blurry', clip: ['9', 1] }, _meta: { title: 'CLIP Text Encode (Negative Prompt)' } },
+      [`${n}:3`]: { class_type: 'PrimitiveInt', inputs: { value: 896 }, _meta: { title: 'Int (Width)' } },
+      [`${n}:4`]: { class_type: 'PrimitiveInt', inputs: { value: 512 }, _meta: { title: 'Int (Height)' } },
+      [`${n}:5`]: { class_type: 'WanAnimate2ToVideo', inputs: { positive: [`${n}:1`, 0], negative: [`${n}:2`, 0], reference_image: ['7', 0], pose_video: ['8', 0], width: [`${n}:3`, 0], height: [`${n}:4`, 0] } },
+      [`${n}:6`]: { class_type: 'KSampler', inputs: { seed: 1, positive: [`${n}:5`, 0], negative: [`${n}:5`, 1], model: ['9', 0] } },
+    });
+    const prompt = {
+      ...piece(10), ...piece(20),
+      7: { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+      8: { class_type: 'LoadVideo', inputs: { file: 'y.mp4' } },
+      9: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sam3.1.safetensors' } },
+      30: { class_type: 'CreateVideo', inputs: { images: ['10:6', 0] } },
+      31: { class_type: 'SaveVideo', inputs: { video: ['30', 0] }, _meta: { title: 'Save Video (First piece)' } },
+      32: { class_type: 'BatchImagesNode', inputs: { 'images.image0': ['10:6', 0], 'images.image1': ['20:6', 0] } },
+      33: { class_type: 'CreateVideo', inputs: { images: ['32', 0] } },
+      34: { class_type: 'SaveVideo', inputs: { video: ['33', 0] }, _meta: { title: 'Save Video (Final)' } },
+      40: { class_type: 'ImageStitch', inputs: { image1: ['32', 0], image2: ['8', 0] } },
+      41: { class_type: 'SaveVideo', inputs: { video: ['40', 0] }, _meta: { title: 'Side by side' } },
+    };
+    const notes = wfLib.repair(prompt);
+    assert(!prompt['41'] && !prompt['31'] && prompt['34'], `only the full render is saved (${Object.keys(prompt).filter(k => /^3|^4/.test(k)).join()})`);
+    eq(notes.length, 2, 'and both are said');
+    const { mapping, warnings } = wfLib.analyze(prompt);
+    eq(mapping.prompt.length, 1, 'one prompt slot');
+    assert(warnings.some(w => w.includes('renders in 2 pieces')), 'the setup says it renders in pieces');
+    const w = { prompt, mapping: { ...mapping, width: { node: '10:3', input: 'value' }, height: { node: '10:4', input: 'value' } }, options: { snap: 16, fps: 24, frameRule: 'exact' }, overrides: {}, loras: {} };
+    const built = wfLib.buildPrompt(w, { text: 'a robot', imageName: 'c.png', aspectRatio: '16:9', resolution: '480p', seed: 3 }).prompt;
+    eq(`${built['10:1'].inputs.text}|${built['20:1'].inputs.text}`, 'a robot|a robot', 'every piece gets the prompt');
+    eq(`${built['20:3'].inputs.value}×${built['20:4'].inputs.value}`, '848×480', 'and the size');
+    eq(built['20:2'].inputs.text, 'blurry', 'never the negative');
+    const info = { CheckpointLoaderSimple: { input: { required: { ckpt_name: [['other.safetensors', 'wan-2.1/sam3.1.safetensors']] } } }, CLIPVisionLoader: { input: { required: { clip_name: [[]] } } } };
+    built[11] = { class_type: 'CLIPVisionLoader', inputs: { clip_name: 'clip_vision_h.safetensors' }, _meta: { title: 'Load CLIP Vision' } };
+    const check = modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://huggingface.co/x/clip_vision_h.safetensors', directory: 'clip_vision' }]);
+    eq(JSON.stringify(check.fixes.map(f => f.to)), '["wan-2.1/sam3.1.safetensors"]', 'a model kept in a subfolder is found there');
+    eq(check.missing.map(m => `${m.file}→${m.folder}`).join(), 'clip_vision_h.safetensors→clip_vision', 'a missing one is named, with where it goes');
+    assert(check.missing[0].url.startsWith('https://huggingface.co/') && check.missing[0].download, 'and its download link, one Prompt Maker may use');
+    assert(!modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://example.com/clip_vision_h.safetensors', directory: 'clip_vision' }]).missing[0].download, 'a link elsewhere is shown, not downloaded');
+  });
+
+  await test('models: a workflow needing a model ComfyUI lacks: step 5 says so, ⬇ Download puts it in ComfyUI, then it renders', async () => {
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click((await visible('#wfpAddFirst')) ? '#wfpAddFirst' : '#wfpAdd');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [bigModelWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    const setup = await text('#wfWarnings');
+    assert(setup.includes('doesn\'t have a model') && setup.includes('big_model.safetensors'), `the setup says which model is missing: ${setup}`);
+    await type('#wfName', 'Needs a big model');
+    await click('#wfSave');
+    await toastText('is ready');
+    await waitFor('!document.querySelector("#wfpModels").hidden', 'step 5 says a model is missing');
+    const notice = await text('#wfpModels');
+    assert(notice.includes('big_model.safetensors') && notice.includes('models/checkpoints'), `which, and where it goes: ${notice}`);
+    await shot('48-missing-model');
+
+    // Rendering before it's there: a clear message, nothing sent to ComfyUI.
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a quiet harbor at dawn');
+    await click('#generateBtn');
+    await genDone();
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("doesn\'t have a model")', 'the render says what is missing');
+    eq(comfy.prompts.length, before, 'nothing was sent to ComfyUI');
+    await click('#stageError .x');
+
+    await click('#wfpModels [data-act="mm-get"]');
+    await toastText('is in ComfyUI now');
+    await waitFor('document.querySelector("#wfpModels").hidden', 'once it\'s there, the notice goes', 10000);
+    const got = path.join(comfyRoot, 'models', 'checkpoints', 'big_model.safetensors');
+    eq((await fs.stat(got)).size, MODEL_BYTES.length, 'the whole file is in ComfyUI\'s checkpoints folder');
+    assert(!(await fileExists(`${got}.part`)), 'and nothing half-done next to it');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    eq(comfy.prompts.at(-1).prompt['4'].inputs.ckpt_name, 'big_model.safetensors', 'with that model');
+    const refused = await js(`fetch("/api/comfy/downloads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "x.safetensors", folder: "checkpoints", url: "https://example.com/x.safetensors" }) }).then(async r => [r.status, (await r.json()).error])`);
+    assert(refused[0] === 400 && refused[1].includes('only downloads models from Hugging Face'), `other sites are refused: ${refused[1]}`);
+  });
+
+  await test('render: ComfyUI skipping part of a workflow stops the render, with its reasons', async () => {
+    await type('#theme', 'SKIPOUT a red kite over the dunes');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("would skip part of this workflow")', 'the render stops with ComfyUI\'s reasons');
+    const msg = await text('#stageError');
+    assert(msg.includes('#9 SaveImage') && msg.includes("'gone.safetensors' isn't in ComfyUI") && !msg.includes('mock_model'), `in short: ${msg}`);
+    await sleep(600);
+    eq(await count('.take .rtile img'), 0, 'and no half render is kept');
+    await click('#stageError .x');
+  });
+
+  await test('gallery: a render moved out of the renders folder leaves every view, and comes back with its file', async () => {
+    const all = await (await fetch(`${APP}/api/history`)).json();
+    const entry = all.find(e => e.variations.some(v => v.renders?.length));
+    const render = entry.variations.flatMap(v => v.renders || []).at(-1);
+    const file = render.files[0].file;
+    const away = path.join(tmp, `moved-${file}`);
+    await fs.rename(path.join(dataDir, 'renders', file), away);
+    // A video whose file is gone too: its tile only loads the file when hovered, so it would stay a blank box.
+    const histFile = path.join(dataDir, 'history.json');
+    const raw = JSON.parse(await fs.readFile(histFile, 'utf8'));
+    raw.unshift({ id: 'moved-video', createdAt: new Date().toISOString(), favorite: false, modelId: 'ltx-2-3', modelName: 'LTX 2.3', modelKind: 'video', theme: 'a moved video', variations: [{ versions: [{ text: 'a moved video', createdAt: new Date().toISOString() }], renders: [{ id: 'moved-r', versionIndex: 0, text: 'a moved video', workflowName: 'Mock', files: [{ file: 'moved-video_0.mp4', kind: 'video', name: 'moved.mp4' }], createdAt: new Date().toISOString() }] }] });
+    await fs.writeFile(histFile, JSON.stringify(raw));
+    const shown = await (await fetch(`${APP}/api/history`)).json();
+    const files = shown.flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files.map(f => f.file))));
+    assert(!files.includes(file) && !files.includes('moved-video_0.mp4'), 'the page isn\'t sent renders whose file is gone');
+    assert(shown.find(e => e.id === 'moved-video').variations[0].versions.length === 1, 'their takes stay');
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('document.querySelectorAll("#galleryGrid .gtile").length > 0', 'gallery');
+    eq(await count(`#galleryGrid [src*="${file}"], #galleryGrid [src*="moved-video_0"]`), 0, 'no tile for them, not even a blank one');
+    eq(await text('#galleryCount'), String(await count('#galleryGrid .gtile')), 'and the count agrees');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'history');
+    eq(await count(`.hcard [src*="${file}"], .hcard [src*="moved-video_0"]`), 0, 'no History card shows them');
+    // Put back, it shows again.
+    await fs.rename(away, path.join(dataDir, 'renders', file));
+    await fs.writeFile(histFile, JSON.stringify(raw.slice(1)));
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor(`!!document.querySelector('#galleryGrid [src*="${file}"]')`, 'back in the Gallery with its file');
+    // Gone while it's on screen: the tile leaves too.
+    await fs.rename(path.join(dataDir, 'renders', file), away);
+    await js(`(() => { const el = document.querySelector('#galleryGrid [src*="${file}"]'); el.src = el.src + '?again'; })()`);
+    await waitFor(`!document.querySelector('#galleryGrid [src*="${file}"]') || document.querySelector('#galleryGrid [src*="${file}"]').closest('.gtile').hidden`, 'the tile leaves while you look');
+    for (let n = problems.length - 1; n >= 0; n--) if (problems[n].includes(file)) problems.splice(n, 1); // the browser logs the 404 it was meant to hit
+    await fs.rename(away, path.join(dataDir, 'renders', file));
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('motion video: black bars around the picture are found, and cropped with one click', async () => {
+    const clip = path.join(tmp, 'webcam-bars.mp4');
+    const made = await new Promise(resolve => {
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x240:rate=12', '-t', '2', '-vf', 'pad=480:240:160:0:black', '-pix_fmt', 'yuv420p', clip], { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', code => resolve(code === 0));
+    });
+    if (!made) return console.log('      (skipped: ffmpeg not installed)');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="wan-animate-2"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await setFiles('#videoInput', [clip]);
+    await waitFor('document.querySelector("#mzInfo").textContent.includes("480×240")', 'the motion video is in', 15000);
+    await waitFor('!!document.querySelector("#videoCrop")', 'it offers to crop the bars');
+    assert((await text('#motionHint')).includes('160×240 inside a 480×240 frame'), 'and says where the picture is');
+    await click('#videoCrop');
+    await toastText('without its black bars');
+    await waitFor('document.querySelector("#mzInfo").textContent.includes("160×240")', 'now the picture alone');
+    assert(!(await js('!!document.querySelector("#videoCrop")')), 'nothing left to crop');
+    eq(await value('#aspect'), '2:3', 'the aspect follows the cropped video (no character yet)');
+    await click('#videoClear');
+    await click('.model-card[data-id="krea2-raw"]');
   });
 
   await test('jobs: the assistant works through a folder, skips what fails and logs it; a reload stops it safely', async () => {

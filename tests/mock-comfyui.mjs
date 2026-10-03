@@ -29,7 +29,7 @@ export const OBJECT_INFO = {
   KSampler: { input: { required: { model: ['MODEL'], seed: ['INT', { control_after_generate: true }], steps: ['INT', { default: 20 }], cfg: ['FLOAT', { default: 8 }], sampler_name: [['euler', 'dpmpp_2m']], scheduler: [['normal', 'karras']], positive: ['CONDITIONING'], negative: ['CONDITIONING'], latent_image: ['LATENT'], denoise: ['FLOAT', { default: 1 }] } }, input_order: { required: ['model', 'seed', 'steps', 'cfg', 'sampler_name', 'scheduler', 'positive', 'negative', 'latent_image', 'denoise'] }, output: ['LATENT'], output_node: false, display_name: 'KSampler' },
   VAEDecode: { input: { required: { samples: ['LATENT'], vae: ['VAE'] } }, input_order: { required: ['samples', 'vae'] }, output: ['IMAGE'], output_node: false, display_name: 'VAE Decode' },
   SaveImage: { input: { required: { images: ['IMAGE'], filename_prefix: ['STRING', { default: 'ComfyUI' }] } }, input_order: { required: ['images', 'filename_prefix'] }, output: [], output_node: true, display_name: 'Save Image' },
-  LoraLoaderModelOnly: { input: { required: { model: ['MODEL'], lora_name: [['krea2/baked_in.safetensors']], strength_model: ['FLOAT', { default: 1, min: -100, max: 100 }] } }, input_order: { required: ['model', 'lora_name', 'strength_model'] }, output: ['MODEL'], output_node: false, display_name: 'LoraLoaderModelOnly' },
+  LoraLoaderModelOnly: { input: { required: { model: ['MODEL'], lora_name: [['LTX_2.3/motion_boost.safetensors', 'krea2/baked_in.safetensors', 'krea2/detail_slider.safetensors', 'krea2/film_grain.safetensors', 'loose_file.safetensors']], strength_model: ['FLOAT', { default: 1, min: -100, max: 100 }] } }, input_order: { required: ['model', 'lora_name', 'strength_model'] }, output: ['MODEL'], output_node: false, display_name: 'LoraLoaderModelOnly' },
   LoadImage: { input: { required: { image: [['example.png'], { image_upload: true }] } }, input_order: { required: ['image'] }, output: ['IMAGE', 'MASK'], output_node: false, display_name: 'Load Image' },
   LoadVideo: { input: { required: { file: ['COMBO', { options: [], video_upload: true }] } }, input_order: { required: ['file'] }, output: ['VIDEO'], output_node: false, display_name: 'Load Video' },
   GetVideoComponents: { input: { required: { video: ['VIDEO'] } }, input_order: { required: ['video'] }, output: ['IMAGE', 'AUDIO', 'FLOAT'], output_node: false, display_name: 'Get Video Components' },
@@ -121,7 +121,21 @@ function wsFrame(text) {
   return Buffer.concat([header, payload]);
 }
 
-// root: a fake ComfyUI install folder; finished renders are saved to root/output like the real thing.
+// A "model" the fake Hugging Face (/hf/<name>) hands out.
+export const MODEL_BYTES = Buffer.alloc(300 * 1024, 7);
+
+// Files in a folder and its subfolders, as ComfyUI lists them ("sub/name.safetensors").
+function filesIn(dir, prefix = '') {
+  let out = [];
+  for (const d of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+    if (d.isDirectory()) out = out.concat(filesIn(path.join(dir, d.name), `${prefix}${d.name}/`));
+    else if (/\.safetensors$/.test(d.name)) out.push(prefix + d.name);
+  }
+  return out;
+}
+
+// root: a fake ComfyUI install folder; finished renders are saved to root/output like the real thing, and the
+// checkpoints in root/models/checkpoints are offered next to mock_model.safetensors.
 export function startMockComfy(port, { png, root = null }) {
   const prompts = [];
   const uploads = [];
@@ -186,9 +200,17 @@ export function startMockComfy(port, { png, root = null }) {
     for await (const c of req) raw = Buffer.concat([raw, c]);
     const p = url.pathname;
     if (p === '/system_stats') return json(200, { system: { comfyui_version: '0.38.0-mock' }, devices: [{ name: 'cuda:0 Mock GPU : cudaMallocAsync', vram_total: 8 * 2 ** 30, vram_free: 6 * 2 ** 30 }] });
-    if (p === '/object_info') return json(200, OBJECT_INFO);
-    if (p === '/internal/folder_paths') return json(200, root ? { custom_nodes: [path.join(root, 'custom_nodes')] } : {});
-    if (p === '/models/loras') return json(200, ['LTX_2.3/motion_boost.safetensors', 'krea2/baked_in.safetensors', 'krea2/detail_slider.safetensors', 'krea2/film_grain.safetensors', 'loose_file.safetensors']);
+    if (p === '/object_info') {
+      const info = structuredClone(OBJECT_INFO);
+      if (root) info.CheckpointLoaderSimple.input.required.ckpt_name[0].push(...filesIn(path.join(root, 'models', 'checkpoints')));
+      return json(200, info);
+    }
+    if (p === '/internal/folder_paths') return json(200, root ? { custom_nodes: [path.join(root, 'custom_nodes')], checkpoints: [path.join(root, 'models', 'checkpoints')] } : {});
+    if (p.startsWith('/hf/')) {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': MODEL_BYTES.length });
+      return res.end(MODEL_BYTES);
+    }
+    if (p === '/models/loras') return json(200, OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0]);
     if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: saved.modified }, { path: '.index.json', size: 10, modified: 0 }]);
     if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, saved.json);
     if (p === '/templates/video_wan_animate2.json') return json(200, WAN_TEMPLATE);
@@ -204,7 +226,9 @@ export function startMockComfy(port, { png, root = null }) {
       prompts.push({ id, ...body });
       pending.push({ id, prompt: body.prompt });
       chain = chain.then(() => execute(id, body.prompt, body.client_id));
-      return json(200, { prompt_id: id, number: prompts.length, node_errors: {} });
+      // SKIPOUT: like ComfyUI when one output fails its checks: the rest is queued, the reasons come back.
+      const skipped = JSON.stringify(body.prompt).includes('SKIPOUT') ? { 9: { class_type: 'SaveImage', errors: [{ message: 'Value not in list', details: "ckpt_name: 'gone.safetensors' not in ['mock_model.safetensors']" }] } } : {};
+      return json(200, { prompt_id: id, number: prompts.length, node_errors: skipped });
     }
     if (p === '/history' && req.method === 'GET') return json(200, history);
     if (p === '/history' && req.method === 'POST') {
