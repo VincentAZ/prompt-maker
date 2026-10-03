@@ -852,6 +852,8 @@ async function renderTake(req, res) {
     videoName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.video.file}`, VIDEO_MIME[entry.video.file.split('.').pop()] || 'video/mp4');
   }
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
+  // A workflow that loops over the whole motion video: how many pieces it takes, for the progress line.
+  const pieces = workflow.mapping.video && entry.video?.seconds && entry.video?.fps ? wf.loopPieces(workflow.prompt, Math.round(entry.video.seconds * entry.video.fps)) : null;
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
   const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio });
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
@@ -880,6 +882,7 @@ async function renderTake(req, res) {
       let lastPreview = 0;
       const done = await comfy.watch(base, promptId, clientId, prompt, {
         signal: stream.signal,
+        pieces,
         onEvent: ev => {
           if (ev.type !== 'preview') return stream.send({ ...ev, i });
           if (Date.now() - lastPreview < 350) return;
@@ -971,7 +974,7 @@ function openRenderJob(meta) {
     if (ev.type === 'queued') now.stage = ev.position > 1 ? `Waiting: ${ev.position - 1} ahead in ComfyUI` : ev.position === 1 ? 'Next up in ComfyUI' : 'Sent to ComfyUI…';
     else if (ev.type === 'running') Object.assign(now, { stage: 'Starting…', pct: 0 });
     else if (ev.type === 'node') now.stage = ev.title;
-    else if (ev.type === 'progress' && ev.max) now.pct = Math.round((ev.value / ev.max) * 100);
+    else if (ev.type === 'progress' && ev.max) now.pct = Math.round(ev.overall ?? (ev.value / ev.max) * 100);
     else if (ev.type === 'render') Object.assign(now, { finished: now.finished + 1, pct: null, stage: 'Saving…' });
     else if (ev.type === 'error') now.stage = `⚠️ ${ev.message}`;
   };
@@ -1173,6 +1176,24 @@ async function route(req, res) {
     const box = await videotools.bars(file, await videotools.probe(file));
     if (!box) throw store.httpError(400, 'This video has no black bars to crop.');
     const tmp = await videotools.crop(file, box);
+    try {
+      const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
+      return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  }
+  // A part of a long video (from start, this many seconds): the one stretch you want animated.
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/trim$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
+    const body = await readBody(req);
+    const length = (await videotools.probe(file))?.seconds || 0;
+    const start = Math.max(0, Number(body.start) || 0);
+    const seconds = Math.min(Number(body.seconds) || 0, length ? length - start : Infinity);
+    if (!(seconds >= 0.2) || (length && start >= length)) throw store.httpError(400, `Pick a part inside the video${length ? ` (it's ${Math.round(length * 10) / 10} s long)` : ''}.`);
+    const tmp = await videotools.trim(file, Math.round(start * 1000) / 1000, Math.round(seconds * 1000) / 1000);
     try {
       const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
       return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });

@@ -2982,10 +2982,10 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
-  await test('motion video: black bars around the picture are found, and cropped with one click', async () => {
+  await test('motion video: black bars are cropped with one click; a workflow that animates less says so; ✂️ Trim picks the part', async () => {
     const clip = path.join(tmp, 'webcam-bars.mp4');
     const made = await new Promise(resolve => {
-      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x240:rate=12', '-t', '2', '-vf', 'pad=480:240:160:0:black', '-pix_fmt', 'yuv420p', clip], { stdio: 'ignore' });
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x240:rate=12', '-t', '10', '-vf', 'pad=480:240:160:0:black', '-pix_fmt', 'yuv420p', clip], { stdio: 'ignore' });
       p.on('error', () => resolve(false));
       p.on('exit', code => resolve(code === 0));
     });
@@ -3002,7 +3002,23 @@ esac
     await waitFor('document.querySelector("#mzInfo").textContent.includes("160×240")', 'now the picture alone');
     assert(!(await js('!!document.querySelector("#videoCrop")')), 'nothing left to crop');
     eq(await value('#aspect'), '2:3', 'the aspect follows the cropped video (no character yet)');
+
+    // The picked workflow (the mock template) animates 81 frames; this video has 120.
+    await setFiles('#imageInput', [portrait]);
+    await waitFor('(document.querySelector("#wfpWarn")?.textContent || "").includes("animates 81 frames")', 'step 5 says the workflow animates only part of it');
+    assert((await text('#wfpWarn')).includes('the first 6.8s of your 10s motion video'), `and how much: ${await text('#wfpWarn')}`);
+    await click('#videoTrim');
+    await waitFor('!document.querySelector("#trimBox").hidden', 'the trim tools');
+    eq(await value('#trimLen'), '6.8', 'it starts as long as the workflow animates');
+    await type('#trimStart', '2');
+    await type('#trimLen', '4');
+    assert((await text('#trimNote')).includes('2s → 6s') && (await text('#trimNote')).includes('48 frames'), `it says what you picked: ${await text('#trimNote')}`);
+    await click('#trimGo');
+    await toastText('of your motion video, from 2s');
+    await waitFor('/🕺 4(\\.\\d)?s ·/.test(document.querySelector("#mzInfo").textContent) && document.querySelector("#trimBox").hidden', 'now that part alone');
+    await waitFor('!(document.querySelector("#wfpWarn")?.textContent || "").includes("animates")', 'and the workflow does all of it');
     await click('#videoClear');
+    await click('#imageClear');
     await click('.model-card[data-id="krea2-raw"]');
   });
 

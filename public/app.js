@@ -43,6 +43,7 @@ const state = {
   loraPicker: { open: false, q: '' },
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   wfMissing: new Map(), // workflow id → model files it needs that ComfyUI doesn't have
+  trim: null, // { start, seconds } while picking part of the motion video (✂️ Trim)
   downloads: [], // model downloads into ComfyUI (running in the server)
   comfy: null,
   renderRuns: new Set(),
@@ -1411,24 +1412,79 @@ async function loadVideoFile(file, { quiet = false } = {}) {
   }
 }
 
-// Swaps the motion video for a copy made by ffmpeg: at 24 fps (so a fast phone video doesn't take 5× as long), or
-// without its black bars (crop).
-async function videoCopy(btn, kind) {
+// Swaps the motion video for a copy made by ffmpeg: at 24 fps (so a fast phone video doesn't take 5× as long),
+// without its black bars (crop), or a part of it (trim: { start, seconds }).
+async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
   const v = state.video;
   if (!v?.file) return;
-  btn.disabled = true;
-  btn.textContent = kind === 'crop' ? '⏳ Cropping…' : '⏳ Making a 24 fps copy…';
+  const label = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = { crop: '⏳ Cropping…', trim: '⏳ Cutting…', retime: '⏳ Making a 24 fps copy…' }[kind];
+  }
   try {
-    const r = await api(`/api/videos/${encodeURIComponent(v.file)}/${kind}`, { method: 'POST', body: kind === 'retime' ? { fps: 24 } : {} });
+    const r = await api(`/api/videos/${encodeURIComponent(v.file)}/${kind}`, { method: 'POST', body: kind === 'retime' ? { fps: 24 } : part || {} });
     const blob = await (await fetch(`/videos/${encodeURIComponent(r.file)}`)).blob();
+    closeTrim();
     await loadVideoFile(new File([blob], `${r.file}`, { type: 'video/mp4' }), { quiet: true });
-    const aspect = $('#aspect').value;
-    toast(kind === 'crop' ? `✂️ Now using your motion video without its black bars · aspect ${aspect}` : '🕺 Now using a 24 fps copy of your motion video');
+    if (quiet) return r;
+    toast(kind === 'crop' ? `✂️ Now using your motion video without its black bars · aspect ${$('#aspect').value}`
+      : kind === 'trim' ? `✂️ Now using ${secsLabel(r.info?.seconds || part.seconds)} of your motion video, from ${secsLabel(part.start)}`
+        : '🕺 Now using a 24 fps copy of your motion video');
+    return r;
   } catch (err) {
+    if (quiet) throw err;
     toast(`Couldn't make the copy: ${err.message}`, true);
-    btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
   }
 }
+
+// ✂️ Trim: pick the stretch of a long motion video to animate. The preview plays just that stretch while you pick.
+// It starts as long as the picked workflow animates (81 frames for some), else the whole video.
+function openTrim() {
+  const v = state.video;
+  if (!v?.file) return;
+  const flow = activeFlow();
+  const clip = typeof flow?.motionFrames === 'number' && v.fps ? flow.motionFrames / v.fps : null;
+  $('#trimStart').value = '0';
+  $('#trimStart').max = String(Math.max(0, (v.seconds || 0) - 0.2));
+  $('#trimLen').value = String(Math.round(Math.min(v.seconds || clip || 5, clip || v.seconds || 5) * 10) / 10);
+  $('#trimLen').max = String(v.seconds || '');
+  $('#trimBox').hidden = false;
+  syncTrim();
+  $('#trimStart').focus();
+}
+function closeTrim() {
+  $('#trimBox').hidden = true;
+  state.trim = null;
+}
+function syncTrim() {
+  const v = state.video;
+  const start = Math.max(0, Number($('#trimStart').value) || 0);
+  const seconds = Math.max(0.2, Number($('#trimLen').value) || 0);
+  state.trim = { start, seconds };
+  const end = Math.min(v?.seconds || Infinity, start + seconds);
+  const flow = activeFlow();
+  const frames = v?.fps ? Math.round((end - start) * v.fps) : null;
+  $('#trimNote').textContent = `${secsLabel(start)} → ${secsLabel(end)}${frames ? ` · ${frames} frames` : ''}${typeof flow?.motionFrames === 'number' && frames > flow.motionFrames + 1 ? ` · “${flow.name}” animates the first ${flow.motionFrames} of them` : ''}`;
+  const pv = $('#motionPreview');
+  if (pv.currentTime < start || pv.currentTime > end) pv.currentTime = start;
+}
+$('#trimStart').addEventListener('input', syncTrim);
+$('#trimLen').addEventListener('input', syncTrim);
+$('#trimGo').addEventListener('click', e => videoCopy(e.currentTarget, 'trim', state.trim));
+$('#trimCancel').addEventListener('click', () => { closeTrim(); renderMotionHint(); });
+$('#trimBox').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('#trimGo').click(); } // inside the Create form: Enter must not generate
+  if (e.key === 'Escape') { e.preventDefault(); closeTrim(); }
+});
+$('#motionPreview').addEventListener('timeupdate', e => {
+  const t = state.trim;
+  if (t && (e.target.currentTime < t.start - 0.05 || e.target.currentTime > t.start + t.seconds)) e.target.currentTime = t.start;
+});
 
 function setVideo(v) {
   const old = state.video;
@@ -1490,6 +1546,11 @@ function renderMotionHint() {
     hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoRetime">Use a 24 fps copy</button>');
     $('#videoRetime').addEventListener('click', e => videoCopy(e.currentTarget, 'retime'));
   }
+  if (v?.file && v.ffmpeg && v.seconds > 1 && $('#trimBox').hidden) {
+    hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoTrim" title="Use only part of this video">✂️ Trim</button>');
+    $('#videoTrim').addEventListener('click', openTrim);
+  }
+  if (!v?.file && !$('#trimBox').hidden) closeTrim();
 }
 
 // The motion video as the server stores it with a take (null while it's still uploading).
@@ -4138,9 +4199,18 @@ function renderWorkflowWarning() {
       : !state.image && flow.maps.image ? `“${flow.name}” needs ${currentModel()?.motionVideo ? 'your character image' : 'an input image'}. Add one in step 3, or pick another workflow.`
         : !state.video && flow.maps.video ? `“${flow.name}” needs a motion video. Add one in step 3.`
           : state.video && currentModel()?.motionVideo && !flow.maps.video ? `“${flow.name}” has no Load Video node, so it would ignore your motion video. Pick or add a Wan Animate 2 workflow.`
-            : '';
+            : clipNote(flow);
   warn.hidden = !msg;
   warn.textContent = msg ? `⚠️ ${msg}` : '';
+}
+
+// A motion video longer than what the picked workflow animates: say how much of it the clip will be.
+function clipNote(flow) {
+  const v = state.video;
+  const f = flow.motionFrames;
+  if (!currentModel()?.motionVideo || !v?.seconds || !v.fps || typeof f !== 'number' || f >= Math.round(v.seconds * v.fps) - 1) return '';
+  const all = workflowsFor(state.modelId).find(w => w.motionFrames === 'all');
+  return `“${flow.name}” animates ${f} frames: the first ${secsLabel(f / v.fps)} of your ${secsLabel(v.seconds)} motion video. ${all ? `For all of it, pick “${all.name}”. To pick which part, use` : 'To pick which part, use'} ✂️ Trim in step ③.`;
 }
 
 function renderStaleNotice() {
@@ -4821,7 +4891,7 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
         nodesSeen.get(i).add(ev.node);
         setTile(i, null, ev.title);
       } else if (ev.type === 'progress') {
-        const pct = ev.max ? (ev.value / ev.max) * 100 : 0;
+        const pct = ev.overall ?? (ev.max ? (ev.value / ev.max) * 100 : 0); // a video made in pieces: the whole render
         setTile(i, pct, `${nodeTitle || 'Sampling'} · ${ev.value}/${ev.max}`);
         setTitle(`🎨 ${Math.round(pct)}%${count > 1 ? ` (${i + 1}/${count})` : ''}`);
       } else if (ev.type === 'preview') {
@@ -6273,7 +6343,7 @@ const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
 // The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
-const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'favorite_render', 'favorite_entry']);
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'favorite_render', 'favorite_entry']);
 
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
@@ -6290,6 +6360,7 @@ const TOOLS = [
   T('clear_image', 'Remove the image from step 3.'),
   T('use_motion_video', 'Set the motion video in step 3 for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
   T('clear_motion_video', 'Remove the motion video from step 3.'),
+  T('edit_motion_video', 'Change the motion video in step 3 (needs ffmpeg; each makes a copy and uses it): use only part of it (start and seconds, e.g. the stretch the workflow animates), crop the black bars around its picture, or make a 24 fps copy of a fast one.', { start: N('Use part of it: seconds from its start'), seconds: N('Use part of it: how many seconds'), crop_bars: B('Crop the black bars around the picture'), fps24: B('Make a 24 fps copy') }),
   T('character_from_render', 'Make a still render the character for Wan Animate 2: switches to that model and attaches the still. Then set a motion video (use_motion_video) and a theme for the place and camera, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (step 5).', { name: S('Workflow name') }, ['name']),
   T('add_lora', 'Add a LoRA (from the model\'s LoRA folder) to the picked workflow.', { name: S('LoRA name or part of it'), strength: N('Strength, usually 0.3–1.2; default 1') }, ['name']),
@@ -6457,7 +6528,7 @@ function assistantState() {
     model: m && { name: m.name, kind: m.kind, ...(m.motionVideo ? { characterAnimation: true } : {}) },
     theme: $('#theme').value,
     image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
-    ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, ready: Boolean(state.video.file) } : null } : {}),
+    ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, fps: state.video.fps || null, ready: Boolean(state.video.file), ...(state.video.bars ? { black_bars: `picture is ${state.video.bars.width}×${state.video.bars.height}` } : {}), workflow_animates: activeFlow()?.motionFrames === 'all' ? 'the whole video' : typeof activeFlow()?.motionFrames === 'number' ? `${activeFlow().motionFrames} frames` : 'unknown' } : null } : {}),
     dials: m && {
       aspect: $('#aspect').value, aspects: m.aspectRatios,
       resolution: $('#resolution').value, resolutions: m.resolutions,
@@ -6821,6 +6892,28 @@ const TOOL_IMPL = {
     return { summary: `Motion video → ${name} (${secsLabel(state.video.seconds || 0)})` };
   },
   clear_motion_video: () => { setVideo(null); return { summary: 'Motion video removed' }; },
+  edit_motion_video: async ({ start, seconds, crop_bars: crop, fps24 }) => {
+    if (!state.video?.file) throw new Error('There is no motion video in step 3 yet.');
+    if (!state.video.ffmpeg) throw new Error('Changing the video needs ffmpeg, which isn\'t installed on this computer.');
+    const done = [];
+    if (crop) {
+      if (!state.video.bars) throw new Error('This video has no black bars to crop.');
+      await videoCopy(null, 'crop', null, { quiet: true });
+      done.push(`black bars cropped (${state.video.width}×${state.video.height})`);
+    }
+    if (start != null || seconds != null) {
+      const from = Math.max(0, Number(start) || 0);
+      const length = Number(seconds) > 0 ? Number(seconds) : (state.video.seconds || 0) - from;
+      await videoCopy(null, 'trim', { start: from, seconds: length }, { quiet: true });
+      done.push(`${secsLabel(state.video.seconds || length)} from ${secsLabel(from)}`);
+    }
+    if (fps24) {
+      await videoCopy(null, 'retime', null, { quiet: true });
+      done.push('24 fps');
+    }
+    if (!done.length) throw new Error('Say what to change: start and seconds, crop_bars or fps24.');
+    return { summary: `Motion video → ${done.join(', ')}` };
+  },
   character_from_render: async ({ take, render }) => {
     notBusy();
     const card = needCard(take || 1);
