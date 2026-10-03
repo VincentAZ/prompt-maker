@@ -1602,6 +1602,38 @@ esac
     }
   });
 
+  await test('history: opening a card puts back everything it was made with, render setup too', async () => {
+    const flows = async () => (await fetch(`${APP}/api/workflows`)).json();
+    const picked = await js('document.querySelector(".take .rb-wf")?.selectedOptions[0]?.textContent || ""');
+    const flow = (await flows()).find(f => f.modelId === 'krea2-raw' && f.name === picked);
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'fixed', value: 4242 } }) });
+    await js('location.reload()');
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a glass of lemonade on a porch');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered ×2', 10000);
+    // Change the setup: random seed, ×1, another prompt.
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'random' } }) });
+    await js('location.reload()');
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    await type('#theme', 'something else entirely');
+    await click('.tabs button[data-view="history"]');
+    await waitFor(`[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("a glass of lemonade"))`, 'the card');
+    const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("a glass of lemonade")) + 1`);
+    await click(`.hcard:nth-of-type(${n}) [data-act="open"]`);
+    await waitFor('document.querySelector("#theme").value === "a glass of lemonade on a porch"', 'the theme is back');
+    await waitFor('document.querySelector(".take .rb-count .active")?.dataset.value === "2"', 'renders per take back to ×2');
+    const seed = (await flows()).find(f => f.id === flow.id).seed;
+    eq(seed.mode, 'fixed', 'the seed mode is back');
+    eq(seed.value, 4242, 'and the seed');
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'random' } }) });
+  });
+
   await test('render all takes at once', async () => {
     await click('#varSeg button[data-value="2"]');
     await type('#theme', 'twin lighthouses');

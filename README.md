@@ -230,7 +230,7 @@ The conversation is kept in your data folder; 🧹 clears it. It works best with
 Everything you generate is saved automatically:
 
 - **Find things:** search themes and prompts, filter by model, or show only ★ favorites.
-- **Pick up where you left off:** click a card to reopen it with its image and settings, and keep refining. The card that's open on Create is ringed in History, which scrolls to it.
+- **Pick up where you left off:** click a card to reopen it exactly as it was made: model, theme, image and its role, aspect, resolution, duration, length, temperature, takes and batch, plus how it was rendered (workflow, renders per take, seed and seed mode, LoRAs and their strengths, sampler settings). Keep refining, or Generate / Render again the same way. The card that's open on Create is ringed in History, which scrolls to it.
 - **Delete is for good.** Deleting a card removes its prompts, its input image (unless another card uses the same one) and its renders, along with ComfyUI's copies of them: the files in its output folder, the image uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. Quotes of it in the assistant chat become "[deleted]", and a video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render or image no History card uses anymore.
 
 ### Keyboard shortcuts

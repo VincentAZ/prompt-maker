@@ -817,6 +817,10 @@ async function renderTake(req, res) {
         frames: applied.frames || null,
         duration: applied.duration || null,
         ...(applied.loras?.length ? { loras: applied.loras } : {}),
+        // The rest of the setup, so opening this from History can put it all back.
+        count,
+        seedMode: workflow.options?.seedMode || 'random',
+        overrides: workflow.overrides || {},
         files,
         createdAt: new Date().toISOString(),
         secs: Math.round((Date.now() - t0) / 100) / 10,

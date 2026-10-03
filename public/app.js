@@ -2218,6 +2218,46 @@ function forgetEntry(entry) {
   }
 }
 
+// The rest of what an entry was made with: its batch, and how its newest render was made (workflow,
+// renders per take, seed, LoRAs, sampler settings), so the next Generate or Render works the same way.
+async function restoreSetup(entry) {
+  const b = entry.batch && batches().find(x => x.name === entry.batch);
+  setBatchPick(b ? b.id : '');
+  const renders = entry.variations.flatMap(v => v.renders || []);
+  const r = renders.slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+  const flow = r && state.workflows.find(f => f.id === r.workflowId && f.modelId === entry.modelId);
+  if (!flow) return;
+  pickWorkflow(entry.modelId, flow.id);
+  // Renders per take: as recorded, else how many each take got with that workflow (older entries).
+  const count = clampInt(r.count ?? Math.max(...entry.variations.map(v => (v.renders || []).filter(x => x.workflowId === flow.id && x.versionIndex === r.versionIndex).length)), 1, BATCH_MAX);
+  state.cards.forEach(c => { if (c.rb) { c.rb.count = count; c.rb.workflowId = flow.id; renderZone(c); } });
+  // The seed the run started at (a ×N run gets one seed after another).
+  const take = entry.variations.find(v => (v.renders || []).includes(r)).renders;
+  const first = take.slice(-count).find(x => x.workflowId === flow.id) || r;
+  if (first.seed != null && flow.seed?.inputs) await setSeed(flow, { mode: r.seedMode || flow.seed.mode, value: first.seed });
+  if (flow.loras) {
+    const used = new Map((r.loras || []).map(l => [l.name, l.strength]));
+    const l = flow.loras;
+    for (const n of l.nodes) {
+      const on = used.has(n.name);
+      const next = { on, strength: on ? used.get(n.name) : n.strength };
+      if (next.on === n.on && next.strength === n.strength) delete l.tweaks[n.key]; else l.tweaks[n.key] = next;
+      used.delete(n.name);
+    }
+    for (const a of l.added) { a.on = used.has(a.name); if (a.on) { a.strength = used.get(a.name); used.delete(a.name); } }
+    for (const [name, strength] of used) l.added.push({ name, strength, on: true });
+    saveLoras(flow, { now: true });
+    renderLoraPanel();
+  }
+  if (r.overrides && JSON.stringify(r.overrides) !== JSON.stringify(flow.overrides || {})) {
+    const patch = { ...Object.fromEntries(Object.keys(flow.overrides || {}).map(k => [k, null])), ...r.overrides };
+    await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { overridePatch: patch } }).catch(() => {});
+    await loadWorkflows();
+  }
+  renderWorkflowPicker();
+  state.cards.forEach(c => c.rb && renderZone(c));
+}
+
 // Puts an entry's setup back into the Create form: model, dials, theme, image and takes.
 async function loadForm(entry) {
   await flushEdits();
@@ -2242,6 +2282,7 @@ async function openEntry(entry) {
   state.timings = {};
   showView('create');
   renderResults(entry);
+  await restoreSetup(entry);
   requestAnimationFrame(() => {
     const stage = $('.stage');
     if (stage.getBoundingClientRect().left < 40) stage.scrollIntoView({ block: 'start' }); // single-column layout
