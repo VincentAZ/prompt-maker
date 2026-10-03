@@ -368,6 +368,8 @@ esac
   await Promise.all(['Page.enable', 'Runtime.enable', 'Log.enable', 'DOM.enable'].map(m => cdp.send(m)));
   // Every toast, in order, with when it showed: there's one toast slot, and a later toast replaces the one before.
   // And every click and key press that reached the page, so a lost one can be told apart from one the app ignored.
+  // The assistant opens by default; most tests want the page as it is without it (one test checks the default).
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.origin === ${JSON.stringify(APP)} && localStorage.getItem('pm.assistantOpen') === null && !sessionStorage.getItem('default-assistant')) localStorage.setItem('pm.assistantOpen', 'false');` });
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__toasts = [];
     window.__input = { clicks: 0, keys: 0 };
     addEventListener('click', () => { window.__input.clicks++; }, true);
@@ -1547,6 +1549,59 @@ esac
     eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
   });
 
+  await test('assistant: on by default, sees the renders and says which it likes; favorites; asks before deleting', async () => {
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    // On by default: with no choice saved, the panel opens with the app.
+    await js('localStorage.removeItem("pm.assistantOpen"); sessionStorage.setItem("default-assistant", "1"); location.reload()');
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    assert(await visible('#assistant'), 'the assistant is open from the start');
+    await js('sessionStorage.removeItem("default-assistant")');
+    try {
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a red balloon over the rooftops');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'a render to look at', 10000);
+
+    await type('#asInput', 'Which of these renders do you like best?');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('take 1, render 1'), `it gives an opinion: ${await bot()}`);
+    assert(await count('#asLog .as-seen img') >= 1, 'the chat shows what it looked at');
+    const sent = JSON.stringify(lastCall().messages);
+    assert(/data:image\/jpeg;base64,/.test(sent), 'the Brain got the pictures');
+
+    await type('#asInput', 'favorite the first one');
+    await press('Enter');
+    await idle();
+    assert((await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join("|")')).includes('Marked as a favorite'), 'favorited');
+    const fav = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.favorite);
+    assert(fav.length >= 1, 'saved as a favorite');
+
+    const before = (await (await fetch(`${APP}/api/history`)).json()).length;
+    await type('#asInput', 'delete this prompt');
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'it asks on screen first');
+    await click('#asLog [data-confirm="no"]');
+    await idle();
+    assert((await bot()).includes('kept it'), 'and keeps it when you say no');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, before, 'nothing deleted');
+    await waitFor('!!document.querySelector("#asLog .as-msg.bot")', 'saved');
+    await sleep(300);
+    assert(!(await fs.readFile(path.join(dataDir, 'assistant.json'), 'utf8')).includes('data:image'), 'pictures it saw aren\'t saved to disk');
+    } finally {
+      if (await visible('#assistant')) {
+        await click('#asClear'); // a fresh conversation for the tests after this
+        await click('#asClear');
+        await click('#asClose');
+      }
+    }
+  });
+
   await test('render all takes at once', async () => {
     await click('#varSeg button[data-value="2"]');
     await type('#theme', 'twin lighthouses');
@@ -2270,7 +2325,7 @@ esac
     eq(await value('#theme'), 'from a tag', 'tool calls written as text work too');
 
     await goto(`${APP}/#create`);
-    await click('#askBtn');
+    await waitFor('!document.querySelector("#assistant").hidden', 'left open, it opens again with the app');
     await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 6', 'the conversation is still there after a reload');
     await viewport(390, 844, true);
     await sleep(200);

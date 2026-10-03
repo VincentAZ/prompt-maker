@@ -2024,6 +2024,21 @@ function bumpHistoryBadge(delta) {
   badge.hidden = !n;
 }
 
+// Deletes an entry for good (History's Delete, and the assistant after you confirm). Returns a note if ComfyUI's
+// copies may be out of reach.
+async function deleteEntryNow(entry) {
+  const { left } = await api(`/api/history/${entry.id}`, { method: 'DELETE' });
+  historyDeletes++;
+  state.history = state.history.filter(x => x.id !== entry.id);
+  forgetEntry(entry);
+  forgetSeenImages();
+  bumpHistoryBadge(-1);
+  renderHistoryFilters();
+  if (isView('history')) renderHistory();
+  toast(left ? `🗑️ Deleted. ${left}` : '🗑️ Deleted for good', Boolean(left));
+  return left || null;
+}
+
 // Counts deletes, so a list fetched before one can't bring the deleted card back.
 let historyDeletes = 0;
 
@@ -2157,16 +2172,7 @@ $('#historyList').addEventListener('click', async e => {
       if (state.entry?.id === id) state.entry.favorite = entry.favorite;
       renderHistory();
     } else if (btn.dataset.act === 'delete') {
-      confirmClick(btn, 'Sure?', async () => {
-        const { left } = await api(`/api/history/${id}`, { method: 'DELETE' });
-        historyDeletes++;
-        state.history = state.history.filter(x => x.id !== id);
-        forgetEntry(entry);
-        bumpHistoryBadge(-1);
-        renderHistoryFilters();
-        renderHistory();
-        toast(left ? `🗑️ Deleted. ${left}` : '🗑️ Deleted for good', Boolean(left));
-      });
+      confirmClick(btn, 'Sure?', () => deleteEntryNow(entry));
     } else if (btn.dataset.act === 'open') {
       await openEntry(entry);
     }
@@ -2790,7 +2796,8 @@ $('#draftUse').addEventListener('click', () => { $('#mInstr').value = $('#draftR
 $('#draftAppend').addEventListener('click', () => { $('#mInstr').value = `${$('#mInstr').value.trim()}\n\n${$('#draftResult').value}`; markDirty(); toast('✨ Draft appended. Remember to Save.'); });
 
 window.addEventListener('beforeunload', e => {
-  if (state.dirty || state.settingsDirty || state.busy || state.renderRuns.size || state.cards.some(cardDirty)) e.preventDefault();
+  // (A render isn't a reason: it keeps going in the server, and the page picks it up again.)
+  if (state.dirty || state.settingsDirty || state.busy || state.cards.some(cardDirty)) e.preventDefault();
 });
 
 // ---------- settings ----------
@@ -4964,16 +4971,24 @@ function lbRender() {
   });
   $('[data-lb="delete"]', $('#lbInfo')).addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', async () => {
     try {
-      const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'DELETE' });
-      forgetRender(updated);
-      lb.items = lb.items.filter(x => x.render.id !== render.id);
-      lb.index = Math.min(lb.index, lb.items.length - 1);
-      toast('🗑️ Render deleted');
-      if (lb.items.length) lbRender(); else closeLightbox();
+      await deleteRenderNow(entry, render);
     } catch (err) {
       toast(err.message, true);
     }
   }));
+}
+
+// Deletes one render for good (the lightbox's Delete, and the assistant after you confirm).
+async function deleteRenderNow(entry, render) {
+  const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'DELETE' });
+  forgetRender(updated);
+  forgetSeenImages();
+  if (!$('#lightbox').hidden) {
+    lb.items = lb.items.filter(x => x.render.id !== render.id);
+    lb.index = Math.min(lb.index, lb.items.length - 1);
+    if (lb.items.length) lbRender(); else closeLightbox();
+  }
+  toast('🗑️ Render deleted');
 }
 
 $('#lbClose').addEventListener('click', closeLightbox);
@@ -5559,13 +5574,96 @@ const TOOLS = [
   T('undo_playbook_edit', 'Put back the playbook as it was before your last edit_playbook.'),
   T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
   T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
+  T('look_at', 'See renders (images, or frames of videos) or the input image with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest.', {
+    what: E(['takes', 'lightbox', 'input_image', 'earlier_runs', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; earlier_runs: the runs above the new one; gallery: the newest renders anywhere'),
+    take: I('Only this take'),
+    renders: { type: 'array', items: { type: 'integer' }, description: 'Only these renders of the take (1 = newest)' },
+    limit: I('At most this many pictures, up to 8; default 6'),
+  }),
+  T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
+  T('close_lightbox', 'Close the full-screen lightbox.'),
+  T('favorite_render', 'Mark a render as a favorite (♥, shown in Gallery → Favorites), or unmark it. Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), on: B('true = favorite (default), false = not') }),
+  T('favorite_entry', 'Star (★) the prompt on screen in History, or unstar it.', { on: B('true = star (default), false = unstar') }),
+  T('delete_render', 'Delete a render for good (asks the user to confirm on screen). Default: the one in the lightbox. Only when the user asked.', { take: I('Take number'), render: I('1 = newest render of that take') }),
+  T('delete_entry', 'Delete a prompt from History for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
+  T('cancel_renders', 'Cancel renders in progress (🎨 Rendering): those of one take on screen, or all.', { take: I('Take number on screen; leave out for every render') }),
+  T('set_brain', 'Switch the Brain (the LLM in the top bar) that writes prompts and runs you. A ☁️ cloud Brain asks the user first.', { name: S('Brain name or part of it') }, ['name']),
+  T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
 ];
 
 // What the assistant shows while a tool runs.
 const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
+  look_at: 'Looking…', cancel_renders: 'Cancelling…',
 };
+
+// ---- what the assistant can see ----
+
+const THINKING = ['off', 'low', 'medium', 'high', 'default']; // as the server's THINKING_LEVELS
+const lightboxItem = () => ($('#lightbox').hidden ? null : lb.items[lb.index] || null);
+function describeItem(it) {
+  const renders = (it.entry.variations?.[it.index]?.renders || []).slice().reverse();
+  const n = renders.findIndex(r => r.id === it.render.id) + 1;
+  return { take: it.index + 1, render: n || null, kind: it.file.kind, model: it.entry.modelName, theme: it.entry.theme, seed: it.render.seed ?? null, favorite: Boolean(it.render.favorite) };
+}
+// A take's renders as lightbox items, newest first (render 1 = newest).
+const takeItems = card => takeRenders(card).slice().reverse().flatMap(r => r.files.map(f => ({ entry: state.entry, index: card.index, render: r, file: f })));
+function needRender({ take, render }) {
+  if (take == null && lightboxItem()) return lightboxItem();
+  const card = needCard(take || 1);
+  const it = takeItems(card)[(render || 1) - 1];
+  if (!it) throw new Error(`Take ${take || 1} has no render ${render || 1}.`);
+  return it;
+}
+
+// A picture for the Brain: JPEG, at most 768 px. Videos give two frames (start and middle).
+function loadInto(el, src) {
+  return new Promise((resolve, reject) => {
+    el.onerror = () => reject(new Error('Couldn\'t load it.'));
+    if (el.tagName === 'IMG') { el.onload = () => resolve(el); el.src = src; return; }
+    el.onloadeddata = () => resolve(el);
+    el.muted = true;
+    el.preload = 'auto';
+    el.src = src;
+  });
+}
+function snapshot(el, w, h) {
+  const scale = Math.min(1, 768 / Math.max(w, h));
+  const c = Object.assign(document.createElement('canvas'), { width: Math.round(w * scale) || 1, height: Math.round(h * scale) || 1 });
+  c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.85);
+}
+async function picturesOf(src, kind) {
+  if (kind !== 'video') {
+    const img = await loadInto(new Image(), src);
+    return [snapshot(img, img.naturalWidth, img.naturalHeight)];
+  }
+  const v = await loadInto(document.createElement('video'), src);
+  const out = [];
+  for (const t of [Math.min(0.1, v.duration / 2), v.duration / 2]) {
+    await new Promise(r => { v.onseeked = r; v.currentTime = t; });
+    out.push(snapshot(v, v.videoWidth, v.videoHeight));
+  }
+  v.removeAttribute('src');
+  v.load();
+  return out;
+}
+
+// After a delete, pictures of it the assistant was shown are dropped from the conversation too.
+function forgetSeenImages() {
+  for (const m of as.messages) {
+    if (Array.isArray(m.content)) m.content = m.content.map(p => (p.type === 'image_url' ? { type: 'text', text: '(an image shown earlier)' } : p));
+  }
+}
+
+// Asks the user on screen, in the conversation (for what can't be undone).
+function confirmInChat(question, yes) {
+  return new Promise(resolve => {
+    as.confirm = { question, yes, resolve };
+    renderAssistantLog();
+  });
+}
 
 function findModel(q) {
   if (!q) return currentModel();
@@ -5614,7 +5712,11 @@ function assistantState() {
     batch_runs: pickedBatches().map(b => b.name), // what Generate runs: none, one batch, or all in order
     chain: state.chain.steps.length ? state.chain.steps.map(s => ({ model: modelById(s.modelId)?.name, use: s.use, whatHappens: s.direction, gate: s.gate, takes: s.takes })) : null,
     chainRun: state.run ? { status: state.run.status, steps: state.run.entries.length } : null,
-    takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, start: $('.prompt-text', c.el).value.slice(0, 140) })) : [],
+    takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, favorites: takeRenders(c).filter(r => r.favorite).length, text: $('.prompt-text', c.el).value.slice(0, 1500) })) : [],
+    lightbox: lightboxItem() ? describeItem(lightboxItem()) : null, // what the user is looking at, full screen
+    earlier_runs: state.prev.filter(e => e.id !== state.entry?.id).map(e => ({ theme: e.theme, model: e.modelName, renders: e.variations.reduce((n, v) => n + (v.renders?.length || 0), 0) })),
+    rendering_now: rendersNow.map(j => ({ theme: j.theme, model: j.modelName, take: j.index + 1, left: j.count - j.finished, stage: j.stage, pct: j.pct })),
+    settings: { adult_content: Boolean(state.settings?.adultContent), thinking: state.settings?.thinking },
     busy: state.busy || state.chainActive,
   };
 }
@@ -5639,6 +5741,122 @@ async function savePlaybook(model) {
 }
 
 const TOOL_IMPL = {
+  look_at: async ({ what = 'takes', take, renders, limit }) => {
+    const llm = selectedLlm();
+    if (llm && llm.vision === false) throw new Error(`${llm.name} can't see images. Switch the Brain (top bar) to a 👁 vision model, then ask again.`);
+    const max = clampInt(limit ?? 6, 1, 8);
+    let items = [];
+    if (what === 'lightbox') {
+      if (!lightboxItem()) throw new Error('Nothing is open in the lightbox.');
+      items = [{ it: lightboxItem(), label: 'the render open in the lightbox' }];
+    } else if (what === 'input_image') {
+      if (!state.image) throw new Error('There\'s no image in step 3.');
+      const pics = await picturesOf(state.image.dataUrl || `/images/${encodeURIComponent(state.image.file)}`, 'image');
+      return { summary: 'Looked at the input image', pictures: ['the input image (step 3)'], _images: pics.map(url => ({ label: 'the input image', url })) };
+    } else if (what === 'earlier_runs') {
+      items = state.prev.filter(e => e.id !== state.entry?.id).flatMap((e, run) => e.variations.flatMap((v, index) => (v.renders || []).slice().reverse().flatMap(r => r.files.map(f => ({ it: { entry: e, index, render: r, file: f }, label: `earlier run ${run + 1} (“${(e.theme || 'from an image').slice(0, 40)}”), take ${index + 1}` })))));
+    } else if (what === 'gallery') {
+      if (!state.history.length) state.history = await api('/api/history');
+      items = galleryItems().map(it => ({ it, label: `“${(it.entry.theme || 'from an image').slice(0, 40)}” (${it.entry.modelName})` }));
+    } else {
+      const cards = take ? [needCard(take)] : state.cards.filter(c => !c.interrupted);
+      for (const card of cards) {
+        takeItems(card).forEach((it, i) => { if (!renders?.length || renders.includes(i + 1)) items.push({ it, label: `take ${card.index + 1}, render ${i + 1}` }); });
+      }
+      if (!items.length) throw new Error(take ? `Take ${take} has no renders yet.` : 'There are no renders on screen yet. Render first.');
+    }
+    const images = [];
+    const seen = [];
+    for (const { it, label } of items) {
+      if (images.length >= max || it.file.kind === 'audio') continue;
+      const pics = await picturesOf(`/renders/${encodeURIComponent(it.file.file)}`, it.file.kind).catch(() => []);
+      const name = `${label}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}${it.render.favorite ? ', ♥ favorite' : ''}${it.file.kind === 'video' ? ' (video: its start and middle)' : ''}`;
+      pics.slice(0, max - images.length).forEach(url => images.push({ label: name, url }));
+      seen.push(name);
+    }
+    if (!images.length) throw new Error('Couldn\'t load any of those.');
+    return { summary: `Looked at ${seen.length === 1 ? seen[0] : `${seen.length} renders`}`, pictures: seen, ...(items.length > seen.length ? { not_shown: items.length - seen.length } : {}), _images: images };
+  },
+  show_render: ({ take, render }) => {
+    const card = needCard(take || 1);
+    const items = takeItems(card);
+    const n = (render || 1) - 1;
+    if (!items[n]) throw new Error(`Take ${take || 1} has no render ${render || 1}.`);
+    showView('create');
+    openLightbox(items, n);
+    return { summary: `Showing take ${card.index + 1}, render ${n + 1}` };
+  },
+  close_lightbox: () => { if (!$('#lightbox').hidden) closeLightbox(); return { summary: 'Closed the lightbox' }; },
+  favorite_render: async ({ take, render, on }) => {
+    const it = needRender({ take, render });
+    const want = on !== false;
+    const updated = await api(`/api/history/${it.entry.id}/renders/${it.render.id}`, { method: 'PATCH', body: { favorite: want } });
+    forgetRender(updated);
+    if (lightboxItem()?.render.id === it.render.id) { lightboxItem().render = updated.variations[it.index].renders.find(r => r.id === it.render.id) || it.render; lbRender(); }
+    return { summary: want ? '♥ Marked as a favorite' : 'No longer a favorite' };
+  },
+  favorite_entry: async ({ on }) => {
+    if (!state.entry?.id) throw new Error('There\'s no prompt on screen.');
+    const want = on !== false;
+    const updated = await api(`/api/history/${state.entry.id}`, { method: 'PATCH', body: { favorite: want } });
+    state.entry.favorite = updated.favorite;
+    const h = state.history.find(x => x.id === state.entry.id);
+    if (h) h.favorite = updated.favorite;
+    if (isView('history')) renderHistory();
+    return { summary: want ? '★ Starred in History' : 'Unstarred' };
+  },
+  delete_render: async ({ take, render }) => {
+    const it = needRender({ take, render });
+    const d = describeItem(it);
+    if (!(await confirmInChat(`Delete take ${d.take}'s render ${d.render} for good? Its file goes, here and in ComfyUI.`, '🗑 Delete it'))) return { summary: 'Kept it: the user said no', declined: true };
+    await deleteRenderNow(it.entry, it.render);
+    return { summary: `Deleted take ${d.take}'s render ${d.render}` };
+  },
+  delete_entry: async ({ query }) => {
+    let entry = state.entry?.id ? state.history.find(e => e.id === state.entry.id) || state.entry : null;
+    if (query) {
+      const all = await api('/api/history');
+      const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
+      entry = all.find(x => [x.theme, x.modelName, ...x.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase().includes(words.join(' '))) || all.find(x => { const t = [x.theme, x.modelName, ...x.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase(); return words.every(w => t.includes(w)); });
+    }
+    if (!entry) throw new Error(query ? `Nothing in History matches “${query}”.` : 'There\'s no prompt on screen to delete.');
+    notBusy();
+    const renders = entry.variations.reduce((n, v) => n + (v.renders?.length || 0), 0);
+    if (!(await confirmInChat(`Delete “${entry.theme || 'from an image'}” (${entry.modelName}) for good? Its prompts${renders ? ` and ${renders} render${renders > 1 ? 's' : ''}` : ''} go, here and in ComfyUI.`, '🗑 Delete for good'))) return { summary: 'Kept it: the user said no', declined: true };
+    const left = await deleteEntryNow(entry);
+    return { summary: `Deleted “${entry.theme || 'from an image'}”${left ? `. ${left}` : ''}` };
+  },
+  cancel_renders: async ({ take }) => {
+    const jobs = (await api('/api/renders')).filter(j => take == null || (j.historyId === state.entry?.id && j.index === take - 1));
+    if (!jobs.length) throw new Error(take ? `Take ${take} isn't rendering.` : 'Nothing is rendering.');
+    await Promise.all(jobs.map(j => api(`/api/runs/${j.runId}/cancel`, { method: 'POST' })));
+    pollRenders();
+    const n = jobs.reduce((k, j) => k + j.count - j.finished, 0);
+    return { summary: `Cancelled ${n} render${n === 1 ? '' : 's'}` };
+  },
+  set_brain: async ({ name }) => {
+    const s = squash(name);
+    const m = state.llms.find(x => squash(x.name) === s || x.id === name) || state.llms.find(x => squash(x.name).includes(s) || squash(x.id).includes(s));
+    if (!m) throw new Error(`No Brain like “${name}”. The Brains are: ${state.llms.map(x => x.name).slice(0, 20).join(', ')}.`);
+    await setBrain(m.id);
+    if (state.settings?.llmModel !== m.id) throw new Error(m.cloud ? 'The user didn\'t allow that cloud Brain.' : `Couldn't switch to ${m.name}.`);
+    return { summary: `Brain → ${m.cloud ? '☁️ ' : ''}${m.name}`, vision: m.vision !== false };
+  },
+  change_setting: async ({ setting, value }) => {
+    const v = String(value ?? '').trim().toLowerCase();
+    const onOff = () => { if (['on', 'true', 'yes', '1'].includes(v)) return true; if (['off', 'false', 'no', '0'].includes(v)) return false; throw new Error(`Say on or off for ${setting}.`); };
+    const num = (lo, hi) => { const n = Number(v); if (!Number.isFinite(n) || n < lo || n > hi) throw new Error(`${setting} goes from ${lo} to ${hi}.`); return n; };
+    const body = setting === 'adult_content' ? { adultContent: onOff() }
+      : setting === 'comfy_cleanup' ? { comfyCleanup: onOff() }
+      : setting === 'top_p' ? { topP: num(0, 1) }
+      : setting === 'max_tokens' ? { maxTokens: Math.round(num(256, 32768)) }
+      : setting === 'thinking' ? (THINKING.includes(v) ? { thinking: v } : (() => { throw new Error(`Thinking is one of: ${THINKING.join(', ')}.`); })())
+      : null;
+    if (!body) throw new Error(`I can't change “${setting}”.`);
+    state.settings = await api('/api/settings', { method: 'PUT', body });
+    if (isView('settings') && !state.settingsDirty) renderSettings();
+    return { summary: `${setting.replace(/_/g, ' ')} → ${Object.values(body)[0] === true ? 'on' : Object.values(body)[0] === false ? 'off' : Object.values(body)[0]}` };
+  },
   read_playbook: async ({ model }) => {
     const m = await api(`/api/models/${needModel(model).id}`);
     return { summary: `Read the ${m.name} playbook`, name: m.name, kind: m.kind, description: m.description, instructions: m.instructions, aspect_ratios: m.aspectRatios, resolutions: m.resolutions, durations: m.durations, length_guide: m.lengthGuide, examples: m.examples };
@@ -5981,10 +6199,20 @@ async function askAssistant(text) {
       as.messages.push({ role: 'assistant', content: done.text || '', ...(calls.length ? { tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) } : {}) });
       renderAssistantLog();
       if (!calls.length) break;
+      const seen = [];
       for (const c of calls) {
         if (as.stopped) break;
-        const result = await runTool(c);
+        const { _images, ...result } = await runTool(c);
+        if (_images) seen.push(..._images);
         as.messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(result) });
+        renderAssistantLog();
+      }
+      // What look_at showed goes to the Brain as pictures (tool results can only be text).
+      if (seen.length && !as.stopped) {
+        as.messages.push({ role: 'user', auto: true, content: [
+          { type: 'text', text: `(Prompt Maker) What you asked to see, in order: ${seen.map((x, i) => `${i + 1}) ${x.label}`).join('; ')}.` },
+          ...seen.map(x => ({ type: 'image_url', image_url: { url: x.url } })),
+        ] });
         renderAssistantLog();
       }
     }
@@ -6001,6 +6229,7 @@ async function askAssistant(text) {
 
 function stopAssistant() {
   as.stopped = true;
+  if (as.confirm) { as.confirm.resolve(false); as.confirm = null; }
   as.controller?.abort();
   if (state.busy || state.chainActive) stop();
 }
@@ -6021,6 +6250,7 @@ function mdLite(text) {
 }
 
 const STARTERS = [
+  ['👁 Which render is best?', 'Which of these renders do you like best, and why?', true],
   ['🎬 Set up a shot', 'Set up a 16:9 shot of '],
   ['🧬 Add a LoRA', 'Add the  LoRA at 0.6'],
   ['📽️ Animate my last still', 'Turn my newest still into a video'],
@@ -6033,7 +6263,10 @@ function renderAssistantLog() {
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
   const items = [];
   for (const m of as.messages) {
-    if (m.role === 'user') items.push(`<div class="as-msg me">${mdLite(m.content)}</div>`);
+    if (m.role === 'user' && m.auto) {
+      const pics = Array.isArray(m.content) ? m.content.filter(p => p.type === 'image_url') : [];
+      items.push(`<div class="as-act as-seen">👁 ${pics.length ? pics.map(p => `<img src="${esc(p.image_url.url)}" alt="">`).join('') : 'Looked at the pictures'}</div>`);
+    } else if (m.role === 'user') items.push(`<div class="as-msg me">${mdLite(m.content)}</div>`);
     else if (m.role === 'assistant') {
       if (m.note) items.push(`<div class="as-act bad">${esc(m.note)}</div>`);
       else if (m.content) items.push(`<div class="as-msg bot">${mdLite(m.content)}</div>`);
@@ -6044,10 +6277,11 @@ function renderAssistantLog() {
     }
   }
   if (!as.messages.length) {
-    items.push(`<div class="as-hello"><b>Hi! I know my way around Prompt Maker.</b><p>Ask how something works, or tell me what to make: “set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them”.</p>
+    items.push(`<div class="as-hello"><b>Hi! I'm your creative partner.</b><p>Ask what I think (“which render do you like better?”, “tower or dungeon?”, “what aspect suits this?”), or tell me what to make and I'll run the app: “set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, then render them”.</p>
       <div class="as-starters">${STARTERS.map(([label, text, send], i) => `<button type="button" class="chip-btn" data-starter="${i}">${esc(label)}</button>`).join('')}</div></div>`);
   }
-  if (as.running) items.push(`<div class="as-act live">⏳ ${esc(as.running)}</div>`);
+  if (as.confirm) items.push(`<div class="as-confirm" role="group" aria-label="Confirm"><p>${esc(as.confirm.question)}</p><div class="row"><button type="button" class="btn small danger" data-confirm="yes">${esc(as.confirm.yes)}</button><button type="button" class="btn small" data-confirm="no">Keep it</button></div></div>`);
+  if (as.running && !as.confirm) items.push(`<div class="as-act live">⏳ ${esc(as.running)}</div>`);
   if (as.live) items.push('<div class="as-msg bot live" id="asLive"></div>');
   log.innerHTML = items.join('');
   updateLiveBubble();
@@ -6068,20 +6302,22 @@ function syncAssistantBusy() {
   $('#asBrain').textContent = selectedLlm()?.name ? `· ${selectedLlm().name}` : '';
 }
 
-async function openAssistant(open = $('#assistant').hidden) {
+// The assistant is on by default: its panel opens with the app (on a wide enough screen) and stays as you left it.
+async function openAssistant(open = $('#assistant').hidden, { focus = true } = {}) {
   const panel = $('#assistant');
   panel.hidden = !open;
+  saved.set('assistantOpen', open);
   document.body.classList.toggle('as-open', open);
   $('#askBtn').setAttribute('aria-expanded', open);
   document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`);
-  if (!open) { $('#askBtn').focus(); return; }
+  if (!open) { if (focus) $('#askBtn').focus(); return; }
   syncAssistantBusy();
   if (!as.loaded) {
     as.loaded = true;
     as.messages = (await api('/api/assistant/chat').catch(() => ({ messages: [] }))).messages;
   }
   renderAssistantLog();
-  $('#asInput').focus();
+  if (focus) $('#asInput').focus();
 }
 
 function sendAssistant() {
@@ -6106,6 +6342,13 @@ $('#asInput').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAssistant(); }
 });
 $('#asLog').addEventListener('click', e => {
+  const c = e.target.closest('[data-confirm]');
+  if (c && as.confirm) {
+    const { resolve } = as.confirm;
+    as.confirm = null;
+    resolve(c.dataset.confirm === 'yes');
+    return renderAssistantLog();
+  }
   const b = e.target.closest('[data-starter]');
   if (!b) return;
   const [, text, send] = STARTERS[Number(b.dataset.starter)];
@@ -6255,6 +6498,7 @@ async function loadModels() {
   if (state.workflows.length) await loadComfyStatus();
   await resumeAfterReload();
   pollRenders();
+  if (saved.get('assistantOpen', true) && innerWidth >= 1100) await openAssistant(true, { focus: false });
   document.documentElement.dataset.ready = '1';
 })();
 

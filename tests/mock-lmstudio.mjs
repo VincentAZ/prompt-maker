@@ -40,7 +40,9 @@ function cannedPrompt(body) {
 // tool calls to make, or the reply once the tool results are back.
 function assistantTurn(body) {
   const msgs = body.messages;
-  const at = msgs.map(m => m.role).lastIndexOf('user');
+  // The user's last words (pictures the app sends after look_at come as user messages with image parts).
+  const at = msgs.map(m => (m.role === 'user' && !Array.isArray(m.content) ? 'said' : m.role)).lastIndexOf('said');
+  const sawPictures = msgs.slice(at + 1).some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url' && /^data:image\/jpeg;base64,/.test(p.image_url.url)));
   const said = textOf(msgs[at].content).toLowerCase();
   const round = msgs.slice(at + 1).filter(m => m.role === 'assistant').length;
   const results = msgs.slice(at + 1).filter(m => m.role === 'tool').map(m => m.content).join('\n');
@@ -51,6 +53,9 @@ function assistantTurn(body) {
     : /bogus/.test(said) ? [{ calls: [['set_model', { model: 'nonexistent' }]] }, { text: results.includes('"error"') ? 'There\'s no model by that name.' : 'Done.' }]
     : /fix the playbook/.test(said) ? [{ calls: [['edit_playbook', { model: 'krea', description: 'Edited by the assistant', resolutions: ['1024×1024', '1536×1024'] }]] }, { text: results.includes('Saved the') ? 'Saved it. Say undo to put it back.' : 'That failed.' }]
     : /\bundo\b/.test(said) ? [{ calls: [['undo_playbook_edit', {}]] }, { text: results.includes('back as it was') ? 'Put it back.' : 'That failed.' }]
+    : /like best/.test(said) ? [{ calls: [['look_at', {}]] }, { text: sawPictures ? 'I\'d pick **take 1, render 1**: the light is softer and the subject reads better.' : 'I couldn\'t see them.' }]
+    : /favorite the first/.test(said) ? [{ calls: [['favorite_render', { take: 1, render: 1 }]] }, { text: results.includes('Marked as a favorite') ? 'Done, it\'s a favorite.' : 'That failed.' }]
+    : /delete this prompt/.test(said) ? [{ calls: [['delete_entry', {}]] }, { text: results.includes('"declined":true') ? 'Okay, I kept it.' : results.includes('Deleted') ? 'Deleted it for good.' : 'That failed.' }]
     : /tag fallback/.test(said) ? [{ text: '<tool_call>{"name": "set_theme", "arguments": {"text": "from a tag"}}</tool_call>' }, { text: 'Theme set.' }]
     : [{ text: 'I can help with that.' }];
   return script[Math.min(round, script.length - 1)];

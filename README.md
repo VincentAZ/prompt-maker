@@ -203,16 +203,18 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 
 ### ✦ The assistant
 
-Click **✦ Ask** in the top bar (or press **Ctrl+K**) on any page. The assistant runs on your **Brain** (the same LM Studio model, so it stays offline) and knows its way around the app:
+Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
-- **Ask how things work.** *"Why is my render ignoring the image?"* It looks up the answer in this guide.
+- **Ask what it thinks.** *"Which of these renders do you like better?"*, *"Should the princess be in the high tower or the dungeon?"*, *"Based on this prompt, what aspect ratio should it be?"* It gives a real opinion with a reason, and offers to act on it.
+- **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, earlier runs and the Gallery. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
+- **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, earlier runs, renders in progress.
 - **Tell it what to make.** *"Set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them."*
-  - It works the same controls you would: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, chains, History.
+  - It runs the app with the same controls you have: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, chains, History, playbooks, favorites, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
   - Each step shows in the chat ("✓ Model → Krea 2 RAW") and on screen.
   - **■ Stop** or **Esc** stops it.
-- **It never deletes anything or changes Settings.** It tells you where to do that yourself.
+- **Deleting asks you first.** It can delete a prompt or a render when you ask, but only after you click **🗑 Delete** in the chat; **Keep it** says no. A ☁️ cloud Brain still asks you before it's used.
 
-The conversation is kept in your data folder; 🧹 clears it. It works best with a model that supports tool calling (Qwen 3/3.5/3.6, Hermes, Gemma 3+, Llama 3.1+).
+The conversation is kept in your data folder; 🧹 clears it. It works best with a model that supports tool calling and vision (Qwen 3/3.5/3.6 VL, Gemma 3+, Llama 3.2 Vision).
 
 ### Refine and versions
 

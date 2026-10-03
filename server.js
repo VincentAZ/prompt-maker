@@ -429,8 +429,9 @@ async function draftGuide(req, res) {
 async function assistantChat(req, res) {
   const body = await readBody(req);
   const settings = await store.getSettings();
-  const llm = await prepareLlm(settings, body.llmModel, false);
-  const messages = [{ role: 'system', content: assistant.systemPrompt(body.state) }, ...assistant.cleanMessages(body.messages)];
+  const chat = assistant.cleanMessages(body.messages);
+  const llm = await prepareLlm(settings, body.llmModel, assistant.hasImages(chat)); // looking at images needs a 👁 Brain
+  const messages = [{ role: 'system', content: assistant.systemPrompt(body.state) }, ...chat];
   const tools = assistant.cleanTools(body.tools);
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
