@@ -279,6 +279,17 @@ main { padding: 24px; max-width: 1560px; margin: 0 auto; }
 .dz-sub { color: var(--muted); font-size: 12.5px; }
 .dz-preview { position: relative; display: flex; justify-content: center; background: #000; }
 .dz-preview img { display: block; max-width: 100%; max-height: 280px; object-fit: contain; }
+.mz-preview video { display: block; max-width: 100%; max-height: 280px; object-fit: contain; }
+.zone-label { margin: 0 0 6px; font-size: 13px; }
+.wf-templates { margin-bottom: 12px; }
+.wf-tpl-head { margin: 0 0 6px; }
+.wf-tpl-own { margin: 10px 0 6px; }
+.wf-saved .ws-tpl { flex: 1; min-width: 0; font-weight: 650; }
+.wf-saved .ws-note { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.zone-label .muted { font-size: 12px; }
+#motionBlock { margin-top: 14px; }
+#motionBlock .hint { margin-top: 6px; }
+.ip-tile video { display: block; width: 100%; height: 100%; object-fit: cover; }
 .dz-zoom { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; }
 .dz-actions { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; }
 .dz-source { position: absolute; left: 10px; top: 10px; max-width: calc(100% - 20px); padding: 4px 11px; border-radius: 999px; background: rgb(10 9 16 / 78%); backdrop-filter: blur(8px); color: #fff; font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

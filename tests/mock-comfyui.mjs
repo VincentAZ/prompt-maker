@@ -31,6 +31,85 @@ export const OBJECT_INFO = {
   SaveImage: { input: { required: { images: ['IMAGE'], filename_prefix: ['STRING', { default: 'ComfyUI' }] } }, input_order: { required: ['images', 'filename_prefix'] }, output: [], output_node: true, display_name: 'Save Image' },
   LoraLoaderModelOnly: { input: { required: { model: ['MODEL'], lora_name: [['krea2/baked_in.safetensors']], strength_model: ['FLOAT', { default: 1, min: -100, max: 100 }] } }, input_order: { required: ['model', 'lora_name', 'strength_model'] }, output: ['MODEL'], output_node: false, display_name: 'LoraLoaderModelOnly' },
   LoadImage: { input: { required: { image: [['example.png'], { image_upload: true }] } }, input_order: { required: ['image'] }, output: ['IMAGE', 'MASK'], output_node: false, display_name: 'Load Image' },
+  LoadVideo: { input: { required: { file: ['COMBO', { options: [], video_upload: true }] } }, input_order: { required: ['file'] }, output: ['VIDEO'], output_node: false, display_name: 'Load Video' },
+  GetVideoComponents: { input: { required: { video: ['VIDEO'] } }, input_order: { required: ['video'] }, output: ['IMAGE', 'AUDIO', 'FLOAT'], output_node: false, display_name: 'Get Video Components' },
+  WanAnimate2ToVideo: {
+    input: {
+      required: { positive: ['CONDITIONING'], negative: ['CONDITIONING'], vae: ['VAE'], width: ['INT', { default: 832 }], height: ['INT', { default: 480 }], length: ['INT', { default: 81 }], batch_size: ['INT', { default: 1 }], video_frame_offset: ['INT', { default: 0 }], pose_strength: ['FLOAT', { default: 1 }], pose_start_percent: ['FLOAT', { default: 0 }], pose_end_percent: ['FLOAT', { default: 1 }], reference_image_strength: ['FLOAT', { default: 1 }] },
+      optional: { reference_image: ['IMAGE'], pose_video: ['IMAGE'], positive_pose: ['CONDITIONING'] },
+    },
+    input_order: { required: ['positive', 'negative', 'vae', 'width', 'height', 'length', 'batch_size', 'video_frame_offset', 'pose_strength', 'pose_start_percent', 'pose_end_percent', 'reference_image_strength'], optional: ['reference_image', 'pose_video', 'positive_pose'] },
+    output: ['CONDITIONING', 'CONDITIONING', 'LATENT', 'INT', 'INT', 'INT'], output_node: false, display_name: 'WanAnimate2ToVideo',
+  },
+};
+
+// A small stand-in for ComfyUI's "video_wan_animate2" template, with its two quirks: the subgraph node lists only
+// some of its widget inputs (values follow the subgraph's input order), and one input (pose_start_percent) feeds
+// both ends of the pose window.
+export const WAN_TEMPLATE = {
+  id: 'mock-wan-animate2', revision: 0, last_node_id: 20, last_link_id: 4, version: 0.4,
+  nodes: [
+    { id: 1, type: 'LoadImage', title: 'Load Image (Reference Image)', mode: 0, inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [1] }], widgets_values: ['pink_hair_ref.png', 'image'] },
+    { id: 2, type: 'LoadVideo', title: 'Load Video (Pose Video)', mode: 0, inputs: [], outputs: [{ name: 'VIDEO', type: 'VIDEO', links: [2] }], widgets_values: ['street_dance_drive.mp4', 'image'] },
+    {
+      id: 10, type: 'sg-wan', title: 'Motion Transfer (Wan Animate 2)', mode: 0,
+      inputs: [
+        { name: 'text_1', type: 'STRING', widget: { name: 'text_1' }, link: null },
+        { name: 'input', type: 'IMAGE', link: 1 },
+        { name: 'video', type: 'VIDEO', link: 2 },
+      ],
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [3] }],
+      widgets_values: ['Character Description: a placeholder\nBackground description: a white room', 'A girl doing street dance, background stationary', 1, 0],
+    },
+    { id: 20, type: 'SaveImage', mode: 0, inputs: [{ name: 'images', type: 'IMAGE', link: 3 }], outputs: [], widgets_values: ['video/ComfyUI'] },
+  ],
+  links: [[1, 1, 0, 10, 1, 'IMAGE'], [2, 2, 0, 10, 2, 'VIDEO'], [3, 10, 0, 20, 0, 'IMAGE']],
+  definitions: {
+    subgraphs: [{
+      id: 'sg-wan', name: 'Motion Transfer (Wan Animate 2)',
+      inputNode: { id: -10 }, outputNode: { id: -20 },
+      inputs: [
+        { name: 'text_1', type: 'STRING', linkIds: [11] },
+        { name: 'text_2', type: 'STRING', linkIds: [12] },
+        { name: 'input', type: 'IMAGE', linkIds: [13] },
+        { name: 'video', type: 'VIDEO', linkIds: [14] },
+        { name: 'pose_strength', type: 'FLOAT', linkIds: [15] },
+        { name: 'pose_start_percent', type: 'FLOAT', linkIds: [16, 17] },
+      ],
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', linkIds: [30] }],
+      nodes: [
+        { id: 101, type: 'CheckpointLoaderSimple', mode: 0, inputs: [], outputs: [{ name: 'MODEL', type: 'MODEL', links: [20] }, { name: 'CLIP', type: 'CLIP', links: [21, 22, 23] }, { name: 'VAE', type: 'VAE', links: [24, 29] }], widgets_values: ['mock_model.safetensors'] },
+        { id: 102, type: 'CLIPTextEncode', title: 'CLIP Text Encode (Positive Prompt)', mode: 0, inputs: [{ name: 'clip', type: 'CLIP', link: 21 }, { name: 'text', type: 'STRING', widget: { name: 'text' }, link: 11 }], outputs: [{ name: 'CONDITIONING', type: 'CONDITIONING', links: [25] }], widgets_values: ['x'] },
+        { id: 103, type: 'CLIPTextEncode', mode: 0, inputs: [{ name: 'clip', type: 'CLIP', link: 22 }, { name: 'text', type: 'STRING', widget: { name: 'text' }, link: 12 }], outputs: [{ name: 'CONDITIONING', type: 'CONDITIONING', links: [26] }], widgets_values: ['x'] },
+        { id: 104, type: 'CLIPTextEncode', title: 'CLIP Text Encode (Negative Prompt)', mode: 0, inputs: [{ name: 'clip', type: 'CLIP', link: 23 }], outputs: [{ name: 'CONDITIONING', type: 'CONDITIONING', links: [27] }], widgets_values: ['blurry, low quality, watermark, worst quality'] },
+        { id: 105, type: 'GetVideoComponents', mode: 0, inputs: [{ name: 'video', type: 'VIDEO', link: 14 }], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [28] }] },
+        {
+          id: 106, type: 'WanAnimate2ToVideo', mode: 0,
+          inputs: [
+            { name: 'positive', type: 'CONDITIONING', link: 25 }, { name: 'negative', type: 'CONDITIONING', link: 27 }, { name: 'vae', type: 'VAE', link: 24 },
+            { name: 'reference_image', type: 'IMAGE', link: 13 }, { name: 'pose_video', type: 'IMAGE', link: 28 }, { name: 'positive_pose', type: 'CONDITIONING', link: 26 },
+            { name: 'width', type: 'INT', widget: { name: 'width' }, link: null }, { name: 'height', type: 'INT', widget: { name: 'height' }, link: null },
+            { name: 'length', type: 'INT', widget: { name: 'length' }, link: null }, { name: 'batch_size', type: 'INT', widget: { name: 'batch_size' }, link: null },
+            { name: 'video_frame_offset', type: 'INT', widget: { name: 'video_frame_offset' }, link: null },
+            { name: 'pose_strength', type: 'FLOAT', widget: { name: 'pose_strength' }, link: 15 }, { name: 'pose_start_percent', type: 'FLOAT', widget: { name: 'pose_start_percent' }, link: 16 },
+            { name: 'pose_end_percent', type: 'FLOAT', widget: { name: 'pose_end_percent' }, link: 17 }, { name: 'reference_image_strength', type: 'FLOAT', widget: { name: 'reference_image_strength' }, link: null },
+          ],
+          outputs: [{ name: 'positive', type: 'CONDITIONING', links: [31] }, { name: 'negative', type: 'CONDITIONING', links: [32] }, { name: 'latent', type: 'LATENT', links: [33] }],
+          widgets_values: [832, 480, 81, 1, 0, 1, 0, 1, 1],
+        },
+        { id: 107, type: 'KSampler', mode: 0, inputs: [{ name: 'model', type: 'MODEL', link: 20 }, { name: 'positive', type: 'CONDITIONING', link: 31 }, { name: 'negative', type: 'CONDITIONING', link: 32 }, { name: 'latent_image', type: 'LATENT', link: 33 }], outputs: [{ name: 'LATENT', type: 'LATENT', links: [34] }], widgets_values: [42, 'randomize', 6, 1, 'euler', 'normal', 1] },
+        { id: 108, type: 'VAEDecode', mode: 0, inputs: [{ name: 'samples', type: 'LATENT', link: 34 }, { name: 'vae', type: 'VAE', link: 29 }], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [30] }] },
+      ],
+      links: [
+        [11, -10, 0, 102, 1, 'STRING'], [12, -10, 1, 103, 1, 'STRING'], [13, -10, 2, 106, 3, 'IMAGE'], [14, -10, 3, 105, 0, 'VIDEO'],
+        [15, -10, 4, 106, 11, 'FLOAT'], [16, -10, 5, 106, 12, 'FLOAT'], [17, -10, 5, 106, 13, 'FLOAT'],
+        [20, 101, 0, 107, 0, 'MODEL'], [21, 101, 1, 102, 0, 'CLIP'], [22, 101, 1, 103, 0, 'CLIP'], [23, 101, 1, 104, 0, 'CLIP'], [24, 101, 2, 106, 2, 'VAE'], [29, 101, 2, 108, 1, 'VAE'],
+        [25, 102, 0, 106, 0, 'CONDITIONING'], [26, 103, 0, 106, 5, 'CONDITIONING'], [27, 104, 0, 106, 1, 'CONDITIONING'], [28, 105, 0, 106, 4, 'IMAGE'],
+        [31, 106, 0, 107, 1, 'CONDITIONING'], [32, 106, 1, 107, 2, 'CONDITIONING'], [33, 106, 2, 107, 3, 'LATENT'], [34, 107, 0, 108, 0, 'LATENT'],
+        [30, 108, 0, -20, 0, 'IMAGE'],
+      ],
+    }],
+  },
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -112,6 +191,7 @@ export function startMockComfy(port, { png, root = null }) {
     if (p === '/models/loras') return json(200, ['LTX_2.3/motion_boost.safetensors', 'krea2/baked_in.safetensors', 'krea2/detail_slider.safetensors', 'krea2/film_grain.safetensors', 'loose_file.safetensors']);
     if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: saved.modified }, { path: '.index.json', size: 10, modified: 0 }]);
     if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, saved.json);
+    if (p === '/templates/video_wan_animate2.json') return json(200, WAN_TEMPLATE);
     if (p === '/upload/image' && req.method === 'POST') {
       const name = /filename="([^"]+)"/.exec(raw.toString('latin1'))?.[1] || 'upload.png';
       uploads.push(name);

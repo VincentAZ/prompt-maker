@@ -1,0 +1,61 @@
+{
+  "id": "wan-animate-2",
+  "name": "Wan Animate 2",
+  "kind": "video",
+  "description": "Wan-AI's character animation model: your character image performs the moves of a motion video, in a new setting written in text.",
+  "color": "#ffb347",
+  "instructions": "## What Wan Animate 2 is\n- Wan-AI's end-to-end character animation model (August 2026, 14B, Wan 2.2 family), native in ComfyUI. It takes three things: a character image (who), a motion video (what moves) and this prompt (what the character looks like, where they are, and where the camera is).\n- It reads the motion video's frames directly (no pose skeletons) and copies their movement onto the character. Identity comes from the image, motion from the video, and the background, light and viewpoint come only from the text.\n- The prompt is an objective caption. Its text encoder (UMT5) rewards literal, specific descriptions of looks and places; it ignores or misreads story, emotion and hype.\n- It makes no sound. The ComfyUI templates keep the motion video's own audio, so never describe sound, music or dialogue.\n\n## Prompt format\n- Write exactly three labeled lines, in this order, as plain prose. No markdown, lists, quotes or extra lines:\n  `Character appearance description: ...`\n  `Background description: ...`\n  `Motion: ...`\n- The first two lines are the main prompt, in the format the model was trained on. Prompt Maker sends the Motion line on its own to the model's pose-video branch, so it must start with exactly `Motion:`.\n\n## Character appearance description\n- Looks only: what the character is (person, animal, toy, robot, cartoon), age range and build, face, hair (color, length, style), each piece of clothing with color, material and pattern, shoes, accessories, and distinguishing marks (glasses, tattoos, scars, prosthetics). End with the medium or style: photorealistic, 3D animation, anime, vinyl toy, claymation, oil painting.\n- Name at least two distinguishing features, so the same character reads the same in every take and every clip.\n- No actions, poses, gestures, facial expressions or emotions, and no motion verbs (walks, dances, raises). No opinions (beautiful, cool, stunning).\n- Never describe the person in the motion video: the character from the image replaces them.\n\n## Background description\n- The output's background comes only from this line. The character image's background and the motion video's background are both dropped. A vague or missing background gives a flat, gray result, so always write a specific one.\n- Describe the location, what is behind and around the character, time of day, the light (source, direction, softness, color), weather or atmosphere, the palette and the photographic or artistic style. Keep one consistent light logic.\n- If the theme names no place, pick one that suits the character and the motion (a rooftop at dusk for a street dancer, a clean studio backdrop for a product mascot).\n- Keep the background still: no crowds, traffic or moving objects that would compete with the motion.\n\n## Viewpoint (camera)\n- Wan Animate 2 decouples the camera from the motion video, and the viewpoint is set in text. End the Background line with one sentence for framing and angle: full-body, knee-up or waist-up framing; eye-level, low or high angle; front, three-quarter or side view. For example: \"Full-body framing from a low angle in a three-quarter view from the left.\"\n- Match the framing to the motion video: full-body moves (dance, sports, walking) need full-body framing. A close-up hides what the motion does.\n- Keep the camera still unless the theme asks for a move, then at most one slow move (\"the camera slowly orbits to the right\").\n\n## Motion\n- One sentence of 10-30 words: a short label for the subject (from the character, not the video's performer) plus the movement seen in the motion video, its kind, rhythm and energy, ending with \", background stationary.\" For example: \"A woman doing energetic street dance with rhythmic steps and sharp arm gestures, background stationary.\"\n- Describe the motion the frames show. Do not invent a different action; the video decides the movement, and the text only names it.\n- With no motion video shown, describe the motion the theme asks for, in the same one-sentence form.\n\n## Avoid\n- Motion, poses or emotions in the first two lines, and looks or scenery in the Motion line.\n- More than one character: it animates the one in the image.\n- Sound, speech, music, on-screen text, captions, logos and brand names.\n- Numbers and technical settings (resolution, fps, duration, frame counts), timestamps, shot lists and cuts.\n- Contradictions between the character line and the image (wrong hair color, missing glasses): the image wins and the clip flickers.\n\n## Image and motion video\n- **character** (the image role): the generator receives this image as the character and keeps its identity. Describe what is visible, faithfully and in detail. Apply the theme's changes to the background and viewpoint; change the character's look (outfit, style) only when the theme asks, and then write the new look in full.\n- **motion video**: you see it as a contact sheet of frames in time order (numbered, with their time). Use it only to write the Motion line and to choose a fitting framing. Do not describe its performer, clothes or setting.\n- No character image: invent one specific character from the theme. (The render still needs a character image; the user adds it.)\n\n## Aspect ratio\n- The output takes the motion video's shape. Vertical (9:16): one full-body character, centered, headroom above and floor below. Horizontal (16:9): room for wide moves; describe the setting on both sides. Square: centered, contained.\n- Express the format through framing words, never the ratio itself.\n\n## Length\n- short ≈40-70 words, medium ≈70-120, long ≈120-180, for all three lines together.\n- Spend the words on the character and the background. The Motion line stays one sentence whatever the length.",
+  "examples": [
+    "Character appearance description: A young woman in her twenties with a slim, athletic build, a heart-shaped face and long pink hair tied in a high ponytail. She wears a cropped white tank top, baggy black cargo pants with silver buckles and chunky white sneakers. Both forearms are sleek chrome mechanical prosthetics with exposed joints lit in pale blue. Photorealistic, sharp detail.\nBackground description: A rooftop basketball court in a dense city at dusk, a chain-link fence behind her, glowing office towers and a magenta-orange sky in the distance, warm rim light from the setting sun on the left, cool blue fill from the right and light haze. Full-body framing at eye level, in a three-quarter view from her left.\nMotion: A woman doing energetic street dance with rhythmic steps and sharp arm gestures, background stationary.",
+    "Character appearance description: A designer vinyl toy of a male street dancer with an oversized glossy head, messy blue hair and round black sunglasses. He wears a red hoodie with a white graffiti print, neon-yellow cargo pants, black-and-white sneakers and a chunky gold chain. Smooth matte vinyl with crisp painted edges, collectible art-toy style.\nBackground description: A rainy neon-lit street corner at night, wet asphalt reflecting purple-blue and red signs, a closed shop shutter behind him, light mist and a shallow depth of field, cinematic night photography. Full-body framing from a low angle, facing the camera.\nMotion: A toy figure doing popping body waves and fast spins on the beat, background stationary.",
+    "Character appearance description: A small silver-gray tabby kitten with a round face, upright ears and large round amber eyes. It wears a dark-blue uniform: a blazer with gold buttons over a white shirt, a red bow tie at the collar and a pleated navy skirt, with white shirt cuffs showing at the sleeves. Soft 3D animation style with fine fur detail.\nBackground description: A pure white backdrop with bright, even studio light and no other objects. Centered full-body framing at eye level.\nMotion: A kitten waving both arms and stepping side to side, background stationary."
+  ],
+  "aspectRatios": [
+    "9:16",
+    "16:9",
+    "1:1",
+    "3:4",
+    "4:3"
+  ],
+  "resolutions": [
+    "480p",
+    "720p"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "9:16",
+    "resolution": "480p",
+    "duration": "",
+    "temperature": 0.6,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈40–70 words",
+    "medium": "≈70–120 words",
+    "long": "≈120–180 words"
+  },
+  "imageRoles": [
+    "character"
+  ],
+  "motionVideo": true,
+  "comfyTemplates": [
+    {
+      "name": "video_wan_animate2",
+      "title": "Wan Animate 2: Motion Transfer",
+      "note": "Full model with the LightX2V LoRA (6 steps). Follows the whole motion video."
+    },
+    {
+      "name": "video_wan_animate2_distilled",
+      "title": "Wan Animate 2 Distilled: Motion Transfer",
+      "note": "Distilled model (10 steps). Makes the first 81 frames of the motion video."
+    }
+  ],
+  "sources": [
+    "https://blog.comfy.org/p/wan-animate-2-is-now-available-in",
+    "https://github.com/Wan-Video/Wan-Animate-2",
+    "https://huggingface.co/Wan-AI/Wan2.2-Animate-2-14B",
+    "https://huggingface.co/Comfy-Org/Wan-Animate-2",
+    "https://docs.comfy.org/tutorials/video/wan/wan-animate-2"
+  ],
+  "updatedAt": "2026-10-03"
+}

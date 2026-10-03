@@ -14,6 +14,7 @@ const state = {
   llmError: '',
   modelId: null,
   image: null, // { file } once stored on the server; { dataUrl } while it uploads
+  video: null, // the motion video (character-animation models): { file, sheet, seconds, frames, width, height, ratio }
   imageRole: 'reference', // the user's choice; "animate" falls back to reference on image models
   length: 'medium',
   variations: 1,
@@ -311,16 +312,20 @@ function sizeChoices(m, aspect) {
 }
 
 // Fills Aspect with the model's presets, plus the attached image's own ratio when it needs one.
+// The shape the clip takes: a motion video's on a character-animation model, else the attached image's.
+const shapeRatio = (m = currentModel()) => (m?.motionVideo && state.video?.ratio) || state.image?.ratio || null;
+const shapeIcon = (m = currentModel()) => (m?.motionVideo && state.video?.ratio ? '🕺' : '🖼️');
+
 function fillAspect(m, value) {
-  const own = ownAspect(m, state.image?.ratio);
+  const own = ownAspect(m, shapeRatio(m));
   fillSelect($('#aspect'), own ? [...m.aspectRatios, own] : m.aspectRatios, value);
-  if (own) $(`#aspect option[value="${own}"]`).textContent = `${own} 🖼️`; // the image icon, like the "from image" note
+  if (own) $(`#aspect option[value="${own}"]`).textContent = `${own} ${shapeIcon(m)}`; // the image icon, like the "from image" note
 }
 
 // Sets Aspect to the attached image's shape: its own ratio on a video model, else the model's closest option.
 function matchImageAspect() {
   const m = currentModel();
-  const r = state.image?.ratio;
+  const r = shapeRatio(m);
   if (!m || !r) return null;
   const own = ownAspect(m, r);
   if (own) fillAspect(m, own);
@@ -329,6 +334,9 @@ function matchImageAspect() {
   $('#aspect').value = best;
   syncResolution();
   $('#aspectNote').hidden = false;
+  const fromVideo = shapeIcon(m) === '🕺';
+  $('#aspectNote').textContent = fromVideo ? '🕺 from video' : '🖼️ from image';
+  $('#aspectNote').title = fromVideo ? 'Picked to match your motion video\'s shape' : 'Picked to match your image\'s shape';
   savePrefs();
   return best;
 }
@@ -346,8 +354,13 @@ function syncResolution() {
   if (r) sel.value = r;
 }
 
-// The role actually used: "animate" only exists for video models.
-const effectiveRole = () => (state.imageRole === 'animate' && currentModel()?.kind !== 'video' ? 'reference' : state.imageRole);
+// The image roles a model offers: its own list (e.g. only "character" for Wan Animate 2), else reference and recreate,
+// plus animate on video models. The role actually used is the one picked if offered, else the first.
+const rolesFor = m => (m?.imageRoles?.length ? m.imageRoles : ['reference', 'recreate', ...(m?.kind === 'video' ? ['animate'] : [])]);
+const effectiveRole = () => {
+  const offered = rolesFor(currentModel());
+  return offered.includes(state.imageRole) ? state.imageRole : offered[0];
+};
 
 // ---------- navigation ----------
 
@@ -950,12 +963,20 @@ const MOTIONS = [
   'he turns toward the camera and smiles, gentle handheld drift',
   'waves roll in while the camera cranes up to reveal the bay',
 ];
+// Character animation: the motion video sets the moves, so the theme says where and from what angle.
+const SETTINGS = [
+  'on a rooftop at sunset, low angle, three-quarter view',
+  'in a rainy neon alley at night, full body, eye level',
+  'on a white studio backdrop with soft even light',
+  'on a beach at golden hour, slightly from above',
+];
 let phIdx = 0;
 const animating = () => Boolean(state.image) && effectiveRole() === 'animate';
 function themePlaceholder() {
-  const list = animating() ? MOTIONS : SURPRISES;
+  const staging = Boolean(currentModel()?.motionVideo);
+  const list = staging ? SETTINGS : animating() ? MOTIONS : SURPRISES;
   const ex = list[phIdx % list.length];
-  $('#theme').placeholder = animating() ? `What happens? e.g. ${ex}… (optional)` : `e.g. ${ex}…`;
+  $('#theme').placeholder = staging ? `Where are they, and from what angle? e.g. ${ex}… (optional)` : animating() ? `What happens? e.g. ${ex}… (optional)` : `e.g. ${ex}…`;
 }
 themePlaceholder();
 setInterval(() => {
@@ -1041,19 +1062,27 @@ const ROLE_HINTS = {
   reference: ['Blends the image\'s look (subject, setting, light, mood) with your theme.', 'No theme? The AI suggests a prompt inspired by the image.'],
   recreate: ['Rebuilds the image as a prompt, with your theme applied as changes.', 'Rebuilds this image as a prompt, as faithfully as possible.'],
   animate: ['Image-to-video: your image is frame one, and your theme says what happens.', 'Image-to-video: your image is frame one, and the AI picks fitting motion.'],
+  character: ['Your character performs the motion video\'s moves; your theme sets the place and the camera.', 'Your character performs the motion video\'s moves, somewhere the AI picks to suit them.'],
 };
 
 function renderRole() {
   const m = currentModel();
   const hasImage = Boolean(state.image);
   const role = effectiveRole();
-  $('#roleBlock').hidden = !hasImage;
+  const offered = rolesFor(m);
+  $('#roleBlock').hidden = !hasImage || offered.length < 2; // one way to use it: nothing to pick
   $('#roleHint').hidden = !hasImage;
-  $('[data-value="animate"]', $('#roleBlock')).hidden = m?.kind !== 'video';
+  for (const b of $$('#roleBlock .role')) b.hidden = !offered.includes(b.dataset.value);
   setActive($('#roleBlock'), role);
+  // Character animation: step 3 takes the character and the motion video (also for a chain step that animates one).
+  const motion = Boolean(m?.motionVideo);
+  $('#motionBlock').hidden = !motion && !chainNeedsVideo();
+  $('#charLabel').hidden = !motion;
+  $('#imageStepTitle').textContent = motion ? 'Character & motion' : 'Add an image';
+  $('#imageStepOpt').textContent = motion ? 'both needed to render' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
   $('#roleHint').textContent = ROLE_HINTS[role][hasTheme ? 0 : 1];
-  $('#themeOpt').textContent = hasImage ? 'optional' : '';
+  $('#themeOpt').textContent = hasImage || (motion && state.video) ? 'optional' : '';
   themePlaceholder();
   renderVisionWarning();
   renderWorkflowWarning();
@@ -1231,8 +1260,11 @@ document.addEventListener('drop', e => {
   dragDepth = 0;
   $('#dropOverlay').hidden = true;
   if (!isView('create')) return toast('Go to Create to use an image.', true);
-  const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
-  if (file) loadImageFile(file); else toast('🤔 That file isn\'t an image.', true);
+  const files = [...e.dataTransfer.files];
+  const file = files.find(f => f.type.startsWith('image/'));
+  const video = files.find(isVideoFile);
+  if (video) loadVideoFile(video); // a motion video (character animation)
+  if (file) loadImageFile(file); else if (!video) toast('🤔 That file isn\'t an image.', true);
 });
 document.addEventListener('paste', e => {
   if (!isView('create')) return;
@@ -1240,15 +1272,243 @@ document.addEventListener('paste', e => {
   if (file) { e.preventDefault(); loadImageFile(file); }
 });
 
+// ---------- create: step 3, the motion video (character animation) ----------
+// For models like Wan Animate 2: the character in the image performs the moves of this video. ComfyUI gets the file
+// as it is; the Brain sees a contact sheet of its frames, so it can name the motion.
+
+const SHEET_FRAMES = 6;
+const VIDEO_EXT_MIME = { mp4: 'video/mp4', m4v: 'video/x-m4v', webm: 'video/webm', mov: 'video/quicktime', mkv: 'video/x-matroska' };
+const isVideoFile = f => Boolean(f) && (f.type.startsWith('video/') || /\.(mp4|m4v|webm|mov|mkv)$/i.test(f.name || ''));
+const secsLabel = s => (s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s * 10) / 10}s`);
+
+// A video element with the file loaded, ready to seek. Rejects when the browser can't decode it.
+function openVideo(src) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.onloadeddata = () => resolve(v);
+    v.onerror = () => reject(new Error('This browser can\'t play that video, so it can\'t be used. Convert it to MP4 (H.264) or WebM first.'));
+    v.src = src;
+  });
+}
+
+// Seeks and waits for the frame (or gives up after a few seconds, keeping whatever frame is there).
+const seekTo = (v, t) => new Promise(resolve => {
+  const done = () => { clearTimeout(timer); v.removeEventListener('seeked', done); resolve(); };
+  const timer = setTimeout(done, 4000);
+  v.addEventListener('seeked', done);
+  v.currentTime = t;
+});
+
+// A video recorded in a browser can lack its duration until it's been read to the end.
+async function videoDuration(v) {
+  if (Number.isFinite(v.duration) && v.duration > 0) return v.duration;
+  await seekTo(v, 1e7);
+  const d = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : v.currentTime;
+  await seekTo(v, 0);
+  return d || 0;
+}
+
+// Frames taken evenly through the video, in reading order, each numbered with its time: one JPEG for the Brain.
+async function contactSheet(v, seconds) {
+  const ar = v.videoWidth / v.videoHeight || 1;
+  const cols = ar >= 1 ? 2 : 3;
+  const rows = Math.ceil(SHEET_FRAMES / cols);
+  const max = 1536;
+  let tw = Math.floor(max / cols);
+  let th = Math.round(tw / ar);
+  if (th * rows > max) { th = Math.floor(max / rows); tw = Math.round(th * ar); }
+  const canvas = document.createElement('canvas');
+  canvas.width = tw * cols;
+  canvas.height = th * rows;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const size = Math.max(14, Math.round(Math.min(tw, th) * 0.07));
+  ctx.font = `700 ${size}px sans-serif`;
+  ctx.textBaseline = 'top';
+  for (let i = 0; i < SHEET_FRAMES; i++) {
+    const t = seconds ? Math.min(Math.max(0, seconds - 0.05), ((i + 0.5) * seconds) / SHEET_FRAMES) : 0;
+    await seekTo(v, t);
+    const x = (i % cols) * tw;
+    const y = Math.floor(i / cols) * th;
+    ctx.drawImage(v, x, y, tw, th);
+    const label = `${i + 1} · ${t.toFixed(1)}s`;
+    ctx.fillStyle = 'rgb(0 0 0 / 70%)';
+    ctx.fillRect(x + 6, y + 6, ctx.measureText(label).width + size * 0.8, size * 1.5);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, x + 6 + size * 0.4, y + 6 + size * 0.25);
+    ctx.strokeStyle = '#000';
+    ctx.strokeRect(x, y, tw, th);
+  }
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+async function uploadVideo(file, type) {
+  let res;
+  try {
+    res = await fetch('/api/videos', { method: 'POST', headers: { 'Content-Type': type }, body: file });
+  } catch (err) {
+    throw new Error(friendly(err));
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  return data.file;
+}
+
+// Reads a video, stores it and its contact sheet, and makes it the motion video. A video the browser can't decode
+// (H.265 from a phone, mostly) is stored as it is for ComfyUI; the page then reads a preview the server makes with
+// ffmpeg, if this computer has it.
+// A Then step animates a character, so step 3's motion video is for it.
+const chainNeedsVideo = () => state.chain.steps.some(st => modelById(st.modelId)?.motionVideo);
+
+let videoToken = null;
+async function loadVideoFile(file, { quiet = false } = {}) {
+  if (!currentModel()?.motionVideo && !chainNeedsVideo()) {
+    const m = state.models.find(x => x.motionVideo);
+    if (!m) return toast('🤔 None of your models takes a motion video.', true);
+    selectModel(m.id);
+    toast(`Switched to ${m.name}, which takes a motion video.`);
+  }
+  if (!isVideoFile(file)) return toast('🤔 That file isn\'t a video. Use MP4, WebM or MOV.', true);
+  const type = (file.type && file.type !== 'application/octet-stream' ? file.type : VIDEO_EXT_MIME[(file.name.split('.').pop() || '').toLowerCase()]) || 'video/mp4';
+  const token = {};
+  videoToken = token;
+  const url = URL.createObjectURL(file);
+  const own = await openVideo(url).catch(() => null);
+  const playable = Boolean(own?.videoWidth);
+  if (!playable) URL.revokeObjectURL(url);
+  setVideo({ url: playable ? url : null });
+  try {
+    const name = await uploadVideo(file, type);
+    if (videoToken !== token) return;
+    const prep = await api(`/api/videos/${encodeURIComponent(name)}/prepare`, { method: 'POST', body: { preview: !playable } });
+    const view = playable ? own : prep.preview ? await openVideo(`/videos/${encodeURIComponent(prep.preview)}`).catch(() => null) : null;
+    const seconds = view ? await videoDuration(view) : prep.info?.seconds || 0;
+    const width = view?.videoWidth || prep.info?.width || null;
+    const height = view?.videoHeight || prep.info?.height || null;
+    const sheetUrl = view ? await contactSheet(view, seconds) : null;
+    const sheet = sheetUrl ? (await api('/api/images', { method: 'POST', body: { image: sheetUrl } })).file : null;
+    if (videoToken !== token) return; // replaced meanwhile
+    setVideo({
+      file: name, preview: prep.preview || null, sheet, seconds: Math.round(seconds * 100) / 100, frames: sheet ? SHEET_FRAMES : 0,
+      width, height, ratio: width && height ? width / height : null, fps: prep.info?.fps || null, ffmpeg: prep.ffmpeg, url: playable ? url : null,
+    });
+    const aspect = matchImageAspect();
+    if (quiet) return;
+    toast(`🕺 Motion video added${seconds ? ` · ${secsLabel(seconds)}` : ''}${aspect ? ` · aspect set to ${aspect} to match` : ''}${sheet ? '' : ' · no preview in this browser'}`, !sheet);
+    announce(`Motion video added${seconds ? `, ${secsLabel(seconds)} long` : ''}.${aspect ? ` Aspect ratio set to ${aspect} to match it.` : ''}`);
+  } catch (err) {
+    if (videoToken === token) setVideo(null);
+    toast(`Motion video failed: ${err.message}`, true);
+  }
+}
+
+// Swaps the motion video for a copy at 24 fps (made by ffmpeg), so a fast phone video doesn't take 5× as long.
+async function retimeVideo(btn) {
+  const v = state.video;
+  if (!v?.file) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Making a 24 fps copy…';
+  try {
+    const r = await api(`/api/videos/${encodeURIComponent(v.file)}/retime`, { method: 'POST', body: { fps: 24 } });
+    const blob = await (await fetch(`/videos/${encodeURIComponent(r.file)}`)).blob();
+    await loadVideoFile(new File([blob], `${r.file}`, { type: 'video/mp4' }), { quiet: true });
+    toast('🕺 Now using a 24 fps copy of your motion video');
+  } catch (err) {
+    toast(`Couldn't make the copy: ${err.message}`, true);
+    btn.disabled = false;
+  }
+}
+
+function setVideo(v) {
+  const old = state.video;
+  if (old?.url?.startsWith('blob:') && old.url !== v?.url) URL.revokeObjectURL(old.url);
+  state.video = v;
+  const pv = $('#motionPreview');
+  const src = !v ? null : v.url || (v.preview ? `/videos/${encodeURIComponent(v.preview)}` : v.file && v.sheet ? `/videos/${encodeURIComponent(v.file)}` : null);
+  if (src) {
+    if (pv.getAttribute('src') !== src) pv.src = src;
+    pv.play().catch(() => {});
+  } else {
+    pv.removeAttribute('src');
+    pv.load();
+  }
+  $('.mz-empty').hidden = Boolean(v);
+  $('.mz-preview').hidden = !v;
+  $('#motionZone').setAttribute('aria-label', v ? 'Motion video added' : 'Add a motion video: drop or browse');
+  $('#mzInfo').textContent = !v ? '' : v.file
+    ? `🕺 ${[v.seconds ? secsLabel(v.seconds) : '', v.width && v.height ? `${v.width}×${v.height}` : '', v.fps ? `${Math.round(v.fps)} fps` : ''].filter(Boolean).join(' · ') || 'Motion video'}`
+    : '⏳ Reading the video…';
+  renderMotionHint();
+  saved.set('video', v?.file ? { file: v.file, preview: v.preview, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, ratio: v.ratio, fps: v.fps, ffmpeg: v.ffmpeg } : null);
+  if (!v && old) {
+    const m = currentModel();
+    if (m?.motionVideo && !m.aspectRatios.includes($('#aspect').value)) { // the video's own ratio goes with it
+      fillAspect(m, closestAspect(m, ratioOf($('#aspect').value)));
+      syncResolution();
+    }
+  }
+  renderRole();
+  syncNewBtn();
+  if (state.chain.steps.length) renderChainEditor(); // a character step needs it
+}
+
+// Under the motion video: how it's used, or what to know about this one (no preview here, a high frame rate).
+function renderMotionHint() {
+  const v = state.video;
+  const hint = $('#motionHint');
+  const parts = [];
+  if (v?.file && !v.sheet) {
+    parts.push(`🙈 This browser can't show this video (H.265 from a phone, probably), so the Brain can't see the moves: describe them in the theme. ComfyUI still uses it as it is.${v.ffmpeg === false ? ' With ffmpeg installed, Prompt Maker makes a preview.' : ''}`);
+  }
+  if (v?.fps > 32) {
+    parts.push(`⚠️ ${Math.round(v.fps)} fps: Wan Animate 2 uses every frame, so this takes about ${Math.round(v.fps / 24)}× as long as at 24 fps.`);
+  }
+  hint.innerHTML = parts.length ? parts.map(esc).join(' ') : 'The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.';
+  if (v?.fps > 32 && v.ffmpeg) {
+    hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoRetime">Use a 24 fps copy</button>');
+    $('#videoRetime').addEventListener('click', e => retimeVideo(e.currentTarget));
+  }
+}
+
+// The motion video as the server stores it with a take (null while it's still uploading).
+const videoForRequest = () => {
+  const v = state.video;
+  return v?.file ? { file: v.file, preview: v.preview || undefined, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, fps: v.fps || undefined } : null;
+};
+
+// A take's motion video put back on Create (from History).
+function restoreVideo(v) {
+  setVideo(v?.file ? { ...v, ratio: v.width && v.height ? v.width / v.height : null } : null);
+}
+
+const mz = $('#motionZone');
+mz.addEventListener('click', e => { if (!state.video && !e.target.closest('button')) $('#videoInput').click(); });
+mz.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target === mz && !state.video) { e.preventDefault(); $('#videoInput').click(); }
+});
+$('#videoInput').addEventListener('change', e => { loadVideoFile(e.target.files[0]); e.target.value = ''; });
+$('#videoReplace').addEventListener('click', () => $('#videoInput').click());
+$('#videoClear').addEventListener('click', () => { setVideo(null); mz.focus(); });
+$('#motionPreview').addEventListener('error', () => {
+  if (state.video?.file && !state.video.url) { setVideo(null); toast('The motion video is gone from the data folder. Add it again.', true); }
+});
+
 // ---------- create: step 3, an image from the Gallery ----------
 // Any image you've rendered can be the input image: it's linked back to its render, and ComfyUI gets the original.
 
-const picker = { model: '', items: [] };
+// kind 'video' picks a motion video instead (any video you rendered).
+const picker = { model: '', items: [], kind: 'image' };
 
-async function openImagePicker() {
+async function openImagePicker(kind = 'image') {
   const all = await api('/api/history').catch(() => null);
   if (all) state.history = all;
-  picker.items = galleryItems().filter(it => it.file.kind === 'image');
+  picker.kind = kind === 'video' ? 'video' : 'image';
+  picker.items = galleryItems().filter(it => it.file.kind === picker.kind);
+  $('#imgPickTitle').textContent = picker.kind === 'video' ? 'Pick a motion video from your Gallery' : 'Pick an image from your Gallery';
   renderImagePicker();
   $('#imgPick').showModal();
   ($('#imgPickGrid .ip-tile') || $('#imgPickClose')).focus();
@@ -1263,8 +1523,8 @@ function renderImagePicker() {
     : '';
   const shown = items.filter(it => !picker.model || it.entry.modelId === picker.model);
   $('#imgPickGrid').innerHTML = shown.length
-    ? shown.map(it => `<div class="ip-cell"><button type="button" class="ip-tile" data-n="${items.indexOf(it)}" style="--m:${modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId })}" aria-label="Use ${esc(it.entry.theme || 'this image')} (${esc(it.entry.modelName)}${it.render.seed != null ? `, seed ${it.render.seed}` : ''})"><img src="/renders/${encodeURIComponent(it.file.file)}" alt="" loading="lazy"><span class="ip-cap">${esc(it.entry.theme || 'From an image')}</span></button><button type="button" class="ip-zoom" data-n="${items.indexOf(it)}" title="Look closer" aria-label="Look closer at ${esc(it.entry.theme || 'this image')}">🔍</button></div>`).join('')
-    : `<p class="muted">${items.length ? 'No images from this model yet.' : 'No image renders yet. Render a take with ComfyUI and it shows up here.'}</p>`;
+    ? shown.map(it => `<div class="ip-cell"><button type="button" class="ip-tile" data-n="${items.indexOf(it)}" style="--m:${modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId })}" aria-label="Use ${esc(it.entry.theme || `this ${picker.kind}`)} (${esc(it.entry.modelName)}${it.render.seed != null ? `, seed ${it.render.seed}` : ''})">${picker.kind === 'video' ? `<video src="/renders/${encodeURIComponent(it.file.file)}#t=0.1" muted preload="metadata" playsinline></video>` : `<img src="/renders/${encodeURIComponent(it.file.file)}" alt="" loading="lazy">`}<span class="ip-cap">${esc(it.entry.theme || 'From an image')}</span></button>${picker.kind === 'video' ? '' : `<button type="button" class="ip-zoom" data-n="${items.indexOf(it)}" title="Look closer" aria-label="Look closer at ${esc(it.entry.theme || 'this image')}">🔍</button>`}</div>`).join('')
+    : `<p class="muted">${items.length ? `No ${picker.kind}s from this model yet.` : `No ${picker.kind} renders yet. Render a take with ComfyUI and it shows up here.`}</p>`;
 }
 
 async function useRenderAsImage(it) {
@@ -1277,7 +1537,18 @@ async function useRenderAsImage(it) {
   }
 }
 
-for (const id of ['#dzGallery', '#imageGallery']) $(id).addEventListener('click', openImagePicker);
+for (const id of ['#dzGallery', '#imageGallery']) $(id).addEventListener('click', () => openImagePicker('image'));
+for (const id of ['#mzGallery', '#videoGallery']) $(id).addEventListener('click', () => openImagePicker('video'));
+
+// A rendered video as the motion video (stored as its own copy, so deleting the render doesn't take it away).
+async function useRenderAsVideo(it) {
+  try {
+    const blob = await (await fetch(`/renders/${encodeURIComponent(it.file.file)}`)).blob();
+    await loadVideoFile(new File([blob], it.file.name || it.file.file, { type: blob.type || 'video/mp4' }));
+  } catch (err) {
+    toast(`Couldn't use that video: ${err.message}`, true);
+  }
+}
 $('#imgPickClose').addEventListener('click', () => $('#imgPick').close());
 $('#imgPickModels').addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -1294,7 +1565,8 @@ $('#imgPickGrid').addEventListener('click', e => {
   const b = e.target.closest('.ip-tile');
   if (!b) return;
   $('#imgPick').close();
-  useRenderAsImage(picker.items[Number(b.dataset.n)]);
+  const it = picker.items[Number(b.dataset.n)];
+  if (picker.kind === 'video') useRenderAsVideo(it); else useRenderAsImage(it);
 });
 
 // Thumbnail size in the picker: drag the 🔍 slider; it's remembered.
@@ -1334,6 +1606,8 @@ $('#imageZoom').addEventListener('click', () => { if ($('#imagePreview').src) op
 const REFINE_CHIPS = {
   common: [['✂️', 'Shorter'], ['🔍', 'More detailed'], ['🎞️', 'More cinematic'], ['📸', 'More natural & candid'], ['💡', 'Different lighting'], ['📐', 'Different camera angle']],
   video: [['⚡', 'More dynamic motion'], ['🐢', 'Calmer, slower motion'], ['🚁', 'Add camera movement']],
+  // Character animation: the motion video sets the moves, so the changes are about the place and the look.
+  character: [['🏙️', 'A different setting'], ['👗', 'A different outfit'], ['🎨', 'A different style']],
 };
 
 function errorTitle(msg) {
@@ -1537,7 +1811,7 @@ async function openSource(src) {
 }
 
 function createTake(index, count, model) {
-  const chips = [...REFINE_CHIPS.common, ...(model?.kind === 'video' ? REFINE_CHIPS.video : [])];
+  const chips = [...REFINE_CHIPS.common, ...(model?.motionVideo ? REFINE_CHIPS.character : model?.kind === 'video' ? REFINE_CHIPS.video : [])];
   const name = count > 1 ? `Take ${index + 1}` : 'Your prompt';
   const el = document.createElement('article');
   el.className = 'take';
@@ -1789,7 +2063,7 @@ function stop() {
 function syncNewBtn() {
   const b = $('#newBtn');
   b.hidden = running() || line.pumping;
-  b.disabled = !($('#theme').value.trim() || state.image || state.entry);
+  b.disabled = !($('#theme').value.trim() || state.image || state.video || state.entry);
 }
 
 function setThemeQuietly(text) {
@@ -1805,10 +2079,11 @@ function setThemeQuietly(text) {
 async function newSession() {
   if (state.busy) return;
   await flushEdits();
-  const before = { theme: $('#theme').value, image: state.image, entry: state.entry?.id ? state.entry : null, timings: state.timings };
+  const before = { theme: $('#theme').value, image: state.image, video: state.video?.file ? state.video : null, entry: state.entry?.id ? state.entry : null, timings: state.timings };
   showError('');
   setThemeQuietly('');
   setImage(null);
+  setVideo(null);
   state.timings = {};
   closeRun();
   renderResults(null);
@@ -1823,6 +2098,7 @@ async function newSession() {
       if (state.busy || state.entry) return toast('Too late to undo here. It\'s all in History.', true);
       setThemeQuietly(before.theme);
       setImage(before.image);
+      if (before.video) restoreVideo(before.video);
       if (before.entry) {
         state.timings = before.timings;
         renderResults(before.entry);
@@ -2004,9 +2280,11 @@ async function formRequest() {
   const theme = $('#theme').value.trim();
   showError('');
   if (!m) return showError('Pick a target model first. No models? Add one in the Models tab.');
-  if (!theme && !state.image) {
+  const motion = m.motionVideo ? videoForRequest() : null;
+  if (m.motionVideo && state.video && !motion) return showError('Hold on, the motion video is still loading.');
+  if (!theme && !state.image && !motion) {
     $('#theme').focus();
-    return showError('Give me something to work with: type a theme, add an image, or both.');
+    return showError(m.motionVideo ? 'Give me something to work with: add your character and a motion video in step 3, type a theme, or both.' : 'Give me something to work with: type a theme, add an image, or both.');
   }
   if (state.llmOk === false) await loadLlms();
   if (state.llmOk === false) return showError(`Can't reach LM Studio at ${state.settings.lmStudioUrl}. Its local server is off (quitting the LM Studio app turns it off too).`);
@@ -2026,8 +2304,9 @@ async function formRequest() {
     variations: state.variations,
     ...(state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}),
     ...(state.image?.source ? { source: state.image.source } : {}),
+    ...(motion ? { video: motion } : {}),
   };
-  if (state.image?.source && m.kind === 'video') saved.set('animateModel', m.id);
+  if (state.image?.source && m.kind === 'video' && !m.motionVideo) saved.set('animateModel', m.id);
   return body;
 }
 
@@ -2318,7 +2597,7 @@ function renderHistory() {
       <article class="hcard${e.id === state.entry?.id ? ' current' : ''}" data-id="${esc(e.id)}" style="--m:${color}"${e.id === state.entry?.id ? ' aria-current="true" title="Open on Create"' : ''}>
         <div class="hthumb hopen${cover || e.imageFile ? '' : ' textonly'}" data-act="open" aria-hidden="true">
           ${cover ? mediaTag(cover, { hover: true }) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="" loading="lazy">` : kindIcon(e.modelKind)}
-          ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${{ reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate' }[e.imageRole] || ''}</span>` : ''}
+          ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${{ reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
         </div>
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite: ${esc(title)}" title="${e.favorite ? 'Unfavorite' : 'Favorite'}">${e.favorite ? '★' : '☆'}</button>
         <div class="hbody">
@@ -2468,6 +2747,7 @@ async function loadForm(entry) {
   if (entry.imageRole) state.imageRole = entry.imageRole;
   const src = entry.source;
   setImage(entry.imageFile ? { file: entry.imageFile, ...(src ? { source: { entryId: src.entryId, index: src.index, renderId: src.renderId, file: src.file, modelName: src.modelName, seed: src.seed } } : {}) } : null);
+  if (modelById(entry.modelId)?.motionVideo) restoreVideo(entry.video);
   setVariations(entry.variations.length, { persist: false });
   showError('');
 }
@@ -2763,6 +3043,8 @@ function fillModelForm(m, isNew) {
   $('#mAspects').value = m.aspectRatios.join(', ');
   $('#mRes').value = m.resolutions.join(', ');
   $('#mDur').value = m.durations.join(', ');
+  $('#mMotion').checked = Boolean(m.motionVideo);
+  modelExtras = { imageRoles: m.imageRoles, comfyTemplates: m.comfyTemplates };
   refreshDefaultSelects(m.defaults);
   $('#dLen').value = m.defaults.length;
   $('#dTemp').value = m.defaults.temperature;
@@ -2784,8 +3066,16 @@ function fillModelForm(m, isNew) {
   refreshPanelSummaries();
 }
 
+// What the form doesn't show but a playbook keeps: its image roles and its ComfyUI templates.
+let modelExtras = {};
+
 function readModelForm() {
+  const motionVideo = $('#mKind').value === 'video' && $('#mMotion').checked;
+  // A character-animation model uses its image as the character; others keep whatever roles they had.
+  const roles = modelExtras.imageRoles?.length ? modelExtras.imageRoles : null;
   return {
+    ...(motionVideo ? { motionVideo, imageRoles: roles?.includes('character') ? roles : ['character'] } : roles && !roles.includes('character') ? { imageRoles: roles } : {}),
+    ...(modelExtras.comfyTemplates?.length ? { comfyTemplates: modelExtras.comfyTemplates } : {}),
     id: state.editId || undefined,
     name: $('#mName').value.trim(),
     kind: $('#mKind').value,
@@ -3825,8 +4115,10 @@ function renderWorkflowWarning() {
   const flow = state.workflows.find(f => f.id === $('#wfpSelect').value && f.modelId === state.modelId);
   const msg = !flow || $('#wfpBox').hidden ? ''
     : animating() && !flow.maps.image ? `“${flow.name}” has no image input, so it would ignore your first frame. Pick or add an image-to-video workflow.`
-      : !state.image && flow.maps.image ? `“${flow.name}” needs an input image. Add one in step 3, or pick another workflow.`
-        : '';
+      : !state.image && flow.maps.image ? `“${flow.name}” needs ${currentModel()?.motionVideo ? 'your character image' : 'an input image'}. Add one in step 3, or pick another workflow.`
+        : !state.video && flow.maps.video ? `“${flow.name}” needs a motion video. Add one in step 3.`
+          : state.video && currentModel()?.motionVideo && !flow.maps.video ? `“${flow.name}” has no Load Video node, so it would ignore your motion video. Pick or add a Wan Animate 2 workflow.`
+            : '';
   warn.hidden = !msg;
   warn.textContent = msg ? `⚠️ ${msg}` : '';
 }
@@ -4453,16 +4745,21 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
 
 // The video model a still gets animated with: the one used last time, else the first video model.
 function animateTarget() {
-  const videos = state.models.filter(m => m.kind === 'video');
+  const videos = state.models.filter(m => m.kind === 'video' && !m.motionVideo); // character animation has no first frame
   return videos.find(m => m.id === saved.get('animateModel', null)) || videos[0] || null;
 }
 
+// The character-animation model (e.g. Wan Animate 2): the one on Create if it is one, else the first.
+const characterTarget = () => (currentModel()?.motionVideo ? currentModel() : state.models.find(m => m.motionVideo) || null);
+
 // Starts the next step from a render: it becomes the input image on Create, linked back to where it came from.
-// animate: switch to a video model and use the still as the first frame.
-async function continueFrom(it, { animate }) {
+// animate: switch to a video model and use the still as the first frame. character: switch to a character-animation
+// model (Wan Animate 2) with the still as the character, for the motion video in step 3.
+async function continueFrom(it, { animate, character = false }) {
   if (state.busy) return toast('Hold on, a prompt is still cooking. Stop it or wait.', true);
-  const target = animate ? animateTarget() : null;
+  const target = character ? characterTarget() : animate ? animateTarget() : null;
   if (animate && !target) return toast('Add a video model first (Models tab).', true);
+  if (character && !target) return toast('Add a character-animation model first, like Wan Animate 2 (Models tab).', true);
   let blob;
   try {
     blob = await (await fetch(`/renders/${encodeURIComponent(it.file.file)}`)).blob();
@@ -4473,12 +4770,16 @@ async function continueFrom(it, { animate }) {
   showView('create');
   if (target) {
     if (target.id !== state.modelId) selectModel(target.id);
-    state.imageRole = 'animate';
-    saved.set('imageRole', 'animate');
+    state.imageRole = character ? 'character' : 'animate';
+    saved.set('imageRole', state.imageRole);
   }
   const source = { entryId: it.entry.id, index: it.index, renderId: it.render.id, file: it.file.file, modelName: it.entry.modelName, seed: it.render.seed ?? null };
   await loadImageFile(new File([blob], it.file.name || it.file.file, { type: blob.type || 'image/png' }), { source, quiet: true });
-  if (target) {
+  if (character) {
+    toast(`🧍 Your still is the character for ${target.name}.${state.video ? ' Say where they are (or leave it to the AI), then Generate' : ' Now add a motion video for its moves'}`);
+    announce(`The still is now the character for ${target.name}.`);
+    $(state.video ? '#theme' : '#motionZone').scrollIntoView({ block: 'center', behavior: scrollMode() });
+  } else if (target) {
     replaceTheme(''); // the theme now says what happens; ↶ Undo brings the still's theme back
     toast(`🎬 Ready to animate with ${target.name}. Say what happens (or leave it to the AI), then Generate`);
     announce(`The still is now the first frame for ${target.name}. Describe what happens, then generate.`);
@@ -4493,7 +4794,9 @@ async function continueFrom(it, { animate }) {
 // Step 1 is the Create form itself; each "Then" step takes the renders of the step before as its input image.
 // state.chain = { steps: [then steps], renders: renders per take for step 1, recipeId }.
 
-const USE_LABEL = { animate: 'first frame', reference: 'reference', recreate: 'recreate' };
+const USE_LABEL = { animate: 'first frame', reference: 'reference', recreate: 'recreate', character: 'character' };
+// How a Then step's model can use the image of the step before: first frame first on video models.
+const chainUses = m => (m?.imageRoles?.length ? m.imageRoles : m?.kind === 'video' ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate']);
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || lo));
 const outputNoun = (m, n) => `${n} ${m?.kind === 'video' ? (n === 1 ? 'video' : 'videos') : (n === 1 ? 'still' : 'stills')}`;
 
@@ -4513,7 +4816,7 @@ function chainWorkflow(modelId, ref) {
 
 function thenStep(st = {}) {
   const m = modelById(st.modelId) || animateTarget() || state.models[0];
-  const uses = m?.kind === 'video' ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate'];
+  const uses = chainUses(m);
   const flows = m ? workflowsFor(m.id) : [];
   return {
     modelId: m?.id || '',
@@ -4542,6 +4845,7 @@ function chainProblems() {
     const flow = flows.find(f => f.id === st.workflowId);
     if (!flow) return flows.some(f => f.maps.image) ? `Pick a workflow for ${m.name}.` : `${m.name} has no workflow that takes an image yet. Add one with ＋ (it needs a Load Image node).`;
     if (!flow.maps.image) return `“${flow.name}” has no image input, so it can't take the image from the step before. Pick an image-to-${m.kind} workflow.`;
+    if (m.motionVideo && !state.video?.file) return `${m.name} copies the moves of a motion video: add one in step 3 (this step uses it).`;
     if (m.kind === 'video' && i < steps.length - 1) return 'A video can\'t feed the next step yet. (Extending clips is coming.)';
     return '';
   });
@@ -4586,7 +4890,7 @@ function stepCardHtml(st, i, warn) {
   const video = m?.kind === 'video';
   const flows = m ? workflowsFor(m.id) : [];
   const flow = flows.find(f => f.id === st.workflowId);
-  const uses = video ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate'];
+  const uses = chainUses(m);
   const open = st.open || Boolean(warn);
   const summary = [USE_LABEL[st.use], flow?.name || 'no workflow', `${st.takes} take${st.takes > 1 ? 's' : ''}${st.renders > 1 ? ` ×${st.renders}` : ''}`, video ? st.duration : ''].filter(Boolean).join(' · ');
   const models = [...state.models].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'video' ? -1 : 1));
@@ -4612,18 +4916,18 @@ function stepCardHtml(st, i, warn) {
           <label class="dial"><span>Model</span><select data-f="modelId">${models.map(x => `<option value="${esc(x.id)}"${x.id === st.modelId ? ' selected' : ''}>${kindIcon(x.kind)} ${esc(x.name)}</option>`).join('')}</select></label>
           <label class="dial"><span>Use the image as</span><select data-f="use">${uses.map(u => `<option value="${u}"${u === st.use ? ' selected' : ''}>${USE_LABEL[u]}</option>`).join('')}</select></label>
         </div>
-        <label class="dial"><span>${st.use === 'animate' ? 'What happens' : 'What changes'} <small class="cc-opt">optional</small></span>
-          <textarea data-f="direction" rows="2" placeholder="${st.use === 'animate' ? 'e.g. she takes a sip and laughs, slow push-in. Empty = the AI picks fitting motion' : 'e.g. make it night, add rain. Empty = keep it as is'}">${esc(st.direction)}</textarea></label>
+        <label class="dial"><span>${st.use === 'animate' ? 'What happens' : st.use === 'character' ? 'Where, and from what angle' : 'What changes'} <small class="cc-opt">optional</small></span>
+          <textarea data-f="direction" rows="2" placeholder="${st.use === 'animate' ? 'e.g. she takes a sip and laughs, slow push-in. Empty = the AI picks fitting motion' : st.use === 'character' ? 'e.g. on a rooftop at sunset, low angle. The moves come from the motion video in step 3' : 'e.g. make it night, add rain. Empty = keep it as is'}">${esc(st.direction)}</textarea></label>
         <div class="dial"><span>Workflow</span>
           <div class="cc-wf">
             <select data-f="workflowId" aria-label="Workflow for this step"><option value="">— pick a workflow —</option>${flows.map(f => `<option value="${esc(f.id)}"${f.id === st.workflowId ? ' selected' : ''}${f.maps.image ? '' : ' disabled'}>${esc(f.name)}${f.maps.image ? '' : ' (no image input)'}</option>`).join('')}</select>
             <button type="button" class="btn small" data-act="addwf" title="Add a workflow for ${esc(m?.name || 'this model')}" aria-label="Add a workflow">＋</button>
           </div>
         </div>
-        <div class="cc-grid${video ? ' three' : ''}">
+        <div class="cc-grid${video && m.durations.length ? ' three' : ''}">
           <div class="dial"><span>Takes</span><div class="seg" data-f="takes" role="radiogroup" aria-label="Takes">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">${n}</button>`).join('')}</div></div>
           <div class="dial"><span>Renders each</span><div class="seg" data-f="renders" role="radiogroup" aria-label="Renders per take">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div></div>
-          ${video ? `<label class="dial"><span>Duration</span><select data-f="duration">${m.durations.map(d => `<option${d === st.duration ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select></label>` : ''}
+          ${video && m.durations.length ? `<label class="dial"><span>Duration</span><select data-f="duration">${m.durations.map(d => `<option${d === st.duration ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select></label>` : ''}
         </div>
         <p class="warn-line cc-warn"${warn ? '' : ' hidden'}>${esc(warn ? `⚠️ ${warn}` : '')}</p>
       </div>
@@ -4633,6 +4937,7 @@ function stepCardHtml(st, i, warn) {
 function renderChainEditor() {
   const box = $('#chainBox');
   if (!box) return;
+  $('#motionBlock').hidden = !currentModel()?.motionVideo && !chainNeedsVideo();
   const focus = document.activeElement?.closest?.('#chainBox') ? { i: document.activeElement.closest('[data-i]')?.dataset.i, sel: document.activeElement.dataset.f ? `[data-f="${document.activeElement.dataset.f}"]` : document.activeElement.dataset.act ? `[data-act="${document.activeElement.dataset.act}"]` : null } : null;
   const steps = state.chain.steps;
   // Fill in workflows that weren't known yet (e.g. just added with ＋).
@@ -4926,11 +5231,15 @@ async function continueWith(run, k, items) {
       showError(`Couldn't use that render: ${friendly(err)}`);
       break;
     }
-    const aspect = ownAspect(model, img.ratio) || closestAspect(model, img.ratio) || model.defaults.aspectRatio || '';
+    // A character animation takes the motion video's shape (and the video itself, from step 3).
+    const motion = model.motionVideo ? videoForRequest() : null;
+    const shape = motion ? state.video.ratio || img.ratio : img.ratio;
+    const aspect = ownAspect(model, shape) || closestAspect(model, shape) || model.defaults.aspectRatio || '';
     const body = {
       modelId: model.id,
       theme: step.direction.trim(),
-      imageRole: model.kind === 'video' ? step.use : step.use === 'animate' ? 'reference' : step.use,
+      imageRole: chainUses(model).includes(step.use) ? step.use : chainUses(model)[0],
+      ...(motion ? { video: motion } : {}),
       aspectRatio: aspect,
       resolution: resolutionFor({ ...model, resolutions: sizeChoices(model, aspect) }, aspect, model.defaults.resolution) || model.defaults.resolution || '',
       duration: model.kind === 'video' ? step.duration : '',
@@ -5171,6 +5480,8 @@ function lbRender() {
       <a class="btn small primary" href="/renders/${encodeURIComponent(file.file)}" download="${esc(file.name || file.file)}">⬇ Download</a>
       <button type="button" class="btn small" data-lb="copy">📋 Copy prompt</button>
       ${file.kind === 'image' && animateTarget() ? `<button type="button" class="btn small" data-lb="animate" title="Make a video from this still: it becomes the first frame">🎬 Animate this</button>` : ''}
+      ${file.kind === 'image' && characterTarget() ? `<button type="button" class="btn small" data-lb="character" title="Make it perform a motion video's moves with ${esc(characterTarget().name)}">🧍 Animate as a character</button>` : ''}
+      ${file.kind === 'video' && characterTarget() ? `<button type="button" class="btn small" data-lb="motion" title="Use this video's moves for a character, with ${esc(characterTarget().name)}">🕺 Use as motion video</button>` : ''}
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
       ${lb.fromGallery ? '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>' : '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>'}
@@ -5193,6 +5504,17 @@ function lbRender() {
   $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); openEntry(entry); });
   $('[data-lb="animate"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: true }); });
   $('[data-lb="use"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false }); });
+  $('[data-lb="character"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false, character: true }); });
+  $('[data-lb="motion"]', $('#lbInfo'))?.addEventListener('click', async () => {
+    if (state.busy) return toast('Hold on, a prompt is still cooking. Stop it or wait.', true);
+    closeLightbox();
+    await flushEdits();
+    showView('create');
+    const target = characterTarget();
+    if (target.id !== state.modelId) selectModel(target.id);
+    await useRenderAsVideo(it);
+    $('#motionZone').scrollIntoView({ block: 'center', behavior: scrollMode() });
+  });
   $('[data-lb="seed"]', $('#lbInfo'))?.addEventListener('click', () => {
     const flow = state.workflows.find(f => f.id === render.workflowId);
     if (!flow) return;
@@ -5339,7 +5661,10 @@ $('#galleryModels').addEventListener('click', e => { const b = e.target.closest(
 
 // ---------- models → workflows ----------
 
-const MAP_CHIPS = [['prompt', '✍️ Prompt'], ['image', '🖼️ Image'], ['size', '📐 Size'], ['duration', '⏱️ Duration'], ['seed', '🎲 Seed']];
+const MAP_CHIPS = [['prompt', '✍️ Prompt'], ['motion', '🕺 Motion'], ['image', '🖼️ Image'], ['video', '🎞️ Video'], ['size', '📐 Size'], ['duration', '⏱️ Duration'], ['seed', '🎲 Seed']];
+// Motion chips only matter on character-animation models.
+const mapChips = m => MAP_CHIPS.filter(([k]) => m?.motionVideo || (k !== 'motion' && k !== 'video'));
+const sourceLabel = src => (src.startsWith('comfyui:') ? 'from your ComfyUI library' : src.startsWith('comfytemplate:') ? 'ComfyUI template' : 'uploaded file');
 
 function renderWorkflowList() {
   const list = $('#wfList');
@@ -5359,8 +5684,8 @@ function renderWorkflowList() {
   list.innerHTML = flows.map(f => `
     <li class="wf-row" data-id="${esc(f.id)}">
       <span aria-hidden="true">🎨</span>
-      <div><div class="wf-name">${esc(f.name)}${state.wfStale.has(f.id) ? ' <span class="tag warn">↻ changed in ComfyUI</span>' : ''}</div><div class="wf-src">${f.source.startsWith('comfyui:') ? 'from your ComfyUI library' : 'uploaded file'} · ${f.nodes} nodes</div></div>
-      <div class="wf-maps">${MAP_CHIPS.map(([k, label]) => `<span class="${f.maps[k] ? 'on' : ''}" title="${f.maps[k] ? 'Set by Prompt Maker' : 'Left as the workflow has it'}">${label}</span>`).join('')}</div>
+      <div><div class="wf-name">${esc(f.name)}${state.wfStale.has(f.id) ? ' <span class="tag warn">↻ changed in ComfyUI</span>' : ''}</div><div class="wf-src">${sourceLabel(f.source)} · ${f.nodes} nodes</div></div>
+      <div class="wf-maps">${mapChips(m).map(([k, label]) => `<span class="${f.maps[k] ? 'on' : ''}" title="${f.maps[k] ? 'Set by Prompt Maker' : 'Left as the workflow has it'}">${label}</span>`).join('')}</div>
       <div class="wf-actions">
         ${state.wfStale.has(f.id) ? '<button type="button" class="btn small primary" data-act="refresh">↻ Update</button>' : ''}
         <button type="button" class="btn small" data-act="setup">⚙ Set up</button>
@@ -5410,7 +5735,7 @@ function openWorkflowDialog({ edit = null, modelId = null, focusSampler = false 
   $('#wfPickMsg').hidden = true;
   $('#wfDelete').hidden = !edit;
   $('#wfRefresh').hidden = !edit;
-  if (edit) $('#wfRefresh').textContent = edit.source?.startsWith('comfyui:') ? '↻ Update from ComfyUI' : '↻ Update from a file';
+  if (edit) $('#wfRefresh').textContent = edit.source?.startsWith('comfyui:') || edit.source?.startsWith('comfytemplate:') ? '↻ Update from ComfyUI' : '↻ Update from a file';
   if (edit) {
     $('#wfDialogTitle').textContent = `Set up “${edit.name}”`;
     showSetup(edit);
@@ -5443,6 +5768,7 @@ async function loadSavedWorkflows() {
     $('#wfRetry').addEventListener('click', loadSavedWorkflows);
     return;
   }
+  renderTemplates();
   try {
     dlg.saved = await api('/api/comfy/workflows');
   } catch (err) {
@@ -5451,6 +5777,20 @@ async function loadSavedWorkflows() {
   }
   renderSavedList();
 }
+
+// ComfyUI's own templates for the model (its playbook names them), offered above your saved workflows.
+function renderTemplates() {
+  const m = modelById(dlg.modelId);
+  const list = m?.comfyTemplates || [];
+  $('#wfTemplates').hidden = !list.length;
+  $('#wfTplModel').textContent = m?.name || '';
+  const have = new Set(workflowsFor(dlg.modelId).map(f => f.source));
+  $('#wfTplList').innerHTML = list.map(t => `<li><button type="button" data-template="${esc(t.name)}" data-title="${esc(t.title)}"><span aria-hidden="true">⭐</span><span class="ws-tpl">${esc(t.title)}${t.note ? `<span class="ws-note">${esc(t.note)}</span>` : ''}</span>${have.has(`comfytemplate:${t.name}`) ? '<span class="ws-date">added already</span>' : ''}</button></li>`).join('');
+}
+$('#wfTplList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-template]');
+  if (b) prepareWorkflow({ template: b.dataset.template, templateTitle: b.dataset.title });
+});
 
 function renderSavedList() {
   const q = $('#wfSearch').value.trim().toLowerCase();
@@ -5471,7 +5811,7 @@ $('#wfBack').addEventListener('click', () => openWorkflowDialog({ modelId: dlg.m
 $('#wfRefresh').addEventListener('click', () => {
   const flow = state.workflows.find(f => f.id === dlg.editId);
   if (!flow) return;
-  if (flow.source.startsWith('comfyui:')) updateWorkflow(flow.id, { review: true });
+  if (flow.source.startsWith('comfyui:') || flow.source.startsWith('comfytemplate:')) updateWorkflow(flow.id, { review: true });
   else $('#wfRefreshFile').click();
 });
 $('#wfRefreshFile').addEventListener('change', async e => {
@@ -5542,7 +5882,14 @@ async function prepareWorkflow(payload) {
 
 const targetKey = t => (t ? `${t.node}|${t.input}` : '');
 
-const PARAM_LABEL = { seed: 'Seed', steps: 'Steps', cfg: 'CFG', sampler: 'Sampler', scheduler: 'Scheduler', denoise: 'Denoise' };
+const PARAM_LABEL = { seed: 'Seed', steps: 'Steps', cfg: 'CFG', sampler: 'Sampler', scheduler: 'Scheduler', denoise: 'Denoise', pose: 'Pose strength', poseStart: 'Pose start', poseEnd: 'Pose end', identity: 'Character strength' };
+// What the character-animation knobs do (Wan Animate 2), shown on hover.
+const PARAM_TIP = {
+  pose: 'How strongly the motion video drives the moves. 1 is as trained; lower loosens it, higher follows it harder.',
+  poseStart: 'When, in the sampling steps (0–1), the motion video starts to count.',
+  poseEnd: 'When, in the sampling steps (0–1), the motion video stops counting. Around 0.7 keeps the moves but loosens fine detail.',
+  identity: 'How closely the character keeps the image\'s look. Below 1 lets the prompt restyle it; above 1 holds it tighter.',
+};
 const paramLabel = p => {
   const stage = /^(stage\d+|first|second|pass\d+|hires|refiner|base)_/i.exec(p.input)?.[1];
   const base = p.input.toLowerCase() === 'guidance' ? 'Guidance' : PARAM_LABEL[p.kind];
@@ -5572,9 +5919,10 @@ function renderSamplerControls(data) {
       field.dataset.key = key;
       field.dataset.kind = p.kind;
       field.dataset.original = String(p.value);
+      if (PARAM_TIP[p.kind]) field.title = PARAM_TIP[p.kind];
       const control = p.options
         ? `<select>${p.options.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select>`
-        : `<input type="${p.kind === 'sampler' || p.kind === 'scheduler' ? 'text' : 'number'}" ${p.kind === 'cfg' ? 'step="0.1" min="0"' : p.kind === 'denoise' ? 'step="0.01" min="0" max="1"' : p.kind === 'steps' ? 'step="1" min="1"' : 'step="1" min="0"'}>`;
+        : `<input type="${p.kind === 'sampler' || p.kind === 'scheduler' ? 'text' : 'number'}" ${p.kind === 'cfg' ? 'step="0.1" min="0"' : ['denoise', 'poseStart', 'poseEnd'].includes(p.kind) ? 'step="0.01" min="0" max="1"' : ['pose', 'identity'].includes(p.kind) ? 'step="0.05" min="0" max="10"' : p.kind === 'steps' ? 'step="1" min="1"' : 'step="1" min="0"'}>`;
       const locked = p.kind === 'cfg' && Number(p.value) === 1 && overrides[key] === undefined;
       field.innerHTML = `<span>${esc(paramLabel(p))} <button type="button" class="sp-reset" title="Back to the workflow's value (${esc(p.value)})" hidden>↺</button>${locked ? '<button type="button" class="sp-unlock" title="CFG 1 is what distilled, turbo and lightning models need. Unlock only if you know this model takes more.">🔒 unlock</button>' : ''}</span>${control}${locked ? '<small class="sp-lock">Locked at 1 (distilled/turbo)</small>' : ''}`;
       const input = $('input, select', field);
@@ -5670,6 +6018,8 @@ function showSetup(data) {
   (m.prompt?.length ? m.prompt : [null]).forEach(t => addPromptRow(t));
   if (!c.text.length) $('#wfWarnings').insertAdjacentHTML('beforeend', '<p class="wf-warn">⚠️ This workflow has no text input to put a prompt into. It can\'t be used for rendering prompts.</p>');
   fillMap($('#mapImage'), c.image, m.image);
+  fillMap($('#mapMotion'), c.motion || [], m.motion?.[0] || null);
+  fillMap($('#mapVideo'), c.video || [], m.video || null);
   fillMap($('#mapWidth'), c.width, m.width);
   fillMap($('#mapHeight'), c.height, m.height);
   fillMap($('#mapAspect'), c.aspect, m.aspect);
@@ -5685,15 +6035,20 @@ function showSetup(data) {
   renderSamplerControls(data);
   // Only show what this workflow can actually take; name the rest.
   const rows = [
+    ['#rowMotion', 'a motion prompt', c.motion?.length || m.motion?.length],
     ['#rowImage', 'an input image', c.image.length || m.image],
+    ['#rowVideo', 'a motion video', c.video?.length || m.video],
     ['#rowSize', 'a size', c.width.length || c.height.length || c.aspect.length || m.width || m.aspect],
     ['#rowDuration', 'a duration', c.seconds.length || c.frames.length || m.seconds || m.frames],
     ['#rowSeed', 'sampler settings', c.seed.length || (c.params || []).length],
   ];
   const missing = [];
+  const motionModel = Boolean(modelById(dlg.modelId || data.modelId)?.motionVideo);
   for (const [sel, what, has] of rows) {
+    const motionRow = sel === '#rowMotion' || sel === '#rowVideo';
+    $(sel).hidden = motionRow && !has && !motionModel; // only character animation cares
     $(sel).classList.toggle('unused', !has);
-    if (!has) missing.push(what);
+    if (!has && !$(sel).hidden) missing.push(what);
   }
   $('#mapMissing').hidden = !missing.length;
   $('#mapMissing').textContent = missing.length ? `Not in this workflow: ${missing.join(', ')}. Those stay as the workflow has them.` : '';
@@ -5706,7 +6061,9 @@ $('#wfSave').addEventListener('click', async () => {
   if (!prompt.length) return wfToast('Pick where the prompt goes first.');
   const mapping = {
     prompt,
+    motion: [parseTarget($('#mapMotion').value)].filter(Boolean),
     image: parseTarget($('#mapImage').value),
+    video: parseTarget($('#mapVideo').value),
     width: parseTarget($('#mapWidth').value),
     height: parseTarget($('#mapHeight').value),
     aspect: parseTarget($('#mapAspect').value),
@@ -5770,7 +6127,7 @@ const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
 // The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
-const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'favorite_render', 'favorite_entry']);
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'favorite_render', 'favorite_entry']);
 
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
@@ -5783,8 +6140,11 @@ const TOOLS = [
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
   T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('e.g. "1920×1080"'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
-  T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate'], 'animate = first frame of a video (video models only)') }, ['role']),
+  T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate', 'character'], 'animate = first frame of a video (video models only); character = the character a motion video animates (character-animation models like Wan Animate 2 only)') }, ['role']),
   T('clear_image', 'Remove the image from step 3.'),
+  T('use_motion_video', 'Set the motion video in step 3 for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
+  T('clear_motion_video', 'Remove the motion video from step 3.'),
+  T('character_from_render', 'Make a still render the character for Wan Animate 2: switches to that model and attaches the still. Then set a motion video (use_motion_video) and a theme for the place and camera, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (step 5).', { name: S('Workflow name') }, ['name']),
   T('add_lora', 'Add a LoRA (from the model\'s LoRA folder) to the picked workflow.', { name: S('LoRA name or part of it'), strength: N('Strength, usually 0.3–1.2; default 1') }, ['name']),
   T('set_lora', 'Change a LoRA\'s strength or switch it on or off (the workflow\'s own LoRAs or added ones).', { name: S('LoRA name or part of it'), strength: N('New strength'), on: B('On or off') }, ['name']),
@@ -5797,7 +6157,7 @@ const TOOLS = [
   T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–50; default 1') }),
   T('animate_render', 'Make a still render the first frame of a video: switches to the video model and attaches the still. Then use set_theme for what happens, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
-    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate'], 'How it uses the image; animate = first frame'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'auto'], 'pick = wait for the user to choose renders; auto = all go on') }, required: ['model'] } },
+    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'auto'], 'pick = wait for the user to choose renders; auto = all go on') }, required: ['model'] } },
   }, ['steps']),
   T('clear_chain', 'Remove every step from step 6, back to a single step.'),
   T('load_chain', 'Load a saved chain by name.', { name: S('Chain name') }, ['name']),
@@ -5830,7 +6190,7 @@ const TOOLS = [
   T('delete_entry', 'Delete a prompt from History for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
   T('cancel_renders', 'Cancel renders in progress (🎨 Rendering): those of one take on screen, or all.', { take: I('Take number on screen; leave out for every render') }),
   T('set_brain', 'Switch the Brain (the LLM in the top bar) that writes prompts and runs you. A ☁️ cloud Brain asks the user first.', { name: S('Brain name or part of it') }, ['name']),
-  T('list_folder', 'List the pictures in a folder on this computer (for a job, or use_image). A bare name is looked for in the home folder, Pictures, Desktop, Downloads and Documents.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
+  T('list_folder', 'List the pictures (and videos) in a folder on this computer (for a job, use_image or use_motion_video). A bare name is looked for in the home folder, Pictures, Desktop, Downloads and Documents.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
   T('use_image', 'Put a picture from a folder into step 3.', { folder: S('The folder, as list_folder took it'), file: S('The file name, from list_folder') }, ['folder', 'file']),
   T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}].`, {
     title: S('A short name for the job'),
@@ -5847,7 +6207,7 @@ const TOOLS = [
 const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
-  look_at: 'Looking…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', start_job: 'Starting the job…',
+  look_at: 'Looking…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
 };
 
 // ---- what the assistant can see ----
@@ -5948,9 +6308,10 @@ function assistantState() {
   return {
     page: VIEWS.find(isView),
     brain: selectedLlm()?.name || null,
-    model: m && { name: m.name, kind: m.kind },
+    model: m && { name: m.name, kind: m.kind, ...(m.motionVideo ? { characterAnimation: true } : {}) },
     theme: $('#theme').value,
     image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
+    ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, ready: Boolean(state.video.file) } : null } : {}),
     dials: m && {
       aspect: $('#aspect').value, aspects: m.aspectRatios,
       resolution: $('#resolution').value, resolutions: m.resolutions,
@@ -5958,7 +6319,7 @@ function assistantState() {
       length: state.length, takes: state.variations, temperature: Number($('#temperature').value),
     },
     comfyui: state.comfy ? (state.comfy.ok ? 'ready' : 'offline') : 'unknown',
-    workflow: flow && { name: flow.name, takesImage: flow.maps.image, others: workflowsFor(m.id).filter(f => f.id !== flow.id).map(f => f.name), autoRender: saved.get(autoRenderKey(m.id), false) },
+    workflow: flow && { name: flow.name, takesImage: flow.maps.image, ...(flow.maps.video ? { takesMotionVideo: true } : {}), others: workflowsFor(m.id).filter(f => f.id !== flow.id).map(f => f.name), autoRender: saved.get(autoRenderKey(m.id), false) },
     loras: flow ? [...flowLoras(flow).own.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on, inWorkflow: true })), ...flowLoras(flow).added.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on }))] : [],
     batches: batches().map(b => ({ name: b.name, count: b.count, prompts: b.mode })),
     batch_runs: pickedBatches().map(b => b.name), // what Generate runs: none, one batch, or all in order
@@ -6140,7 +6501,7 @@ const TOOL_IMPL = {
   },
   list_folder: async ({ folder }) => {
     const f = await api(`/api/folder?path=${encodeURIComponent(folder || '')}`);
-    return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 200).map(i => i.name), ...(f.images.length > 200 || f.more ? { more: f.images.length - 200 + f.more } : {}), subfolders: f.folders };
+    return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'}${f.videos?.length ? ` and ${f.videos.length} video${f.videos.length === 1 ? '' : 's'}` : ''} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 200).map(i => i.name), ...(f.images.length > 200 || f.more ? { more: f.images.length - 200 + f.more } : {}), ...(f.videos?.length ? { videos: f.videos } : {}), subfolders: f.folders };
   },
   use_image: async ({ folder, file, path }) => {
     const q = path ? `path=${encodeURIComponent(path)}` : `folder=${encodeURIComponent(folder || '')}&name=${encodeURIComponent(file || '')}`;
@@ -6287,12 +6648,42 @@ const TOOL_IMPL = {
   set_image_role: ({ role }) => {
     if (!state.image) throw new Error('There\'s no image in step 3.');
     if (role === 'animate' && currentModel()?.kind !== 'video') throw new Error('Animate only works with a video model.');
+    if (!rolesFor(currentModel()).includes(role)) throw new Error(`${currentModel()?.name} uses the image only as: ${rolesFor(currentModel()).join(', ')}.`);
     state.imageRole = role;
     saved.set('imageRole', role);
     renderRole();
     return { summary: `Image used as ${USE_LABEL[role] || role}` };
   },
   clear_image: () => { setImage(null); return { summary: 'Image removed' }; },
+  use_motion_video: async ({ folder, file, take, render }) => {
+    let blob;
+    let name;
+    if (folder || file) {
+      const res = await fetch(`/api/folder/video?folder=${encodeURIComponent(folder || '')}&name=${encodeURIComponent(file || '')}`).catch(err => { throw new Error(friendly(err)); });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Couldn't open ${file}.`);
+      blob = await res.blob();
+      name = file;
+    } else {
+      const it = needRender({ take, render });
+      if (it.file.kind !== 'video') throw new Error('That render is a still, not a video. Pick a video render, or a video from a folder.');
+      blob = await (await fetch(`/renders/${encodeURIComponent(it.file.file)}`)).blob();
+      name = it.file.name || it.file.file;
+    }
+    const before = state.video;
+    await loadVideoFile(new File([blob], name, { type: blob.type || '' }), { quiet: true });
+    if (state.video === before || !state.video?.file) throw new Error(`Couldn't use ${name}: it didn't open as a video.`);
+    return { summary: `Motion video → ${name} (${secsLabel(state.video.seconds || 0)})` };
+  },
+  clear_motion_video: () => { setVideo(null); return { summary: 'Motion video removed' }; },
+  character_from_render: async ({ take, render }) => {
+    notBusy();
+    const card = needCard(take || 1);
+    const items = takeRenders(card).slice().reverse().flatMap(r => r.files.filter(f => f.kind === 'image').map(f => ({ entry: state.entry, index: card.index, render: r, file: f })));
+    const it = items[(render || 1) - 1];
+    if (!it) throw new Error(`Take ${take || 1} has no still render${render > 1 ? ` number ${render}` : ''}. Render it first.`);
+    await continueFrom(it, { animate: false, character: true });
+    return { summary: `The still is now the character for ${currentModel()?.name}` };
+  },
   pick_workflow: ({ name }) => {
     const m = currentModel();
     const flows = workflowsFor(m.id);
@@ -7031,7 +7422,11 @@ const shorten = (s, n = 90) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const PANEL_SUMMARY = {
   'create-model': () => { const m = currentModel(); return m ? `${m.kind === 'video' ? '🎬' : '📷'} ${m.name}` : ''; },
   'create-theme': () => shorten($('#theme').value.trim()) || 'Nothing yet',
-  'create-image': () => (state.image ? `🖼️ Image attached · ${effectiveRole()}` : 'No image'),
+  'create-image': () => {
+    const img = state.image ? `🖼️ Image attached · ${effectiveRole()}` : 'No image';
+    if (!currentModel()?.motionVideo && !chainNeedsVideo()) return img;
+    return `${state.image ? '🧍 Character attached' : 'No character'} · ${state.video ? `🕺 Motion video${state.video.seconds ? ` ${secsLabel(state.video.seconds)}` : ''}` : 'no motion video'}`;
+  },
   'create-dials': () => [
     !$('#aspectField').hidden && $('#aspect').value, !$('#resolutionField').hidden && $('#resolution').value,
     !$('#durationField').hidden && $('#duration').value, `${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`,
@@ -7135,6 +7530,9 @@ async function loadModels() {
     const img = saved.get('image', null);
     if (img && (await api(`/api/images/${encodeURIComponent(img)}`).catch(() => ({}))).exists) setImage({ file: img, source: saved.get('imageSource', null) });
     else saved.set('image', null);
+    const vid = saved.get('video', null);
+    if (vid?.file && (await api(`/api/videos/${encodeURIComponent(vid.file)}`).catch(() => ({}))).exists) restoreVideo(vid);
+    else saved.set('video', null);
     renderRole();
     renderResults(null);
     showView(location.hash.slice(1) || 'create', { push: false });

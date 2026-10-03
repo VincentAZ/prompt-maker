@@ -403,7 +403,7 @@ esac
   await test('boot', async () => {
     await goto(`${APP}/`);
     assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'Create view is active');
-    eq(await count('.model-card'), 3, 'model cards');
+    eq(await count('.model-card'), 4, 'model cards');
     await waitFor('document.querySelector("#llmDot").classList.contains("ok")', 'LLM status dot to be green');
     eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
     assert(!(await visible('#banner')), 'offline banner hidden');
@@ -1030,19 +1030,19 @@ esac
     eq(await count('#dDur option'), 2, 'duration defaults follow the list');
     await click('#saveModelBtn');
     await toastText('Saved');
-    eq(await count('#modelList li'), 4, 'four models');
-    eq(await count('.model-card'), 4, 'new model on Create');
+    eq(await count('#modelList li'), 5, 'five models');
+    eq(await count('.model-card'), 5, 'new model on Create');
     await click('#dupModelBtn');
     eq(await value('#mName'), 'Test Wizard 9 copy', 'duplicate name');
     await click('#saveModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 5', 'five models');
+    await waitFor('document.querySelectorAll("#modelList li").length === 6', 'six models');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 4', 'copy deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 5', 'copy deleted');
     await click('#modelList button[data-id="test-wizard-9"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 3', 'test model deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 4', 'test model deleted');
   });
 
   await test('models: import JSON', async () => {
@@ -1050,11 +1050,11 @@ esac
     await fs.writeFile(file, JSON.stringify({ name: 'Imported Model', kind: 'image', instructions: '## Hi', aspectRatios: ['1:1'] }));
     await setFiles('#importInput', [file]);
     await toastText('1 new');
-    await waitFor('document.querySelectorAll("#modelList li").length === 4', 'imported model listed');
+    await waitFor('document.querySelectorAll("#modelList li").length === 5', 'imported model listed');
     await click('#modelList button[data-id="imported-model"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 3', 'imported model deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 4', 'imported model deleted');
   });
 
   await test('models: AI draft from docs', async () => {
@@ -1093,13 +1093,13 @@ esac
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
     await waitFor('!document.querySelector(\'#modelList button[data-id="minimax-h3"]\')', 'gone from the list');
-    eq(await count('.model-card'), 2, 'gone from Create');
+    eq(await count('.model-card'), 3, 'gone from Create');
     await waitFor('!document.querySelector("#restoreBuiltinsBtn").hidden', 'bring-back offered');
     assert((await text('#restoreBuiltinsBtn')).includes('MiniMax'), 'names it');
     await click('#restoreBuiltinsBtn');
     await toastText('Brought back');
-    eq(await count('#modelList li'), 3, 'back in the list');
-    eq(await count('.model-card'), 3, 'back on Create');
+    eq(await count('#modelList li'), 4, 'back in the list');
+    eq(await count('.model-card'), 4, 'back on Create');
     assert(!(await visible('#restoreBuiltinsBtn')), 'nothing left to bring back');
   });
 
@@ -1210,6 +1210,23 @@ esac
     eq(Object.keys(api).sort().join(','), '3,4,5,6,7,8,9', 'runnable nodes (note dropped)');
     eq(JSON.stringify(api['3'].inputs), JSON.stringify({ seed: 42, steps: 20, cfg: 7, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] }), 'KSampler inputs (control value skipped)');
     eq(api['6']._meta.title, 'Positive Prompt', 'titles kept');
+    // A node whose input list names only its linked widget (as in ComfyUI's newer templates): the values follow
+    // the node's definition, including a dynamic combo's sub-widgets and a "FLOAT,INT" widget.
+    const info = {
+      Loader: { input: { required: { clip_name: [['a.safetensors', 'b.safetensors']], type: [['stable_diffusion', 'wan']] }, optional: { device: [['default', 'cpu']] } }, input_order: { required: ['clip_name', 'type'], optional: ['device'] }, output: ['CLIP'] },
+      Resize: { input: { required: { input: ['IMAGE'], resize_type: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'scale dimensions', inputs: { required: { width: ['INT', { default: 512 }], height: ['INT', { default: 512 }] } } }, { key: 'scale by multiplier', inputs: { required: { multiplier: ['FLOAT', { default: 1 }] } } }] }], scale_method: [['area', 'bilinear']], rate: ['FLOAT,INT', { widgetType: 'FLOAT', default: 25 }], batch: ['INT', { default: 1 }] } }, input_order: { required: ['input', 'resize_type', 'scale_method', 'rate', 'batch'] }, output: ['IMAGE'], output_node: true },
+      Src: { input: { required: {} }, output: ['STRING', 'IMAGE'] },
+    };
+    const partial = convertUiWorkflow({
+      nodes: [
+        { id: 1, type: 'Src', mode: 0, inputs: [], outputs: [{ name: 'STRING', type: 'STRING', links: [1] }, { name: 'IMAGE', type: 'IMAGE', links: [2] }] },
+        { id: 2, type: 'Loader', mode: 0, inputs: [{ name: 'clip_name', type: 'COMBO', widget: { name: 'clip_name' }, link: 1 }], outputs: [], widgets_values: ['b.safetensors', 'wan', 'cpu'] },
+        { id: 3, type: 'Resize', mode: 0, inputs: [{ name: 'input', type: 'IMAGE', link: 2 }, { name: 'resize_type.width', type: 'INT', widget: { name: 'resize_type.width' }, link: null }], outputs: [], widgets_values: ['scale dimensions', 482, 854, 'bilinear', 30, 2] },
+      ],
+      links: [[1, 1, 0, 2, 0, 'STRING'], [2, 1, 1, 3, 0, 'IMAGE']],
+    }, info);
+    eq(JSON.stringify(partial['2'].inputs), JSON.stringify({ type: 'wan', device: 'cpu', clip_name: ['1', 0] }), 'the unlisted widgets keep their saved values');
+    eq(JSON.stringify(partial['3'].inputs), JSON.stringify({ resize_type: 'scale dimensions', 'resize_type.width': 482, 'resize_type.height': 854, scale_method: 'bilinear', rate: 30, batch: 2, input: ['1', 1] }), 'dynamic sub-widgets and FLOAT,INT widgets in order');
   });
 
   await test('settings: ComfyUI connection', async () => {
@@ -2708,6 +2725,115 @@ esac
     await press('Escape');
     await waitFor('!document.querySelector("#imgView").open', 'Esc closes it');
     await click('#imageClear');
+  });
+
+  await test('Wan Animate 2: a character performs a motion video; ComfyUI\'s template is fixed and the prompt split', async () => {
+    const history = async () => (await fetch(`${APP}/api/history`)).json();
+    const textOf = c => (typeof c === 'string' ? c : c.filter(p => p.type === 'text').map(p => p.text).join('\n'));
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="wan-animate-2"]');
+    await waitFor('!document.querySelector("#motionBlock").hidden && !document.querySelector("#charLabel").hidden', 'step 3 asks for a character and a motion video');
+    eq(await text('#imageStepTitle'), 'Character & motion', 'step 3 is about both');
+    assert((await js('document.querySelector("#theme").placeholder')).startsWith('Where are they'), 'the theme says where and from what angle');
+
+    // ComfyUI's own template, offered first: read from ComfyUI, its empty pose window fixed, everything mapped.
+    await click((await visible('#wfpAddFirst')) ? '#wfpAddFirst' : '#wfpAdd');
+    await waitFor('!document.querySelector("#wfTemplates").hidden && document.querySelectorAll("#wfTplList button").length === 2', 'ComfyUI\'s templates for the model come first');
+    await click('#wfTplList button[data-template="video_wan_animate2"]');
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'the setup');
+    assert((await text('#wfWarnings')).includes('pose window ended where it started'), 'the template\'s empty pose window is fixed, and it says so');
+    eq(await value('#mapMotion'), '10:103|text', 'the Motion line goes to the pose prompt');
+    eq(await value('#mapVideo'), '2|file', 'the motion video goes to Load Video');
+    eq(await js('[...document.querySelectorAll("#mapPrompt select")].map(s => s.value).join()'), '10:102|text', 'the rest to the prompt');
+    eq(await value('#samplerCtl .sp-field[data-kind="poseEnd"] input'), '1', 'pose end is 1 now');
+    assert(await visible('#samplerCtl .sp-field[data-kind="pose"]') && await visible('#samplerCtl .sp-field[data-kind="identity"]'), 'pose and character strength can be tuned');
+    await shot('46-wan-template-setup');
+    await click('#wfSave');
+    await toastText('is ready');
+
+    // Render without a motion video: a clear message, no ComfyUI job.
+    await setFiles('#imageInput', [portrait]);
+    await waitFor('!document.querySelector(".dz-preview").hidden && document.querySelector("#roleBlock").hidden', 'the character is in (one way to use it: no role to pick)');
+    assert((await text('#roleHint')).includes('performs the motion video'), 'the hint says what happens');
+    assert((await text('#wfpWarn')).includes('needs a motion video'), 'step 5 says the workflow needs a motion video');
+
+    // A motion video recorded in the browser: a WebM with no duration in its header, like many recorders make.
+    await js(`(async () => {
+      const c = document.createElement('canvas'); c.width = 180; c.height = 320; c.style.cssText = 'position:fixed;left:-999px'; document.body.append(c); // frames are only recorded from a canvas on the page
+      const ctx = c.getContext('2d');
+      const rec = new MediaRecorder(c.captureStream(15), { mimeType: 'video/webm' });
+      const chunks = [];
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.start();
+      for (let i = 0; i < 20; i++) { ctx.fillStyle = 'hsl(' + i * 18 + ' 80% 50%)'; ctx.fillRect(0, 0, 180, 320); ctx.fillStyle = '#fff'; ctx.fillRect(20 + i * 6, 100, 40, 120); await new Promise(r => setTimeout(r, 70)); }
+      rec.stop();
+      await new Promise(r => { rec.onstop = r; });
+      c.remove();
+      const dt = new DataTransfer();
+      dt.items.add(new File(chunks, 'dance.webm', { type: 'video/webm' }));
+      const input = document.querySelector('#videoInput');
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    })()`);
+    await waitFor('document.querySelector("#mzInfo").textContent.startsWith("🕺")', 'the motion video is stored', 15000);
+    await toastText('Motion video added');
+    eq(await value('#aspect'), '9:16', 'the aspect follows the motion video');
+    assert(!(await visible('#wfpWarn')), 'nothing missing anymore');
+    await shot('47-wan-step3');
+
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'on a rooftop at dusk');
+    await click('#generateBtn');
+    await genDone();
+    const ask = mock.log.at(-1).messages.find(m => m.role === 'user');
+    eq(ask.content.filter(p => p.type === 'image_url').length, 2, 'the Brain sees the character and a contact sheet of the motion');
+    assert(textOf(ask.content).includes('MOTION VIDEO') && textOf(ask.content).includes('role = "character"'), 'and is told which is which');
+    const entry = (await history()).find(e => e.theme === 'on a rooftop at dusk');
+    assert(entry.video?.file?.endsWith('.webm') && entry.video.sheet && entry.video.seconds > 0.5, 'the take keeps its motion video, its frames and its length');
+    eq(entry.imageRole, 'character', 'and the image is the character');
+    assert(await fileExists(path.join(dataDir, 'videos', entry.video.file)), 'the video is in the data folder');
+
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    for (let i = 0; i < 100 && comfy.prompts.length === before; i++) await sleep(50);
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    const sent = comfy.prompts.at(-1).prompt;
+    const main = sent['10:102'].inputs.text;
+    assert(main.startsWith('Character appearance description:') && main.includes('Background description:') && !/Motion:/.test(main), 'the look and setting go to the prompt');
+    assert(sent['10:103'].inputs.text.startsWith('A woman doing'), 'the Motion line goes to the pose prompt');
+    eq(sent['2'].inputs.file, `prompt-maker_${entry.video.file}`, 'the motion video goes to ComfyUI');
+    assert(comfy.uploads.includes(`prompt-maker_${entry.video.file}`) && await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.video.file}`)), 'uploaded to its input folder');
+    eq(sent['10:106'].inputs.pose_end_percent, 1, 'the pose window is fixed in what is sent');
+    eq(`${sent['10:106'].inputs.width}×${sent['10:106'].inputs.height}`, '480×848', '480p in the video\'s shape');
+    await click('.take .rtile img');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert(await visible('[data-lb="character"]'), 'a still can become a character for Wan Animate 2');
+    await press('Escape');
+
+    // New clears the motion video too, and History puts it back.
+    await click('#newBtn');
+    await waitFor('document.querySelector("#motionBlock .mz-preview").hidden', 'cleared');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("on a rooftop at dusk"))', 'the card');
+    const n = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("on a rooftop at dusk")) + 1');
+    await click(`.hcard:nth-of-type(${n}) button.open`);
+    await waitFor('document.querySelector(".model-card.active")?.dataset.id === "wan-animate-2" && document.querySelector("#mzInfo").textContent.startsWith("🕺")', 'the motion video is back with the card');
+
+    // Deleting the card takes the video with it, here and in ComfyUI.
+    await click('.tabs button[data-view="history"]');
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await waitFor('![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("on a rooftop at dusk"))', 'card gone');
+    await toastText('Deleted for good');
+    assert(!(await fileExists(path.join(dataDir, 'videos', entry.video.file))), 'the motion video is gone from the data folder');
+    assert(!(await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.video.file}`))), 'and from ComfyUI\'s input folder');
+    assert(!(await fileExists(path.join(dataDir, 'images', entry.video.sheet))), 'and its frames');
+    await click('.tabs button[data-view="create"]');
+    if (await visible('#videoClear')) await click('#videoClear');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(await js('document.querySelector("#motionBlock").hidden'), 'other models don\'t ask for a motion video');
   });
 
   await test('jobs: the assistant works through a folder, skips what fails and logs it; a reload stops it safely', async () => {

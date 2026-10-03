@@ -3,6 +3,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import * as store from './lib/store.js';
 import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } from './lib/lmstudio.js';
@@ -11,6 +12,7 @@ import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
 import * as cloud from './lib/cloud.js';
 import * as folders from './lib/folders.js';
+import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
@@ -52,7 +54,8 @@ const MIME = {
 };
 
 // The browser may only talk to this server: nothing external can load, even by accident.
-const CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'";
+// media-src blob: lets a motion video play in the page while it's read and uploaded.
+const CSP = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'";
 
 // ---------- helpers ----------
 
@@ -236,11 +239,16 @@ async function recordRun(llm, outcome, t0, warm) {
   await store.recordBrainRun(llm.id, { outcome, seconds: warm ? secondsSince(t0) : null }).catch(() => {});
 }
 
+// The image role used: one the model offers (its imageRoles, else reference / recreate, plus animate for video).
+function roleFor(model, wanted) {
+  const offered = model.imageRoles?.length ? model.imageRoles : ['reference', 'recreate', ...(model.kind === 'video' ? ['animate'] : [])];
+  return offered.includes(wanted) ? wanted : offered[0];
+}
+
 function pickParams(body, model) {
-  const role = ['reference', 'recreate', 'animate'].includes(body.imageRole) ? body.imageRole : 'reference';
   return {
     theme: String(body.theme || '').trim(),
-    imageRole: model.kind !== 'video' && role === 'animate' ? 'reference' : role,
+    imageRole: roleFor(model, body.imageRole),
     aspectRatio: String(body.aspectRatio || model.defaults.aspectRatio || ''),
     resolution: String(body.resolution || model.defaults.resolution || ''),
     duration: model.kind === 'video' ? String(body.duration || model.defaults.duration || '') : '',
@@ -249,6 +257,32 @@ function pickParams(body, model) {
 }
 
 // ---------- generation ----------
+
+// A motion video for a character-animation model (Wan Animate 2): the stored file, the contact sheet of its frames
+// that the Brain sees, and its shape. Returns { file, sheet, seconds, frames, width, height }, or null.
+async function motionVideo(v, model) {
+  if (!model.motionVideo || !v || typeof v !== 'object') return null;
+  const file = store.videoPath(v.file);
+  if (!file || !(await fs.access(file).then(() => true, () => false))) throw store.httpError(400, 'The motion video is missing. Add it again in step 3.');
+  const num = (x, max) => (Number.isFinite(Number(x)) && Number(x) > 0 ? Math.min(max, Math.round(Number(x) * 100) / 100) : null);
+  return {
+    file: v.file,
+    ...(v.preview === `${v.file.slice(0, 20)}.preview.mp4` ? { preview: v.preview } : {}), // what the page plays (H.265 and such)
+    sheet: /^[a-f0-9]{20}\.(jpg|png|webp)$/.test(v.sheet || '') ? v.sheet : null,
+    fps: num(v.fps, 1000),
+    seconds: num(v.seconds, 36000),
+    frames: num(v.frames, 64),
+    width: num(v.width, 16384),
+    height: num(v.height, 16384),
+  };
+}
+
+// The motion video as the Brain gets it (its contact sheet's data URL added), or null.
+async function videoForBrain(video) {
+  if (!video) return null;
+  const sheetDataUrl = video.sheet ? await store.readImageDataUrl(video.sheet).catch(() => null) : null;
+  return { ...video, sheetDataUrl };
+}
 
 // A take started from an earlier render (e.g. a still that becomes a video's first frame). Returns the link
 // to store on the new entry, or null if that render is gone.
@@ -298,21 +332,25 @@ async function generate(req, res) {
     imageFile = body.imageFile;
     imageDataUrl = await store.readImageDataUrl(imageFile);
   }
-  if (!params.theme && !imageDataUrl) throw store.httpError(400, 'Enter a theme, add an image, or both.');
+  const video = await motionVideo(body.video, model);
+  const brainVideo = await videoForBrain(video);
+  if (!params.theme && !imageDataUrl && !video) throw store.httpError(400, 'Enter a theme, add an image, or both.');
   const source = imageDataUrl ? await resolveSource(body.source) : null;
   const chain = chainRef(body.chain);
   const batch = typeof body.batch === 'string' ? body.batch.trim().slice(0, 60) : ''; // the saved batch this run belongs to
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
+  if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null; // a text-only Brain goes by the theme alone
+  const seesImages = Boolean(imageDataUrl || brainVideo?.sheetDataUrl);
   const llmModel = llm.id;
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.variations) || 1)));
   const opts = sampling(settings, body.temperature ?? model.defaults.temperature, llm);
 
-  const stream = startStream(res, llm, count, Boolean(imageDataUrl));
+  const stream = startStream(res, llm, count, seesImages);
   const texts = [];
   try {
     for (let index = 0; index < count; index++) {
-      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text }, imageDataUrl, { index, count, previous: texts });
+      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo }, imageDataUrl, { index, count, previous: texts });
       const t0 = Date.now();
       const warm = llm.loaded !== false;
       const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
@@ -343,6 +381,7 @@ async function generate(req, res) {
       ...params,
       temperature: opts.temperature,
       imageFile,
+      ...(video ? { video } : {}),
       ...(source ? { source } : {}),
       ...(chain ? { chain } : {}),
       ...(batch ? { batch } : {}),
@@ -369,14 +408,17 @@ async function refine(req, res) {
   const base = variation.versions[Number.isInteger(body.baseIndex) ? body.baseIndex : -1] || variation.versions.at(-1);
   const current = typeof body.currentText === 'string' && body.currentText.trim() ? body.currentText.trim() : base.text;
   const imageDataUrl = entry.imageFile ? await store.readImageDataUrl(entry.imageFile) : null;
+  const brainVideo = model.motionVideo ? await videoForBrain(entry.video) : null;
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
+  if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null;
+  const seesImages = Boolean(imageDataUrl || brainVideo?.sheetDataUrl);
   const llmModel = llm.id;
   const opts = sampling(settings, body.temperature ?? entry.temperature, llm);
   const params = pickParams(entry, model);
 
-  const stream = startStream(res, llm, 1, Boolean(imageDataUrl));
+  const stream = startStream(res, llm, 1, seesImages);
   try {
-    const messages = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '' }, imageDataUrl, current, instruction);
+    const messages = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo }, imageDataUrl, current, instruction);
     const t0 = Date.now();
     const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
       signal: stream.signal,
@@ -600,6 +642,10 @@ async function prepareWorkflow(body) {
     name = body.comfyPath.split('/').pop().replace(/\.json$/i, '');
     source = `comfyui:${body.comfyPath}`;
     sourceModified = Number(listed.modified) || null;
+  } else if (body.template) {
+    json = await comfy.readTemplate(settings.comfyUrl, String(body.template));
+    name = String(body.templateTitle || body.template).trim().slice(0, 120);
+    source = `comfytemplate:${body.template}`;
   }
   if (!json || typeof json !== 'object') throw store.httpError(400, 'That file is not valid JSON.');
   let preset = null;
@@ -623,6 +669,7 @@ async function prepareWorkflow(body) {
   } else {
     throw store.httpError(400, 'This doesn\'t look like a ComfyUI workflow. In ComfyUI use Workflow → Save, or Workflow → Export (API).');
   }
+  const fixed = wf.repair(prompt);
   const analysis = wf.analyze(prompt, info);
   return {
     name: name || 'Workflow',
@@ -632,7 +679,7 @@ async function prepareWorkflow(body) {
     mapping: preset?.mapping || analysis.mapping,
     options: preset?.options || analysis.options,
     candidates: analysis.candidates,
-    warnings: analysis.warnings,
+    warnings: [...fixed, ...analysis.warnings],
     producesVideo: analysis.producesVideo,
     nodes: Object.keys(prompt).length,
   };
@@ -641,8 +688,9 @@ async function prepareWorkflow(body) {
 // Pulls in a newer version of a workflow: from ComfyUI (if it came from there) or from a file you pick.
 async function refreshWorkflow(existing, body) {
   const fromComfy = existing.source.startsWith('comfyui:');
-  if (!body.json && !fromComfy) throw store.httpError(400, 'This workflow was uploaded from a file. Pick the new version of the file to update it.');
-  const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
+  const template = existing.source.startsWith('comfytemplate:') ? existing.source.slice('comfytemplate:'.length) : '';
+  if (!body.json && !fromComfy && !template) throw store.httpError(400, 'This workflow was uploaded from a file. Pick the new version of the file to update it.');
+  const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : template ? { template, templateTitle: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
   const { mapping, overrides, loras, lost, changes } = wf.carryOver(existing, fresh.prompt, fresh.mapping);
   if (!mapping.prompt.length) throw store.httpError(400, 'The new version has no text input for the prompt, so it can\'t be used for rendering.');
   const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, loras, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
@@ -652,7 +700,8 @@ async function refreshWorkflow(existing, body) {
 const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
 // The names an entry's input image gets in ComfyUI's input folder (its render original, or the copy the LLM saw).
-const uploadNames = e => [e.source?.file, e.imageFile].filter(Boolean).map(name => `prompt-maker_${name}`);
+const uploadNames = e => [e.source?.file, e.imageFile, e.video?.file].filter(Boolean).map(name => `prompt-maker_${name}`);
+const VIDEO_MIME = Object.fromEntries(Object.entries(store.VIDEO_TYPES).map(([mime, ext]) => [ext, mime]));
 // And the names its renders got when a take was made from one of them (animating a still uploads the still).
 const renderUploads = renders => renders.flatMap(r => (r.files || []).map(f => `prompt-maker_${f.file}`));
 
@@ -736,6 +785,9 @@ async function renderTake(req, res) {
   if (workflow.mapping.image && !entry.imageFile) {
     throw store.httpError(400, `"${workflow.name}" needs an input image (it has a Load Image node), but this take has none. Add an image on the Create page, or pick a text-to-image/video workflow.`);
   }
+  if (workflow.mapping.video && !entry.video?.file) {
+    throw store.httpError(400, `"${workflow.name}" needs a motion video (it has a Load Video node), but this take has none. Add a motion video in step 3 on the Create page, then Generate again.`);
+  }
   const base = settings.comfyUrl;
   await comfy.status(base);
   const info = await comfy.objectInfo(base).catch(() => null);
@@ -748,6 +800,12 @@ async function renderTake(req, res) {
     const buf = await fs.readFile(useOriginal ? original : path.join(store.IMAGES_DIR, entry.imageFile));
     const ext = name.split('.').pop().toLowerCase();
     imageName = await comfy.uploadImage(base, buf, `prompt-maker_${name}`, IMAGE_MIME[ext] || 'image/png');
+  }
+  let videoName = null;
+  if (workflow.mapping.video && entry.video?.file) {
+    const file = store.videoPath(entry.video.file);
+    const buf = await fs.readFile(file).catch(() => { throw store.httpError(404, 'This take\'s motion video is missing from the data folder.'); });
+    videoName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.video.file}`, VIDEO_MIME[entry.video.file.split('.').pop()] || 'video/mp4');
   }
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
@@ -765,6 +823,7 @@ async function renderTake(req, res) {
       const { prompt, applied } = wf.buildPrompt(workflow, {
         text,
         imageName,
+        videoName,
         aspectRatio: entry.aspectRatio,
         resolution: entry.resolution,
         duration: entry.duration,
@@ -832,7 +891,7 @@ async function renderTake(req, res) {
         if (err.status !== 404) throw err;
         // The take was deleted while this rendered: none of it is kept, here or in ComfyUI.
         await store.removeRenderFiles([render]);
-        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs: imageName ? [imageName] : [], rest: await store.listHistory() });
+        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs: [imageName, videoName].filter(Boolean), rest: await store.listHistory() });
         throw store.httpError(404, 'That take was deleted, so its render was thrown away.');
       }
       stream.send({ type: 'render', i, render });
@@ -1044,6 +1103,40 @@ async function route(req, res) {
     runs.get(match[1])?.abort();
     return sendJson(res, 200, { ok: true });
   }
+  if (p === '/api/videos' && m === 'POST') {
+    // The raw file as the body (it can be big, so it isn't JSON), its type in Content-Type.
+    if (Number(req.headers['content-length']) > store.MAX_VIDEO) throw store.httpError(413, `That video is too big (over ${store.MAX_VIDEO / 1024 / 1024} MB). Trim it to the part you need.`);
+    return sendJson(res, 200, { file: await store.saveVideo(req, req.headers['content-type']) });
+  }
+  // What's in a motion video (when ffmpeg is installed), and a preview the browser can play when it can't play the file.
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/prepare$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    const body = await readBody(req);
+    const ffmpeg = await videotools.hasFfmpeg();
+    const info = await videotools.probe(file);
+    let preview = null;
+    if (body.preview && ffmpeg) preview = path.basename(await videotools.preview(file).catch(err => { console.warn(`Couldn't make a preview of ${match[1]}: ${err.message}`); return ''; })) || null;
+    return sendJson(res, 200, { ffmpeg, info, preview });
+  }
+  // A copy at a lower frame rate (Wan Animate 2 uses every frame: 120 fps takes 5× as long as 24).
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/retime$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
+    const fps = Math.min(60, Math.max(8, Math.round(Number((await readBody(req)).fps) || 24)));
+    const tmp = await videotools.retime(file, fps);
+    try {
+      const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
+      return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  }
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)$/)) && m === 'GET') {
+    const file = store.videoPath(match[1]);
+    return sendJson(res, 200, { exists: Boolean(file) && (await fs.access(file).then(() => true, () => false)) });
+  }
   if (p === '/api/images' && m === 'POST') {
     const body = await readBody(req);
     return sendJson(res, 200, { file: await store.saveImage(body.image) });
@@ -1057,6 +1150,7 @@ async function route(req, res) {
 
   // The assistant's jobs: a folder's pictures to work through, and each job's plan and log.
   if (p === '/api/folder' && m === 'GET') return sendJson(res, 200, await folders.listFolder(url.searchParams.get('path')));
+  if (p === '/api/folder/video' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name'), video: true }), PRIVATE);
   if (p === '/api/folder/image' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name') }), PRIVATE);
   if (p === '/api/jobs' && m === 'GET') return sendJson(res, 200, await store.listJobs());
   if ((match = p.match(/^\/api\/jobs\/([\w-]+)$/)) && m === 'PUT') {
@@ -1189,6 +1283,10 @@ async function route(req, res) {
     return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
   }
 
+  if (p.startsWith('/videos/') && m === 'GET') {
+    const file = store.videoPath(decodeURIComponent(p.slice('/videos/'.length)));
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
+  }
   if (p.startsWith('/images/') && m === 'GET') {
     const file = within(store.IMAGES_DIR, decodeURIComponent(p.slice('/images/'.length)));
     return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });

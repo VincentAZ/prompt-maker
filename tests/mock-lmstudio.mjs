@@ -30,6 +30,10 @@ function cannedPrompt(body) {
   const lead = revise ? `Revised to be ${revise.toLowerCase()}: ` : variation ? `Alternate take ${variation}: ` : '';
   const img = hasImage ? ' matching the palette and light of the reference image,' : '';
   const scene = `${lead}A candid 35mm film photograph of ${theme},${img} framed at eye level with soft natural light falling from the left. Fine grain, muted true-to-life colors, shallow depth of field, and small imperfect details that make it feel real.`;
+  if (system.includes('Character appearance description')) {
+    const frames = users.some(u => Array.isArray(u.content) && u.content.filter(p => p.type === 'image_url').length > 1);
+    return `Character appearance description: ${lead}A woman in her twenties with long pink hair in a high ponytail, a white tank top and black cargo pants. Photorealistic.\nBackground description: ${theme}, warm light from the left. Full-body framing at eye level.\nMotion: A woman doing ${frames ? 'the street dance from the frames' : 'a simple dance'}, background stationary.`;
+  }
   if (system.includes('integrated_multimodal_description')) {
     return `integrated_multimodal_description: [Shot 1] ${scene} The camera pushes in with small amplitude at slow speed.\n\noverall_soundscape: Soft ambience and gentle footsteps.\n\nnon_diegetic_music: N/A`;
   }

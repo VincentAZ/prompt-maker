@@ -23,6 +23,7 @@ Every image and video model wants its prompts written differently:
 - **Krea 2 RAW** likes dense, literal captions with skin-texture cues.
 - **LTX 2.3** wants one flowing paragraph, with camera moves and sound written in.
 - **MiniMax H3** expects a structured "shooting script" with timed shots and dialogue tags.
+- **Wan Animate 2** wants a plain caption of the character and the setting, plus one line naming the moves of its motion video.
 
 Prompt Maker keeps a **playbook for each model** and has a local LLM write the prompt in exactly that style. You describe the idea, and it handles the dialect. Hook up your ComfyUI workflows and each prompt is one click away from the finished image or video.
 
@@ -55,6 +56,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - 🪞 **Recreate**: describe it so the model can reproduce it.
   - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
 - **Image alone.** Leave the theme empty and it suggests a prompt from the image.
+- **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you.
 - **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length.
   - Uploading an image **matches the aspect ratio to it** automatically.
   - Each model remembers your last choices.
@@ -182,7 +184,7 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 |---|---|
 | **① Pick your model** | The generator you're writing for. Its color follows you across the app. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
-| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). |
+| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
 | **④ Dial it in** | Aspect ratio, resolution, duration (video), prompt length, number of takes, temperature. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
 | **⑥ Then…** | Optional. Chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
@@ -204,12 +206,47 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 | 🎯 **Reference** | You like the image's vibe | Carries its subject, palette, lighting and mood into *your* theme. |
 | 🪞 **Recreate** | You want *that* image | Describes it faithfully so the target model can reproduce it. Your theme becomes changes. |
 | 🎬 **Animate** | Image-to-video (video models only) | Treats the image as the first frame and describes the motion, camera and sound from there. |
+| 🧍 **Character** | Character animation (Wan Animate 2) | The generator gets the image as the character to animate. The prompt describes how it looks exactly as it is, and where it is. It's the only way those models use an image, so there's nothing to pick. |
 
 **Temperature** runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
 
 **Prompt length** (*short / medium / long*) means something different for each model. For example, "medium" is about 70–120 words for Krea and about 160–260 for MiniMax. Every take shows its word count against that target.
 
 **Keep it tidy:** every step on Create, every card in Settings and Models, and every take folds down to a one-line summary. Click its header or the ▾ button; Prompt Maker remembers what you folded. Seed, denoise and LoRAs live under step ⑤ → **Advanced**.
+
+### Character animation (Wan Animate 2)
+
+[Wan Animate 2](https://github.com/Wan-Video/Wan-Animate-2) makes a **character image** perform the moves of a **motion video**: a dance, a walk, a fight scene. The character keeps its look from the image, the moves come from the video, and the **setting, light and camera angle come from your theme**. Pick **Wan Animate 2** in step ① and step ③ becomes **Character & motion**:
+
+- **🧍 Character:** drop, paste or pick an image, like any image. A clear, full shot of one character works best.
+- **🕺 Motion video:** drop a video on the page, **browse**, or **🎞️ Pick a video from your Gallery** (any video you rendered). MP4, WebM, MOV and MKV work, up to 500 MB. It plays in step ③, and **Aspect** (step ④) follows its shape.
+  - Frame it like your character: full body to full body. A close-up character with a full-body dance (or the other way round) is the most common cause of a bad result.
+  - The clip is as long as the video, and its frames are used one for one. Step ③ shows its length, shape and frame rate. Above 30 fps (many phones film at 60 or 120), it takes that much longer to render: **Use a 24 fps copy** swaps in a copy at 24 fps, with the sound kept.
+  - **Phone videos (H.265/HEVC)** often don't play in the browser. ComfyUI uses them as they are; for the page, Prompt Maker makes a small upright preview, so you still see it, Aspect still matches it, and the Brain still sees the moves. The preview and the 24 fps copy need [ffmpeg](https://ffmpeg.org) on this computer (most Linux systems have it). Without it, the video still renders; the Brain then goes by your theme for the moves.
+- **② The theme** says where the character is and from where the camera sees it: *"on a rooftop at dusk, low angle, three-quarter view"*. Leave it empty and the AI picks a setting that suits the character.
+
+**What the Brain writes.** The prompt is in Wan Animate 2's own format: a `Character appearance description:` line (looks only: no actions or emotions), a `Background description:` line (the place, the light, the camera), and a `Motion:` line naming the moves. A 👁 vision Brain sees your character and a **contact sheet of the motion video** (6 frames in order, with their times), so it describes the character faithfully and names the motion from the video. A text-only Brain still works: it goes by your theme.
+
+**Rendering it.** In step ⑤, click **＋ Add workflow**. **⭐ ComfyUI's templates for Wan Animate 2** come first, straight from your ComfyUI (update ComfyUI if they're missing):
+
+| Template | What it does |
+|---|---|
+| **Wan Animate 2: Motion Transfer** | The full model with the LightX2V LoRA (6 steps). It follows the whole motion video, however long, in 81-frame pieces. |
+| **Wan Animate 2 Distilled: Motion Transfer** | The distilled model (10 steps). It makes the first 81 frames of the motion video. |
+
+Prompt Maker sets them up for you: the look and setting go to the prompt, the **Motion** line to the pose prompt, your character to *Load Image*, the motion video to *Load Video*, and the size from step ④. It also **fixes a mistake in ComfyUI's template**: its pose window starts and ends at 0, which leaves the motion video unused; Prompt Maker sets the end to 1.0 and says so in the setup. Your own Wan Animate 2 workflows work too (from ComfyUI or a file).
+
+The setup's **🎛️ Sampler** settings add Wan Animate 2's own controls:
+
+| Setting | What it does |
+|---|---|
+| **Pose strength** | How strongly the motion video drives the moves. 1 is as trained; lower loosens it, higher follows it harder. |
+| **Pose start / Pose end** | When, in the sampling steps (0–1), the motion video counts. An end around 0.7 keeps the moves but loosens fine detail. |
+| **Character strength** | How closely the character keeps the image's look. Below 1 lets the prompt restyle it (a new outfit); above 1 holds it tighter. |
+
+**From a render.** In the lightbox, **🧍 Animate as a character** sends a still to Wan Animate 2 as the character, and **🕺 Use as motion video** sends a video render as the moves. A chain can do it too: a **Then** step on Wan Animate 2 uses the still before it as the 🧍 *character* and the motion video in step ③.
+
+The motion video is kept with the take (History puts it back), and deleting the History card deletes it, here and in ComfyUI.
 
 ### ✦ The assistant
 
@@ -219,7 +256,7 @@ Your creative partner, on from the start: its panel opens with the app (on a wid
 - **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, earlier runs and the Gallery. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
 - **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, earlier runs, renders in progress.
 - **Tell it what to make.** *"Set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them."*
-  - It runs the app with the same controls you have: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, chains, History, playbooks, favorites, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
+  - It runs the app with the same controls you have: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, motion videos and characters (Wan Animate 2), chains, History, playbooks, favorites, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
   - Each step shows in the chat ("✓ Model → Krea 2 RAW") and on screen.
   - **■ Stop** or **Esc** stops it.
 - **🗂 Give it long jobs.** *"Use the 4 pictures in folder ABC to do 2 takes each, the first with low temperature, the second with high. Skip any problems and log them for me to review later."*
@@ -271,7 +308,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**.
 2. On **Create**, pick a model (say *Krea 2 RAW*) and click **＋ Add workflow** in step ⑤. (Or do it in **Models**, which lists every model's workflows.)
 3. Choose where the workflow comes from:
-   - **From ComfyUI** lists every workflow you've saved in ComfyUI. Click one.
+   - **From ComfyUI** lists every workflow you've saved in ComfyUI. Click one. For some models (Wan Animate 2), **⭐ ComfyUI's own templates** for it come first: one click, and it's set up.
    - **Upload a file** accepts a saved workflow, an *Export (API)* file, or a workflow exported from Prompt Maker.
 4. Check the **setup**. Prompt Maker reads the workflow and suggests where things go:
 
@@ -279,13 +316,15 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
    |---|---|
    | ✍️ **Prompt** | The take's prompt. It picks the text that feeds the sampler's *positive* input, never the negative. You can send it to several inputs. |
    | 🖼️ **Image** | The take's image, uploaded to ComfyUI (for image-to-image or image-to-video). |
+   | 🕺 **Motion** | Character animation only: the take's `Motion:` line (Wan Animate 2's pose prompt). The rest of the take goes to ✍️ Prompt. |
+   | 🎞️ **Video** | Character animation only: the take's motion video, uploaded to ComfyUI (a *Load Video* node). |
    | 📐 **Size** | Width and height from the take's resolution and aspect, rounded to a multiple of 8/16/32/64. An *aspect ratio* input gets its closest option. |
    | ⏱️ **Duration** | Seconds, or a frame count worked out from the frame rate (with 8n+1 or 4n+1 rounding for LTX and Wan-style models). |
    | 🎲 **Seed** | A fresh random seed every render, unless you lock it. |
 
    Anything you don't map stays exactly as the workflow has it. Add as many workflows per model as you like, for example a fast draft workflow and a slow hi-res one.
 
-5. Tune the **🎛️ Sampler** settings if you like. Prompt Maker shows the workflow's own **seed, steps, CFG, sampler and scheduler** (every sampler in it, two-stage ones included) and lets you change any of them; **↺** puts a value back.
+5. Tune the **🎛️ Sampler** settings if you like. Prompt Maker shows the workflow's own **seed, steps, CFG, sampler and scheduler** (every sampler in it, two-stage ones included), plus Wan Animate 2's pose and character strengths, and lets you change any of them; **↺** puts a value back.
    - A **CFG of 1 is locked**, because distilled, turbo and lightning models need it. **🔒 unlock** is there if you really mean it.
    - Leave *New random seed every render* on, or turn it off to use a fixed seed.
 
@@ -369,7 +408,7 @@ You'll need an image-to-video workflow (one with a *Load Image* node) on the vid
 A chain runs several steps in a row, each one continuing from the renders of the step before, like a still that becomes a video. Build it in step **⑥ Then…** on the Create page:
 
 1. Set up step 1 as usual (model, theme, dials, and a workflow in step ⑤).
-2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*), **what happens** (optional; empty lets the AI choose), its workflow, takes and renders.
+2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*; 🧍 *character* on Wan Animate 2, which also uses the motion video in step ③), **what happens** (optional; empty lets the AI choose), its workflow, takes and renders.
 3. Between steps, choose **⏸️ Let me pick** (the chain waits while you pick the best renders) or **⚡ Auto** (every render goes on).
 4. Click **Run chain**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
 
@@ -397,17 +436,19 @@ Every render also appears in the **Gallery** tab, with filters for images, video
 
 ## Target models
 
-Three models come with ready-made playbooks, researched from their official prompting guides (September 2026):
+Four models come with ready-made playbooks, researched from their official prompting guides (September and October 2026):
 
 | Model | Type | Prompt style |
 |---|---|---|
 | **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. |
 | **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
+| **Wan Animate 2** | Video (character animation) | Wan-AI's official caption format: `Character appearance description:` (looks only) and `Background description:` (place, light, camera angle), plus a `Motion:` line for the pose prompt. Takes a character image and a motion video ([more](#character-animation-wan-animate-2)). |
 
 > **Good to know**
 > - Krea recommends *Krea 2 Turbo* for everyday generation. RAW is the undistilled base model, mainly meant for training.
 > - If you run MiniMax H3 through a host that rewrites prompts (for example fal.ai's prompt expansion), turn that off so the structured format arrives intact.
+> - Wan Animate 2 was trained on Chinese captions; the playbook writes English, like ComfyUI's own templates, which its text encoder (UMT5) reads well. It makes no sound: ComfyUI's templates keep the motion video's audio.
 > - Each model's sources are listed in its editor.
 
 ### Adding or updating a model
@@ -449,6 +490,10 @@ Each model is a single `.json` file (built-ins in `playbooks/<id>.json`, yours i
   "defaults": { "aspectRatio": "16:9", "resolution": "1920×1080", "duration": "6s", "temperature": 0.7, "length": "medium" },
   "lengthGuide": { "short": "≈50–90 words", "medium": "≈100–170 words", "long": "≈170–250 words" },
   "sources": ["https://…"]
+  // Optional:
+  // "imageRoles": ["character"],         the ways the image can be used (reference, recreate, animate, character)
+  // "motionVideo": true,                 character animation: step 3 takes a motion video too
+  // "comfyTemplates": [{ "name": "video_wan_animate2", "title": "…", "note": "…" }]   ComfyUI templates offered first
 }
 ```
 
@@ -503,6 +548,7 @@ Settings also shows your data folder and the **version** you run (with the exact
 | `HOST` | `127.0.0.1` | Interface to bind. ⚠️ There's no login, so don't expose it to a network you don't trust. |
 | `PROMPT_MAKER_DATA` | [per-user data folder](#your-data) | Where your settings, history, images, renders, workflows and playbooks are stored. |
 | `LMS_BIN` | `~/.lmstudio/bin/lms` | Path to LM Studio's `lms` tool, used by the **▶ Start it** button. |
+| `FFMPEG_BIN` / `FFPROBE_BIN` | `ffmpeg` / `ffprobe` | Optional, for motion videos: previews of videos the browser can't play, and 24 fps copies. |
 
 ## Privacy & offline
 
@@ -531,7 +577,8 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 <data folder>/
 ├── settings.json   # your settings, including your master instructions
 ├── history.json    # every generation, its versions and its renders
-├── images/         # images you've used (deduplicated)
+├── images/         # images you've used (deduplicated), and the frames the Brain saw of each motion video
+├── videos/         # motion videos for character animation (deduplicated), and browser previews of H.265 ones
 ├── renders/        # images and videos rendered with ComfyUI
 ├── workflows/      # ComfyUI workflows you've attached, with their setup
 ├── chains/         # chains you saved or edited
@@ -611,6 +658,18 @@ The workflow needs custom nodes that aren't installed. In ComfyUI, open **Manage
 </details>
 
 <details>
+<summary><b>"This browser can't play that video"</b> (motion video)</summary>
+
+Prompt Maker reads the motion video in your browser to show it and to take frames for the Brain. MP4 (H.264) and WebM always play; H.265 (HEVC) phone videos and ProRes often don't. With [ffmpeg](https://ffmpeg.org) installed, Prompt Maker makes a preview the browser can play, on its own. Without it, the video is still used for rendering, but the Brain can't see the moves: describe them in the theme, or convert the video to MP4 (H.264).
+</details>
+
+<details>
+<summary><b>"This workflow needs a motion video"</b></summary>
+
+The workflow has a *Load Video* node mapped as the motion video, but the take has none. On Create, add a motion video in step ③ (Wan Animate 2), then Generate again: the motion video is kept with each take.
+</details>
+
+<details>
 <summary><b>A workflow doesn't convert or render quite right</b></summary>
 
 Prompt Maker converts saved workflows itself. It handles bypassed nodes, reroutes, primitives, subgraphs and so on, and was checked against ComfyUI's own conversion on real workflows. A few exotic custom widgets can still differ. If one misbehaves, export it from ComfyUI with **Workflow → Export (API)** and upload that file instead.
@@ -646,7 +705,8 @@ prompt-maker/
 │   ├── store.js            # file storage in your data folder: models, settings, history, images, renders
 │   ├── comfy.js            # ComfyUI client: status, saved workflows, queue, live progress, downloads
 │   ├── comfy-convert.js    # saved (editor) workflows → API format, incl. subgraphs & bypass
-│   └── workflows.js        # attached workflows: auto-mapping and building the prompt to queue
+│   ├── workflows.js        # attached workflows: auto-mapping and building the prompt to queue
+│   └── videotools.js       # optional ffmpeg help for motion videos: what's in one, browser previews, 24 fps copies
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts)
 ├── playbooks/              # the built-in model playbooks (read-only to the app)
 ├── chains/                 # the starter chains (read-only to the app)
@@ -680,7 +740,7 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 
 - [LM Studio](https://lmstudio.ai), for making local LLMs easy.
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI), for being the best local rendering engine there is.
-- The prompting guides from **Krea**, **Lightricks (LTX)** and **MiniMax** that the bundled playbooks are built on (sources are in each model's editor).
+- The prompting guides from **Krea**, **Lightricks (LTX)**, **MiniMax** and **Wan-AI** that the bundled playbooks are built on (sources are in each model's editor).
 - Fonts: [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), both under the SIL Open Font License (`public/fonts/OFL.txt`).
 
 ## License
