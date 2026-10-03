@@ -56,6 +56,14 @@ function assistantTurn(body) {
     : /like best/.test(said) ? [{ calls: [['look_at', {}]] }, { text: sawPictures ? 'I\'d pick **take 1, render 1**: the light is softer and the subject reads better.' : 'I couldn\'t see them.' }]
     : /favorite the first/.test(said) ? [{ calls: [['favorite_render', { take: 1, render: 1 }]] }, { text: results.includes('Marked as a favorite') ? 'Done, it\'s a favorite.' : 'That failed.' }]
     : /delete this prompt/.test(said) ? [{ calls: [['delete_entry', {}]] }, { text: results.includes('"declined":true') ? 'Okay, I kept it.' : results.includes('Deleted') ? 'Deleted it for good.' : 'That failed.' }]
+    : /^job:/.test(said) ? (() => {
+      const folder = textOf(msgs[at].content).match(/(\/[^\s,]+)/)[1];
+      const runs = [
+        { label: 'low temp', steps: [{ tool: 'clear_chain' }, { tool: 'set_model', args: { model: 'krea' } }, { tool: 'set_theme', args: { text: '' } }, { tool: 'set_dials', args: { takes: 1, temperature: 0.3, batch: 'off' } }, { tool: 'generate' }] },
+        { label: 'high temp', steps: [{ tool: 'set_dials', args: { takes: 1, temperature: 1.4 } }, { tool: 'generate' }] },
+      ];
+      return [{ calls: [['list_folder', { folder }]] }, { calls: [['start_job', { title: 'Pics, low and high', folder, runs }]] }, { text: results.includes('Started the job') ? 'Started it: follow it in 🗂 Jobs.' : 'That failed.' }];
+    })()
     : /tag fallback/.test(said) ? [{ text: '<tool_call>{"name": "set_theme", "arguments": {"text": "from a tag"}}</tool_call>' }, { text: 'Theme set.' }]
     : [{ text: 'I can help with that.' }];
   return script[Math.min(round, script.length - 1)];

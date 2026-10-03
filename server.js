@@ -10,6 +10,7 @@ import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
 import * as cloud from './lib/cloud.js';
+import * as folders from './lib/folders.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
@@ -1053,6 +1054,19 @@ async function route(req, res) {
   }
   if ((match = p.match(/^\/api\/images\/([\w.]+)$/)) && m === 'DELETE') return sendJson(res, 200, { removed: await store.deleteImageIfUnused(match[1]) });
   if (p === '/api/refine' && m === 'POST') return refine(req, res);
+
+  // The assistant's jobs: a folder's pictures to work through, and each job's plan and log.
+  if (p === '/api/folder' && m === 'GET') return sendJson(res, 200, await folders.listFolder(url.searchParams.get('path')));
+  if (p === '/api/folder/image' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name') }), PRIVATE);
+  if (p === '/api/jobs' && m === 'GET') return sendJson(res, 200, await store.listJobs());
+  if ((match = p.match(/^\/api\/jobs\/([\w-]+)$/)) && m === 'PUT') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await store.saveJob({ ...body, id: match[1] }));
+  }
+  if ((match = p.match(/^\/api\/jobs\/([\w-]+)$/)) && m === 'DELETE') {
+    await store.deleteJob(match[1]);
+    return sendJson(res, 200, { ok: true });
+  }
 
   if (p === '/api/history' && m === 'GET') return sendJson(res, 200, await store.listHistory());
   if ((match = p.match(/^\/api\/history\/([\w-]+)$/))) {

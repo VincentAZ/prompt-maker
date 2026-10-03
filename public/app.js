@@ -360,9 +360,13 @@ function resizeTextareas() {
 }
 window.addEventListener('resize', resizeTextareas);
 
+// While a job step runs, its tools don't pull you back to Create from another page.
+let quietNav = false;
+
 function showView(name, { push = true } = {}) {
   const [view, sub] = String(name).split('/');
   name = VIEWS.includes(view) ? view : 'create';
+  if (quietNav && name === 'create' && !isView('create')) return;
   if (name === 'models') showModelsPane(sub || modelsPane, { push: false });
   $$('.tabs button').forEach(b => {
     const on = b.dataset.view === name;
@@ -5608,6 +5612,9 @@ const I = description => ({ type: 'integer', description });
 const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
+// The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'favorite_render', 'favorite_entry']);
+
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
   T('list_models', 'The target models (image and video) with their aspect ratios, resolutions and durations.'),
@@ -5666,6 +5673,16 @@ const TOOLS = [
   T('delete_entry', 'Delete a prompt from History for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
   T('cancel_renders', 'Cancel renders in progress (🎨 Rendering): those of one take on screen, or all.', { take: I('Take number on screen; leave out for every render') }),
   T('set_brain', 'Switch the Brain (the LLM in the top bar) that writes prompts and runs you. A ☁️ cloud Brain asks the user first.', { name: S('Brain name or part of it') }, ['name']),
+  T('list_folder', 'List the pictures in a folder on this computer (for a job, or use_image). A bare name is looked for in the home folder, Pictures, Desktop, Downloads and Documents.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
+  T('use_image', 'Put a picture from a folder into step 3.', { folder: S('The folder, as list_folder took it'), file: S('The file name, from list_folder') }, ['folder', 'file']),
+  T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}].`, {
+    title: S('A short name for the job'),
+    folder: S('Optional: the folder of pictures to work through'),
+    limit: I('Optional: only the first N pictures'),
+    runs: { type: 'array', description: 'What to do (for each picture)', items: { type: 'object', properties: { label: S('e.g. "low temp"'), steps: { type: 'array', items: { type: 'object', properties: { tool: E([...JOB_TOOLS], 'The tool'), args: { type: 'object', description: 'Its arguments' } }, required: ['tool'] } } }, required: ['steps'] } },
+  }, ['title', 'runs']),
+  T('job_status', 'How a job is going, or how it went: done, skipped (with why) and left. Default: the newest job.', { title: S('Words from its title') }),
+  T('control_job', 'Pause, resume or stop a job, retry what it skipped, or show the user the Jobs window.', { action: E(['pause', 'resume', 'stop', 'retry_skipped', 'show'], 'pause = after the current item; stop = now'), title: S('Words from its title; default: the newest job') }, ['action']),
   T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
 ];
 
@@ -5673,7 +5690,7 @@ const TOOLS = [
 const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
-  look_at: 'Looking…', cancel_renders: 'Cancelling…',
+  look_at: 'Looking…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', start_job: 'Starting the job…',
 };
 
 // ---- what the assistant can see ----
@@ -5796,6 +5813,7 @@ function assistantState() {
     rendering_now: rendersNow.map(j => ({ theme: j.theme, model: j.modelName, take: j.index + 1, left: j.count - j.finished, stage: j.stage, pct: j.pct })),
     settings: { adult_content: Boolean(state.settings?.adultContent), thinking: state.settings?.thinking },
     busy: state.busy || state.chainActive,
+    jobs: jobs.list.slice(0, 3).map(j => ({ title: j.title, status: j.status, ...jobCounts(j), ...(j.why ? { why: j.why } : {}) })),
   };
 }
 
@@ -5960,6 +5978,73 @@ const TOOL_IMPL = {
     const saved = await savePlaybook(as.undoPlaybook);
     as.undoPlaybook = null;
     return { summary: `Put the ${saved.name} playbook back as it was` };
+  },
+  list_folder: async ({ folder }) => {
+    const f = await api(`/api/folder?path=${encodeURIComponent(folder || '')}`);
+    return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 200).map(i => i.name), ...(f.images.length > 200 || f.more ? { more: f.images.length - 200 + f.more } : {}), subfolders: f.folders };
+  },
+  use_image: async ({ folder, file, path }) => {
+    const q = path ? `path=${encodeURIComponent(path)}` : `folder=${encodeURIComponent(folder || '')}&name=${encodeURIComponent(file || '')}`;
+    const res = await fetch(`/api/folder/image?${q}`).catch(err => { throw new Error(friendly(err)); });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Couldn't open ${file || path}.`);
+    const name = file || String(path).split(/[/\\]/).pop();
+    const blob = await res.blob();
+    const before = state.image;
+    await loadImageFile(new File([blob], name, { type: blob.type || 'image/png' }), { quiet: true });
+    if (state.image === before || !state.image?.file) throw new Error(`Couldn't use ${name}: it didn't open as a picture.`);
+    return { summary: `Image → ${name}` };
+  },
+  start_job: async ({ title, folder, limit, runs }) => {
+    const list = (Array.isArray(runs) ? runs : []).slice(0, 12).map((r, i) => {
+      const steps = (Array.isArray(r?.steps) ? r.steps : []).slice(0, 24).map(st => {
+        const tool = String(st?.tool || '');
+        if (!JOB_TOOLS.has(tool)) throw new Error(`A job step can't use “${tool}”. Steps can use: ${[...JOB_TOOLS].join(', ')}.`);
+        let args = st.args ?? {};
+        if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+        if (!args || typeof args !== 'object' || Array.isArray(args)) args = {};
+        if (tool === 'set_model') needModel(args.model);
+        return { tool, args };
+      });
+      if (!steps.length) throw new Error(`Run ${i + 1} has no steps.`);
+      return { label: String(r.label || `Run ${i + 1}`).slice(0, 80), steps };
+    });
+    if (!list.length) throw new Error('A job needs at least one run with steps.');
+    let pics = [null];
+    let where = null;
+    if (folder) {
+      const f = await api(`/api/folder?path=${encodeURIComponent(folder)}`);
+      if (!f.images.length) throw new Error(`There are no pictures in ${f.shown}.`);
+      pics = f.images.slice(0, limit ? clampInt(limit, 1, 500) : 500);
+      where = { path: f.folder, shown: f.shown };
+    }
+    const units = pics.flatMap(img => list.map((r, run) => ({
+      label: [img?.name, list.length > 1 || !img ? r.label : ''].filter(Boolean).join(' · '),
+      image: img && { name: img.name, path: img.path }, run, status: 'pending', log: [], entries: [],
+    })));
+    if (units.length > 1000) throw new Error(`That's ${units.length} items: more than a job takes (1000). Use fewer pictures (limit) or runs.`);
+    const asked = [...as.messages].reverse().find(m => m.role === 'user' && !m.auto && typeof m.content === 'string')?.content || '';
+    const job = { id: crypto.randomUUID(), title: String(title || 'Job').slice(0, 80), request: asked.slice(0, 600), createdAt: new Date().toISOString(), status: 'queued', folder: where, runs: list, units };
+    jobs.list.unshift(job);
+    await saveJob(job);
+    const waiting = jobs.current && jobs.current !== job;
+    runJobs();
+    return { summary: `Started the job “${job.title}”: ${units.length} item${units.length === 1 ? '' : 's'}${waiting ? ' (after the one running now)' : ''}. Follow it in 🗂 Jobs`, items: units.length, steps_each: list.map(r => r.steps.length) };
+  },
+  job_status: ({ title }) => {
+    const job = needJob(title);
+    const c = jobCounts(job);
+    const skipped = job.units.filter(u => u.status === 'skipped');
+    return {
+      summary: `Job “${job.title}”: ${JOB_STATUS[job.status]}, ${c.done} done, ${c.skipped} skipped, ${c.left} left`,
+      status: job.status, ...c, ...(job.why ? { why: job.why } : {}),
+      skipped_items: skipped.slice(0, 40).map(u => ({ item: u.label, why: u.error })),
+    };
+  },
+  control_job: ({ action, title }) => {
+    const job = needJob(title);
+    if (action === 'show') { openJobs(job.id); return { summary: 'Opened 🗂 Jobs' }; }
+    jobAction(job, action === 'retry_skipped' ? 'retry' : action);
+    return { summary: `Job “${job.title}” → ${action.replace('_', ' ')}` };
   },
   get_state: () => ({ summary: 'Looked at the Create page', ...assistantState() }),
   list_models: () => ({ summary: `${state.models.length} models`, models: state.models.map(m => ({ name: m.name, kind: m.kind, description: m.description, aspects: m.aspectRatios, resolutions: m.resolutions, durations: m.durations })) }),
@@ -6226,6 +6311,9 @@ async function runTool(call) {
   }
   const fn = TOOL_IMPL[call.name];
   if (!fn) return { error: `There's no tool called ${call.name}.` };
+  if (jobs.current && (JOB_TOOLS.has(call.name) || ['delete_entry', 'open_history'].includes(call.name))) {
+    return { error: `The job “${jobs.current.title}” is using the Create page right now. Pause it (control_job) or wait for it.` };
+  }
   as.running = TOOL_RUNNING[call.name] || null;
   renderAssistantLog();
   try {
@@ -6258,7 +6346,7 @@ async function askAssistant(text) {
   syncAssistantBusy();
   renderAssistantLog();
   try {
-    for (let round = 0; round < 10 && !as.stopped; round++) {
+    for (let round = 0; round < 16 && !as.stopped; round++) {
       let done = null;
       let failed = null;
       as.live = { text: '', thinking: false, status: '' };
@@ -6447,6 +6535,334 @@ document.addEventListener('keydown', e => {
 });
 window.addEventListener('resize', () => document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`));
 
+// ---------- jobs (the assistant's long tasks) ----------
+// The assistant plans a job (start_job): runs × pictures, each a list of tool steps. The job runs here, on Create,
+// one item after another, through the same tools. Whatever fails is skipped and logged, and the job goes on. The plan
+// and log are saved after every step, so a reload loses nothing (the item it was on is marked to check).
+
+const jobs = { list: [], current: null, pause: false, cancel: false, open: new Set(), onlySkipped: new Set() };
+const JOB_STATUS = { queued: 'waiting to start', running: 'running', paused: 'paused', done: 'done' };
+const JOB_ICON = { pending: '·', running: '⏳', done: '✓', skipped: '⏭' };
+
+function jobCounts(job) {
+  const c = { done: 0, skipped: 0, left: 0, total: job.units.length };
+  for (const u of job.units) {
+    if (u.status === 'done') c.done++;
+    else if (u.status === 'skipped') c.skipped++;
+    else c.left++;
+  }
+  return c;
+}
+function needJob(title) {
+  const s = squash(title);
+  const job = s ? jobs.list.find(j => squash(j.title).includes(s)) : jobs.list[0];
+  if (!job) throw new Error(jobs.list.length ? `No job like “${title}”. The jobs are: ${jobs.list.map(j => j.title).join(', ')}.` : 'There are no jobs yet.');
+  return job;
+}
+
+function saveJob(job) {
+  job.beat = Date.now();
+  return api(`/api/jobs/${job.id}`, { method: 'PUT', body: job }).catch(err => toast(`Couldn't save the job's log: ${friendly(err)}`, true));
+}
+
+// Boot: a job that was running when the page went away stops at the item it was on (marked to check).
+async function loadJobs() {
+  const list = await api('/api/jobs').catch(() => null);
+  if (!list) return;
+  jobs.list = list.map(j => (jobs.current?.id === j.id ? jobs.current : j));
+  const stale = jobs.list.filter(j => j.status === 'running' && j !== jobs.current && Date.now() - (j.beat || 0) > 45e3);
+  for (const j of stale) {
+    for (const u of j.units) if (u.status === 'running') Object.assign(u, { status: 'skipped', error: 'Interrupted: the page was reloaded or closed while this ran. Check what it made, or retry it.', endedAt: new Date().toISOString() });
+    j.status = 'paused';
+    j.why = 'The page was reloaded or closed while this job ran.';
+    saveJob(j);
+    toast(`🗂 The job “${j.title}” was interrupted`, false, { label: 'Resume', run: () => jobAction(j, 'resume') });
+  }
+  // Running in another tab (or the reload was seconds ago): look again once its heartbeat should have come.
+  if (jobs.list.some(j => j.status === 'running' && j !== jobs.current)) setTimeout(loadJobs, 50e3);
+  drawJobs();
+  if (jobs.list.some(j => j.status === 'queued')) runJobs();
+}
+
+// One job at a time, oldest first.
+async function runJobs() {
+  if (jobs.current) return;
+  for (;;) {
+    const job = jobs.list.filter(j => j.status === 'queued').at(-1);
+    if (!job) break;
+    jobs.current = job;
+    jobs.pause = jobs.cancel = false;
+    job.status = 'running';
+    job.why = '';
+    const beat = setInterval(() => saveJob(job), 15e3);
+    try {
+      await runJob(job);
+    } finally {
+      clearInterval(beat);
+      jobs.current = null;
+      jobs.pause = jobs.cancel = false;
+      await saveJob(job);
+      drawJobs();
+    }
+    if (job.status === 'done') {
+      const c = jobCounts(job);
+      toast(`🗂 Job “${job.title}” done: ${c.done} made${c.skipped ? `, ${c.skipped} skipped` : ''}`, Boolean(c.skipped), { label: 'See the log', run: () => openJobs(job.id) });
+    }
+  }
+}
+
+async function runJob(job) {
+  let lastError = '';
+  let sameErrors = 0;
+  for (;;) {
+    if (jobs.cancel || jobs.pause) {
+      job.status = 'paused';
+      job.why = jobs.cancel ? 'Stopped by you.' : 'Paused by you.';
+      return;
+    }
+    const u = job.units.find(x => x.status === 'pending');
+    if (!u) { job.status = 'done'; job.endedAt = new Date().toISOString(); return; }
+    Object.assign(u, { status: 'running', error: '', log: [], startedAt: new Date().toISOString() });
+    saveJob(job);
+    drawJobs();
+    try {
+      if (u.image) await jobStep(job, u, 'use_image', { path: u.image.path });
+      for (const st of job.runs[u.run]?.steps || []) await jobStep(job, u, st.tool, st.args);
+      u.status = 'done';
+      sameErrors = 0;
+    } catch (err) {
+      u.status = 'skipped';
+      u.error = jobs.cancel ? 'Stopped by you.' : friendly(err);
+      // The same failure three times in a row is something to fix (LM Studio down, ComfyUI off…), not to skip past.
+      sameErrors = u.error === lastError ? sameErrors + 1 : 1;
+      lastError = u.error;
+      if (sameErrors >= 3 && !jobs.cancel) {
+        u.endedAt = new Date().toISOString();
+        job.status = 'paused';
+        job.why = `The last 3 items failed the same way: ${u.error} Fix that, then Resume (and Retry the skipped ones).`;
+        toast(`🗂 Job “${job.title}” paused: the same problem 3 times`, true, { label: 'See why', run: () => openJobs(job.id) });
+        return;
+      }
+    }
+    u.endedAt = new Date().toISOString();
+    saveJob(job);
+    drawJobs();
+  }
+}
+
+async function jobStep(job, u, tool, args) {
+  // Waits while Create is busy with something else (you, or the assistant, may be generating).
+  while (state.busy || state.chainActive || state.batchRun) {
+    if (jobs.cancel) throw new Error('Stopped by you.');
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (jobs.cancel) throw new Error('Stopped by you.');
+  u.now = tool;
+  drawJobs();
+  quietNav = true;
+  try {
+    const r = await TOOL_IMPL[tool]({ ...(args || {}) });
+    u.log.push({ tool, text: r.summary || 'Done' });
+    if (['generate', 'refine_take', 'render'].includes(tool) && state.entry?.id && !u.entries.includes(state.entry.id)) u.entries.push(state.entry.id);
+  } catch (err) {
+    u.log.push({ tool, error: friendly(err) });
+    throw err;
+  } finally {
+    quietNav = false;
+    u.now = null;
+  }
+}
+
+function jobAction(job, action) {
+  job = jobs.list.find(j => j.id === job.id) || job; // the list may have been reloaded since
+  const mine = jobs.current === job;
+  if (action === 'pause') {
+    if (!mine) throw new Error('That job isn\'t running.');
+    jobs.pause = true;
+  } else if (action === 'stop') {
+    if (!mine) throw new Error('That job isn\'t running.');
+    jobs.cancel = true;
+    stop(); // whatever is being written
+    // And its renders: the ones of what this item made, and of what's on Create (the job put it there).
+    const u = job.units.find(x => x.status === 'running');
+    const ids = new Set([...(u?.entries || []), state.entry?.id].filter(Boolean));
+    api('/api/renders').then(list => list.filter(j => ids.has(j.historyId)).forEach(j => api(`/api/runs/${j.runId}/cancel`, { method: 'POST' }).catch(() => {}))).catch(() => {});
+  } else if (action === 'resume' || action === 'retry') {
+    if (action === 'retry') {
+      const skipped = job.units.filter(u => u.status === 'skipped');
+      if (!skipped.length) throw new Error('Nothing was skipped.');
+      for (const u of skipped) Object.assign(u, { status: 'pending', error: '', log: [] });
+    }
+    if (mine) return drawJobs();
+    if (!job.units.some(u => u.status === 'pending')) throw new Error('That job has nothing left to do.');
+    job.status = 'queued';
+    job.why = '';
+    saveJob(job);
+    runJobs();
+  }
+  drawJobs();
+}
+
+// The pill (top bar) shows while a job is on, or has a log you haven't seen; the strip on Create while one runs.
+function drawJobs() {
+  const active = jobs.list.filter(j => j.status !== 'done');
+  const unseen = jobs.list.filter(j => j.status === 'done' && !j.seen);
+  const btn = $('#jobsBtn');
+  btn.hidden = !active.length && !unseen.length;
+  const run = jobs.current;
+  const c = run && jobCounts(run);
+  $('#jobsCount').textContent = run ? `${c.done + c.skipped}/${c.total}` : active.length ? '⏸' : '✓';
+  btn.classList.toggle('on', Boolean(run));
+  btn.setAttribute('aria-label', run ? `Job running: ${c.done + c.skipped} of ${c.total}. Show jobs` : 'Show jobs');
+  $('#asJobs').hidden = !jobs.list.length;
+  const bar = $('#jobBar');
+  bar.hidden = !run;
+  if (run) {
+    const u = run.units.find(x => x.status === 'running');
+    bar.innerHTML = `<span aria-hidden="true">🗂</span><span class="jb-text">The job <b>${esc(run.title)}</b> is using this page: item ${Math.min(c.total, c.done + c.skipped + 1)} of ${c.total}${u ? ` (${esc(u.label)}${u.now ? `, ${esc(u.now.replace(/_/g, ' '))}` : ''})` : ''}. Changes you make here go into it.</span>
+      <button type="button" class="btn small" data-jb="show">Watch</button><button type="button" class="btn small" data-jb="pause"${jobs.pause ? ' disabled' : ''}>${jobs.pause ? 'Pausing after this one…' : '⏸ Pause'}</button>`;
+  }
+  if ($('#jobsDlg').open) renderJobsList();
+}
+
+function jobUnitHtml(job, u, n) {
+  const last = u.error || (u.status === 'running' ? (u.now ? `${u.now.replace(/_/g, ' ')}…` : 'Starting…') : u.log.map(l => l.text).join(' · '));
+  const thumb = u.image ? `<button type="button" class="ju-thumb" data-ju="view" data-n="${n}" title="Look at ${esc(u.image.name)}"><img src="/api/folder/image?path=${encodeURIComponent(u.image.path)}" alt="" loading="lazy"></button>` : '';
+  return `<li class="ju s-${u.status}"><span class="ju-ico" aria-hidden="true">${JOB_ICON[u.status]}</span>${thumb}
+    <div class="ju-main"><b>${esc(u.label)}</b>${last ? `<span>${esc(last)}</span>` : ''}</div>
+    ${u.entries.length ? `<div class="ju-acts"><button type="button" class="btn small" data-ju="renders" data-n="${n}" title="See what it rendered">👁 View</button><button type="button" class="btn small" data-ju="open" data-n="${n}" title="Open it on Create">↗ Open</button></div>` : ''}</li>`;
+}
+
+// Redraws in place: only the log rows that changed are replaced, so pictures don't reload at every step.
+function renderJobsList() {
+  const box = $('#jobsList');
+  if (!jobs.list.length) {
+    box.innerHTML = '<p class="muted">No jobs yet. Ask the assistant for something long, for example “use the pictures in ~/Pictures/ABC: 2 takes each, the first at low temperature, the second at high. Skip any problems and log them.”</p>';
+    return;
+  }
+  $$(':scope > :not(.job)', box).forEach(el => el.remove());
+  const ids = new Set(jobs.list.map(j => j.id));
+  $$('.job', box).forEach(el => { if (!ids.has(el.dataset.id)) el.remove(); });
+  jobs.list.forEach((job, i) => {
+    let el = $(`.job[data-id="${CSS.escape(job.id)}"]`, box);
+    if (!el) {
+      el = document.createElement('section');
+      el.className = 'job';
+      el.dataset.id = job.id;
+      el.innerHTML = `<div class="job-top"></div><details data-job-log${jobs.open.has(job.id) ? ' open' : ''}><summary></summary><label class="job-only" hidden><input type="checkbox" data-job="only"> Only the skipped ones</label><ol class="job-log"></ol></details>`;
+    }
+    if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
+    const c = jobCounts(job);
+    const mine = jobs.current === job;
+    const pct = c.total ? Math.round(((c.done + c.skipped) / c.total) * 100) : 0;
+    const acts = [
+      mine && `<button type="button" class="btn small" data-job="pause"${jobs.pause ? ' disabled' : ''}>${jobs.pause ? 'Pausing…' : '⏸ Pause'}</button>`,
+      mine && '<button type="button" class="btn small danger" data-job="stop">■ Stop now</button>',
+      !mine && job.status !== 'running' && c.left > 0 && `<button type="button" class="btn small primary" data-job="resume"${job.status === 'queued' ? ' disabled' : ''}>${job.status === 'queued' ? 'Waiting to start…' : '▶ Resume'}</button>`,
+      c.skipped > 0 && job.status !== 'running' && `<button type="button" class="btn small" data-job="retry" title="Try the skipped items again">↻ Retry ${c.skipped} skipped</button>`,
+      !mine && job.status !== 'running' && '<button type="button" class="btn small danger" data-job="remove" title="Remove this job and its log (what it made stays in History)">🗑 Remove</button>',
+    ].filter(Boolean).join('');
+    el.className = `job s-${job.status}`;
+    $('.job-top', el).innerHTML = `<div class="job-head"><b>${esc(job.title)}</b><span class="job-chip">${job.status === 'running' && !mine ? 'running in another tab' : esc(JOB_STATUS[job.status])}</span><span class="spacer"></span><span class="muted small">${esc(timeAgo(job.createdAt))}</span></div>
+      ${job.request ? `<p class="job-req">“${esc(job.request)}”</p>` : ''}
+      <div class="job-progress" role="progressbar" aria-label="Progress" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
+      <p class="small">${c.done} done${c.skipped ? ` · <b class="job-skips">${c.skipped} skipped</b>` : ''}${c.left ? ` · ${c.left} to go` : ''}${job.folder ? ` · 📁 ${esc(job.folder.shown)}` : ''}</p>
+      ${job.why ? `<p class="warn-line">${esc(job.why)}</p>` : ''}
+      ${acts ? `<div class="job-acts">${acts}</div>` : ''}`;
+    $('summary', el).textContent = `Log: ${c.total} item${c.total === 1 ? '' : 's'}`;
+    const only = jobs.onlySkipped.has(job.id) && c.skipped > 0;
+    $('.job-only', el).hidden = !c.skipped;
+    $('.job-only input', el).checked = only;
+    const ol = $('.job-log', el);
+    const rows = job.units.map((u, n) => [u, n]).filter(([u]) => !only || u.status === 'skipped');
+    while (ol.children.length > rows.length) ol.lastElementChild.remove();
+    rows.forEach(([u, n], k) => {
+      const html = jobUnitHtml(job, u, n);
+      const li = ol.children[k];
+      if (li?._html === html) return;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html.trim();
+      const fresh = tpl.content.firstElementChild;
+      fresh._html = html;
+      if (li) li.replaceWith(fresh); else ol.append(fresh);
+    });
+  });
+}
+
+function openJobs(id) {
+  if (id) jobs.open.add(id);
+  else if (jobs.list[0]) jobs.open.add(jobs.list[0].id);
+  for (const j of jobs.list) if (j.status === 'done' && !j.seen) { j.seen = true; saveJob(j); }
+  if (!$('#jobsDlg').open) $('#jobsDlg').showModal();
+  renderJobsList();
+  drawJobs();
+  if (id) $(`.job[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+
+// What a job item made, as lightbox items.
+async function jobItems(u) {
+  const out = [];
+  for (const id of u.entries) {
+    const e = await api(`/api/history/${id}`).catch(() => null);
+    if (e) e.variations.forEach((v, index) => (v.renders || []).slice().reverse().forEach(r => r.files.forEach(f => out.push({ entry: e, index, render: r, file: f }))));
+  }
+  return out;
+}
+
+$('#jobsBtn').addEventListener('click', () => openJobs());
+$('#asJobs').addEventListener('click', () => openJobs());
+$('#jobsClose').addEventListener('click', () => $('#jobsDlg').close());
+$('#jobBar').addEventListener('click', e => {
+  const b = e.target.closest('[data-jb]');
+  if (!b || !jobs.current) return;
+  if (b.dataset.jb === 'show') openJobs(jobs.current.id);
+  else jobAction(jobs.current, 'pause');
+});
+$('#jobsList').addEventListener('toggle', e => {
+  const d = e.target.closest?.('[data-job-log]');
+  const id = d?.closest('.job')?.dataset.id;
+  if (id) { if (d.open) jobs.open.add(id); else jobs.open.delete(id); }
+}, true);
+$('#jobsList').addEventListener('error', e => { if (e.target.tagName === 'IMG') e.target.closest('.ju-thumb')?.classList.add('broken'); }, true);
+$('#jobsList').addEventListener('change', e => {
+  if (e.target.dataset.job !== 'only') return;
+  const id = e.target.closest('.job').dataset.id;
+  if (e.target.checked) jobs.onlySkipped.add(id); else jobs.onlySkipped.delete(id);
+  renderJobsList();
+});
+$('#jobsList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-job], [data-ju]');
+  if (!b || b.dataset.job === 'only') return;
+  const job = jobs.list.find(j => j.id === b.closest('.job').dataset.id);
+  if (!job) return;
+  if (b.dataset.job === 'remove') {
+    return confirmClick(b, 'Sure?', async () => {
+      await api(`/api/jobs/${job.id}`, { method: 'DELETE' }).catch(err => toast(friendly(err), true));
+      jobs.list = jobs.list.filter(j => j !== job);
+      drawJobs();
+      renderJobsList();
+    });
+  }
+  if (b.dataset.job) {
+    try { jobAction(job, b.dataset.job); } catch (err) { toast(err.message, true); }
+    return renderJobsList();
+  }
+  const u = job.units[Number(b.dataset.n)];
+  if (!u) return;
+  if (b.dataset.ju === 'view') return openImageView(`/api/folder/image?path=${encodeURIComponent(u.image.path)}`);
+  if (b.dataset.ju === 'open') {
+    if (jobs.current) return toast('The job is using Create right now. Pause it first, or use 👁 View.', true);
+    const entry = await api(`/api/history/${u.entries.at(-1)}`).catch(() => null);
+    if (!entry) return toast('That one is no longer in History.', true);
+    $('#jobsDlg').close();
+    return openEntry(entry);
+  }
+  const items = await jobItems(u);
+  if (!items.length) return toast(`${u.label} wrote ${u.entries.length > 1 ? 'prompts' : 'a prompt'} but has no renders. Use ↗ Open to read ${u.entries.length > 1 ? 'them' : 'it'}.`);
+  $('#jobsDlg').close();
+  openLightbox(items, 0, { fromGallery: true });
+});
+
 // ---------- collapsible panels ----------
 // Anything with data-panel="key" folds down to its header plus a one-line summary, by its ▾ button or a click on
 // the header. Remembered per panel (takes aren't: they come and go). data-default="collapsed" starts folded.
@@ -6576,6 +6992,7 @@ async function loadModels() {
   if (state.workflows.length) await loadComfyStatus();
   await resumeAfterReload();
   pollRenders();
+  loadJobs();
   if (saved.get('assistantOpen', true) && innerWidth >= 1100) await openAssistant(true, { focus: false });
   document.documentElement.dataset.ready = '1';
 })();

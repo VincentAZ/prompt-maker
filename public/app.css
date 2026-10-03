@@ -1002,8 +1002,8 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 /* =================== step 3: pick an image from the Gallery =================== */
 .dz-gallery { margin-top: 8px; }
 dialog.img-pick { width: min(980px, calc(100vw - 32px)); }
-.ip-bar { display: flex; align-items: center; gap: 12px; padding: 0 22px; }
-.ip-bar .ip-filters { display: flex; flex: 1; flex-wrap: wrap; gap: 6px; }
+.ip-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 22px; }
+.ip-bar .ip-filters { display: flex; flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-start; width: auto; margin: 0; padding: 0; gap: 6px; }
 .ip-size { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .ip-size input { width: 140px; }
 .ip-cell { position: relative; }
@@ -1011,7 +1011,7 @@ dialog.img-pick { width: min(980px, calc(100vw - 32px)); }
 .ip-cell:hover .ip-zoom, .ip-zoom:focus-visible { opacity: 1; }
 @media (hover: none) { .ip-zoom { opacity: 1; } }
 .img-pick .modal-body > .ip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--ip-size, 140px), 100%), 1fr)); gap: 10px; padding: 12px 22px 22px; max-height: 70vh; overflow-y: auto; }
-.ip-tile { position: relative; aspect-ratio: 1; padding: 0; overflow: hidden; border-radius: 12px; border: 2px solid transparent; background: #07060b; }
+.ip-tile { position: relative; display: block; width: 100%; aspect-ratio: 1; padding: 0; overflow: hidden; border-radius: 12px; border: 2px solid transparent; background: #07060b; }
 .ip-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .ip-tile:hover, .ip-tile:focus-visible { border-color: var(--m); }
 .ip-cap { position: absolute; inset: auto 0 0 0; padding: 18px 8px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 11.5px; font-weight: 650; color: #fff; background: linear-gradient(to top, rgb(0 0 0 / 80%), transparent); }
@@ -1135,3 +1135,48 @@ dialog.img-view::backdrop { background: rgb(6 5 10 / 80%); }
 .iv-stage.actual { display: block; overflow: auto; }
 .iv-stage.actual img { max-width: none; max-height: none; cursor: zoom-out; }
 .iv-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--line); }
+
+/* Jobs: the assistant's long tasks. The top-bar pill, the strip on Create while one runs, and the Jobs window. */
+.jobs-btn { border-color: color-mix(in srgb, var(--accent, #8b7bff) 50%, var(--line-2)); background: rgb(139 123 255 / 12%); }
+.jobs-btn:hover { background: rgb(139 123 255 / 22%); }
+.jobs-btn em { background: var(--accent, #8b7bff); }
+.jobs-btn:not(.on) .rp-spin { animation: none; }
+.job-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 12px; padding: 9px 12px; border-radius: var(--radius-sm); border: 1px solid rgb(139 123 255 / 45%); background: rgb(139 123 255 / 12%); font-size: 13.5px; }
+.job-bar[hidden] { display: none; }
+.job-bar .jb-text { flex: 1; min-width: 200px; }
+dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
+.jobs-intro { padding: 0 22px 10px; margin: 0; }
+.jobs-list { display: grid; gap: 12px; padding: 0 22px 22px; overflow-y: auto; min-height: 0; }
+.job { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--line); background: rgb(255 255 255 / 3%); }
+.job p { margin: 0; }
+.job-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.job-head b { font-size: 16px; }
+.job-chip { font-size: 12px; font-weight: 750; padding: 2px 9px; border-radius: 999px; background: var(--line); }
+.job.s-running .job-chip { background: rgb(139 123 255 / 30%); }
+.job.s-paused .job-chip { background: rgb(255 196 77 / 22%); }
+.job.s-done .job-chip { background: rgb(77 220 140 / 20%); }
+.job-req { font-size: 13px; color: var(--text-2); font-style: italic; }
+.job-progress { height: 5px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.job-progress i { display: block; height: 100%; background: var(--accent, #8b7bff); transition: width 0.4s; }
+.job-skips { color: #ffd27a; }
+.job-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.job details summary { cursor: pointer; font-weight: 700; font-size: 13.5px; }
+.job-only { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 13px; }
+.job-log { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.ju { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); }
+.ju.s-skipped { border-color: rgb(255 196 77 / 40%); background: rgb(255 196 77 / 6%); }
+.ju.s-running { border-color: rgb(139 123 255 / 55%); }
+.ju.s-pending { opacity: 0.6; }
+.ju-ico { width: 18px; text-align: center; flex: none; }
+.ju.s-done .ju-ico { color: #6ee7a8; }
+.ju-thumb { flex: none; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: #07060b; cursor: zoom-in; }
+.ju-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ju-thumb.broken { display: grid; place-items: center; cursor: default; pointer-events: none; }
+.ju-thumb.broken img { display: none; }
+.ju-thumb.broken::after { content: '⚠'; color: #ffd27a; font-size: 18px; }
+.ju-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ju-main b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ju-main span { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.ju.s-skipped .ju-main span { color: #ffe2a8; }
+.ju-acts { display: flex; gap: 6px; flex: none; }
+@media (max-width: 560px) { .ju { flex-wrap: wrap; } .ju-acts { width: 100%; justify-content: flex-end; } }

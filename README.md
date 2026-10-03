@@ -64,6 +64,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - Word count against the model's ideal length (✓ when it's on target).
   - Timing for each take, plus a status while the model loads or thinks.
   - Progress shown in the browser tab title.
+- **✦ Assistant with 🗂 jobs.** A creative partner that sees your renders and runs the app, and takes long jobs (*"2 takes for each picture in this folder, skip any problems and log them"*) that run on their own and leave a log to review.
 - **History.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, star favorites, and reopen any entry to keep refining.
 - **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
@@ -212,6 +213,13 @@ Your creative partner, on from the start: its panel opens with the app (on a wid
   - It runs the app with the same controls you have: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, chains, History, playbooks, favorites, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
   - Each step shows in the chat ("✓ Model → Krea 2 RAW") and on screen.
   - **■ Stop** or **Esc** stops it.
+- **🗂 Give it long jobs.** *"Use the 4 pictures in folder ABC to do 2 takes each, the first with low temperature, the second with high. Skip any problems and log them for me to review later."*
+  - It looks in the folder (a full path, `~/…`, or just a name it finds in your home folder, Pictures, Desktop, Downloads or Documents), plans the job, and starts it. The job then runs **on its own**, one item after another, while you do other things. Its tools don't pull you back to Create.
+  - Anything that fails is **skipped and logged**, and the job goes on. If the same thing fails 3 times in a row (LM Studio off, ComfyUI down…), it pauses so you can fix that first.
+  - **🗂 Job** in the top bar shows progress (item 3 of 8). On Create, a strip says a job is using the page: changes you make there go into it.
+  - The **Jobs** window has each job's log: ✓ done or ⏭ skipped (with why), the picture (click it to look closer), **👁 View** for what it rendered and **↗ Open** to bring it onto Create. **Only the skipped ones** filters the log, and **↻ Retry skipped** tries them again. You can **⏸ Pause** (after the current item), **■ Stop now**, **▶ Resume** or **🗑 Remove** (what the job made stays in History).
+  - Jobs survive reloads: each step is saved. If the page reloads or closes mid-job, the job pauses, the item it was on is marked to check, and a toast offers **Resume**.
+  - Ask *"how did the job go?"* and it tells you what was done and what was skipped, and why. Once you've seen a finished job's log, the pill goes away; **🗂** in the assistant panel opens the Jobs window any time.
 - **Deleting asks you first.** It can delete a prompt or a render when you ask, but only after you click **🗑 Delete** in the chat; **Keep it** says no. A ☁️ cloud Brain still asks you before it's used.
 
 The conversation is kept in your data folder; 🧹 clears it. It works best with a model that supports tool calling and vision (Qwen 3/3.5/3.6 VL, Gemma 3+, Llama 3.2 Vision).
@@ -520,6 +528,8 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── chains/         # chains you saved or edited
 ├── providers.json  # cloud providers you added, with your API keys (readable by you only)
 ├── brains.json     # what the app learned about each LLM: thinking, speed, Quick check, its own Thinking level
+├── assistant.json  # the assistant conversation
+├── jobs.json       # the assistant's jobs: their plan, progress and log (the newest 30)
 └── models/         # playbooks you added or edited
 ```
 

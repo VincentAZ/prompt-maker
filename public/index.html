@@ -46,6 +46,7 @@
         <ul id="rendersList" class="rp-list"></ul>
       </div>
     </div>
+    <button type="button" id="jobsBtn" class="renders-btn jobs-btn" title="Jobs: long tasks the assistant works through, and their logs" hidden><span class="rp-spin" aria-hidden="true">🗂</span><span class="rp-label">Job</span><em id="jobsCount"></em></button>
     <button type="button" id="askBtn" class="ask-btn" aria-expanded="false" aria-controls="assistant" title="Ask the assistant (Ctrl+K)"><span aria-hidden="true">✦</span><span class="ask-label">Ask</span></button>
     <div class="llm" id="llmBox">
       <span class="dot" id="llmDot"></span>
@@ -79,6 +80,7 @@
   <main>
     <!-- ================= CREATE ================= -->
     <section id="view-create" class="view" aria-label="Create">
+      <div id="jobBar" class="job-bar" role="status" hidden></div>
       <div class="create">
         <form id="createForm" class="director" autocomplete="off" novalidate>
           <section class="step" data-panel="create-model">
@@ -641,6 +643,17 @@
     </div>
   </dialog>
 
+  <dialog id="jobsDlg" class="modal jobs-dlg" aria-labelledby="jobsTitle">
+    <div class="modal-body">
+      <header class="modal-head">
+        <h2 id="jobsTitle">🗂 Jobs</h2>
+        <button type="button" class="icon-btn" id="jobsClose" aria-label="Close">✕</button>
+      </header>
+      <p class="muted small jobs-intro">Long tasks you give the assistant run here, one item after another. Whatever goes wrong is skipped and logged for you to look at, and the job goes on.</p>
+      <div id="jobsList" class="jobs-list"></div>
+    </div>
+  </dialog>
+
   <dialog id="imgView" class="img-view" aria-label="Image viewer">
     <div class="iv-stage" id="ivStage"><img id="ivImg" alt=""></div>
     <div class="iv-bar">
@@ -664,6 +677,7 @@
       <span class="as-title">✦ Assistant</span>
       <span id="asBrain" class="as-brain"></span>
       <span class="spacer"></span>
+      <button type="button" id="asJobs" class="icon-btn" title="Jobs and their logs" aria-label="Jobs and their logs" hidden>🗂</button>
       <button type="button" id="asClear" class="icon-btn" title="Clear the conversation" aria-label="Clear the conversation">🧹</button>
       <button type="button" id="asClose" class="icon-btn" title="Close (Esc)" aria-label="Close the assistant">✕</button>
     </header>

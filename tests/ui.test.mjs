@@ -2599,13 +2599,93 @@ esac
       await click('#imgPickModels button[data-id=""]');
     }
     await shot('45-image-picker');
+    // Bigger thumbnails, remembered; 🔍 opens one full screen, and it can be used from there.
+    const tileW = () => js('Math.round(document.querySelector("#imgPickGrid .ip-tile").getBoundingClientRect().width)');
+    const small = await tileW();
+    await js('{ const r = document.querySelector("#imgPickSize"); r.value = 400; r.dispatchEvent(new Event("input")); }');
+    assert((await tileW()) > small * 1.8, 'the slider makes the thumbnails bigger');
+    eq(await js('localStorage.getItem("imgPickSize")'), '400', 'and the size is remembered');
+    await click('#imgPickGrid .ip-zoom');
+    await waitFor('document.querySelector("#imgView").open && document.querySelector("#ivImg").naturalWidth > 0 && !document.querySelector("#ivUse").hidden', 'a closer look, with Use this image');
+    await click('#ivImg');
+    assert(await js('document.querySelector("#ivStage").classList.contains("actual")'), 'a click shows it at actual size');
+    await click('#ivClose');
+    assert(await js('document.querySelector("#imgPick").open && !document.querySelector("#imgView").open'), 'closing the viewer goes back to the picker');
+    await js('{ const r = document.querySelector("#imgPickSize"); r.value = 140; r.dispatchEvent(new Event("input")); }');
     await click('#imgPickGrid .ip-tile');
     await waitFor('!document.querySelector(".dz-preview").hidden && !document.querySelector("#dzSource").hidden', 'attached, linked to its render');
     await toastText('Image added');
     assert(!(await js('document.querySelector("#imgPick").open')), 'the picker closed');
     assert((await text('#dzSource')).startsWith('🔗 From '), 'it says where it came from');
     assert(await visible('#imageGallery'), 'and another can be picked from the Gallery');
+    await click('#imageZoom');
+    await waitFor('document.querySelector("#imgView").open && document.querySelector("#ivUse").hidden', 'step 3\'s image opens full screen');
+    await press('Escape');
+    await waitFor('!document.querySelector("#imgView").open', 'Esc closes it');
     await click('#imageClear');
+  });
+
+  await test('jobs: the assistant works through a folder, skips what fails and logs it; a reload stops it safely', async () => {
+    const pics = path.join(tmp, 'Pics');
+    await fs.mkdir(pics, { recursive: true });
+    await fs.writeFile(path.join(pics, 'a.png'), makePng(320, 200));
+    await fs.writeFile(path.join(pics, 'b10.png'), makePng(200, 320));
+    await fs.writeFile(path.join(pics, 'b2.png'), makePng(256, 256));
+    await fs.writeFile(path.join(pics, 'broken.png'), 'not really a picture');
+    await fs.writeFile(path.join(pics, 'notes.txt'), 'not a picture at all');
+    const listed = await js(`fetch("/api/folder?path=" + encodeURIComponent(${q(pics)})).then(r => r.json())`);
+    eq(JSON.stringify(listed.images.map(i => i.name)), JSON.stringify(['a.png', 'b2.png', 'b10.png', 'broken.png']), 'a folder lists its pictures in natural order');
+    const missing = await js('fetch("/api/folder?path=NoSuchFolderAnywhere").then(async r => [r.status, (await r.json()).error])');
+    assert(missing[0] === 404 && missing[1].includes('I looked in'), `a missing folder says where it looked: ${missing[1]}`);
+    eq(await js(`fetch("/api/folder/image?path=" + encodeURIComponent(${q(path.join(pics, 'notes.txt'))})).then(r => r.status)`), 400, 'only pictures are handed out');
+
+    const before = (await js('fetch("/api/history").then(r => r.json())')).length;
+    await click('.tabs button[data-view="gallery"]');
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await type('#asInput', `job: use the pictures in ${pics}, low then high temperature, skip problems`);
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    const acts = await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join(" | ")');
+    assert(acts.includes('4 pictures in') && acts.includes('Started the job “Pics, low and high”: 8 items'), `it looked, then started the job: ${acts}`);
+    assert(await visible('#jobsBtn'), 'the 🗂 Job pill shows');
+    await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 90000);
+    assert(await js('document.querySelector(".tabs button[data-view=\'gallery\']").classList.contains("active")'), 'it ran without pulling you off the page you were on');
+    eq((await js('fetch("/api/history").then(r => r.json())')).length, before + 6, 'six prompts written: two for each good picture');
+
+    await click('#jobsBtn');
+    await waitFor('document.querySelector("#jobsDlg").open && document.querySelectorAll(".job .ju").length === 8', 'the Jobs window with the log');
+    eq(await count('.job .ju.s-done'), 6, 'six done');
+    eq(await count('.job .ju.s-skipped'), 2, 'the broken picture is skipped, both runs');
+    assert((await text('.job .ju.s-skipped')).includes('broken.png'), 'and the log says why');
+    assert((await text('.job .job-chip')).includes('done'), 'the job is done');
+    assert((await text('.job .job-req')).includes('skip problems'), 'it shows what you asked');
+    await shot('46-jobs');
+    await click('.job .ju.s-done .ju-thumb');
+    await waitFor('document.querySelector("#imgView").open', 'a picture from the log opens full screen');
+    await click('#ivClose');
+    await click('.job [data-job="only"]');
+    eq(await count('.job .ju'), 2, 'Only the skipped ones');
+    assert(await js('document.querySelector(".job .ju.s-skipped .ju-thumb").classList.contains("broken")'), 'a picture that won\'t open shows ⚠ instead');
+    await click('#jobsClose');
+    assert(await js('document.querySelector("#jobsBtn").hidden'), 'once seen, the pill goes away');
+    assert(!(await js('document.querySelector("#asJobs").hidden')), 'the log stays a click away in the assistant panel');
+    const saved = JSON.parse(await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8')).jobs[0];
+    eq(saved.status, 'done', 'the job and its log are saved');
+
+    // A job that was running when the page went away: it stops at that item, marked to check, and offers Resume.
+    const half = { ...saved, id: 'reloaded-job', title: 'Half done', status: 'running', beat: Date.now() - 600e3, seen: false, units: saved.units.map((u, i) => ({ ...u, status: i < 2 ? 'done' : i === 2 ? 'running' : 'pending' })) };
+    await js(`fetch("/api/jobs/reloaded-job", { method: "PUT", headers: { "Content-Type": "application/json" }, body: ${q(JSON.stringify(half))} }).then(r => r.ok)`);
+    await goto(`${APP}/#gallery`);
+    await toastText('was interrupted');
+    const after = JSON.parse(await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8')).jobs.find(j => j.id === 'reloaded-job');
+    eq(after.status, 'paused', 'it is paused');
+    assert(after.units[2].status === 'skipped' && after.units[2].error.includes('Interrupted'), 'the item it was on is marked to check');
+    await click('#jobsBtn');
+    await waitFor('document.querySelector(".job[data-id=\'reloaded-job\'] [data-job=\'remove\']")', 'a paused job can be removed');
+    await click('.job[data-id="reloaded-job"] [data-job="remove"]');
+    await click('.job[data-id="reloaded-job"] [data-job="remove"]');
+    await waitFor('!document.querySelector(".job[data-id=\'reloaded-job\']")', 'removed');
+    await click('#jobsClose');
   });
 
   await test('security: other websites can\'t use the local API', async () => {
