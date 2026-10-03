@@ -1934,6 +1934,12 @@ function bumpHistoryBadge(delta) {
 // Counts deletes, so a list fetched before one can't bring the deleted card back.
 let historyDeletes = 0;
 
+// Opening History shows the card that is open on Create (further down the list, it's revealed and scrolled to).
+function revealCurrentCard() {
+  const i = state.history.findIndex(e => e.id === state.entry?.id);
+  if (i >= state.historyLimit) state.historyLimit = Math.ceil((i + 1) / 48) * 48;
+}
+
 async function loadHistory() {
   try {
     const deletes = historyDeletes;
@@ -1945,7 +1951,9 @@ async function loadHistory() {
   $('#historyBadge').textContent = state.history.length;
   $('#historyBadge').hidden = !state.history.length;
   renderHistoryFilters();
+  revealCurrentCard();
   renderHistory();
+  $('#historyList .hcard.current')?.scrollIntoView({ block: 'nearest' });
 }
 
 function renderHistoryFilters() {
@@ -2001,7 +2009,7 @@ function renderHistory() {
     const renderCount = allRenders.length;
     const cover = allRenders.length ? allRenders.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)).files[0] : null;
     return `${heading}
-      <article class="hcard" data-id="${esc(e.id)}" style="--m:${color}">
+      <article class="hcard${e.id === state.entry?.id ? ' current' : ''}" data-id="${esc(e.id)}" style="--m:${color}"${e.id === state.entry?.id ? ' aria-current="true" title="Open on Create"' : ''}>
         <div class="hthumb hopen${cover || e.imageFile ? '' : ' textonly'}" data-act="open" aria-hidden="true">
           ${cover ? mediaTag(cover, { hover: true }) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="" loading="lazy">` : kindIcon(e.modelKind)}
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${{ reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate' }[e.imageRole] || ''}</span>` : ''}
@@ -3725,14 +3733,84 @@ const ASPECT_CSS = ratio => {
 
 function mediaTag(file, { hover = false, controls = false } = {}) {
   const src = `/renders/${encodeURIComponent(file.file)}`;
-  if (file.kind === 'video') return `<video src="${src}" muted loop playsinline preload="metadata"${controls ? ' controls autoplay' : ''}${hover ? ' data-hover' : ''}></video>`;
+  if (file.kind === 'video' && hover) {
+    const still = posterCache.get(file.file);
+    return `<video src="${src}" muted loop playsinline preload="none" data-hover${still ? ` poster="${still}"` : ''}></video>`;
+  }
+  if (file.kind === 'video') return `<video src="${src}" muted loop playsinline preload="metadata"${controls ? ' controls autoplay' : ''}></video>`;
   if (file.kind === 'audio') return controls ? `<audio src="${src}" controls autoplay></audio>` : '<span aria-hidden="true">🔊</span>';
   return `<img src="${src}" alt="" loading="lazy">`;
 }
 
-// Hovering a video tile plays it.
+// Video thumbnails show a still of their first frame and play only while hovered. A page of paused videos goes
+// blank at random: the browser suspends idle video players, and a suspended one drops its picture. The stills
+// are made once per file, in this page only (never saved), two at a time, as tiles scroll into view.
+const posterCache = new Map(); // file → data URL
+const posterJobs = new Map(); // file → Promise
+let posterRunning = 0;
+const posterQueue = [];
+
+function capturePoster(file) {
+  if (!posterJobs.has(file)) {
+    posterJobs.set(file, new Promise(resolve => { posterQueue.push({ file, resolve }); pumpPosters(); }));
+  }
+  return posterJobs.get(file);
+}
+
+function pumpPosters() {
+  while (posterRunning < 2 && posterQueue.length) {
+    const { file, resolve } = posterQueue.shift();
+    posterRunning++;
+    const v = Object.assign(document.createElement('video'), { muted: true, preload: 'auto', playsInline: true });
+    let settled = false;
+    const finish = url => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      v.removeAttribute('src');
+      v.load(); // lets the browser free the player
+      if (url) posterCache.set(file, url); else posterJobs.delete(file); // a failure may be retried later
+      posterRunning--;
+      resolve(url);
+      pumpPosters();
+    };
+    const timer = setTimeout(() => finish(null), 20000);
+    v.addEventListener('loadeddata', () => { v.currentTime = Math.min(0.1, (v.duration || 1) / 2); }, { once: true });
+    v.addEventListener('seeked', () => {
+      try {
+        const scale = Math.min(1, 640 / (v.videoWidth || 640));
+        const c = Object.assign(document.createElement('canvas'), { width: Math.round(v.videoWidth * scale) || 1, height: Math.round(v.videoHeight * scale) || 1 });
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        finish(c.toDataURL('image/jpeg', 0.82));
+      } catch { finish(null); }
+    }, { once: true });
+    v.addEventListener('error', () => finish(null), { once: true });
+    v.src = `/renders/${encodeURIComponent(file)}`;
+  }
+}
+
+const fileOf = v => decodeURIComponent(v.getAttribute('src').split('/').pop());
+const posterSeen = new IntersectionObserver(entries => {
+  for (const { target: v, isIntersecting } of entries) {
+    if (!isIntersecting) continue;
+    posterSeen.unobserve(v);
+    capturePoster(fileOf(v)).then(url => { if (url) v.poster = url; });
+  }
+}, { rootMargin: '400px' });
+const needsPoster = root => root.querySelectorAll?.('video[data-hover]:not([poster])').forEach(v => posterSeen.observe(v));
+new MutationObserver(list => list.forEach(m => m.addedNodes.forEach(n => {
+  if (n.nodeType !== 1) return;
+  if (n.matches('video[data-hover]:not([poster])')) posterSeen.observe(n);
+  needsPoster(n);
+}))).observe(document.body, { childList: true, subtree: true });
+
+// Hovering a video tile plays it; leaving goes back to its still (load() shows the poster again and frees the player).
 document.addEventListener('mouseover', e => { const v = e.target.closest?.('[data-hover]') || e.target.closest?.('.rtile, .gtile, .hthumb')?.querySelector('video[data-hover]'); if (v) v.play().catch(() => {}); });
-document.addEventListener('mouseout', e => { const host = e.target.closest?.('.rtile, .gtile, .hthumb'); const v = host?.querySelector('video[data-hover]'); if (v && !host.contains(e.relatedTarget)) { v.pause(); } });
+document.addEventListener('mouseout', e => {
+  const host = e.target.closest?.('.rtile, .gtile, .hthumb');
+  const v = host?.querySelector('video[data-hover]');
+  if (v && !host.contains(e.relatedTarget)) { v.pause(); if (v.poster) v.load(); }
+});
 
 function renderZone(card) {
   const zone = $('.render-zone', card.el);

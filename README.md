@@ -228,7 +228,7 @@ The conversation is kept in your data folder; 🧹 clears it. It works best with
 Everything you generate is saved automatically:
 
 - **Find things:** search themes and prompts, filter by model, or show only ★ favorites.
-- **Pick up where you left off:** click a card to reopen it with its image and settings, and keep refining.
+- **Pick up where you left off:** click a card to reopen it with its image and settings, and keep refining. The card that's open on Create is ringed in History, which scrolls to it.
 - **Delete is for good.** Deleting a card removes its prompts, its input image (unless another card uses the same one) and its renders, along with ComfyUI's copies of them: the files in its output folder, the image uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. Quotes of it in the assistant chat become "[deleted]", and a video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render or image no History card uses anymore.
 
 ### Keyboard shortcuts
@@ -369,6 +369,7 @@ Every render also appears in the **Gallery** tab, with filters for images, video
 
 - **♡ Favorite** a render from its lightbox; it gets a ♥ on its Gallery tile.
 - After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
+- Video tiles show a still of their first frame and play while you hover them.
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
 - **Earlier runs** (the runs above a new one, to compare renders) are kept across reloads too.
 

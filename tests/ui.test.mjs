@@ -990,6 +990,8 @@ esac
   await test('history: delete with confirm', async () => {
     await click('.tabs button[data-view="history"]');
     await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    eq(await count('.hcard.current'), 1, 'the card open on Create is marked');
+    assert((await text('.hcard.current .htheme')).includes('a gust of wind'), 'it is the one opened last');
     const before = await count('.hcard');
     const badge = Number(await text('#historyBadge'));
     await click('.hcard:last-of-type [data-act="delete"]');
@@ -1443,6 +1445,26 @@ esac
     eq(await count('#galleryGrid .gtile.seen'), 1, 'the Gallery marks the render you looked at last');
     assert(await js('document.querySelector("#galleryGrid .gtile:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
     assert(await js('document.activeElement === document.querySelector("#galleryGrid .gtile.seen")'), 'and focus is back on it');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('gallery: video tiles show a still of their first frame, and play on hover', async () => {
+    const mp4 = path.join(dataDir, 'renders', 'poster-test_0.mp4');
+    const made = await new Promise(resolve => {
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=12', '-t', '1', '-pix_fmt', 'yuv420p', mp4], { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', code => resolve(code === 0));
+    });
+    if (!made) return console.log('      (skipped: ffmpeg not installed)');
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8'));
+    all.unshift({ id: 'poster-test', createdAt: new Date().toISOString(), favorite: false, modelId: 'ltx-2-3', modelName: 'LTX 2.3', modelKind: 'video', theme: 'a test pattern', variations: [{ versions: [{ text: 'a test pattern', createdAt: new Date().toISOString() }], renders: [{ id: 'poster-r', versionIndex: 0, text: 'a test pattern', workflowName: 'Mock', files: [{ file: 'poster-test_0.mp4', kind: 'video', name: 'test.mp4' }], createdAt: new Date().toISOString() }] }] });
+    await fs.writeFile(file, JSON.stringify(all));
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('/^data:image\\/jpeg/.test(document.querySelector(\'#galleryGrid video[src*="poster-test_0.mp4"]\')?.getAttribute("poster") || "")', 'the video tile got its still', 15000);
+    eq(await js('document.querySelector(\'#galleryGrid video[src*="poster-test_0.mp4"]\').preload'), 'none', 'the video itself loads only when played');
+    await fs.writeFile(file, JSON.stringify(all.slice(1)));
+    await fs.rm(mp4);
     await click('.tabs button[data-view="create"]');
   });
 

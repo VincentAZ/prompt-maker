@@ -697,7 +697,8 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 .gallery { --g-cols: 4; --g-min: 260; --g-gap: 14; position: relative; }
 .gtile { position: absolute; display: block; width: 100%; padding: 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: #07060b; cursor: zoom-in; animation: rise 0.3s ease both; }
 .gtile:hover { border-color: var(--m); }
-/* The render you looked at last: a quiet ring in its model's colour, until you open another. */
+/* The render you looked at last (Gallery) or the entry open on Create (History): a quiet ring in its model's colour. */
+.hcard.current { border-color: var(--m); box-shadow: 0 0 0 2px color-mix(in srgb, var(--m) 45%, transparent); }
 .gtile.seen { border-color: var(--m); box-shadow: 0 0 0 2px color-mix(in srgb, var(--m) 45%, transparent); }
 .gtile[hidden] { display: none; }
 .gtile img, .gtile video { display: block; width: 100%; height: auto; aspect-ratio: auto 1 / 1; }
