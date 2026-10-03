@@ -328,7 +328,7 @@ esac
   const mock = startMock(MOCK_PORT);
   await mock.start();
   const comfyRoot = path.join(tmp, 'ComfyUI');
-  for (const d of ['output', 'custom_nodes']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
+  for (const d of ['output', 'input', 'custom_nodes']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
   const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot });
   await comfy.start();
   const apiWorkflowFile = path.join(tmp, 'mock-api.json');
@@ -2218,9 +2218,8 @@ esac
 
   await test('cleanup: a copied render is deleted from ComfyUI\'s output folder and gets its own name', async () => {
     await click('.tabs button[data-view="settings"]');
-    assert(!(await visible('#sComfyDirField')), 'folder field hidden until cleanup is on');
+    assert(await visible('#sComfyDirField'), 'the folder field shows even with cleanup off (deleting from History uses it too)');
     await click('#sComfyCleanup');
-    assert(await visible('#sComfyDirField'), 'then shown');
     await waitFor(`document.querySelector('#sComfyDir').placeholder.includes(${q(path.join(comfyRoot, 'output'))})`, 'the output folder is found on its own');
     await click('#settingsForm button[type="submit"]');
     await waitFor('document.querySelector("#settingsDirty").hidden', 'saved'); // (another toast can cover "Settings saved")
@@ -2246,6 +2245,148 @@ esac
     await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered again', 10000);
     assert(await fileExists(path.join(comfyRoot, 'output', `mock_${comfy.prompts.at(-1).id.slice(0, 6)}.png`)), 'with cleanup off, ComfyUI keeps its file');
     assert(await fileExists(path.join(comfyRoot, 'output', 'not-ours.png')), 'other files are never touched');
+  });
+
+  await test('delete: a render or a run leaves Earlier runs and the disk at once', async () => {
+    const history = async () => (await fetch(`${APP}/api/history`)).json();
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a tin robot waving hello');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go'); // (auto-render may have started one already)
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    if ((await count('.take .rtile img')) < 2) await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length >= 2 && !document.querySelector(".take .rtile.running")', 'rendered twice', 10000);
+    // A new run moves this one under Earlier runs.
+    await type('#theme', 'a tin robot fast asleep');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('document.querySelectorAll("#prevStrip .prev-row").length > 0', 'Earlier runs');
+    // The first earlier run, and its renders as History has them.
+    const shownFiles = await js(`[...document.querySelector("#prevStrip .prev-row").querySelectorAll(".rtile img")].map(i => decodeURIComponent(i.getAttribute("src").split("/").pop()))`);
+    const owner = (await history()).find(e => e.variations.some(v => (v.renders || []).some(r => r.files.some(f => f.file === shownFiles[0]))));
+    const all = owner.variations.flatMap(v => v.renders || []);
+    assert(all.length >= 2, `the earlier run has renders to delete (${all.length})`);
+    const files = all.map(r => r.files[0].file);
+    const tiles = `[...document.querySelectorAll("#prevStrip .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
+    eq(await js(`${tiles}.length`), all.length, 'all its renders show under Earlier runs');
+    const originalOf = r => path.join(comfyRoot, 'output', `mock_${r.promptId.slice(0, 6)}.png`);
+
+    await js(`${tiles}[0].closest(".rtile").classList.add("pick-me")`);
+    await click('#prevStrip .rtile.pick-me');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
+    await toastText('Render deleted');
+    if (await visible('#lightbox')) await press('Escape');
+    const left = (await history()).find(e => e.id === owner.id).variations.flatMap(v => v.renders || []);
+    eq(left.length, all.length - 1, 'one render fewer');
+    const gone = all.find(r => !left.some(x => x.id === r.id));
+    eq(await js(`${tiles}.length`), all.length - 1, 'Earlier runs shows one fewer, right away');
+    assert(!(await fileExists(path.join(dataDir, 'renders', gone.files[0].file))), 'the deleted one is gone from the data folder');
+    if (gone.promptId) assert(!(await fileExists(originalOf(gone))) && !comfy.history[gone.promptId], 'and ComfyUI\'s file and job');
+
+    await click('.tabs button[data-view="history"]');
+    await waitFor(`!!document.querySelector('.hcard[data-id=${q(owner.id)}]')`, 'the card');
+    const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.dataset.id === ${q(owner.id)}) + 1`);
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await toastText('Deleted for good');
+    await click('.tabs button[data-view="create"]');
+    eq(await js(`${tiles}.length`), 0, 'Earlier runs lets go of the deleted run');
+  });
+
+  await test('delete: a History card leaves nothing behind, here or in ComfyUI', async () => {
+    const history = async () => (await fetch(`${APP}/api/history`)).json();
+    const comfyHas = text => Object.values(comfy.history).some(job => JSON.stringify(job.prompt).includes(JSON.stringify(text).slice(1, -1)));
+    const outputOf = n => path.join(comfyRoot, 'output', `mock_${comfy.prompts.at(n).id.slice(0, 6)}.png`);
+    // A still, rendered (ComfyUI keeps its own file: cleanup is off), then animated: the video take uploads the still.
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a paper boat on a rainy puddle');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rcell .rt-next") && !document.querySelector(".take .rtile.running")', 'still rendered', 10000);
+    const still = (await history()).find(e => e.theme === 'a paper boat on a rainy puddle');
+    const stillText = still.variations[0].versions[0].text;
+    const stillFile = still.variations[0].renders[0].files[0].file;
+    const stillOriginal = outputOf(-1);
+    assert(await fileExists(stillOriginal), 'ComfyUI has its own file of the still');
+    await click('.take .rcell .rt-next');
+    await waitFor('document.querySelector(".model-card.active")?.dataset.id === "ltx-2-3" && !document.querySelector(".dz-preview").hidden', 'still loaded as the first frame');
+    await type('#theme', 'the paper boat drifts into the gutter');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'video rendered', 10000);
+    const video = (await history()).find(e => e.theme === 'the paper boat drifts into the gutter');
+    const videoText = video.variations[0].versions[0].text;
+    const videoOriginal = outputOf(-1);
+    const upload = path.join(comfyRoot, 'input', `prompt-maker_${stillFile}`);
+    assert(await fileExists(upload), 'the still went to ComfyUI\'s input folder');
+    assert(comfyHas(stillText) && comfyHas(videoText), 'ComfyUI\'s history has both jobs, prompts and all');
+    eq((await fetch(`${APP}/renders/${stillFile}`)).headers.get('cache-control'), 'no-store', 'renders aren\'t kept in the browser\'s cache');
+    // The assistant once quoted the still's prompt.
+    await fs.writeFile(path.join(dataDir, 'assistant.json'), JSON.stringify({ messages: [{ role: 'user', content: `Make this moodier: ${stillText}` }, { role: 'assistant', content: 'Sure.' }] }));
+
+    const deleteCard = async theme => {
+      await click('.tabs button[data-view="history"]');
+      await waitFor(`[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'the card');
+      const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes(${q(theme)})) + 1`);
+      await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+      await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+      await waitFor(`![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'card gone');
+    };
+
+    await deleteCard('a paper boat on a rainy puddle');
+    await toastText('Deleted for good');
+    assert(!(await history()).some(e => e.id === still.id), 'the entry is gone');
+    assert(!(await fileExists(path.join(dataDir, 'renders', stillFile))), 'its render is gone from the data folder');
+    assert(!(await fileExists(stillOriginal)), 'and ComfyUI\'s own file of it');
+    assert(!(await fileExists(upload)), 'and the copy uploaded to ComfyUI\'s input folder');
+    assert(!comfyHas(stillText), 'and its job in ComfyUI\'s history');
+    assert(!(await fs.readFile(path.join(dataDir, 'assistant.json'), 'utf8')).includes(stillText.slice(0, 60)), 'the assistant conversation no longer quotes it');
+    const kept = (await history()).find(e => e.id === video.id);
+    assert(kept && !kept.source, 'the video made from it stays, without its prompt or a link back');
+    assert(await fileExists(path.join(dataDir, 'images', kept.imageFile)), 'the video keeps its own first frame');
+    assert(await fileExists(videoOriginal) && comfyHas(videoText), 'the video\'s files and job aren\'t touched');
+    assert(!JSON.stringify(await history()).includes(stillText), 'the still\'s prompt is nowhere in History');
+
+    // The form still holds the video's theme and image: they go with it. (Every mock render is the same picture, so
+    // an earlier animation has this very first frame: a file another entry uses stays.)
+    await deleteCard('the paper boat drifts into the gutter');
+    assert((await history()).some(e => e.imageFile === video.imageFile), 'another entry has the same first frame');
+    assert(await fileExists(path.join(dataDir, 'images', video.imageFile)), 'so that file stays');
+    assert(!(await fileExists(path.join(dataDir, 'renders', video.variations[0].renders[0].files[0].file))), 'its render is gone');
+    assert(!(await fileExists(videoOriginal)) && !comfyHas(videoText), 'and ComfyUI\'s file and job');
+    await click('.tabs button[data-view="create"]');
+    eq(await value('#theme'), '', 'the Create form lets go of its theme');
+    assert(!(await visible('.dz-preview')), 'and its image');
+    await js('location.reload()');
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    eq(await value('#theme'), '', 'still empty after a reload');
+    assert(!(await visible('.dz-preview')), 'no image after a reload');
+
+    // An image of your own, used once, goes with its entry.
+    const mine = path.join(tmp, 'only-once.png');
+    await fs.writeFile(mine, makePng(300, 200));
+    await setFiles('#imageInput', [mine]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image added');
+    await type('#theme', 'a kite over the salt flats');
+    await click('#generateBtn');
+    await genDone();
+    const kite = (await history()).find(e => e.theme === 'a kite over the salt flats');
+    assert(kite.imageFile && (await fileExists(path.join(dataDir, 'images', kite.imageFile))), 'the image is stored');
+    await deleteCard('a kite over the salt flats');
+    assert(!(await fileExists(path.join(dataDir, 'images', kite.imageFile))), 'its input image is gone');
+    await click('.tabs button[data-view="create"]');
+    assert(!(await visible('.dz-preview')) && (await value('#theme')) === '', 'and the form let go of both');
   });
 
   await test('step 3: pick any image from the Gallery', async () => {
@@ -2321,9 +2462,10 @@ esac
     const old = path.join(app2, 'data');
     for (const d of ['models', 'images', 'renders', 'workflows']) await fs.mkdir(path.join(old, d), { recursive: true });
     await fs.writeFile(path.join(old, 'settings.json'), JSON.stringify({ comfyUrl: 'http://127.0.0.1:9999' }));
-    await fs.writeFile(path.join(old, 'history.json'), JSON.stringify([{ id: 'old-1', createdAt: '2026-09-01T00:00:00.000Z', theme: 'an old theme', modelId: 'krea2-raw', variations: [] }]));
+    await fs.writeFile(path.join(old, 'history.json'), JSON.stringify([{ id: 'old-1', createdAt: '2026-09-01T00:00:00.000Z', theme: 'an old theme', modelId: 'krea2-raw', imageFile: 'a.jpg', variations: [{ versions: [{ text: 'an old prompt' }], renders: [{ id: 'r1', files: [{ file: 'r.png', kind: 'image' }] }] }] }]));
     await fs.writeFile(path.join(old, 'images', 'a.jpg'), 'jpg');
     await fs.writeFile(path.join(old, 'renders', 'r.png'), 'png');
+    await fs.writeFile(path.join(old, 'renders', 'orphan.png'), 'left by a delete in an older version');
     await fs.writeFile(path.join(old, 'workflows', 'w1.json'), JSON.stringify({ id: 'w1', modelId: 'krea2-raw', name: 'Old flow', prompt: {}, mapping: {} }));
     await fs.copyFile(path.join(ROOT, 'playbooks', 'krea2-raw.json'), path.join(old, 'models', 'krea2-raw.json')); // an untouched built-in
     await fs.writeFile(path.join(old, 'models', 'my-model.json'), JSON.stringify({ id: 'my-model', name: 'My Model', kind: 'image', instructions: '## Mine' }));
@@ -2348,6 +2490,7 @@ esac
       eq((await get('/api/history'))[0]?.theme, 'an old theme', 'history moved');
       eq((await get('/api/workflows'))[0]?.name, 'Old flow', 'workflows moved');
       for (const f of ['images/a.jpg', 'renders/r.png', 'models/my-model.json']) assert(await fileExists(path.join(dir, f)), `${f} moved`);
+      assert(!(await fileExists(path.join(dir, 'renders', 'orphan.png'))), 'a render no History entry uses is removed at start-up');
       assert(!(await fileExists(path.join(dir, 'models', 'krea2-raw.json'))), 'an untouched copy of a built-in is dropped');
       const models = await get('/api/models');
       assert(models.some(m => m.id === 'my-model' && !m.builtin), 'your own model is there');

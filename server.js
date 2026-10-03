@@ -94,6 +94,9 @@ function openStream(res) {
   return { send, runId, signal: controller.signal, end: () => { runs.delete(runId); res.end(); } };
 }
 
+// Renders and images aren't stored in the browser's cache, so a deleted one doesn't live on there.
+const PRIVATE = { 'Cache-Control': 'no-store' };
+
 // Serves a file, with byte ranges so videos can seek.
 async function serveFile(req, res, file, extraHeaders = {}) {
   let data;
@@ -646,6 +649,77 @@ async function refreshWorkflow(existing, body) {
 
 const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
+// The names an entry's input image gets in ComfyUI's input folder (its render original, or the copy the LLM saw).
+const uploadNames = e => [e.source?.file, e.imageFile].filter(Boolean).map(name => `prompt-maker_${name}`);
+// And the names its renders got when a take was made from one of them (animating a still uploads the still).
+const renderUploads = renders => renders.flatMap(r => (r.files || []).map(f => `prompt-maker_${f.file}`));
+
+// Size and checksum of each of these renders' files, read before they're deleted, to find ComfyUI's own copies.
+async function fingerprints(renders) {
+  const out = [];
+  for (const f of renders.flatMap(r => r.files || [])) {
+    const buf = await fs.readFile(path.join(store.RENDERS_DIR, f.file)).catch(() => null);
+    if (buf) out.push(comfy.fingerprint(buf));
+  }
+  return out;
+}
+
+// Drops copies with the same content as a render an entry still has (the same seed and prompt rendered twice):
+// ComfyUI's file of that content may be that entry's.
+async function notShared(copies, rest) {
+  const sizes = new Set(copies.map(c => c.size));
+  const shared = new Set();
+  for (const f of rest.flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files || [])))) {
+    const file = path.join(store.RENDERS_DIR, f.file);
+    if (!sizes.has((await fs.stat(file).catch(() => null))?.size)) continue;
+    const buf = await fs.readFile(file).catch(() => null);
+    if (buf) shared.add(comfy.fingerprint(buf).sha1);
+  }
+  return copies.filter(c => !shared.has(c.sha1));
+}
+
+// Removes what ComfyUI keeps of deleted renders or takes: their jobs (found by id or prompt text), the files those
+// jobs saved, ComfyUI's copies of the renders (found by content), and uploaded input images no entry left uses.
+// Returns a note if some of it may be out of reach, else null.
+async function forgetInComfy(settings, { promptIds = [], texts = [], copies = [], inputs = [], rest = [] }) {
+  const base = settings.comfyUrl;
+  const refs = inputs.map(filename => ({ type: 'input', subfolder: '', filename }));
+  if (promptIds.some(Boolean) || texts.length) {
+    // Not running: its history (kept in memory) is already gone, and its folders are still found below.
+    refs.push(...await comfy.forgetJobs(base, { promptIds, texts }).catch(err => (console.warn(`ComfyUI: ${err.message}`), [])));
+  }
+  const keep = new Set(rest.flatMap(uploadNames));
+  const dirs = await comfy.folders(base, { output: settings.comfyOutputDir, roots: [settings.comfyDir, settings.comfyLaunch?.dir] });
+  await comfy.removeFiles(dirs, refs.filter(r => !(r.type === 'input' && keep.has(r.filename))), copies.length ? await notShared(copies, rest) : [])
+    .catch(err => console.warn(`Couldn't remove ComfyUI's copies: ${err.message}`));
+  if (copies.length && !dirs.output && !settings.comfyCleanup) return "ComfyUI's output folder wasn't found, so its own copies of the renders may still be there. Set the folder in Settings → ComfyUI, or delete them there.";
+  return null;
+}
+
+async function deleteTake(id) {
+  const settings = await store.getSettings();
+  const found = await store.getHistory(id);
+  if (!found) return { ok: true };
+  const renders = found.variations.flatMap(v => v.renders || []);
+  const copies = await fingerprints(renders);
+  const { entry, rest } = await store.deleteHistory(id);
+  if (!entry) return { ok: true };
+  // A prompt another entry also has (word for word) may be that one's job, so it isn't used to find jobs.
+  const others = new Set(rest.flatMap(e => e.variations.flatMap(v => v.versions.map(x => x.text))));
+  const texts = [...new Set(entry.variations.flatMap(v => v.versions.map(x => x.text)))].filter(t => !others.has(t));
+  const left = await forgetInComfy(settings, { promptIds: renders.map(r => r.promptId), texts, copies, inputs: [...uploadNames(entry), ...renderUploads(renders)], rest });
+  return { ok: true, ...(left ? { left } : {}) };
+}
+
+async function deleteOneRender(entryId, renderId) {
+  const settings = await store.getSettings();
+  const render = (await store.getHistory(entryId))?.variations.flatMap(v => v.renders || []).find(r => r.id === renderId);
+  const copies = render ? await fingerprints([render]) : [];
+  const { entry, removed, rest } = await store.deleteRender(entryId, renderId);
+  await forgetInComfy(settings, { promptIds: [removed.promptId], copies, inputs: renderUploads([removed]), rest });
+  return entry;
+}
+
 async function renderTake(req, res) {
   const body = await readBody(req);
   const settings = await store.getSettings();
@@ -679,6 +753,7 @@ async function renderTake(req, res) {
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
   const clientId = comfy.newClientId();
   for (let i = 0; i < count; i++) {
+    if (i > 0 && !(await store.getHistory(entry.id))) break; // deleted meanwhile: its prompt isn't sent again
     const t0 = Date.now();
     let promptId = null;
     const onAbort = () => { if (promptId) comfy.cancel(base, promptId); };
@@ -710,6 +785,7 @@ async function renderTake(req, res) {
       if (!outputs.length) throw store.httpError(502, 'ComfyUI finished but saved no image, video or audio. Does the workflow end in a Save node?');
       const id = crypto.randomUUID();
       const files = [];
+      const copies = [];
       // ComfyUI reuses its numbers (ComfyUI_00001_.png) once files are gone, so copies get their own names.
       const named = [store.slugify(entry.modelName), store.slugify(entry.theme || 'from-image').slice(0, 40), applied.seed ?? null, id.slice(0, 6)].filter(x => x !== null && x !== '').join('_');
       for (const [n, out] of outputs.entries()) {
@@ -717,6 +793,7 @@ async function renderTake(req, res) {
         const file = `${id}_${n}${ext}`;
         const buf = await comfy.download(base, out);
         await fs.writeFile(path.join(store.RENDERS_DIR, file), buf);
+        copies.push(comfy.fingerprint(buf));
         files.push({ file, kind: out.kind, name: `${named}${outputs.length > 1 ? `-${n + 1}` : ''}${ext}` });
         if (settings.comfyCleanup) {
           await comfy.removeOutput(base, out, buf.length, settings.comfyOutputDir).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
@@ -724,6 +801,7 @@ async function renderTake(req, res) {
       }
       const render = {
         id,
+        promptId,
         versionIndex,
         text,
         workflowId: workflow.id,
@@ -741,7 +819,15 @@ async function renderTake(req, res) {
         createdAt: new Date().toISOString(),
         secs: Math.round((Date.now() - t0) / 100) / 10,
       };
-      await store.updateHistory(entry.id, e => { (e.variations[body.index].renders ||= []).push(render); });
+      try {
+        await store.updateHistory(entry.id, e => { (e.variations[body.index].renders ||= []).push(render); });
+      } catch (err) {
+        if (err.status !== 404) throw err;
+        // The take was deleted while this rendered: none of it is kept, here or in ComfyUI.
+        await store.removeRenderFiles([render]);
+        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs: imageName ? [imageName] : [], rest: await store.listHistory() });
+        throw store.httpError(404, 'That take was deleted, so its render was thrown away.');
+      }
       stream.send({ type: 'render', i, render });
     } catch (err) {
       stream.signal.removeEventListener('abort', onAbort);
@@ -901,6 +987,7 @@ async function route(req, res) {
     const exists = await store.readImageDataUrl(match[1]).then(() => true, () => false);
     return sendJson(res, 200, { exists });
   }
+  if ((match = p.match(/^\/api\/images\/([\w.]+)$/)) && m === 'DELETE') return sendJson(res, 200, { removed: await store.deleteImageIfUnused(match[1]) });
   if (p === '/api/refine' && m === 'POST') return refine(req, res);
 
   if (p === '/api/history' && m === 'GET') return sendJson(res, 200, await store.listHistory());
@@ -922,10 +1009,7 @@ async function route(req, res) {
       });
       return sendJson(res, 200, entry);
     }
-    if (m === 'DELETE') {
-      await store.deleteHistory(id);
-      return sendJson(res, 200, { ok: true });
-    }
+    if (m === 'DELETE') return sendJson(res, 200, await deleteTake(id));
   }
 
   // ---- ComfyUI (optional renders) ----
@@ -1000,16 +1084,16 @@ async function route(req, res) {
   }
   if (p === '/api/render' && m === 'POST') return renderTake(req, res);
   if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'DELETE') {
-    return sendJson(res, 200, await store.deleteRender(match[1], match[2]));
+    return sendJson(res, 200, await deleteOneRender(match[1], match[2]));
   }
   if (p.startsWith('/renders/') && m === 'GET') {
     const file = within(store.RENDERS_DIR, decodeURIComponent(p.slice('/renders/'.length)));
-    return file ? serveFile(req, res, file) : sendJson(res, 404, { error: 'Not found' });
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
   }
 
   if (p.startsWith('/images/') && m === 'GET') {
     const file = within(store.IMAGES_DIR, decodeURIComponent(p.slice('/images/'.length)));
-    return file ? serveFile(req, res, file) : sendJson(res, 404, { error: 'Not found' });
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
   }
 
   if (m === 'GET' && !p.startsWith('/api/')) {
@@ -1024,6 +1108,8 @@ async function route(req, res) {
 
 const moved = await store.init();
 if (moved.length) console.log(`Moved your data out of the app folder into ${store.DATA_DIR}: ${moved.join(', ')}`);
+const swept = await store.sweepOrphans().catch(err => (console.warn(`Couldn't tidy the data folder: ${err.message}`), 0));
+if (swept) console.log(`Removed ${swept} file${swept === 1 ? '' : 's'} no History entry uses anymore.`);
 await wf.initWorkflows();
 
 const server = http.createServer(async (req, res) => {

@@ -1917,9 +1917,14 @@ function bumpHistoryBadge(delta) {
   badge.hidden = !n;
 }
 
+// Counts deletes, so a list fetched before one can't bring the deleted card back.
+let historyDeletes = 0;
+
 async function loadHistory() {
   try {
-    state.history = await api('/api/history');
+    const deletes = historyDeletes;
+    const list = await api('/api/history');
+    if (deletes === historyDeletes) state.history = list;
   } catch (err) {
     toast(err.message, true);
   }
@@ -1994,7 +1999,7 @@ function renderHistory() {
           <p class="hprompt">${esc(first)}</p>
           <div class="hactions">
             <button type="button" class="btn small" data-act="copy" aria-label="Copy ${takes > 1 ? `all ${takes} takes` : 'prompt'}: ${esc(title)}">${takes > 1 ? `Copy all ${takes}` : 'Copy'}</button>
-            <button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}">Delete</button>
+            <button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image and renders, here and in ComfyUI">Delete</button>
             <button type="button" class="btn small primary open" data-act="open" aria-label="Open: ${esc(title)}">Open ➜</button>
           </div>
         </div>
@@ -2038,13 +2043,14 @@ $('#historyList').addEventListener('click', async e => {
       renderHistory();
     } else if (btn.dataset.act === 'delete') {
       confirmClick(btn, 'Sure?', async () => {
-        await api(`/api/history/${id}`, { method: 'DELETE' });
+        const { left } = await api(`/api/history/${id}`, { method: 'DELETE' });
+        historyDeletes++;
         state.history = state.history.filter(x => x.id !== id);
-        if (state.entry?.id === id) renderResults(null);
+        forgetEntry(entry);
         bumpHistoryBadge(-1);
         renderHistoryFilters();
         renderHistory();
-        toast('🗑️ Deleted');
+        toast(left ? `🗑️ Deleted. ${left}` : '🗑️ Deleted for good', Boolean(left));
       });
     } else if (btn.dataset.act === 'open') {
       await openEntry(entry);
@@ -2053,6 +2059,44 @@ $('#historyList').addEventListener('click', async e => {
     toast(err.message, true);
   }
 });
+
+// Every copy of an entry the page holds: the stage, History, earlier runs and the chain run each may have their own.
+const copiesOf = id => new Set([state.entry, ...state.history, ...state.prev, ...(state.run?.entries || [])].filter(e => e?.id === id));
+
+// A deleted render leaves every view at once, so no thumbnail of it stays on screen.
+function forgetRender(updated) {
+  for (const e of copiesOf(updated.id)) e.variations.forEach((v, i) => { v.renders = (updated.variations[i]?.renders || []).slice(); });
+  if (state.entry?.id === updated.id) state.cards.forEach(renderTiles);
+  renderPrevStrip();
+  if (state.run) renderRunStrip();
+  if (isView('gallery')) renderGallery();
+  if (isView('history')) renderHistory();
+}
+
+// A deleted entry leaves no trace on this page either: not on the stage, among earlier runs or in a chain run, as a
+// link from the takes made from it, or in the Create form (its theme and image) when it's still what the form holds.
+function forgetEntry(entry) {
+  if (state.entry?.id === entry.id) renderResults(null);
+  state.prev = state.prev.filter(e => e.id !== entry.id);
+  renderPrevStrip();
+  if (state.run?.entries.some(e => e.id === entry.id)) {
+    state.run.entries = state.run.entries.filter(e => e.id !== entry.id);
+    for (const [k, it] of state.run.picks) if (it.entry.id === entry.id) state.run.picks.delete(k);
+    if (state.run.entries.length) renderRunStrip(); else closeRun();
+  }
+  for (const e of state.history) if (e.source?.entryId === entry.id) delete e.source;
+  const img = state.image;
+  const onlyItsImage = entry.imageFile && img?.file === entry.imageFile && !state.history.some(e => e.imageFile === img.file);
+  if (img && (onlyItsImage || img.source?.entryId === entry.id)) {
+    setImage(null);
+    // A copy made for the form (of one of its renders) that nothing else uses goes too.
+    if (img.file && !state.history.some(e => e.imageFile === img.file)) api(`/api/images/${encodeURIComponent(img.file)}`, { method: 'DELETE' }).catch(() => {});
+  }
+  if (entry.theme && $('#theme').value.trim() === entry.theme.trim()) {
+    $('#theme').value = ''; // not replaceTheme: its undo would bring the deleted words back
+    $('#theme').dispatchEvent(new Event('input'));
+  }
+}
 
 // Puts an entry's setup back into the Create form: model, dials, theme, image and takes.
 async function loadForm(entry) {
@@ -2898,7 +2942,7 @@ function renderSettings() {
   $('#sComfyDir').value = s.comfyOutputDir || '';
   $('#sComfyFolder').value = s.comfyDir || '';
   $('#sComfyArgs').value = s.comfyArgs || '';
-  $('#sComfyDirField').hidden = !s.comfyCleanup;
+  showOutputDir();
   $('#sThinking').value = s.thinking;
   $('#sMaster').value = s.masterPrompt;
   $('#sAdult').checked = Boolean(s.adultContent);
@@ -2915,7 +2959,6 @@ $('#settingsForm').addEventListener('input', marksSettingsDirty);
 function showOutputDir() {
   api('/api/comfy/output-dir').then(r => { $('#sComfyDir').placeholder = r.detected ? `found: ${r.detected}` : 'not found: enter it, or start ComfyUI on this computer'; }).catch(() => {});
 }
-$('#sComfyCleanup').addEventListener('change', e => { $('#sComfyDirField').hidden = !e.target.checked; if (e.target.checked) showOutputDir(); });
 $('#settingsForm').addEventListener('change', marksSettingsDirty);
 $('#sTest').addEventListener('click', async () => {
   const out = $('#sTestResult');
@@ -4677,15 +4720,9 @@ function lbRender() {
   $('[data-lb="delete"]', $('#lbInfo')).addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', async () => {
     try {
       const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'DELETE' });
-      if (state.entry?.id === entry.id) {
-        state.entry.variations.forEach((v, i) => { v.renders = updated.variations[i].renders; });
-        state.cards.forEach(renderTiles);
-      }
-      const h = state.history.find(x => x.id === entry.id);
-      if (h) h.variations.forEach((v, i) => { v.renders = updated.variations[i].renders; });
+      forgetRender(updated);
       lb.items = lb.items.filter(x => x.render.id !== render.id);
       lb.index = Math.min(lb.index, lb.items.length - 1);
-      if (isView('gallery')) renderGallery();
       toast('🗑️ Render deleted');
       if (lb.items.length) lbRender(); else closeLightbox();
     } catch (err) {

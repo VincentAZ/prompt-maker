@@ -1,5 +1,6 @@
 // A fake ComfyUI for UI tests: the HTTP API Prompt Maker uses plus a real WebSocket that streams
-// execution progress. Prompt text containing COMFYFAIL fails; SLOWRENDER renders slowly.
+// execution progress. Prompt text containing COMFYFAIL fails; SLOWRENDER renders slowly. With a root folder,
+// uploads land in root/input and renders in root/output, and finished jobs stay in its history until deleted.
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -51,6 +52,8 @@ export function startMockComfy(port, { png, root = null }) {
   const sockets = new Map();
   const allSockets = new Set();
   const interrupted = new Set();
+  const pending = []; // queued, not started: { id, prompt }
+  const dropped = new Set(); // taken off the queue before they started
   let server;
   let running = null;
   let chain = Promise.resolve();
@@ -61,6 +64,9 @@ export function startMockComfy(port, { png, root = null }) {
   };
 
   async function execute(id, prompt, clientId) {
+    const k = pending.findIndex(x => x.id === id);
+    if (k >= 0) pending.splice(k, 1);
+    if (dropped.has(id)) return;
     running = id;
     const text = JSON.stringify(prompt);
     const slow = text.includes('SLOWRENDER');
@@ -72,7 +78,7 @@ export function startMockComfy(port, { png, root = null }) {
     for (let v = 1; v <= 5; v++) {
       if (interrupted.has(id)) {
         send(clientId, { type: 'execution_interrupted', data: { prompt_id: id } });
-        history[id] = { outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_interrupted', { prompt_id: id }]] } };
+        history[id] = { prompt: [0, id, prompt, { client_id: clientId }, ['9']], outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_interrupted', { prompt_id: id }]] } };
         running = null;
         return;
       }
@@ -82,13 +88,13 @@ export function startMockComfy(port, { png, root = null }) {
     if (text.includes('COMFYFAIL')) {
       const err = { prompt_id: id, node_id: '3', node_type: 'KSampler', exception_message: 'Mock sampler exploded' };
       send(clientId, { type: 'execution_error', data: err });
-      history[id] = { outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_error', err]] } };
+      history[id] = { prompt: [0, id, prompt, { client_id: clientId }, ['9']], outputs: {}, status: { status_str: 'error', completed: false, messages: [['execution_error', err]] } };
       running = null;
       return;
     }
     send(clientId, { type: 'executing', data: { node: '9', prompt_id: id } });
     if (root) fs.writeFileSync(path.join(root, 'output', `mock_${id.slice(0, 6)}.png`), png);
-    history[id] = { outputs: { 9: { images: [{ filename: `mock_${id.slice(0, 6)}.png`, subfolder: '', type: 'output' }] } }, status: { status_str: 'success', completed: true, messages: [] } };
+    history[id] = { prompt: [0, id, prompt, { client_id: clientId }, ['9']], outputs: { 9: { images: [{ filename: `mock_${id.slice(0, 6)}.png`, subfolder: '', type: 'output' }] } }, status: { status_str: 'success', completed: true, messages: [] } };
     send(clientId, { type: 'executing', data: { node: null, prompt_id: id } });
     send(clientId, { type: 'execution_success', data: { prompt_id: id } });
     running = null;
@@ -109,21 +115,38 @@ export function startMockComfy(port, { png, root = null }) {
     if (p === '/upload/image' && req.method === 'POST') {
       const name = /filename="([^"]+)"/.exec(raw.toString('latin1'))?.[1] || 'upload.png';
       uploads.push(name);
+      if (root) fs.writeFileSync(path.join(root, 'input', name), png);
       return json(200, { name, subfolder: '', type: 'input' });
     }
     if (p === '/prompt' && req.method === 'POST') {
       const body = JSON.parse(raw.toString());
       const id = crypto.randomUUID();
       prompts.push({ id, ...body });
+      pending.push({ id, prompt: body.prompt });
       chain = chain.then(() => execute(id, body.prompt, body.client_id));
       return json(200, { prompt_id: id, number: prompts.length, node_errors: {} });
+    }
+    if (p === '/history' && req.method === 'GET') return json(200, history);
+    if (p === '/history' && req.method === 'POST') {
+      const body = JSON.parse(raw.toString() || '{}');
+      for (const id of body.delete || []) delete history[id];
+      if (body.clear) for (const id of Object.keys(history)) delete history[id];
+      res.writeHead(200);
+      return res.end();
     }
     if (p.startsWith('/history/')) {
       const id = decodeURIComponent(p.slice('/history/'.length));
       return json(200, history[id] ? { [id]: history[id] } : {});
     }
-    if (p === '/queue' && req.method === 'GET') return json(200, { queue_running: running ? [[0, running]] : [], queue_pending: [] });
-    if (p === '/queue' && req.method === 'POST') return json(200, {});
+    if (p === '/queue' && req.method === 'GET') {
+      const job = id => [prompts.findIndex(x => x.id === id), id, prompts.find(x => x.id === id)?.prompt, {}, ['9']];
+      return json(200, { queue_running: running ? [job(running)] : [], queue_pending: pending.filter(x => !dropped.has(x.id)).map(x => job(x.id)) });
+    }
+    if (p === '/queue' && req.method === 'POST') {
+      const body = raw.length ? JSON.parse(raw.toString()) : {};
+      for (const id of body.delete || []) dropped.add(id);
+      return json(200, {});
+    }
     if (p === '/interrupt') {
       const body = raw.length ? JSON.parse(raw.toString()) : {};
       if (body.prompt_id) interrupted.add(body.prompt_id);
@@ -157,6 +180,7 @@ export function startMockComfy(port, { png, root = null }) {
   return {
     prompts,
     uploads,
+    history,
     editSaved(fn) {
       saved.json = fn(structuredClone(saved.json));
       saved.modified = Date.now();

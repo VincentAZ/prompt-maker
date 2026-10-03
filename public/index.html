@@ -490,7 +490,7 @@
           <p id="sComfyResult" class="test-result" hidden></p>
           <label class="check-row"><input type="checkbox" id="sComfyCleanup"> <span>After copying a render, delete it from ComfyUI's output folder</span></label>
           <label class="field" id="sComfyDirField"><span>ComfyUI output folder <small>only if ComfyUI was started with <code>--output-directory</code></small></span><input id="sComfyDir" placeholder="found automatically"></label>
-          <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer.</p>
+          <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer. Deleting from History always removes ComfyUI's copies of those renders too, so the folder matters even with this off.</p>
           <div class="grid-3">
             <label class="field"><span>ComfyUI folder <small>to start it from Services</small></span><input id="sComfyFolder" placeholder="found automatically"></label>
             <label class="field"><span>Start options</span><input id="sComfyArgs" class="mono" placeholder="as you last ran it"></label>
