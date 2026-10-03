@@ -215,11 +215,20 @@
               <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Generate</span><kbd>Ctrl ↵</kbd>
             </button>
             <button type="button" id="stopBtn" class="btn-stop" hidden>■ Stop <kbd>Esc</kbd></button>
+            <button type="button" id="queueBtn" class="btn-queue" title="Queue the form as it is now (Ctrl+Enter). It runs when what's going is done, and changing the form afterwards won't change it." hidden>＋ Queue<b id="queueCount" hidden></b></button>
             <button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in History." aria-label="New session">＋ New</button>
           </div>
         </form>
 
         <section class="stage" aria-label="Results">
+          <div id="lineBox" class="line-box" role="region" aria-label="Waiting in line" hidden>
+            <div class="line-head">
+              <b id="lineHead"></b>
+              <button type="button" id="lineGo" class="btn small" hidden>▶ Carry on</button>
+              <button type="button" id="lineClear" class="btn small danger">Clear</button>
+            </div>
+            <ol id="lineList" class="line-list"></ol>
+          </div>
           <div id="runStrip" class="run-strip" role="region" aria-label="Chain run" hidden></div>
           <div id="prevStrip" class="prev-strip" role="region" aria-label="Earlier runs" hidden></div>
           <div id="stageHead" class="stage-head" hidden></div>

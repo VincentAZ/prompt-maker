@@ -1740,13 +1740,17 @@ function setBusy(busy) {
   updateGenerateLabel();
   $('#stopBtn').hidden = !busy && !state.chainActive && !state.batchRun;
   syncNewBtn();
+  drawLine();
+  if (!running() && line.orders.length && !line.held && !line.pumping) setTimeout(pumpLine, 0); // queued during a refine or a chain
   $$('.take .refine button, .take .refine input, .take .chips button, .take .save-edit, .take .versions button').forEach(el => { el.disabled = busy; });
   if (!busy) state.cards.forEach(c => { if (!c.interrupted && versionsOf(c).length) { $('.prev', c.el).disabled = c.view === 0; $('.next', c.el).disabled = c.view === versionsOf(c).length - 1; } });
   $('#draftBtn').disabled = busy;
 }
 
-// Stop asks the server to cancel, so takes that already finished still arrive and are kept.
+// Stop asks the server to cancel, so takes that already finished still arrive and are kept. Orders still in line
+// carry on (✕ takes one out).
 function stop() {
+  if (line.running) line.running.stopped = true;
   const run = state.chainActive ? state.run : null;
   if (run && !run.stopped) {
     // Stopping a chain: no further steps, and its renders still in ComfyUI are cancelled.
@@ -1784,7 +1788,7 @@ function stop() {
 // New swaps places with Stop while a prompt is cooking, and has nothing to do on a blank slate.
 function syncNewBtn() {
   const b = $('#newBtn');
-  b.hidden = state.busy || state.chainActive || Boolean(state.batchRun);
+  b.hidden = running() || line.pumping;
   b.disabled = !($('#theme').value.trim() || state.image || state.entry);
 }
 
@@ -1829,16 +1833,170 @@ async function newSession() {
 }
 $('#newBtn').addEventListener('click', newSession);
 
+// Generate takes the form as it is right now, and runs it, or puts it in line if something is still going.
 async function generate() {
-  if (state.busy || state.chainActive || state.batchRun) return;
-  if (state.chain.steps.length) return runChain();
-  const list = pickedBatches();
-  if (list.length) return runBatches(list);
-  const body = await formRequest();
-  if (!body) return;
-  closeRun();
-  await runGeneration(body, currentModel());
+  if (state.chain.steps.length) {
+    if (lineBusy()) return toast('A chain can\'t wait in line: it may stop and ask you to pick. Run it once this is done.', true);
+    return runChain();
+  }
+  const order = await takeOrder();
+  if (order) return enqueue(order);
 }
+
+// ---------- create: the line ----------
+// Every Generate is an order: the form as it was at the click (model, dials, theme, image, batch) and its render
+// setup (workflow, LoRAs, sampler settings), so changing the form afterwards only changes the next one. Orders run
+// one after another; a take's renders go on in ComfyUI while the next prompt is written. A failure puts the line on
+// hold. ■ Stop stops only the one running.
+
+const line = { orders: [], running: null, pumping: false, held: false, seq: 0 };
+const running = () => state.busy || state.chainActive || Boolean(state.batchRun);
+const lineBusy = () => running() || line.pumping || (line.orders.length > 0 && !line.held);
+const lineNote = () => (line.orders.length ? ` · ${line.orders.length} more in line` : '');
+
+async function takeOrder() {
+  const batchList = pickedBatches();
+  const body = await formRequest();
+  if (!body) return null;
+  const m = currentModel();
+  const flow = state.workflows.find(f => f.id === activeWorkflowId(m.id));
+  const renders = flow && (batchList.length > 0 || saved.get(autoRenderKey(m.id), false));
+  let finish;
+  const done = new Promise(r => { finish = r; });
+  return {
+    id: ++line.seq,
+    at: Date.now(),
+    body,
+    model: m,
+    batches: structuredClone(batchList),
+    render: renders ? structuredClone({ workflowId: flow.id, flowName: flow.name, loras: { tweaks: flow.loras?.tweaks || {}, added: flow.loras?.added || [] }, overrides: flow.overrides || {} }) : null,
+    done,
+    finish,
+  };
+}
+
+const orderKey = o => JSON.stringify([o.body, o.batches, o.render]);
+
+// Resolves once this order has run (or left the line).
+function enqueue(order) {
+  const last = line.orders.at(-1) || line.running;
+  // A double click or a second Ctrl+Enter on the same form isn't a second order.
+  if (last && order.at - last.at < 1000 && orderKey(last) === orderKey(order)) return last.done;
+  line.orders.push(order);
+  const waits = running() || line.pumping || line.orders.length > 1;
+  line.held = false;
+  drawLine();
+  if (waits) {
+    toast(`⏳ In line (${line.orders.length} waiting). Changing the form now won't change it`, false, { label: '✕ Take it out', run: () => dropOrder(order.id) });
+  }
+  pumpLine();
+  return order.done;
+}
+
+async function pumpLine() {
+  if (line.pumping) return;
+  line.pumping = true;
+  try {
+    while (line.orders.length && !line.held && !running()) {
+      const order = line.orders.shift();
+      line.running = order;
+      drawLine();
+      const ok = await runOrder(order);
+      line.running = null;
+      order.finish();
+      if (!ok && !order.stopped && line.orders.length) {
+        line.held = true;
+        toast(`⏸ The line is on hold: that one failed. ${line.orders.length} still waiting`, true);
+      }
+      // Whoever waited for this order (the assistant) reads the stage before the next order takes it.
+      await new Promise(r => setTimeout(r, 0));
+    }
+  } finally {
+    line.pumping = false;
+    line.running = null;
+    drawLine();
+    syncNewBtn();
+  }
+}
+
+// Returns false if it failed (the reason is on the stage).
+async function runOrder(order) {
+  closeRun();
+  if (order.batches.length) return runBatches(order);
+  const entry = await runGeneration(order.body, order.model);
+  if (!entry) return false;
+  if (!order.render) return true;
+  if (!state.comfy?.ok) await loadComfyStatus();
+  if (!state.comfy?.ok) {
+    showError(state.comfy?.error || 'ComfyUI is not reachable.');
+    return false;
+  }
+  if (state.entry !== entry) return true; // you opened something else meanwhile; its render bar is still there
+  state.cards.forEach(c => {
+    if (!c.rb || c.interrupted) return;
+    c.rb.workflowId = order.render.workflowId;
+    const sel = $('.rb-wf', c.el);
+    if (sel) sel.value = c.rb.workflowId;
+    startRender(c, { setup: order.render });
+  });
+  return true;
+}
+
+// Takes an order out of line, with a toast to put it back where it was.
+function dropOrder(id) {
+  const i = line.orders.findIndex(o => o.id === id);
+  if (i < 0) return toast('Too late: that one already started.', true);
+  const [order] = line.orders.splice(i, 1);
+  order.finish();
+  if (!line.orders.length) line.held = false;
+  drawLine();
+  toast(`✕ Took “${cut(order.body.theme || 'From an image', 30)}” out of line`, false, {
+    label: '↶ Undo',
+    run: () => { line.orders.splice(Math.min(i, line.orders.length), 0, order); drawLine(); pumpLine(); },
+  });
+}
+
+function orderLine(o) {
+  const what = o.batches.length ? `🎞 ${o.batches.map(b => b.name).join(', ')}` : `${o.body.variations} take${o.body.variations > 1 ? 's' : ''}`;
+  return [o.model.name, o.body.aspectRatio, what, o.render ? `🎨 ${o.render.flowName}` : 'no render', o.body.imageFile || o.body.image ? '🖼 image' : ''].filter(Boolean).join(' · ');
+}
+
+function drawLine() {
+  const n = line.orders.length;
+  $('#queueBtn').hidden = (!running() && !line.pumping) || state.chain.steps.length > 0;
+  $('#queueCount').hidden = !n;
+  $('#queueCount').textContent = n;
+  $('#queueBtn').setAttribute('aria-label', n ? `Queue (${n} waiting)` : 'Queue');
+  $('#lineBox').hidden = !n;
+  $('#lineBox').classList.toggle('held', line.held);
+  if (!n) return;
+  $('#lineHead').textContent = line.held ? `⏸ On hold · ${n} waiting` : `⏳ Up next · ${n}`;
+  $('#lineGo').hidden = !line.held;
+  $('#lineList').innerHTML = line.orders.map((o, i) => `<li data-id="${o.id}" style="--m:${modelColor(o.model)}">
+    <span class="ln-n">${i + 1}</span>
+    <span class="ln-main"><b>${esc(o.body.theme || 'From an image')}</b><small>${esc(orderLine(o))}</small></span>
+    <button type="button" class="icon-btn ln-del" title="Take it out of line" aria-label="Take “${esc(cut(o.body.theme || 'From an image', 40))}” out of line">✕</button>
+  </li>`).join('');
+}
+
+$('#queueBtn').addEventListener('click', generate);
+$('#lineList').addEventListener('click', e => {
+  const li = e.target.closest('.ln-del') && e.target.closest('li');
+  if (li) dropOrder(Number(li.dataset.id));
+});
+$('#lineGo').addEventListener('click', () => {
+  line.held = false;
+  showError('');
+  drawLine();
+  pumpLine();
+});
+$('#lineClear').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', () => {
+  const gone = line.orders.splice(0);
+  gone.forEach(o => o.finish());
+  line.held = false;
+  drawLine();
+  toast(`✕ Cleared the line (${gone.length})`, false, { label: '↶ Undo', run: () => { line.orders.unshift(...gone); drawLine(); pumpLine(); } });
+}));
 
 // Checks the Create form and turns it into a generate request (null, with the reason shown, if it can't run).
 async function formRequest() {
@@ -1874,7 +2032,7 @@ async function formRequest() {
 }
 
 // Writes the takes for a request into the stage, streaming. Returns the saved history entry, or null.
-async function runGeneration(body, m, { autoRender: auto = true } = {}) {
+async function runGeneration(body, m) {
   keepPrevious(state.entry);
   // Placeholder entry so the stage header and meters work while streaming.
   state.entry = { ...body, modelName: m.name, modelKind: m.kind, variations: [] };
@@ -1942,7 +2100,6 @@ async function runGeneration(body, m, { autoRender: auto = true } = {}) {
     savedEntry.llmName = state.entry.llmName;
     adoptEntry(savedEntry, (performance.now() - t0) / 1000);
     bumpHistoryBadge(1);
-    if (auto) autoRender(state.cards);
   } else {
     const keep = stopped ? [] : state.cards.filter(c => c.partial);
     state.cards.filter(c => !keep.includes(c)).forEach(c => c.el.remove());
@@ -1952,7 +2109,7 @@ async function runGeneration(body, m, { autoRender: auto = true } = {}) {
   }
   state.stopping = false;
   if (failed) showError(failed);
-  else if (stopped) toast(savedEntry ? `■ Stopped. Kept ${savedEntry.variations.length} finished take${savedEntry.variations.length > 1 ? 's' : ''}` : '■ Stopped');
+  else if (stopped) toast(`${savedEntry ? `■ Stopped. Kept ${savedEntry.variations.length} finished take${savedEntry.variations.length > 1 ? 's' : ''}` : '■ Stopped'}${lineNote()}`);
   setTitle(failed ? '⚠️ Failed' : document.hidden && savedEntry ? '✓ Done' : '');
   loadLlms(); // a run can load a model or reveal that LM Studio went away
   return savedEntry;
@@ -2251,7 +2408,7 @@ function forgetEntry(entry) {
   if (img && (onlyItsImage || img.source?.entryId === entry.id)) {
     setImage(null);
     // A copy made for the form (of one of its renders) that nothing else uses goes too.
-    if (img.file && !state.history.some(e => e.imageFile === img.file)) api(`/api/images/${encodeURIComponent(img.file)}`, { method: 'DELETE' }).catch(() => {});
+    if (img.file && !state.history.some(e => e.imageFile === img.file) && !line.orders.some(o => o.body.imageFile === img.file)) api(`/api/images/${encodeURIComponent(img.file)}`, { method: 'DELETE' }).catch(() => {});
   }
   if (entry.theme && $('#theme').value.trim() === entry.theme.trim()) {
     $('#theme').value = ''; // not replaceTheme: its undo would bring the deleted words back
@@ -2879,7 +3036,7 @@ $('#draftAppend').addEventListener('click', () => { $('#mInstr').value = `${$('#
 
 window.addEventListener('beforeunload', e => {
   // (A render isn't a reason: it keeps going in the server, and the page picks it up again.)
-  if (state.dirty || state.settingsDirty || state.busy || state.cards.some(cardDirty)) e.preventDefault();
+  if (state.dirty || state.settingsDirty || state.busy || line.orders.length || state.cards.some(cardDirty)) e.preventDefault();
 });
 
 // ---------- settings ----------
@@ -3842,47 +3999,46 @@ $('#batchList').addEventListener('click', e => {
   toast(`🗑 Deleted the batch “${b.name}”`, false, { label: '↶ Undo', run: () => { saveBatches(before); setBatchPick(pickBefore); toast('↶ The batch is back'); } });
 });
 
-// Runs batches one after another. Each is its own Generate: its own takes and History entry, named after it.
-async function runBatches(list) {
-  const m = currentModel();
+// Runs an order's batches one after another. Each is its own Generate: its own takes and History entry, named after it.
+async function runBatches(order) {
+  const { batches: list, model: m } = order;
   const run = { list, index: 0, name: '', total: 0, done: 0, allDone: 0, stopped: false };
   state.batchRun = run;
+  let ok = true;
   for (const [i, b] of list.entries()) {
     if (run.stopped) break;
     Object.assign(run, { index: i, name: b.name, total: b.count, done: 0 });
-    const body = await formRequest();
-    if (!body) break;
-    body.variations = b.mode === 'different' ? b.count : 1;
-    body.batch = b.name;
+    const body = { ...order.body, variations: b.mode === 'different' ? b.count : 1, batch: b.name };
     closeRun();
-    const entry = await runGeneration(body, m, { autoRender: false });
-    if (!entry || run.stopped) break;
-    await renderBatchTakes(b, run);
-    if (!state.comfy?.ok) break; // ComfyUI went away: the error is on screen, the rest would fail the same way
+    const entry = await runGeneration(body, m);
+    if (!entry || run.stopped) { ok = Boolean(entry); break; }
+    await renderBatchTakes(b, run, order.render);
+    if (!state.comfy?.ok) { ok = false; break; } // ComfyUI went away: the error is on screen, the rest would fail the same way
   }
   state.batchRun = null;
   setBusy(false);
   setTitle(document.hidden && run.allDone ? '✓ Rendered' : '');
   const made = `${run.allDone} ${outputWord(run.allDone, m?.kind)}`;
-  if (run.stopped) toast(`■ Batch stopped. ${made} finished, and they're kept`);
+  if (run.stopped) toast(`■ Batch stopped. ${made} finished, and they're kept${lineNote()}`);
   else if (run.allDone) toast(`🎞 ${list.length > 1 ? `All ${list.length} batches` : `“${list[0].name}”`} done: ${made}`);
+  return ok;
 }
 
 // One prompt: its take renders that many times. A prompt each: one take at a time (each render keeps a stream
 // open, and the browser only allows a few per server, so 20 at once would stall the page).
-async function renderBatchTakes(b, run) {
+async function renderBatchTakes(b, run, setup) {
   const cards = state.cards.filter(c => c.rb && !c.interrupted);
   if (!cards.length) return;
   setBusy(false); // ■ Stop stays, for the batch
   if (b.mode === 'same') {
     cards[0].rb.count = b.count;
-    await startRender(cards[0], { quiet: true });
+    await startRender(cards[0], { quiet: true, setup });
     return;
   }
   for (const c of cards) {
     if (run.stopped) break;
     c.rb.count = 1;
-    await startRender(c, { quiet: true });
+    await startRender(c, { quiet: true, setup });
     if (!state.comfy?.ok) break;
   }
 }
@@ -4139,15 +4295,16 @@ function runningTile(card) {
   return t;
 }
 
-async function startRender(card, { quiet = false } = {}) {
+// setup: the workflow, LoRAs and sampler settings a Generate was clicked with (see the line), instead of today's.
+async function startRender(card, { quiet = false, setup = null } = {}) {
   const entry = state.entry; // the stage may show another entry by the time this finishes (chains)
-  const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
+  const flow = state.workflows.find(f => f.id === (setup?.workflowId || card.rb?.workflowId));
   if (!flow || !entry?.id) return;
   if (cardDirty(card)) await saveEdit(card, { quiet: true });
   if (!state.comfy?.ok) await loadComfyStatus();
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
-  saved.set(`wf.${card.model.id}`, flow.id);
-  const body = { historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined };
+  if (!setup) saved.set(`wf.${card.model.id}`, flow.id);
+  const body = { historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : {}) };
   return followRender(card, entry, { count: card.rb.count, flowName: flow.name, quiet, open: (onEvent, signal) => streamApi('/api/render', body, onEvent, signal) });
 }
 
@@ -4707,7 +4864,7 @@ async function runChain() {
   body.chain = { runId: run.id, step: 0, steps: recipe.steps };
   setChainActive(true);
   renderRunStrip();
-  const entry = await runGeneration(body, m0, { autoRender: false });
+  const entry = await runGeneration(body, m0);
   if (!entry || run.stopped) return finishRun(run);
   run.entries.push(entry);
   renderRunStrip();
@@ -4784,7 +4941,7 @@ async function continueWith(run, k, items) {
       source: { entryId: it.entry.id, index: it.index, renderId: it.render.id, file: it.file.file },
       chain: { runId: run.id, step: k + 1 },
     };
-    const entry = await runGeneration(body, model, { autoRender: false });
+    const entry = await runGeneration(body, model);
     if (!entry) break;
     run.entries.push(entry);
     renderRunStrip();
@@ -5777,7 +5934,7 @@ function needCard(n) {
   return card;
 }
 function notBusy() {
-  if (state.busy || state.chainActive || state.batchRun) throw new Error('Something is still running. Wait for it, or press Stop.');
+  if (lineBusy()) throw new Error(`Something is still running${line.orders.length ? `, with ${line.orders.length} more in line` : ''}. Wait for it, or press Stop.`);
 }
 const pick = (options, q) => {
   const s = squash(q);
@@ -5812,7 +5969,9 @@ function assistantState() {
     earlier_runs: state.prev.filter(e => e.id !== state.entry?.id).map(e => ({ theme: e.theme, model: e.modelName, renders: e.variations.reduce((n, v) => n + (v.renders?.length || 0), 0) })),
     rendering_now: rendersNow.map(j => ({ theme: j.theme, model: j.modelName, take: j.index + 1, left: j.count - j.finished, stage: j.stage, pct: j.pct })),
     settings: { adult_content: Boolean(state.settings?.adultContent), thinking: state.settings?.thinking },
-    busy: state.busy || state.chainActive,
+    busy: lineBusy(),
+    in_line: line.orders.map(o => ({ theme: o.body.theme, model: o.model.name })), // queued Generates, waiting their turn
+    line_on_hold: line.held,
     jobs: jobs.list.slice(0, 3).map(j => ({ title: j.title, status: j.status, ...jobCounts(j), ...(j.why ? { why: j.why } : {}) })),
   };
 }
@@ -6651,8 +6810,8 @@ async function runJob(job) {
 }
 
 async function jobStep(job, u, tool, args) {
-  // Waits while Create is busy with something else (you, or the assistant, may be generating).
-  while (state.busy || state.chainActive || state.batchRun) {
+  // Waits while Create is busy with something else (you, or the assistant, may be generating, or have a line).
+  while (lineBusy()) {
     if (jobs.cancel) throw new Error('Stopped by you.');
     await new Promise(r => setTimeout(r, 1000));
   }

@@ -59,6 +59,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - Uploading an image **matches the aspect ratio to it** automatically.
   - Each model remembers your last choices.
 - **Takes.** Generate 1–4 variations at once. Each take deliberately goes a different way (angle, lighting, setting, moment).
+- **⏳ Queue.** No waiting for one to finish: while a prompt is cooking, **＋ Queue** (or `Ctrl+Enter`) lines up the next one, as many as you like. Each keeps the setup it was queued with, and its renders go on in ComfyUI while the next prompt is written.
 - **Refine.** Tell a take what to change ("golden hour", "add a dog", "shorter") or tap a quick chip. Every version is kept and you can page through them, and hand edits are saved as versions too.
 - **Live output.** Text streams in as it's written.
   - Word count against the model's ideal length (✓ when it's on target).
@@ -188,6 +189,14 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 
 **＋ New** (next to Generate) starts a new session: it clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in History.
 
+**⏳ Queue: line up as many as you like.** While a prompt is cooking (or a batch is rendering), **＋ Queue** appears next to **■ Stop**; it (or `Ctrl+Enter`) puts the form, as it is right then, in line:
+
+- **What you see when you click is what runs.** Each one in line keeps its model, theme, image and role, dials, takes, batch, and render setup (workflow, auto-render, LoRAs and sampler settings). Change the form afterwards to set up the next one; it won't touch those already waiting. (The Brain and the seed are the ones in use when its turn comes.)
+- **They run in order**, each its own run and History entry. A take's renders go on in ComfyUI while the next prompt is written; a batch finishes its renders before the next starts.
+- **Up next**, at the top of the results, lists them (the ＋ Queue button counts them): **✕** takes one out (with **↶ Undo**), **Clear** empties the line. Clicking twice on the same form within a second queues it once.
+- **■ Stop** (or `Esc`) stops only the one running; the rest carry on. If one fails (LM Studio or ComfyUI went away, say), the line goes **⏸ on hold** so the rest don't fail the same way: fix it, then **▶ Carry on**.
+- A chain (step ⑥) can't wait in line, since it may stop to ask you to pick. The line lives in the page: reloading it lets go of what's waiting (the page asks first).
+
 **Image modes**
 
 | Mode | Use it when… | What the prompt does |
@@ -229,7 +238,7 @@ The conversation is kept in your data folder; 🧹 clears it. It works best with
 - Type a change in **Tweak it…** and press Enter, or tap a chip like ✂️ *Shorter*, 🎞️ *More cinematic* or ⚡ *More dynamic motion*.
 - Every refine adds a version. Page through them with **‹ ›**.
 - You can edit a prompt by hand. Click **💾 Save edit**, or page away and it's saved automatically.
-- **Stop** (■ or `Esc`) cancels a run but keeps any takes that already finished.
+- **Stop** (■ or `Esc`) cancels a run but keeps any takes that already finished. Runs waiting in line (see [Queue](#create)) carry on.
 
 ### History
 
@@ -245,7 +254,7 @@ Everything you generate is saved automatically:
 
 | Keys | Action |
 |---|---|
-| `Ctrl` / `⌘` + `Enter` | Generate |
+| `Ctrl` / `⌘` + `Enter` | Generate (while one is cooking: queue the next) |
 | `Esc` | Stop the current run |
 | `Enter` (in *Tweak it…*) | Refine that take |
 | `Ctrl` / `⌘` + `V` | Paste an image |

@@ -731,7 +731,7 @@ async function renderTake(req, res) {
   if (!variation) throw store.httpError(400, 'Unknown take.');
   const versionIndex = variation.versions[body.versionIndex] ? body.versionIndex : variation.versions.length - 1;
   const text = variation.versions[versionIndex].text;
-  const workflow = await wf.getWorkflow(body.workflowId || '');
+  const workflow = wf.withSetup(await wf.getWorkflow(body.workflowId || ''), body.setup);
   if (!workflow) throw store.httpError(400, 'Pick a workflow to render with.');
   if (workflow.mapping.image && !entry.imageFile) {
     throw store.httpError(400, `"${workflow.name}" needs an input image (it has a Load Image node), but this take has none. Add an image on the Create page, or pick a text-to-image/video workflow.`);

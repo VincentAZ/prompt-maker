@@ -339,6 +339,23 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .btn-stop:hover { border-color: var(--danger); color: #ffb3bd; }
 .btn-stop kbd { color: var(--muted); }
 .btn-new:hover:not(:disabled) { border-color: rgb(255 255 255 / 35%); background: #302a45; }
+.btn-queue { height: 58px; padding: 0 18px; border-radius: 18px; border: 1px solid rgb(255 179 71 / 55%); background: rgb(255 179 71 / 12%); color: #ffd59a; font-weight: 750; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; transition: border-color 0.15s, background 0.15s; }
+.btn-queue:hover { border-color: #ffb347; background: rgb(255 179 71 / 20%); }
+.btn-queue b { min-width: 20px; padding: 0 6px; border-radius: 999px; background: #ffb347; color: #1d0a14; font-size: 12px; line-height: 20px; text-align: center; }
+.btn-generate:disabled kbd { display: none; } /* while cooking, Ctrl+Enter queues (＋ Queue says so) */
+
+/* the line: Generates waiting their turn, at the top of the stage */
+.line-box { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; margin-bottom: 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); min-width: 0; }
+.line-box.held { border-color: rgb(255 179 71 / 55%); }
+.line-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.line-head b { margin-right: auto; }
+.line-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 236px; overflow-y: auto; }
+.line-list li { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 6px 4px 6px 10px; border-radius: 10px; border-left: 3px solid var(--m); background: rgb(255 255 255 / 3%); }
+.ln-n { font-size: 12px; font-weight: 800; color: var(--muted); }
+.ln-main { display: flex; flex-direction: column; min-width: 0; }
+.ln-main b, .ln-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ln-main b { font-size: 13.5px; }
+.ln-main small { font-size: 12px; color: var(--text-2); }
 
 /* step 5: which workflow renders the takes */
 .comfy-state { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 650; color: var(--text-2); white-space: nowrap; }
@@ -614,7 +631,7 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
   .director { padding: 16px 16px 0; border-radius: 22px; }
   .generate-bar { margin: 0 -16px; padding: 14px 16px 16px; }
   .btn-generate kbd, .btn-stop kbd { display: none; }
-  .btn-stop, .btn-new { padding: 0 14px; }
+  .btn-stop, .btn-new, .btn-queue { padding: 0 14px; }
   .wfp-empty { flex-direction: column; align-items: stretch; text-align: center; }
   .grid-4 { grid-template-columns: 1fr 1fr; }
   .grid-4 .wide { grid-column: 1 / -1; }

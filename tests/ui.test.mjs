@@ -2308,6 +2308,91 @@ esac
     await click('.model-card[data-id="krea2-raw"]');
   });
 
+  await test('queue: line up Generates while one cooks; each keeps its setup; Stop, ✕, hold and carry on', async () => {
+    const lora = sel => `#wfpLoras ${sel}`;
+    const setGrain = async v => { await type(lora('[data-key="+0"] .lr-num'), v); await press('Enter'); };
+    const comfyCount = async (n, label) => {
+      for (const t = Date.now(); comfy.prompts.length < n;) {
+        if (Date.now() - t > 15000) throw new Error(`Timed out waiting for ${label}`);
+        await sleep(50);
+      }
+    };
+    await openPanel('create-render');
+    await openPanel('create-render-adv');
+    await click('#varSeg button[data-value="1"]');
+    if (!(await js('document.querySelector("#wfpAuto").checked'))) await click('#wfpAutoRow');
+    assert(await js('document.querySelector("#wfpAuto").checked'), 'auto-render on');
+
+    await setGrain('0.3');
+    await type('#theme', 'SLOWTEST first in line');
+    const before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#generateBtn").disabled', 'cooking');
+    assert(await visible('#queueBtn'), '＋ Queue shows while it cooks');
+    assert(!(await visible('#lineBox')), 'nothing in line yet');
+
+    // Queued with its own setup: a different LoRA strength and theme.
+    await setGrain('0.9');
+    await type('#theme', 'a queued harbor');
+    await click('#queueBtn');
+    await toastText('In line');
+    eq(await count('#lineList li'), 1, 'one waiting');
+    assert((await text('#lineList li')).includes('a queued harbor'), 'listed by its theme');
+    assert((await text('#lineList li')).includes('Krea 2 RAW'), 'and what it is');
+
+    // Ctrl+Enter queues too; pressing it twice on the same form queues it once.
+    await type('#theme', 'FAILTEST queued');
+    await press('Enter', { ctrl: true });
+    await press('Enter', { ctrl: true });
+    await waitFor('document.querySelectorAll("#lineList li").length === 2', 'the second in line');
+    await sleep(300);
+    eq(await count('#lineList li'), 2, 'a double press queues it once');
+    await type('#theme', 'a queued lighthouse');
+    await press('Enter', { ctrl: true });
+    await waitFor('document.querySelectorAll("#lineList li").length === 3', 'the third in line');
+
+    // ✕ takes one out; ↶ Undo puts it back where it was.
+    await click('#lineList li:nth-child(2) .ln-del');
+    eq(await count('#lineList li'), 2, 'taken out');
+    await click('#toast .toast-act');
+    await waitFor('document.querySelectorAll("#lineList li").length === 3', 'put back');
+    assert((await text('#lineList li:nth-child(2)')).includes('FAILTEST'), 'in its old place');
+
+    // Setting up the next one doesn't touch those waiting.
+    await setGrain('0.1');
+    await type('#theme', 'typed after queueing');
+    await shot('queue');
+
+    // ■ Stop stops only the one cooking; the line carries on.
+    await click('#stopBtn');
+    await toastText('3 more in line');
+    await comfyCount(before + 1, 'the harbor render');
+    let p = comfy.prompts.at(-1).prompt;
+    assert(p['6'].inputs.text.includes('a queued harbor'), 'the queued theme was written and rendered');
+    eq(p.pm_lora_1?.inputs.strength_model, 0.9, 'with the LoRA strength it was queued with, not today\'s');
+
+    // A failure puts the line on hold, so the rest don't fail the same way.
+    await waitFor('document.querySelector("#lineBox").classList.contains("held")', 'on hold after the failure', 15000);
+    assert((await text('#lineHead')).includes('On hold'), 'says so');
+    eq(await count('#lineList li'), 1, 'the last one still waiting');
+    assert((await text('#stageError')).length > 0, 'the reason is on the stage');
+    await click('#lineGo');
+    await waitFor('document.querySelector("#lineBox").hidden', 'line empty', 15000);
+    await genDone();
+    await comfyCount(before + 2, 'the lighthouse render');
+    p = comfy.prompts.at(-1).prompt;
+    assert(p['6'].inputs.text.includes('a queued lighthouse'), 'the last one ran');
+    eq(p.pm_lora_1?.inputs.strength_model, 0.9, 'also as it was queued');
+    eq(await value('#theme'), 'typed after queueing', 'the form is as you left it');
+    const themes = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).slice(0, 2).map(e => e.theme).join('|');
+    eq(themes, 'a queued lighthouse|a queued harbor', 'each its own History entry, in order');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'renders done', 10000);
+    assert(!(await visible('#queueBtn')), '＋ Queue goes when nothing is cooking');
+
+    await setGrain('-0.5');
+    await click('#wfpAutoRow');
+  });
+
   await test('assistant: sets up a shot, generates, adds a LoRA, explains; failures are safe', async () => {
     const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
     const acts = () => js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join(" | ")');
