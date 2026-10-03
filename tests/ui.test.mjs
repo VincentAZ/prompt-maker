@@ -1520,6 +1520,33 @@ esac
     eq(await count('.take .rtile img'), 1, 'no render from the cancelled job');
   });
 
+  await test('rendering now: the top bar shows every render still going; open one, cancel one', async () => {
+    assert(!(await visible('#rendersBtn')), 'no pill while nothing renders');
+    await type('#theme', 'SLOWRENDER paper cranes in the wind');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    await waitFor('!document.querySelector("#rendersBtn").hidden', 'the pill shows');
+    eq(await text('#rendersCount'), '2', 'it counts the renders left');
+    await click('#newBtn'); // the take (and its live tiles) leave the stage
+    await waitFor('!document.querySelector(".take")', 'stage cleared');
+    await click('#rendersBtn');
+    await waitFor('document.querySelectorAll("#rendersList .rp-row").length === 1', 'the panel lists it');
+    assert((await text('#rendersList .rp-row')).includes('paper cranes'), 'by its theme');
+    await waitFor('/Render [12] of 2/.test(document.querySelector("#rendersList .rp-stage").textContent)', 'with its progress');
+    await shot('40-rendering-now');
+    await click('#rendersList [data-rp="open"]');
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'Open brings the take back, rendering live');
+    eq(await value('#theme'), 'SLOWRENDER paper cranes in the wind', 'its take');
+    await click('#rendersBtn');
+    await click('#rendersList [data-rp="cancel"]');
+    await waitFor('document.querySelector("#rendersBtn").hidden', 'cancelled: the pill goes', 10000);
+    await waitFor('!document.querySelector(".take .rtile.running")', 'and the live tiles stop');
+    eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
+  });
+
   await test('render all takes at once', async () => {
     await click('#varSeg button[data-value="2"]');
     await type('#theme', 'twin lighthouses');

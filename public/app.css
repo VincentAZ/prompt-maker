@@ -1090,3 +1090,26 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .prev-head .spacer { flex: 1; }
 .prev-tiles { display: flex; gap: 8px; overflow-x: auto; padding-top: 6px; }
 .prev-tiles .rtile { flex: 0 0 auto; height: 160px; width: auto; }
+
+/* Rendering now: the top-bar pill (only while something renders) and its panel. */
+.rp-wrap { position: relative; flex: none; }
+.renders-btn { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 12px 0 14px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--hot) 50%, var(--line-2)); background: rgb(255 77 141 / 12%); color: var(--text); font-weight: 750; }
+.renders-btn:hover, .renders-btn[aria-expanded="true"] { background: rgb(255 77 141 / 22%); }
+.renders-btn em { font-style: normal; font-size: 12px; font-weight: 800; min-width: 22px; padding: 1px 7px; border-radius: 999px; background: var(--hot); color: #fff; text-align: center; }
+.renders-btn .rp-spin { display: inline-block; animation: rp-pulse 1.6s ease-in-out infinite; }
+@keyframes rp-pulse { 50% { transform: scale(0.82); opacity: 0.7; } }
+@media (prefers-reduced-motion: reduce) { .renders-btn .rp-spin { animation: none; } }
+.renders-panel { position: absolute; right: 0; top: calc(100% + 10px); z-index: 40; width: min(460px, calc(100vw - 32px)); max-height: min(70vh, 640px); overflow: auto; padding: 12px; border-radius: var(--radius); border: 1px solid var(--line-2); background: var(--panel-2, #17141f); box-shadow: 0 24px 60px -20px rgb(0 0 0 / 70%); }
+.rp-head { display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; }
+.rp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rp-row { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center; padding: 8px; border-radius: 12px; border: 1px solid var(--line); border-left: 3px solid var(--m); background: rgb(255 255 255 / 3%); }
+.rp-row.cancelling { opacity: 0.55; }
+.rp-thumb { width: 64px; max-height: 80px; aspect-ratio: var(--ar, 1); overflow: hidden; border-radius: 8px; background: #07060b; display: grid; place-items: center; font-size: 22px; }
+.rp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rp-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rp-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-what, .rp-stage { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-bar { height: 4px; margin-top: 4px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.rp-bar i { display: block; height: 100%; width: 0; background: var(--m); transition: width 0.4s; }
+.rp-acts { display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 760px) { .renders-btn .rp-label { display: none; } }

@@ -39,6 +39,13 @@
         <span>Settings</span>
       </button>
     </nav>
+    <div class="rp-wrap">
+      <button type="button" id="rendersBtn" class="renders-btn" aria-expanded="false" aria-controls="rendersPanel" title="Renders in progress: see them, open them, cancel them" hidden><span class="rp-spin" aria-hidden="true">🎨</span><span class="rp-label">Rendering</span><em id="rendersCount">0</em></button>
+      <div id="rendersPanel" class="renders-panel" role="dialog" aria-label="Renders in progress" hidden>
+        <div class="rp-head"><b>Rendering now</b><span class="spacer"></span><button type="button" id="rendersCancelAll" class="btn small danger">✕ Cancel all</button></div>
+        <ul id="rendersList" class="rp-list"></ul>
+      </div>
+    </div>
     <button type="button" id="askBtn" class="ask-btn" aria-expanded="false" aria-controls="assistant" title="Ask the assistant (Ctrl+K)"><span aria-hidden="true">✦</span><span class="ask-label">Ask</span></button>
     <div class="llm" id="llmBox">
       <span class="dot" id="llmDot"></span>

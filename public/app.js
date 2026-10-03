@@ -1342,6 +1342,99 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   $('#copyAllBtn')?.addEventListener('click', e => copyText(takesText(state.cards.filter(c => !c.interrupted).map(c => $('.prompt-text', c.el).value.trim())), e.currentTarget));
 }
 
+// ---------- rendering now (top bar) ----------
+// Every render still going, from any take (also ones that left the stage, another tab, or before a reload): its
+// progress, Open to bring its take back with live tiles, and ✕ Cancel. The pill shows only while something renders.
+
+let rendersNow = [];
+
+async function pollRenders() {
+  clearTimeout(pollRenders.timer);
+  const open = !$('#rendersPanel').hidden;
+  rendersNow = await api(`/api/renders${open ? '?previews' : ''}`).catch(() => rendersNow);
+  drawRenders();
+  pollRenders.timer = setTimeout(pollRenders, rendersNow.length ? (open ? 1000 : 2000) : 5000);
+}
+
+function rendersLeft() {
+  return rendersNow.reduce((n, j) => n + Math.max(0, j.count - j.finished), 0);
+}
+
+function drawRenders() {
+  const btn = $('#rendersBtn');
+  btn.hidden = !rendersNow.length;
+  if (!rendersNow.length) showRendersPanel(false);
+  $('#rendersCount').textContent = rendersLeft();
+  btn.setAttribute('aria-label', `${rendersLeft()} rendering: show them`);
+  const list = $('#rendersList');
+  // Rows are kept (and only their numbers updated), so a click never lands on a row being redrawn.
+  const keep = new Set(rendersNow.map(j => j.runId));
+  $$('.rp-row', list).forEach(li => { if (!keep.has(li.dataset.run)) li.remove(); });
+  for (const j of rendersNow) {
+    let li = $(`.rp-row[data-run="${CSS.escape(j.runId)}"]`, list);
+    if (!li) {
+      li = document.createElement('li');
+      li.className = 'rp-row';
+      li.dataset.run = j.runId;
+      li.style.setProperty('--m', modelColor(modelById(j.modelId) || { id: j.modelId }));
+      li.innerHTML = `<div class="rp-thumb" style="--ar:${ASPECT_CSS(j.aspectRatio)}"><span aria-hidden="true">🎨</span></div>
+        <div class="rp-main"><b class="rp-theme"></b><span class="rp-what"></span><span class="rp-stage"></span><div class="rp-bar"><i></i></div></div>
+        <div class="rp-acts"><button type="button" class="btn small" data-rp="open">Open</button><button type="button" class="btn small danger" data-rp="cancel">✕ Cancel</button></div>`;
+      list.append(li);
+    }
+    $('.rp-theme', li).textContent = j.theme || 'From an image';
+    $('.rp-what', li).textContent = `${j.modelName} · ${j.workflowName}`;
+    $('.rp-stage', li).textContent = [j.count > 1 ? `Render ${Math.min(j.count, j.finished + 1)} of ${j.count}` : '', j.pct != null ? `${j.pct}%` : '', j.stage].filter(Boolean).join(' · ');
+    $('.rp-bar i', li).style.width = `${j.pct ?? 0}%`;
+    if (j.preview) {
+      const thumb = $('.rp-thumb', li);
+      let img = $('img', thumb);
+      if (!img) { thumb.textContent = ''; img = Object.assign(document.createElement('img'), { alt: '' }); thumb.append(img); }
+      if (img.getAttribute('src') !== j.preview) img.src = j.preview;
+    }
+    if (li.classList.contains('cancelling')) $('.rp-stage', li).textContent = 'Cancelling…';
+  }
+}
+
+function showRendersPanel(show) {
+  const panel = $('#rendersPanel');
+  if (panel.hidden === !show) return;
+  panel.hidden = !show;
+  $('#rendersBtn').setAttribute('aria-expanded', String(show));
+  if (show) pollRenders(); // with previews
+}
+
+$('#rendersBtn').addEventListener('click', () => showRendersPanel($('#rendersPanel').hidden));
+document.addEventListener('click', e => { if (!e.target.closest('.rp-wrap')) showRendersPanel(false); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('#rendersPanel').hidden) { e.stopPropagation(); showRendersPanel(false); $('#rendersBtn').focus(); }
+}, true);
+$('#rendersList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-rp]');
+  if (!b) return;
+  const li = b.closest('.rp-row');
+  const job = rendersNow.find(j => j.runId === li.dataset.run);
+  if (!job) return;
+  if (b.dataset.rp === 'cancel') {
+    li.classList.add('cancelling');
+    b.disabled = true;
+    $('.rp-stage', li).textContent = 'Cancelling…';
+    await api(`/api/runs/${job.runId}/cancel`, { method: 'POST' }).catch(err => toast(err.message, true));
+    return pollRenders();
+  }
+  showRendersPanel(false);
+  if (state.entry?.id === job.historyId) return showView('create');
+  if (state.busy || state.chainActive) return toast('Hold on, something is still cooking. Stop it or wait.', true);
+  const entry = await api(`/api/history/${job.historyId}`).catch(() => null);
+  if (!entry) return toast('That take is no longer in History.', true);
+  await openEntry(entry);
+});
+$('#rendersCancelAll').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', async () => {
+  await Promise.all(rendersNow.map(j => api(`/api/runs/${j.runId}/cancel`, { method: 'POST' }).catch(() => {})));
+  toast('■ Cancelling every render');
+  pollRenders();
+}));
+
 // ---------- create: previous runs ----------
 
 // A new Generate replaces the stage, so the run it replaces (with its renders) stays above it to compare.
@@ -3974,7 +4067,10 @@ async function startRender(card, { quiet = false } = {}) {
 async function resumeRenders(entry) {
   const jobs = await api('/api/renders').catch(() => []);
   for (const job of jobs) {
-    if (job.historyId !== entry.id || state.entry !== entry || [...state.renderRuns].some(r => r.runId === job.runId || (!r.runId && r.entryId === entry.id))) continue;
+    if (job.historyId !== entry.id || state.entry !== entry) continue;
+    const following = [...state.renderRuns].find(r => r.runId === job.runId || (!r.runId && r.entryId === entry.id));
+    if (following && (!following.runId || state.cards.includes(following.card))) continue;
+    following?.detach(); // its tiles were on a stage that's gone: this one shows them now
     const card = state.cards.find(c => c.index === job.index && !c.interrupted);
     if (card) followRender(card, entry, { count: job.count, flowName: job.workflowName, runId: job.runId, open: (onEvent, signal) => streamApi(`/api/renders/${job.runId}/watch`, undefined, onEvent, signal) });
   }
@@ -3992,7 +4088,9 @@ async function resumeAfterReload() {
 
 async function followRender(card, entry, { count, flowName, quiet = false, runId = null, open }) {
   const controller = new AbortController();
-  const run = { controller, runId, entryId: entry.id, cancelled: false };
+  const run = { controller, runId, entryId: entry.id, card, cancelled: false, detached: false };
+  // Another view of this take took over its live tiles: this one just lets go, quietly.
+  run.detach = () => { run.detached = true; controller.abort(); };
   state.renderRuns.add(run);
   const keys = Array.from({ length: count }, (_, i) => `${Date.now()}-${i}`);
   const tiles = keys.map(() => runningTile(card));
@@ -4026,6 +4124,7 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
       if (ev.type === 'start') {
         run.runId = ev.runId;
         if (run.cancelled) cancelRun(); // ✕ before ComfyUI even had it
+        pollRenders();
       }
       else if (ev.type === 'queued' && ev.position != null) {
         const ahead = ev.position - 1;
@@ -4089,6 +4188,8 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
     if (t?.classList.contains('failed')) setTimeout(() => t.remove(), 12000);
   });
   renderTiles(card);
+  pollRenders();
+  if (run.detached) return;
   if (failed) {
     showError(failed);
     const box = $('.renders', card.el);
@@ -6153,6 +6254,7 @@ async function loadModels() {
   await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins(), loadRecipes()]);
   if (state.workflows.length) await loadComfyStatus();
   await resumeAfterReload();
+  pollRenders();
   document.documentElement.dataset.ready = '1';
 })();
 

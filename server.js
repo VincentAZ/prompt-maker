@@ -749,7 +749,7 @@ async function renderTake(req, res) {
   }
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
-  const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name });
+  const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio });
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
   watchRenderJob(stream.job, res);
   const clientId = comfy.newClientId();
@@ -851,10 +851,22 @@ const renderJobs = new Map();
 function openRenderJob(meta) {
   const controller = new AbortController();
   const runId = crypto.randomUUID();
-  const job = { ...meta, runId, events: [], previews: new Map(), watchers: new Set(), done: false };
+  const job = { ...meta, runId, events: [], previews: new Map(), watchers: new Set(), done: false, startedAt: Date.now(), now: { i: 0, finished: 0, pct: null, stage: 'Waiting for ComfyUI…' } };
   runs.set(runId, controller);
   renderJobs.set(runId, job);
+  // What the Rendering panel shows: which render of the job, how far, doing what.
+  const track = ev => {
+    const now = job.now;
+    if (ev.i != null && ev.type !== 'render' && ev.type !== 'preview') { if (ev.i !== now.i) Object.assign(now, { pct: null }); now.i = ev.i; }
+    if (ev.type === 'queued') now.stage = ev.position > 1 ? `Waiting: ${ev.position - 1} ahead in ComfyUI` : ev.position === 1 ? 'Next up in ComfyUI' : 'Sent to ComfyUI…';
+    else if (ev.type === 'running') Object.assign(now, { stage: 'Starting…', pct: 0 });
+    else if (ev.type === 'node') now.stage = ev.title;
+    else if (ev.type === 'progress' && ev.max) now.pct = Math.round((ev.value / ev.max) * 100);
+    else if (ev.type === 'render') Object.assign(now, { finished: now.finished + 1, pct: null, stage: 'Saving…' });
+    else if (ev.type === 'error') now.stage = `⚠️ ${ev.message}`;
+  };
   const send = obj => {
+    track(obj);
     if (obj.type === 'preview') job.previews.set(obj.i, obj);
     else job.events.push(obj);
     for (const res of job.watchers) if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n');
@@ -1131,7 +1143,12 @@ async function route(req, res) {
   }
   if (p === '/api/render' && m === 'POST') return renderTake(req, res);
   if (p === '/api/renders' && m === 'GET') {
-    return sendJson(res, 200, [...renderJobs.values()].filter(j => !j.done).map(({ runId, historyId, index, versionIndex, count, workflowId, workflowName }) => ({ runId, historyId, index, versionIndex, count, workflowId, workflowName })));
+    return sendJson(res, 200, [...renderJobs.values()].filter(j => !j.done).map(j => ({
+      runId: j.runId, historyId: j.historyId, index: j.index, versionIndex: j.versionIndex, count: j.count,
+      workflowId: j.workflowId, workflowName: j.workflowName, theme: j.theme, modelName: j.modelName, modelId: j.modelId,
+      aspectRatio: j.aspectRatio, startedAt: j.startedAt, ...j.now,
+      ...(url.searchParams.has('previews') ? { preview: j.previews.get(j.now.i)?.src || null } : {}),
+    })));
   }
   if ((match = p.match(/^\/api\/renders\/([\w-]+)\/watch$/)) && m === 'GET') {
     const job = renderJobs.get(match[1]);

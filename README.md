@@ -370,6 +370,7 @@ Every render also appears in the **Gallery** tab, with filters for images, video
 - **♡ Favorite** a render from its lightbox; it gets a ♥ on its Gallery tile.
 - After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
 - Video tiles show a still of their first frame and play while you hover them.
+- **🎨 Rendering** in the top bar shows while anything renders, with how many are left. Click it for every render still going, from any take (also ones you moved off the stage, started in another tab, or before a reload): its live preview and progress, **Open** to bring its take back with live tiles, **✕ Cancel**, and **Cancel all**.
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
 - **Earlier runs** (the runs above a new one, to compare renders) are kept across reloads too.
 
