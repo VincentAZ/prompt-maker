@@ -1467,6 +1467,37 @@ esac
     await click('#imageClear');
   });
 
+  await test('render: a page reload doesn\'t stop it; the page picks it up, and ✕ Cancel still works', async () => {
+    const reload = async () => {
+      await js('location.reload()');
+      await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    };
+    await type('#theme', 'SLOWRENDER lanterns on a river');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="1"]');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    await reload();
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'the running render is back on the stage');
+    await toastText('still going');
+    eq(await value('#theme'), 'SLOWRENDER lanterns on a river', 'with its take');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'and it finishes', 15000);
+    eq(comfy.prompts.length, before + 1, 'one job, not restarted');
+    eq(await count('.take .rtile img'), 1, 'one render, shown once');
+
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running again');
+    await reload();
+    await waitFor('!!document.querySelector(".take .rtile.running .rt-cancel")', 'back, with Cancel');
+    await click('.take .rtile.running .rt-cancel');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'cancelled', 8000);
+    await toastText('Render stopped');
+    eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
+    eq(await count('.take .rtile img'), 1, 'no render from the cancelled job');
+  });
+
   await test('render all takes at once', async () => {
     await click('#varSeg button[data-value="2"]');
     await type('#theme', 'twin lighthouses');
@@ -2246,6 +2277,7 @@ esac
   await test('cleanup: a copied render is deleted from ComfyUI\'s output folder and gets its own name', async () => {
     await click('.tabs button[data-view="settings"]');
     assert(await visible('#sComfyDirField'), 'the folder field shows even with cleanup off (deleting from History uses it too)');
+    assert(/^Prompt Maker \d+\.\d+\.\d+/.test(await text('#sVersion')), 'Settings shows the version, for bug reports');
     await click('#sComfyCleanup');
     await waitFor(`document.querySelector('#sComfyDir').placeholder.includes(${q(path.join(comfyRoot, 'output'))})`, 'the output folder is found on its own');
     await click('#settingsForm button[type="submit"]');
@@ -2300,6 +2332,9 @@ esac
     const files = all.map(r => r.files[0].file);
     const tiles = `[...document.querySelectorAll("#prevStrip .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
     eq(await js(`${tiles}.length`), all.length, 'all its renders show under Earlier runs');
+    await js('location.reload()');
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    await waitFor(`${tiles}.length === ${all.length}`, 'Earlier runs survive a reload');
     const originalOf = r => path.join(comfyRoot, 'output', `mock_${r.promptId.slice(0, 6)}.png`);
 
     await js(`${tiles}[0].closest(".rtile").classList.add("pick-me")`);

@@ -749,8 +749,9 @@ async function renderTake(req, res) {
   }
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
-  const stream = openStream(res);
+  const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name });
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
+  watchRenderJob(stream.job, res);
   const clientId = comfy.newClientId();
   for (let i = 0; i < count; i++) {
     if (i > 0 && !(await store.getHistory(entry.id))) break; // deleted meanwhile: its prompt isn't sent again
@@ -842,6 +843,52 @@ async function renderTake(req, res) {
   stream.end();
 }
 
+// A render keeps going when the page that started it closes or reloads: the page only watches it, and can pick it
+// up again (GET /api/renders, then /api/renders/:id/watch). Stop and ✕ cancel it through /api/runs/:id/cancel.
+// Each job keeps its events to replay to a page that comes back, except previews: only the latest per render.
+const renderJobs = new Map();
+
+function openRenderJob(meta) {
+  const controller = new AbortController();
+  const runId = crypto.randomUUID();
+  const job = { ...meta, runId, events: [], previews: new Map(), watchers: new Set(), done: false };
+  runs.set(runId, controller);
+  renderJobs.set(runId, job);
+  const send = obj => {
+    if (obj.type === 'preview') job.previews.set(obj.i, obj);
+    else job.events.push(obj);
+    for (const res of job.watchers) if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n');
+  };
+  const end = () => {
+    job.done = true;
+    runs.delete(runId);
+    for (const res of job.watchers) res.end();
+    setTimeout(() => renderJobs.delete(runId), 60_000); // a page reloading right now still gets the ending
+  };
+  return { send, end, runId, signal: controller.signal, job };
+}
+
+function watchRenderJob(job, res) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  for (const ev of [...job.events, ...job.previews.values()]) res.write(JSON.stringify(ev) + '\n');
+  if (job.done) return res.end();
+  job.watchers.add(res);
+  res.on('close', () => job.watchers.delete(res));
+}
+
+// The version people see in Settings (for bug reports): package.json's, plus the exact commit when run from git.
+const VERSION = await (async () => {
+  const { version } = JSON.parse(await fs.readFile(path.join(import.meta.dirname, 'package.json'), 'utf8'));
+  const git = path.join(import.meta.dirname, '.git');
+  const head = (await fs.readFile(path.join(git, 'HEAD'), 'utf8').catch(() => '')).trim();
+  const ref = head.startsWith('ref: ') ? head.slice(5) : '';
+  const sha = ref ? (await fs.readFile(path.join(git, ref), 'utf8').catch(async () => {
+    const packed = await fs.readFile(path.join(git, 'packed-refs'), 'utf8').catch(() => '');
+    return packed.split('\n').find(l => l.endsWith(` ${ref}`))?.split(' ')[0] || '';
+  })).trim() : head;
+  return /^[0-9a-f]{7,}$/.test(sha) ? `${version} (${sha.slice(0, 7)})` : version;
+})();
+
 // ---------- routing ----------
 
 async function route(req, res) {
@@ -889,7 +936,7 @@ async function route(req, res) {
   }
 
   // Both responses carry the defaults the Settings page needs (e.g. for "Reset to default").
-  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR });
+  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR, version: VERSION });
   if (p === '/api/settings' && m === 'GET') return sendJson(res, 200, settingsView(await store.getSettings()));
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
@@ -1083,6 +1130,13 @@ async function route(req, res) {
     }
   }
   if (p === '/api/render' && m === 'POST') return renderTake(req, res);
+  if (p === '/api/renders' && m === 'GET') {
+    return sendJson(res, 200, [...renderJobs.values()].filter(j => !j.done).map(({ runId, historyId, index, versionIndex, count, workflowId, workflowName }) => ({ runId, historyId, index, versionIndex, count, workflowId, workflowName })));
+  }
+  if ((match = p.match(/^\/api\/renders\/([\w-]+)\/watch$/)) && m === 'GET') {
+    const job = renderJobs.get(match[1]);
+    return job ? watchRenderJob(job, res) : sendJson(res, 404, { error: 'That render has finished.' });
+  }
   if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'PATCH') {
     const body = await readBody(req);
     return sendJson(res, 200, await store.updateHistory(match[1], e => {

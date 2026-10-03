@@ -80,8 +80,9 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 // POSTs and reads the server's newline-delimited JSON event stream.
+// Without a body it's a GET (following something already running).
 async function streamApi(path, body, onEvent, signal) {
-  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+  const res = await fetch(path, body === undefined ? { signal } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `${res.status} ${res.statusText}`);
@@ -1346,7 +1347,19 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
 // A new Generate replaces the stage, so the run it replaces (with its renders) stays above it to compare.
 function keepPrevious(entry) {
   if (!entry?.id) return;
-  state.prev = [entry, ...state.prev.filter(e => e.id !== entry.id)].slice(0, 3);
+  setPrev([entry, ...state.prev.filter(e => e.id !== entry.id)].slice(0, 3));
+}
+
+// Earlier runs are remembered (by entry) so a page reload keeps them; their renders come from History.
+function setPrev(list) {
+  state.prev = list;
+  saved.set('prev', list.map(e => e.id));
+  renderPrevStrip();
+}
+
+function restorePrev(history) {
+  if (state.prev.length) return;
+  state.prev = saved.get('prev', []).map(id => history.find(e => e.id === id)).filter(Boolean);
   renderPrevStrip();
 }
 
@@ -1377,7 +1390,7 @@ function renderPrevStrip() {
       $('.prev-tiles', row).append(b);
     });
     $('.prev-open', row).addEventListener('click', () => { if (state.busy) return showEntry(entry); keepPrevious(state.entry); showEntry(entry); });
-    $('.prev-x', row).addEventListener('click', () => { state.prev = state.prev.filter(e => e !== entry); renderPrevStrip(); });
+    $('.prev-x', row).addEventListener('click', () => setPrev(state.prev.filter(e => e !== entry)));
     box.append(row);
   }
 }
@@ -1570,6 +1583,7 @@ function renderResults(entry, { totalSecs } = {}) {
     showVersion(card, v.versions.length - 1);
   });
   setBusy(state.busy);
+  if (entry.id) resumeRenders(entry);
 }
 
 // Swap the streaming placeholders for the saved takes, keeping the same card elements.
@@ -2077,8 +2091,7 @@ function forgetRender(updated) {
 // link from the takes made from it, or in the Create form (its theme and image) when it's still what the form holds.
 function forgetEntry(entry) {
   if (state.entry?.id === entry.id) renderResults(null);
-  state.prev = state.prev.filter(e => e.id !== entry.id);
-  renderPrevStrip();
+  setPrev(state.prev.filter(e => e.id !== entry.id));
   if (state.run?.entries.some(e => e.id === entry.id)) {
     state.run.entries = state.run.entries.filter(e => e.id !== entry.id);
     for (const [k, it] of state.run.picks) if (it.entry.id === entry.id) state.run.picks.delete(k);
@@ -2948,6 +2961,7 @@ function renderSettings() {
   $('#sAdult').checked = Boolean(s.adultContent);
   $('#sAdultPrompt').value = s.adultPrompt || '';
   $('#sDataDir').textContent = s.dataDir ? `📁 Your data lives in ${s.dataDir}` : '';
+  $('#sVersion').textContent = s.version ? `Prompt Maker ${s.version}` : '';
   $('#sTestResult').hidden = true;
   setSettingsDirty(false);
 }
@@ -3861,7 +3875,7 @@ function runningTile(card) {
   const t = document.createElement('div');
   t.className = 'rtile running';
   t.style.setProperty('--ar', ASPECT_CSS(state.entry?.aspectRatio));
-  t.innerHTML = '<div class="rt-shimmer"></div><div class="rt-live"><span class="rt-pct">…</span><span class="rt-stage">Waiting for ComfyUI…</span></div><div class="rt-bar"></div><button type="button" class="rt-cancel" aria-label="Cancel render" title="Cancel">✕</button>';
+  t.innerHTML = '<div class="rt-shimmer"></div><div class="rt-live"><span class="rt-pct">…</span><span class="rt-stage">Waiting for ComfyUI…</span></div><div class="rt-bar"></div><button type="button" class="rt-cancel" aria-label="Cancel render" title="Cancel this render (a page reload keeps it going)">✕ Cancel</button>';
   return t;
 }
 
@@ -3873,9 +3887,34 @@ async function startRender(card, { quiet = false } = {}) {
   if (!state.comfy?.ok) await loadComfyStatus();
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
   saved.set(`wf.${card.model.id}`, flow.id);
-  const count = card.rb.count;
+  const body = { historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined };
+  return followRender(card, entry, { count: card.rb.count, flowName: flow.name, quiet, open: (onEvent, signal) => streamApi('/api/render', body, onEvent, signal) });
+}
+
+// Renders run on in Prompt Maker's server when the page reloads or closes. A page showing the entry picks them up
+// again: same live tiles, progress and ✕ Cancel.
+async function resumeRenders(entry) {
+  const jobs = await api('/api/renders').catch(() => []);
+  for (const job of jobs) {
+    if (job.historyId !== entry.id || state.entry !== entry || [...state.renderRuns].some(r => r.runId === job.runId || (!r.runId && r.entryId === entry.id))) continue;
+    const card = state.cards.find(c => c.index === job.index && !c.interrupted);
+    if (card) followRender(card, entry, { count: job.count, flowName: job.workflowName, runId: job.runId, open: (onEvent, signal) => streamApi(`/api/renders/${job.runId}/watch`, undefined, onEvent, signal) });
+  }
+}
+
+// After a reload, the take that is still rendering comes back on the stage.
+async function resumeAfterReload() {
+  const [job] = await api('/api/renders').catch(() => []);
+  if (!job || state.entry || state.busy) return;
+  const entry = await api(`/api/history/${job.historyId}`).catch(() => null);
+  if (!entry || state.entry) return;
+  await openEntry(entry);
+  toast('🎨 Your render is still going: picked it up where it is');
+}
+
+async function followRender(card, entry, { count, flowName, quiet = false, runId = null, open }) {
   const controller = new AbortController();
-  const run = { controller, runId: null };
+  const run = { controller, runId, entryId: entry.id, cancelled: false };
   state.renderRuns.add(run);
   const keys = Array.from({ length: count }, (_, i) => `${Date.now()}-${i}`);
   const tiles = keys.map(() => runningTile(card));
@@ -3884,9 +3923,10 @@ async function startRender(card, { quiet = false } = {}) {
   tiles.forEach(t => liveTiles.get(entry).add(t));
   // Newest first: the tile for render 1 goes first.
   renderTiles(card);
+  // The server's job is what renders, so cancelling tells it (leaving the page or reloading doesn't).
   const cancelRun = () => {
+    run.cancelled = true;
     if (run.runId) api(`/api/runs/${run.runId}/cancel`, { method: 'POST' }).catch(() => controller.abort());
-    else controller.abort();
   };
   tiles.forEach(t => $('.rt-cancel', t).addEventListener('click', cancelRun));
   const setTile = (i, pct, stage, big) => {
@@ -3900,19 +3940,15 @@ async function startRender(card, { quiet = false } = {}) {
   let failed = null;
   let nodeTitle = '';
   const nodesSeen = new Map();
-  announce(`Rendering with ${flow.name}`);
+  announce(`Rendering with ${flowName}`);
   setTitle('🎨 Rendering');
   try {
-    await streamApi('/api/render', {
-      historyId: entry.id,
-      index: card.index,
-      versionIndex: card.view,
-      workflowId: flow.id,
-      count,
-      newSeed: card.rb.newSeed === true || undefined,
-    }, ev => {
+    await open(ev => {
       const i = ev.i ?? 0;
-      if (ev.type === 'start') run.runId = ev.runId;
+      if (ev.type === 'start') {
+        run.runId = ev.runId;
+        if (run.cancelled) cancelRun(); // ✕ before ComfyUI even had it
+      }
       else if (ev.type === 'queued' && ev.position != null) {
         const ahead = ev.position - 1;
         setTile(i, null, ahead > 0 ? `Waiting: ${ahead} job${ahead > 1 ? 's' : ''} ahead in ComfyUI` : 'Next up in ComfyUI', `#${ev.position}`);
@@ -3940,7 +3976,7 @@ async function startRender(card, { quiet = false } = {}) {
         card.running.delete(keys[i]);
         liveTiles.get(entry)?.delete(tiles[i]);
         const v = entry.variations?.[card.index];
-        if (v) (v.renders ||= []).push(ev.render);
+        if (v && !(v.renders || []).some(r => r.id === ev.render.id)) (v.renders ||= []).push(ev.render); // (replayed when picked up again)
         renderTiles(card);
         if (entry !== state.entry) renderPrevStrip();
         announce(`Render ${i + 1} of ${count} done`);
@@ -3965,7 +4001,7 @@ async function startRender(card, { quiet = false } = {}) {
   state.renderRuns.delete(run);
   tiles.forEach(t => liveTiles.get(entry)?.delete(t));
   if (entry !== state.entry) renderPrevStrip();
-  card.rb.newSeed = false;
+  if (card.rb) card.rb.newSeed = false;
   refreshSeeds(); // increment / decrement moved the workflow's next seed on
   // Clear tiles that never finished (stopped); keep failed ones briefly so the reason is visible.
   keys.forEach((k, i) => {
@@ -6033,11 +6069,12 @@ async function loadModels() {
   } catch (err) {
     showError(`Could not start: ${friendly(err)}`);
   }
-  api('/api/history').then(h => { state.history = h; $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
+  api('/api/history').then(h => { state.history = h; restorePrev(h); $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
   loadAutostart();
   loadProviders();
   await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins(), loadRecipes()]);
   if (state.workflows.length) await loadComfyStatus();
+  await resumeAfterReload();
   document.documentElement.dataset.ready = '1';
 })();
 
