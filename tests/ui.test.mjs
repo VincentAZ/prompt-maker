@@ -1633,6 +1633,14 @@ esac
     const fav = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.rating === 3);
     assert(fav.length >= 1, 'saved as excellent');
 
+    await type('#asInput', 'pick the best one for a poster');
+    await press('Enter');
+    await idle();
+    const picked = await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join("|")');
+    assert(picked.includes('Picked') && picked.includes('the light is softer'), `it looks, picks one and says why: ${picked}`);
+    assert(await js('!document.querySelector("#dropzone .dz-preview").hidden && !!document.querySelector("#roleBlock .role.active[data-value=reference]")'), 'and puts it in step 3 as the reference');
+    await js('document.querySelector("#imageClear").click()');
+
     const before = (await (await fetch(`${APP}/api/history`)).json()).length;
     await type('#asInput', 'delete this prompt');
     await press('Enter');
@@ -2502,9 +2510,27 @@ esac
     const written = lastCall();
     assert(!written.tools && written.messages[0].content.includes('- set_theme:') && written.messages.every(m => m.role !== 'tool'), 'it was asked again with the tools described, calls and results as text');
 
+    await type('#asInput', 'fewer steps please');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Steps set to 12') && (await text('#wfpSettings')).includes('12 steps'), `sampler steps changed, and step 5 shows it: ${await text('#wfpSettings')}`);
+    const flowId = await value('#wfpSelect');
+    const tweaked = await (await fetch(`${APP}/api/workflows/${flowId}`)).json();
+    const steps = Object.entries(tweaked.overrides).filter(([k]) => k.endsWith('|steps'));
+    eq(JSON.stringify(steps.map(([, v]) => v)), '[12]', 'saved with the workflow');
+    await fetch(`${APP}/api/workflows/${flowId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overridePatch: Object.fromEntries(steps.map(([k]) => [k, null])) }) });
+
+    const topP = (await (await fetch(`${APP}/api/settings`)).json()).topP;
+    await type('#asInput', 'use the screen to set top p to 0.77');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('Pressed “Save settings”') && (await bot()).includes('0.77'), `it found the box and the button on screen: ${await acts()}`);
+    eq((await (await fetch(`${APP}/api/settings`)).json()).topP, 0.77, 'and the setting is saved');
+    await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topP }) });
+
     await goto(`${APP}/#create`);
     await waitFor('!document.querySelector("#assistant").hidden', 'left open, it opens again with the app');
-    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 7', 'the conversation is still there after a reload');
+    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 9', 'the conversation is still there after a reload');
     await viewport(390, 844, true);
     await sleep(200);
     eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');

@@ -6655,7 +6655,7 @@ const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
 // The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
-const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
 
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
@@ -6679,12 +6679,30 @@ const TOOLS = [
   T('set_lora', 'Change a LoRA\'s strength or switch it on or off (the workflow\'s own LoRAs or added ones).', { name: S('LoRA name or part of it'), strength: N('New strength'), on: B('On or off') }, ['name']),
   T('remove_lora', 'Remove a LoRA that was added (the workflow\'s own LoRAs can only be switched off).', { name: S('LoRA name or part of it') }, ['name']),
   T('set_seed', 'Set how the picked workflow seeds each render: random, fixed, increment (+1 each render) or decrement (−1), and/or the seed number.', { mode: E(['random', 'fixed', 'increment', 'decrement'], 'Seed mode'), value: I('The seed (the next one, for increment / decrement)') }),
+  T('set_sampler', 'Change the sampler settings of the picked workflow (step 5): steps, CFG, sampler, scheduler, denoise, and Wan Animate 2\'s strengths. Only the ones given change; they stay with the workflow until changed again (like the user\'s own tweaks). A workflow with several samplers gets the value in each.', {
+    steps: I('Sampling steps, e.g. 20'),
+    cfg: N('CFG (guidance)'),
+    sampler: S('Sampler name, e.g. "euler"'),
+    scheduler: S('Scheduler, e.g. "simple" or "karras"'),
+    denoise: N('0–1: how much an image-to-image render may change the input image'),
+    pose_strength: N('Wan Animate 2: how strongly the motion video drives the moves (1 = as trained)'),
+    character_strength: N('Wan Animate 2: how closely the character keeps the image\'s look (1 = as trained)'),
+    reset: B('First put every sampler setting back to the workflow\'s own'),
+    unlock_cfg: B('Allow changing a CFG of 1 (distilled, turbo and lightning models need 1): only when the user asks for it'),
+  }),
   T('set_auto_render', 'Turn auto-render on or off for the current model (renders every new prompt right away).', { on: B('On or off') }, ['on']),
   T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in History.'),
   T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 6). Waits until they are written.'),
   T('refine_take', 'Change a take with an instruction, e.g. "golden hour" or "shorter".', { take: I('Take number, starting at 1'), instruction: S('What to change') }, ['take', 'instruction']),
   T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–50; default 1') }),
   T('animate_render', 'Make a still render the first frame of a video: switches to the video model and attaches the still. Then use set_theme for what happens, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
+  T('use_render_as_image', 'Put a still render in step 3 for the next prompt: as the first frame of a video (animate), the character (Wan Animate 2), or a reference / recreate image. Default: the render in the lightbox, else take 1\'s newest.', {
+    use: E(['animate', 'character', 'reference', 'recreate'], 'How the next prompt uses it'),
+    take: I('Take number on screen'),
+    render: I('1 = newest render of that take'),
+    render_id: S('A render\'s id from look_at, for one that isn\'t on screen (This session, Gallery)'),
+    model: S('The model to use it with, e.g. the video model to animate with; default: the last video model for animate, else the one on Create'),
+  }, ['use']),
   T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
     steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'auto'], 'pick = wait for the user to choose renders; auto = all go on') }, required: ['model'] } },
   }, ['steps']),
@@ -6706,11 +6724,17 @@ const TOOLS = [
   T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
   T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
   T('look_at', 'See renders (images, or frames of videos) or the input image with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest.', {
-    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started (the 🎞 This session box), newest run first; gallery: the newest renders anywhere'),
+    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started (the 🎞 This session box), newest run first; gallery: the newest renders anywhere. Each picture comes with its render id (for use_render_as_image)'),
     take: I('Only this take'),
     renders: { type: 'array', items: { type: 'integer' }, description: 'Only these renders of the take (1 = newest)' },
     limit: I('At most this many pictures, up to 8; default 6'),
   }),
+  T('pick_best', 'Look at renders and pick the best one for a purpose, then (if asked) put it in step 3 for the next step. In a job it picks among what the job made so far, so a job can go: stills, then pick the best, then animate it. Only stills can go in step 3.', {
+    for: S('What it\'s for, or what makes one the best, e.g. "a stranger sits down next to her: room beside her, moody light"'),
+    from: E(['job', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, the job\'s (default); else this session\'s (default), the takes on screen, or the newest in the Gallery'),
+    then: E(['nothing', 'animate', 'character', 'reference', 'recreate'], 'What to do with the winner: nothing (default, just say which), or put it in step 3 that way'),
+    model: S('The model for the next step, e.g. the video model to animate with'),
+  }, ['for']),
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
   T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (Gallery and This session show it; Gallery filters by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
@@ -6721,7 +6745,7 @@ const TOOLS = [
   T('set_brain', 'Switch the Brain (the LLM in the top bar) that writes prompts and runs you. A ☁️ cloud Brain asks the user first.', { name: S('Brain name or part of it') }, ['name']),
   T('list_folder', 'List the pictures (and videos) in a folder on this computer (for a job, use_image or use_motion_video). A bare name is looked for in the home folder, Pictures, Desktop, Downloads and Documents.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
   T('use_image', 'Put a picture from a folder into step 3.', { folder: S('The folder, as list_folder took it'), file: S('The file name, from list_folder') }, ['folder', 'file']),
-  T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}].`, {
+  T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). A step can judge too: pick_best looks at what the job made so far and can put the winner in step 3 (e.g. stills, then the best one animated, then the same video at other settings with set_sampler and render). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Put the whole task in one job. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}]. Example, "3 stills of a diver, different each time, same seed; animate the best in LTX at 20 steps, then 10": no folder, runs [{label:"still 1", steps:[{tool:"set_model",args:{model:"Krea 2"}},{tool:"set_seed",args:{mode:"fixed",value:7}},{tool:"set_dials",args:{takes:1}},{tool:"set_theme",args:{text:"a diver in a kelp forest, sun rays"}},{tool:"generate"},{tool:"render"}]}, {label:"still 2", steps:[{tool:"set_theme",args:{text:"a diver over a coral reef at dusk"}},{tool:"generate"},{tool:"render"}]}, {label:"still 3", steps:[{tool:"set_theme",args:{text:"a diver in a wreck, torch light"}},{tool:"generate"},{tool:"render"}]}, {label:"best, 20 steps", steps:[{tool:"pick_best",args:{for:"a diver who turns to the camera",then:"animate",model:"LTX 2.3"}},{tool:"set_theme",args:{text:"the diver turns to the camera"}},{tool:"set_sampler",args:{steps:20}},{tool:"generate"},{tool:"render"}]}, {label:"10 steps", steps:[{tool:"set_sampler",args:{steps:10}},{tool:"render"}]}].`, {
     title: S('A short name for the job'),
     folder: S('Optional: the folder of pictures to work through'),
     limit: I('Optional: only the first N pictures'),
@@ -6729,6 +6753,11 @@ const TOOLS = [
   }, ['title', 'runs']),
   T('job_status', 'How a job is going, or how it went: done, skipped (with why) and left. Default: the newest job.', { title: S('Words from its title') }),
   T('control_job', 'Pause, resume or stop a job, retry what it skipped, or show the user the Jobs window.', { action: E(['pause', 'resume', 'stop', 'retry_skipped', 'show'], 'pause = after the current item; stop = now'), title: S('Words from its title; default: the newest job') }, ['action']),
+  T('see_screen', 'What the app shows right now, as numbered controls (buttons, boxes, menus, switches, folds) grouped by where they are, with their values. Use it for anything your other tools don\'t do: setting up or editing workflows, batches, models and playbooks, Brains (Quick check), Settings, Services, the lightbox, any dialog. Numbers hold until the screen changes: look again after pressing something. go_to opens another page first.', { find: S('Optional: words to show only matching controls, e.g. "steps" or "batch"') }),
+  T('press', 'Press a control from see_screen: a button, link, tab, switch, checkbox, or a fold (opens or closes it). Anything that deletes or removes asks the user first.', { control: S('Its number from see_screen') }, ['control']),
+  T('fill', 'Type into a box from see_screen, replacing what is in it.', { control: S('Its number from see_screen'), text: S('What to type') }, ['control', 'text']),
+  T('choose', 'Pick an option in a menu from see_screen.', { control: S('Its number from see_screen'), option: S('The option, as see_screen shows it') }, ['control', 'option']),
+  T('wait', 'Wait (up to 2 minutes) for something started on screen to finish, e.g. a download or a Quick check, then look again.', { seconds: I('How long, 1–120') }, ['seconds']),
   T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
 ];
 
@@ -6737,6 +6766,7 @@ const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
   look_at: 'Looking…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
+  pick_best: 'Choosing the best…', use_render_as_image: 'Putting it in step 3…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
 };
 
 // ---- what the assistant can see ----
@@ -6885,6 +6915,213 @@ async function savePlaybook(model) {
   return saved;
 }
 
+// ---- the screen: what the user sees, as numbered controls (for what the other tools don't do) ----
+
+const CONTROLS = 'button, a[href], input:not([type="hidden"]):not([type="file"]), select, textarea, summary, [role="button"], [role="tab"], [role="switch"], [role="checkbox"], [role="menuitem"], [role="option"]';
+const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+const shown = el => (el.checkVisibility ? el.checkVisibility({ checkVisibilityCSS: true }) : el.getClientRects().length > 0);
+// What can be used: a dialog that's open (or the lightbox) covers the rest. Never the assistant's own panel.
+const screenTop = () => document.querySelector('dialog:modal') || ($('#lightbox').hidden ? null : $('#lightbox'));
+const screenControls = () => [...(screenTop() || document.body).querySelectorAll(CONTROLS)].filter(el => !el.closest('#assistant, [inert]') && shown(el));
+
+// An element's own words, without the controls in it (a label's text, not its menu's options). drop: more to leave
+// out, e.g. a label's buttons and hint.
+function ownText(el, drop = '') {
+  const copy = el.cloneNode(true);
+  copy.querySelectorAll(`select, textarea, input, option${drop}`).forEach(x => x.remove());
+  const words = [];
+  const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
+  while (walk.nextNode()) words.push(walk.currentNode.nodeValue);
+  return clean(words.join(' '));
+}
+const labelOf = el => (el.labels?.[0] ? ownText(el.labels[0], ', button, small, .hint') : '');
+const hintOf = el => clean(el.labels?.[0]?.querySelector('small, .hint')?.textContent);
+function controlName(el) {
+  const aria = clean(el.getAttribute('aria-label') || (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => id && document.getElementById(id)?.textContent).filter(Boolean).join(' '));
+  const text = ['BUTTON', 'A', 'SUMMARY'].includes(el.tagName) || el.getAttribute('role') ? ownText(el) : '';
+  const label = labelOf(el);
+  const words = /[\p{L}\p{N}]{2}/u.test(text) ? text : ''; // icon buttons (⚙, ✕, ↺) are named by their label or tooltip
+  return (aria || words || label || clean(el.title) || text || el.placeholder || el.name || el.id || el.tagName.toLowerCase()).slice(0, 90);
+}
+// The heading of the part of the page a control is in ("5 Render it", "🔌 LM Studio", a fold's title).
+function sectionName(el) {
+  for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+    for (const c of a.children) {
+      if (c === el || c.contains(el)) continue;
+      if (/^H[1-4]$|^LEGEND$/.test(c.tagName)) return clean(`${a.querySelector(':scope > .num')?.textContent || ''} ${ownText(c)}`).slice(0, 60);
+      const head = (c.tagName === 'HEADER' || c.matches('.panel-head, .take-head, .wf-head, .form-head')) && c.querySelector('h1, h2, h3, h4, b, strong, legend');
+      if (head) return clean(`${c.querySelector('.num')?.textContent || ''} ${ownText(head)}`).slice(0, 60);
+      if (c.tagName === 'SUMMARY' && a.tagName === 'DETAILS') return ownText(c).slice(0, 60);
+    }
+  }
+  return '';
+}
+function describeControl(el) {
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  const role = el.getAttribute('role');
+  const kind = el.tagName === 'SELECT' ? 'menu' : el.tagName === 'TEXTAREA' ? 'text box' : el.tagName === 'SUMMARY' ? 'fold' : el.tagName === 'A' ? 'link'
+    : el.tagName === 'INPUT' ? ({ checkbox: 'checkbox', radio: 'choice', range: 'slider', number: 'number box' }[type] || 'box')
+      : role === 'switch' || role === 'checkbox' ? 'switch' : role === 'tab' ? 'tab' : 'button';
+  let line = `${kind} “${controlName(el)}”`;
+  if (el.tagName === 'SELECT') {
+    const opts = [...el.options].map(o => clean(o.textContent));
+    line += ` = “${clean(el.selectedOptions[0]?.textContent)}”${opts.length > 1 ? ` (options: ${opts.slice(0, 15).join(' | ')}${opts.length > 15 ? ` | …${opts.length - 15} more` : ''})` : ''}`;
+  } else if (type === 'checkbox' || type === 'radio') line += el.checked ? ' = on' : ' = off';
+  else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    const max = el.tagName === 'TEXTAREA' ? 120 : 60;
+    line += ` = “${clean(el.value).slice(0, max)}${clean(el.value).length > max ? '…' : ''}”`;
+  } else if (el.tagName === 'SUMMARY') line += el.parentElement.open ? ' (open)' : ' (closed)';
+  if ([el.getAttribute('aria-pressed'), el.getAttribute('aria-selected'), el.getAttribute('aria-checked')].includes('true')) line += ' (on)';
+  if (el.getAttribute('aria-expanded') === 'true' && el.tagName !== 'SUMMARY') line += ' (open)';
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') line += ' (can\'t be used now)';
+  const tip = clean(el.title) || hintOf(el);
+  if (tip && tip.length <= 120 && !controlName(el).includes(tip.slice(0, 24))) line += ` — ${tip}`;
+  return line;
+}
+const overlayName = top => (top ? clean(top.querySelector('h2')?.textContent) || (top.id === 'lightbox' ? 'the lightbox' : 'a dialog') : null);
+// What changed after a press: the page, what's open on top, and a message that popped up.
+const screenNow = () => ({ page: VIEWS.find(isView), open: overlayName(screenTop()), ...($('#toast').hidden ? {} : { message: clean($('#toast').textContent).slice(0, 200) }) });
+
+// as.screen: the controls the Brain was shown, by number; as.seen: everything on screen then. as.screenGen goes up
+// whenever the numbers change, so a call made with older numbers (in the same turn, after a press) isn't misread.
+function readScreen(find) {
+  const words = clean(find).toLowerCase().split(' ').filter(Boolean);
+  const top = screenTop();
+  const all = screenControls();
+  const lines = [];
+  as.screen = [];
+  as.seen = new Set(all);
+  as.screenGen = (as.screenGen || 0) + 1;
+  let section = null;
+  let inSection = 0;
+  let left = 0;
+  for (const el of all) {
+    const sec = sectionName(el);
+    const line = describeControl(el);
+    if (words.length && !words.some(w => `${sec} ${line}`.toLowerCase().includes(w))) continue;
+    if (sec !== section) { section = sec; inSection = 0; lines.push(`## ${sec || 'Top'}`); }
+    if (++inSection > 40 || lines.join('\n').length > 6000) { left++; continue; }
+    as.screen.push(el);
+    lines.push(`[${as.screen.length}] ${line}`);
+  }
+  const msg = screenNow().message;
+  return [
+    `Page: ${VIEWS.find(isView)}${top ? `. Open on top: ${overlayName(top)} (only its controls work until it closes)` : ''}${msg ? `. Message: “${msg}”` : ''}`,
+    ...lines,
+    ...(left ? [`(${left} more not shown: look with find to narrow it down)`] : []),
+  ].join('\n');
+}
+
+function screenControl(control) {
+  if (as.screenGen !== as.roundGen) throw new Error('Not done: the screen changed earlier in this turn, so this number may point at something else now. Use the numbers you were given after that change.');
+  const el = as.screen?.[Number(control) - 1];
+  if (!el) throw new Error(as.screen?.length ? `There's no control ${control} on the screen you looked at. Look again with see_screen.` : 'Look at the screen first (see_screen), then use its numbers.');
+  if (!el.isConnected || !shown(el) || !screenControls().includes(el)) throw new Error('The screen changed since you looked, and that control isn\'t there now. Look again with see_screen.');
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error(`“${controlName(el)}” can't be used right now${el.title ? ` (${clean(el.title)})` : ''}.`);
+  if (jobs.current && el.closest('#view-create')) throw new Error(`The job “${jobs.current.title}” is using the Create page right now. Pause it (control_job) or wait for it.`);
+  return el;
+}
+// Presses that may lose something for good: the user says yes first.
+const RISKY = /delete|remove|discard|erase|wipe|uninstall|overwrite|🗑/i;
+const risky = el => el.classList.contains('danger') || RISKY.test(`${controlName(el)} ${el.title}`);
+const settle = () => new Promise(r => setTimeout(r, 400));
+
+// After a press (or typing): if the screen changed, number it again and say what's new, so the next step can use it.
+function screenChange() {
+  const fresh = screenControls();
+  const now = new Set(fresh);
+  const appeared = fresh.filter(el => !as.seen?.has(el));
+  if (!appeared.length && [...(as.seen || [])].every(el => now.has(el))) return {};
+  as.screen = fresh;
+  as.seen = now;
+  as.screenGen++;
+  const lines = appeared.slice(0, 25).map(el => `[${fresh.indexOf(el) + 1}] ${describeControl(el)}${sectionName(el) ? ` (in ${sectionName(el)})` : ''}`);
+  return { screen_changed: `${appeared.length ? `New on screen:\n${lines.join('\n')}${appeared.length > 25 ? `\n(${appeared.length - 25} more: see_screen)` : ''}` : 'Some controls went away.'}\nThe screen is numbered again: use these numbers from now on (see_screen shows everything).` };
+}
+
+// ---- renders the assistant can name: on screen (take, render), or anywhere by the id look_at showed ----
+
+const renderRef = it => it.render.id.slice(0, 8);
+async function findRender({ take, render, render_id: id }) {
+  if (!id) return needRender({ take, render });
+  const s = String(id).trim().toLowerCase();
+  const match = it => it.render.id.toLowerCase().startsWith(s) && it.file.kind !== 'audio';
+  let it = reelGroups().flatMap(g => g.items).find(match);
+  if (!it) {
+    state.history = await api('/api/history');
+    it = galleryItems().find(match);
+  }
+  if (!it) throw new Error(`There's no render with the id ${id}. Look again (look_at) for its id.`);
+  return it;
+}
+
+// Puts a still in step 3 the way the next step uses it, on the model it's for.
+async function useRenderAs(it, use, model) {
+  notBusy();
+  if (it.file.kind !== 'image') throw new Error('Only a still can go in step 3: that one is a video.');
+  const m = model ? needModel(model) : null;
+  if (use === 'animate') {
+    if (m && (m.kind !== 'video' || m.motionVideo)) throw new Error(`${m.name} can't animate a still: pick a video model.`);
+    if (m) saved.set('animateModel', m.id);
+    await continueFrom(it, { animate: true });
+  } else if (use === 'character') {
+    if (m && !m.motionVideo) throw new Error(`${m.name} isn't a character-animation model (like Wan Animate 2).`);
+    if (m && m.id !== state.modelId) selectModel(m.id);
+    await continueFrom(it, { animate: false, character: true });
+  } else {
+    if (m && m.id !== state.modelId) selectModel(m.id);
+    await continueFrom(it, { animate: false });
+    TOOL_IMPL.set_image_role({ role: use });
+  }
+  if (state.image?.source?.renderId !== it.render.id) throw new Error(stageError() || 'Couldn\'t put it in step 3.');
+  return `${USE_LABEL[use] || use} on ${currentModel().name}`;
+}
+
+// The Brain looks at up to 8 pictures at once and names the best for the purpose: { item, why }.
+async function brainPicksOne(group, purpose) {
+  const content = [{ type: 'text', text: `(Prompt Maker) Pick the best of these ${group.length} renders for: ${purpose}\nJudge them as an art director would (composition, light, mood, story, what the next step needs, technical flaws like extra fingers or warped faces). Reply with its number first, then one short sentence why, like “3: the light…”.` }];
+  group.forEach((g, i) => content.push({ type: 'text', text: `${i + 1}:` }, ...g.pics.map(url => ({ type: 'image_url', image_url: { url } }))));
+  let done = null;
+  let failed = null;
+  await streamApi('/api/assistant', { messages: [{ role: 'user', content }], state: {}, tools: [] }, ev => {
+    if (ev.type === 'done') done = ev;
+    else if (ev.type === 'error') failed = ev.message;
+  });
+  if (failed) throw new Error(failed);
+  const said = done?.text || '';
+  const n = Number((/^\W*(\d+)/.exec(said) || /(?:number|no\.|#|render|picture|image|option)\s*(\d+)/i.exec(said) || /(\d+)/.exec(said))?.[1]);
+  if (!(n >= 1 && n <= group.length)) throw new Error(`The Brain didn't pick one of them (it said “${clean(done?.text).slice(0, 120)}”).`);
+  const why = clean(said.replace(/^\D*\d+\s*[:.)-]?\s*/, '')).split(/(?<=[.!?])\s/)[0]; // the reason, not what it offers next
+  return { item: group[n - 1], why: why.slice(0, 300) };
+}
+
+// Rounds of up to 8 pictures (a video shows 2), the winners meeting until one is left.
+async function brainPicks(items, purpose) {
+  let pool = [];
+  for (const it of items) {
+    const pics = await picturesOf(`/renders/${encodeURIComponent(it.file.file)}`, it.file.kind).catch(() => []);
+    if (pics.length) pool.push({ it, pics });
+  }
+  if (!pool.length) throw new Error('Couldn\'t load any of those renders.');
+  let why = 'the only one';
+  while (pool.length > 1) {
+    const next = [];
+    let group = [];
+    const flush = async () => {
+      if (group.length === 1) next.push(group[0]);
+      else if (group.length) { const r = await brainPicksOne(group, purpose); next.push(r.item); why = r.why; }
+      group = [];
+    };
+    for (const p of pool) {
+      if (group.reduce((n, g) => n + g.pics.length, 0) + p.pics.length > 8) await flush();
+      group.push(p);
+    }
+    await flush();
+    pool = next;
+  }
+  return { it: pool[0].it, why };
+}
+
 const TOOL_IMPL = {
   look_at: async ({ what = 'takes', take, renders, limit }) => {
     const llm = selectedLlm();
@@ -6915,7 +7152,7 @@ const TOOL_IMPL = {
     for (const { it, label } of items) {
       if (images.length >= max || it.file.kind === 'audio') continue;
       const pics = await picturesOf(`/renders/${encodeURIComponent(it.file.file)}`, it.file.kind).catch(() => []);
-      const name = `${label}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}${ratingOf(it.render) ? `, rated ${RATINGS[ratingOf(it.render)].toLowerCase()}` : ''}${it.file.kind === 'video' ? ' (video: its start and middle)' : ''}`;
+      const name = `${label}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}${ratingOf(it.render) ? `, rated ${RATINGS[ratingOf(it.render)].toLowerCase()}` : ''}${it.file.kind === 'video' ? ' (video: its start and middle)' : ''}, render id ${renderRef(it)}`;
       pics.slice(0, max - images.length).forEach(url => images.push({ label: name, url }));
       seen.push(name);
     }
@@ -7044,8 +7281,8 @@ const TOOL_IMPL = {
     return { summary: `Image → ${name}` };
   },
   start_job: async ({ title, folder, limit, runs }) => {
-    const list = (Array.isArray(runs) ? runs : []).slice(0, 12).map((r, i) => {
-      const steps = (Array.isArray(r?.steps) ? r.steps : []).slice(0, 24).map(st => {
+    const list = (Array.isArray(runs) ? runs : []).slice(0, 40).map((r, i) => {
+      const steps = (Array.isArray(r?.steps) ? r.steps : []).slice(0, 40).map(st => {
         const tool = String(st?.tool || '');
         if (!JOB_TOOLS.has(tool)) throw new Error(`A job step can't use “${tool}”. Steps can use: ${[...JOB_TOOLS].join(', ')}.`);
         let args = st.args ?? {};
@@ -7058,6 +7295,15 @@ const TOOL_IMPL = {
       return { label: String(r.label || `Run ${i + 1}`).slice(0, 80), steps };
     });
     if (!list.length) throw new Error('A job needs at least one run with steps.');
+    // Takes have to be written before they can be rendered or refined: a plan that doesn't do that goes back now.
+    let takes = state.cards.some(c => !c.interrupted);
+    for (const r of list) {
+      for (const st of r.steps) {
+        if (['render', 'refine_take'].includes(st.tool) && !takes) throw new Error(`In “${r.label}”, ${st.tool} comes before any takes are written for it. Add a generate step first (after set_model, set_theme and any image).`);
+        if (st.tool === 'generate') takes = true;
+        else if (['set_model', 'new_session', 'animate_render', 'character_from_render', 'use_render_as_image'].includes(st.tool) || (st.tool === 'pick_best' && st.args.then && st.args.then !== 'nothing')) takes = false;
+      }
+    }
     let pics = [null];
     let where = null;
     if (folder) {
@@ -7298,6 +7544,78 @@ const TOOL_IMPL = {
     const s = flow.seed;
     return { summary: s.mode === 'random' ? 'Seed → random each render' : `Seed → ${SEED_ICON[s.mode]} ${s.value}` };
   },
+  set_sampler: async ({ reset, unlock_cfg: unlock, ...args }) => {
+    const flow = activeFlow();
+    if (!flow) throw new Error('Pick a workflow in step 5 first: sampler settings belong to a workflow.');
+    const data = await api(`/api/workflows/${flow.id}`);
+    const params = (data.candidates?.params || []).filter(p => p.kind !== 'seed');
+    const overrides = reset ? {} : { ...(data.overrides || {}) };
+    const patch = reset ? Object.fromEntries(Object.keys(data.overrides || {}).map(k => [k, null])) : {};
+    const done = reset ? ['back to the workflow\'s own'] : [];
+    const kinds = { steps: 'steps', cfg: 'cfg', sampler: 'sampler', scheduler: 'scheduler', denoise: 'denoise', pose_strength: 'pose', character_strength: 'identity' };
+    for (const [arg, kind] of Object.entries(kinds)) {
+      const v = args[arg];
+      if (v == null || v === '') continue;
+      const list = params.filter(p => p.kind === kind);
+      if (!list.length) throw new Error(`${flow.name} has no ${arg.replace('_', ' ')} setting.`);
+      let value;
+      for (const p of list) {
+        const key = `${p.node}|${p.input}`;
+        if (kind === 'sampler' || kind === 'scheduler') {
+          value = p.options ? p.options.find(o => o === v) || p.options.find(o => squash(o) === squash(v)) : String(v).trim();
+          if (!value) throw new Error(`There's no ${kind} “${v}”. ${flow.name} takes: ${p.options.slice(0, 40).join(', ')}.`);
+        } else {
+          value = Number(v);
+          if (!Number.isFinite(value) || value < 0) throw new Error(`${arg.replace('_', ' ')} must be a number.`);
+          if (kind === 'steps') value = clampInt(value, 1, 300);
+          if (kind === 'denoise') value = Math.min(1, value);
+          if (kind === 'cfg' && Number(p.value) === 1 && overrides[key] === undefined && value !== 1 && !unlock) {
+            throw new Error(`${flow.name} runs at CFG 1, which distilled, turbo and lightning models need: more usually ruins the render. Only if the user asks for it, call again with unlock_cfg.`);
+          }
+        }
+        patch[key] = String(value) === String(p.value) ? null : value;
+      }
+      done.push(`${arg.replace('_', ' ')} ${value}${list.length > 1 ? ` (all ${list.length} samplers)` : ''}`);
+    }
+    if (!done.length) throw new Error('Say what to change: steps, cfg, sampler, scheduler, denoise, pose_strength or character_strength.');
+    const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { overridePatch: patch } });
+    const i = state.workflows.findIndex(f => f.id === flow.id);
+    if (i >= 0) state.workflows[i] = { ...state.workflows[i], ...updated };
+    $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
+    renderDenoise();
+    state.cards.forEach(updateSettingsLine);
+    return { summary: `${flow.name}: ${done.join(', ')}`, now: updated.settings };
+  },
+  use_render_as_image: async ({ use, model, ...which }) => {
+    if (!['animate', 'character', 'reference', 'recreate'].includes(use)) throw new Error('Say how to use it: animate, character, reference or recreate.');
+    const it = await findRender(which);
+    return { summary: `Step 3 → the render as ${await useRenderAs(it, use, model)}` };
+  },
+  pick_best: async ({ for: purpose, from, then = 'nothing', model }) => {
+    const llm = selectedLlm();
+    if (llm && llm.vision === false) throw new Error(`${llm.name} can't see images. Switch the Brain (top bar) to a 👁 vision model.`);
+    const where = from || (jobs.current ? 'job' : 'this_session');
+    let items;
+    if (where === 'job') {
+      if (!jobs.current) throw new Error('There\'s no job running: pick from this_session, on_screen or gallery.');
+      const ids = new Set(jobs.current.units.flatMap(u => u.entries));
+      state.history = await api('/api/history');
+      items = galleryItems().filter(it => ids.has(it.entry.id));
+      if (!from && !items.some(it => it.file.kind === 'image' || then === 'nothing')) items = reelGroups().flatMap(g => g.items); // e.g. an earlier job made them
+    } else if (where === 'on_screen') items = state.cards.filter(c => !c.interrupted).flatMap(takeItems);
+    else if (where === 'gallery') {
+      state.history = await api('/api/history');
+      items = galleryItems();
+    } else items = reelGroups().flatMap(g => g.items);
+    const stills = then !== 'nothing';
+    items = items.filter(it => (stills ? it.file.kind === 'image' : it.file.kind !== 'audio')).slice(0, 48);
+    if (!items.length) throw new Error(`There are no ${stills ? 'still ' : ''}renders ${where === 'job' ? 'from this job' : where === 'on_screen' ? 'on screen' : where === 'gallery' ? 'in the Gallery' : 'this session'} to pick from yet.`);
+    const { it, why } = await brainPicks(items, clean(purpose) || 'the best picture');
+    const name = `“${(it.entry.theme || 'from an image').slice(0, 60)}” (${it.entry.modelName}), take ${it.index + 1}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}`;
+    const out = { summary: `Picked ${name} out of ${items.length}: ${why}`, render_id: renderRef(it), why };
+    if (then !== 'nothing') out.summary += `. Step 3 → it as ${await useRenderAs(it, then, model)}`;
+    return out;
+  },
   set_auto_render: ({ on }) => {
     const m = currentModel();
     if (!workflowsFor(m.id).length) throw new Error(`${m.name} has no workflow to render with yet.`);
@@ -7392,6 +7710,57 @@ const TOOL_IMPL = {
     return { summary: `Sent ${items.length} render${items.length > 1 ? 's' : ''} on: chain ${run.status === 'done' ? 'done' : run.status}` };
   },
   go_to: ({ page }) => { showView(page); return { summary: `Opened ${page[0].toUpperCase()}${page.slice(1)}` }; },
+  see_screen: ({ find }) => {
+    const screen = readScreen(find);
+    return { summary: `Looked at the screen (${VIEWS.find(isView)}${screenTop() ? `, ${overlayName(screenTop())}` : ''})`, screen };
+  },
+  press: async ({ control }) => {
+    const el = screenControl(control);
+    const name = controlName(el);
+    if (el.tagName === 'A' && el.origin !== location.origin) throw new Error('That link goes to a website: tell the user to open it.');
+    if (risky(el) && !(await confirmInChat(`Press “${name}”${sectionName(el) ? ` (${sectionName(el)})` : ''}? It may delete or remove something for good.`, 'Yes, press it'))) {
+      return { summary: `Didn't press “${name}”: the user said no`, declined: true };
+    }
+    el.scrollIntoView({ block: 'center' });
+    el.focus({ preventScroll: true });
+    el.click();
+    await settle();
+    return { summary: `Pressed “${name}”`, ...screenNow(), ...screenChange() };
+  },
+  fill: async ({ control, text }) => {
+    const el = screenControl(control);
+    const name = controlName(el);
+    if (!(el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes(el.type)))) {
+      throw new Error(`“${name}” isn't a box to type in: ${el.tagName === 'SELECT' ? 'use choose' : 'use press'}.`);
+    }
+    if (el.readOnly) throw new Error(`“${name}” can't be typed in.`);
+    el.scrollIntoView({ block: 'center' });
+    el.focus({ preventScroll: true });
+    el.value = String(text ?? '');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    return { summary: `${name} → “${clean(el.value).slice(0, 80)}”`, value: el.value.slice(0, 300), ...screenNow(), ...screenChange() };
+  },
+  choose: async ({ control, option }) => {
+    const el = screenControl(control);
+    const name = controlName(el);
+    if (el.tagName !== 'SELECT') throw new Error(`“${name}” isn't a menu: use press or fill.`);
+    const opts = [...el.options].filter(o => !o.disabled);
+    const o = opts.find(x => x.value === option || clean(x.textContent) === clean(option)) || opts.find(x => squash(x.textContent) === squash(option)) || opts.find(x => squash(x.textContent).includes(squash(option)));
+    if (!o || !squash(option)) throw new Error(`“${name}” has no option like “${option}”. It has: ${opts.map(x => clean(x.textContent)).join(' | ')}.`);
+    el.scrollIntoView({ block: 'center' });
+    el.value = o.value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    return { summary: `${name} → ${clean(o.textContent)}`, ...screenNow(), ...screenChange() };
+  },
+  wait: async ({ seconds }) => {
+    const until = Date.now() + clampInt(seconds, 1, 120) * 1000;
+    while (Date.now() < until && !as.stopped) await new Promise(r => setTimeout(r, 250));
+    return { summary: `Waited ${clampInt(seconds, 1, 120)} s`, ...screenNow() };
+  },
   open_history: async ({ query }) => {
     notBusy();
     const all = await api('/api/history');
@@ -7418,6 +7787,8 @@ async function runTool(call) {
   as.running = TOOL_RUNNING[call.name] || null;
   renderAssistantLog();
   try {
+    // Create may still be finishing what the last step started (saving, a render starting): wait a little, as jobs do.
+    for (let i = 0; JOB_TOOLS.has(call.name) && lineBusy() && i < 40 && !as.stopped; i++) await new Promise(r => setTimeout(r, 500));
     return { ok: true, ...(await fn(args || {})) };
   } catch (err) {
     return { error: friendly(err) };
@@ -7447,7 +7818,7 @@ async function askAssistant(text) {
   syncAssistantBusy();
   renderAssistantLog();
   try {
-    for (let round = 0; round < 16 && !as.stopped; round++) {
+    for (let round = 0; round < 60 && !as.stopped; round++) {
       let done = null;
       let failed = null;
       as.live = { text: '', thinking: false, status: '' };
@@ -7467,6 +7838,7 @@ async function askAssistant(text) {
       renderAssistantLog();
       if (!calls.length) break;
       const seen = [];
+      as.roundGen = as.screenGen; // screen numbers in these calls are the ones the Brain has seen so far
       for (const c of calls) {
         if (as.stopped) break;
         const { _images, ...result } = await runTool(c);
@@ -8019,6 +8391,7 @@ function decoratePanel(el) {
   if (!head) return;
   head.classList.add('panel-toggle');
   el._btn = Object.assign(document.createElement('button'), { type: 'button', className: 'collapse-btn' });
+  el._name = (head.querySelector('h2, h3, b, legend') || head).textContent.replace(/\s+/g, ' ').trim(); // so its button says "Expand Batch", not just "Expand"
   (head.querySelector(':scope > .head-actions, :scope > .take-actions, :scope > .form-actions') || head).append(el._btn); // with the header's buttons, so it never wraps alone
   el._sum = Object.assign(document.createElement('p'), { className: 'panel-summary' });
   head.after(el._sum);
@@ -8029,7 +8402,7 @@ function decoratePanel(el) {
 function setPanel(el, collapsed, remember = true) {
   el.classList.toggle('collapsed', collapsed);
   el._btn.setAttribute('aria-expanded', String(!collapsed));
-  el._btn.setAttribute('aria-label', collapsed ? 'Expand' : 'Collapse');
+  el._btn.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'}${el._name ? ` ${el._name}` : ''}`);
   el._btn.title = collapsed ? 'Expand' : 'Collapse';
   if (remember && el.dataset.panel !== 'take') {
     panelState[el.dataset.panel] = collapsed;

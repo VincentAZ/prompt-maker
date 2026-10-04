@@ -68,6 +68,18 @@ function assistantTurn(body) {
       ];
       return [{ calls: [['list_folder', { folder }]] }, { calls: [['start_job', { title: 'Pics, low and high', folder, runs }]] }, { text: results.includes('Started the job') ? 'Started it: follow it in 🗂 Jobs.' : 'That failed.' }];
     })()
+    : /pick the best/.test(said) ? [{ calls: [['pick_best', { for: 'a moody poster', then: 'reference' }]] }, { text: results.includes('Picked') ? 'Picked one and put it in step 3.' : 'That failed.' }]
+    : /fewer steps/.test(said) ? [{ calls: [['set_sampler', { steps: 12 }]] }, { text: results.includes('steps 12') ? 'Steps set to 12.' : 'That failed.' }]
+    // Settings through the screen: look, type in the box it found, look again, press the button it found.
+    : /use the screen/.test(said) ? (() => {
+      const last = re => [...results.matchAll(re)].at(-1)?.[1];
+      return [
+        { calls: [['go_to', { page: 'settings' }], ['see_screen', { find: 'top' }]] },
+        { calls: [['fill', { control: Number(last(/\[(\d+)\] number box “Top P/g)), text: '0.77' }], ['see_screen', { find: 'save settings' }]] },
+        { calls: [['press', { control: Number(last(/\[(\d+)\] button “Save settings”/g)) }]] },
+        { text: results.includes('Pressed “Save settings”') ? 'Saved: top P is 0.77.' : 'That failed.' },
+      ];
+    })()
     : /tag fallback/.test(said) ? [{ text: '<tool_call>{"name": "set_theme", "arguments": {"text": "from a tag"}}</tool_call>' }, { text: 'Theme set.' }]
     : [{ text: 'I can help with that.' }];
   return script[Math.min(round, script.length - 1)];
@@ -108,6 +120,13 @@ export function startMock(port) {
     const said = body.messages.filter(m => m.role === 'user' && !Array.isArray(m.content)).at(-1);
     if (body.tools && /broken template/.test(said?.content)) {
       res.end(`event: error\ndata: ${JSON.stringify({ error: { message: 'Error rendering prompt with jinja template: "Cannot call something that is not a function: got UndefinedValue".' } })}\n\n`);
+      return;
+    }
+    // The assistant's pick_best: the Brain looks at the renders and names one.
+    if (!body.tools && textOf(body.messages.at(-1).content).startsWith('(Prompt Maker) Pick the best')) {
+      for (const w of '2: the light is softer and the balloon reads better.'.split(/(?<=\s)/)) send({ choices: [{ delta: { content: w } }] });
+      send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
+      res.end('data: [DONE]\n\n');
       return;
     }
     // Then its tools come in writing: it calls one as text (a bracket wrong, then words written too early), and
