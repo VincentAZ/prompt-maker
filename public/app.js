@@ -413,7 +413,9 @@ $$('.tabs button').forEach(b => b.addEventListener('click', () => showView(b.dat
 let llmLoading = null;
 function loadLlms() {
   llmLoading ??= (async () => {
-    const res = await api('/api/llms').catch(err => ({ ok: false, error: err.message, appDown: Boolean(err.appDown), models: [] }));
+    let res = await api('/api/llms').catch(err => ({ ok: false, error: err.message, appDown: Boolean(err.appDown), models: [] }));
+    // Just stopped: the server can still answer for a moment, so don't flip back to "running".
+    if (!res.appDown && Date.now() - (state.stoppedAt || 0) < 8000) res = { ok: false, appDown: true, models: [] };
     const cameBack = state.llmOk === false && res.ok;
     const appBack = state.appDown && !res.appDown;
     state.appDown = Boolean(res.appDown);
@@ -425,8 +427,11 @@ function loadLlms() {
     renderBrains();
     renderBanner();
     renderVisionWarning();
+    if (state.appDown) renderServicesDown();
     if (appBack && !state.booted) location.reload(); // the page came from its offline copy: load it for real
     else if (appBack) {
+      state.stoppedAt = 0;
+      loadServices();
       toast(res.ok ? '🔌 Prompt Maker is back' : '🔌 Prompt Maker is back, but LM Studio is still off');
       if (/Prompt Maker server/.test($('#stageError').textContent)) showError('');
     } else if (cameBack) {
@@ -954,6 +959,8 @@ $('#themeUndo').addEventListener('click', () => {
   toast('↶ Your theme is back');
 });
 
+$('#themeClear').addEventListener('click', () => replaceTheme(''));
+
 let surpriseIdx = Math.floor(Math.random() * SURPRISES.length);
 $('#surpriseBtn').addEventListener('click', () => {
   surpriseIdx = (surpriseIdx + 1 + Math.floor(Math.random() * (SURPRISES.length - 1))) % SURPRISES.length;
@@ -1136,6 +1143,7 @@ $('#theme').addEventListener('input', e => {
   sizeTheme();
   syncNewBtn();
   saved.set('theme', $('#theme').value);
+  $('#themeClear').disabled = !$('#theme').value;
   if (themeUndo !== null) {
     // Typing after a replacement retires the undo chip (replaceTheme re-arms it right after its own edit).
     themeUndo = null;
@@ -4237,7 +4245,8 @@ function renderServices(st) {
     if (start !== undefined) $(`[data-act="${name}-start"]`, el).hidden = !start;
     if (stop !== undefined) $(`[data-act="${name}-stop"]`, el).hidden = !stop;
   };
-  row('app', { dot: 'ok', text: st.app.service ? 'Running in the background' : 'Running' });
+  row('app', { dot: 'ok', text: st.app.service ? 'Running in the background' : 'Running', stop: true });
+  $('#stopAllBtn').disabled = false;
   const { lms, comfy } = st;
   row('lms', lms.running
     ? { dot: 'ok', text: `Running · ${lms.loaded ? `${lms.loaded} model${lms.loaded > 1 ? 's' : ''} loaded` : 'no model loaded'}`, start: false, stop: lms.local }
@@ -4260,6 +4269,17 @@ function renderServices(st) {
   // Keep watching while ComfyUI is on its way up.
   clearTimeout(servicesPoll);
   if ((comfy.starting || busy === 'start') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
+}
+
+// With Prompt Maker's server stopped, nothing here can be checked or pressed: say so instead of showing stale states.
+function renderServicesDown() {
+  for (const el of document.querySelectorAll('#servicesCard .svc')) {
+    const app = el.dataset.svc === 'app';
+    $('.dot', el).className = `dot ${app ? 'bad' : ''}`;
+    $('.svc-state', el).textContent = app ? 'Stopped' : 'Unknown while Prompt Maker is stopped';
+    for (const b of el.querySelectorAll('button[data-act]')) b.hidden = true;
+  }
+  $('#stopAllBtn').disabled = true;
 }
 
 // Starts ComfyUI, then watches until it answers (or gives up after three minutes).
@@ -4295,8 +4315,13 @@ async function serviceAction(btn) {
     return confirmClick(btn, all ? 'Click again to stop everything' : 'Click again to stop', async () => {
       btn.disabled = true;
       await api(`/api/services/${all ? 'all' : 'app'}/stop`, { method: 'POST' }).catch(() => {});
-      toast(all ? '■ Stopped everything. Start Prompt Maker again from your app menu.' : '■ Prompt Maker stopped. Start it again from your app menu, or the button above.');
-      setTimeout(loadLlms, 1500); // shows the "isn't running" banner, with its Start button
+      // Show it stopped right away: the banner turns into "isn't running" (with its Start button) and the rows say so.
+      state.stoppedAt = Date.now();
+      Object.assign(state, { appDown: true, llmOk: false });
+      renderBanner();
+      renderLlmSelect();
+      renderServicesDown();
+      toast(all ? '■ Stopped everything. Start Prompt Maker again from your app menu.' : '■ Prompt Maker stopped. Start it again with the button above.');
       btn.disabled = false;
     });
   }
@@ -8843,6 +8868,7 @@ async function loadModels() {
     renderModelList();
     setVariations(saved.get('variations', 1));
     $('#theme').value = saved.get('theme', '');
+    $('#themeClear').disabled = !$('#theme').value;
     const img = saved.get('image', null);
     if (img && (await api(`/api/images/${encodeURIComponent(img)}`).catch(() => ({}))).exists) setImage({ file: img, source: saved.get('imageSource', null) });
     else saved.set('image', null);

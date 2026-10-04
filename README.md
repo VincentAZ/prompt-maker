@@ -162,7 +162,7 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 
 | Row | What you can do |
 |---|---|
-| **Prompt Maker** | ■ Stop it (the page then offers ▶ Start Prompt Maker) |
+| **Prompt Maker** | ■ Stop it. The page shows it stopped right away (the rows say *Stopped*) and offers ▶ Start Prompt Maker |
 | **LM Studio** | ▶ Start its server, or ■ Stop it, which first unloads every model to free the GPU |
 | **ComfyUI** | ▶ Start it, or ■ Stop it. It starts from its folder, the way Prompt Maker last saw you run it, or with live previews on (`--preview-method auto`); change the folder or the options under **ComfyUI** in Settings. Tick *Start ComfyUI along with it* to have it come up with Prompt Maker |
 
@@ -174,7 +174,7 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 
 1. **Pick a brain.** Use the **Brain** menu at the top right: models marked 👁 can see images, and "loaded" means it's ready right now.
 2. **Pick a target model**, for example *Krea 2 RAW*.
-3. **Describe the shot.** Type a theme, or hit **🎲 Surprise me**.
+3. **Describe the shot.** Type a theme, or hit **🎲 Surprise me**. **✕ Clear** empties the box in one click (**↶ Undo** brings it back).
 4. Click **Generate**, or press `Ctrl+Enter`.
 5. **Copy** the prompt, or tweak it: type *"make it night time"* in the box under the take and press Enter.
 

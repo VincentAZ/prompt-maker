@@ -437,6 +437,18 @@ esac
     assert((await value('#theme')).includes('beach'), 'try chip filled beach theme');
   });
 
+  await test('clear empties the theme, undo brings it back', async () => {
+    const orig = await value('#theme');
+    await type('#theme', '');
+    assert(await js('document.querySelector("#themeClear").disabled'), 'nothing to clear: greyed out');
+    await type('#theme', 'a fox in the snow');
+    await click('#themeClear');
+    eq(await value('#theme'), '', 'theme cleared');
+    await click('#themeUndo');
+    eq(await value('#theme'), 'a fox in the snow', 'undo restored theme');
+    await type('#theme', orig);
+  });
+
   await test('generate 2 takes (theme only)', async () => {
     await click('.model-card[data-id="krea2-raw"]');
     await click('#varSeg button[data-value="2"]');
