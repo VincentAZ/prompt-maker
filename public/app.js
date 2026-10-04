@@ -4763,7 +4763,7 @@ function flowLoras(flow) {
   const own = l.nodes.map(n => ({ ...n, ...(l.tweaks[n.key] || {}), own: true, edited: Boolean(l.tweaks[n.key]), original: n }));
   return { own, added: l.added };
 }
-const loraCount = flow => { const { own, added } = flowLoras(flow); return own.filter(x => x.on).length + added.filter(x => x.on).length; };
+const loraCount = flow => { const { own, added } = flowLoras(flow); const used = x => x.on && Number(x.strength) !== 0; return own.filter(used).length + added.filter(used).length; };
 
 // The model's LoRA folder: the one you chose, else the folder whose name matches the model ("krea2" for
 // Krea 2 RAW, "LTX_2.3" for LTX 2.3), else all of them ("").
@@ -4790,7 +4790,7 @@ function renderLoraPanel() {
   const { own, added } = flowLoras(flow);
   const focus = document.activeElement?.closest?.('#wfpLoras') ? { key: document.activeElement.closest('[data-key]')?.dataset.key, cls: [...document.activeElement.classList].find(c => c.startsWith('lr-')) || document.activeElement.dataset.act } : null;
   const row = (l, key) => `
-    <li class="lora-row${l.on ? '' : ' off'}" data-key="${esc(key)}">
+    <li class="lora-row${l.on && Number(l.strength) !== 0 ? '' : ' off'}" data-key="${esc(key)}">
       <label class="switch mini" title="${l.on ? 'On' : 'Off'}"><input type="checkbox" class="lr-on"${l.on ? ' checked' : ''} aria-label="Use ${esc(loraShort(l.name))}"><span class="track" aria-hidden="true"></span></label>
       <span class="lr-name" title="${esc(l.name)}${l.pieces > 1 ? ` · loaded by each of the workflow's ${l.pieces} pieces: this sets them all` : ''}">${esc(loraShort(l.name))}${l.own ? `<small>in workflow${l.pieces > 1 ? ` · ×${l.pieces} pieces` : ''}</small>` : ''}</span>
       ${l.own ? (l.edited ? `<button type="button" class="icon-btn lr-reset" data-act="lora-reset" title="Back to the workflow's ${l.original.on ? Number(l.original.strength).toFixed(2) : 'off'}" aria-label="Reset ${esc(loraShort(l.name))}">↺</button>` : '<span></span>') : `<button type="button" class="icon-btn" data-act="lora-remove" aria-label="Remove ${esc(loraShort(l.name))}" title="Remove">✕</button>`}

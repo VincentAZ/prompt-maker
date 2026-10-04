@@ -425,6 +425,7 @@ Step ⑤ shows the **🧬 LoRAs** of the picked workflow:
 
 - **The workflow's own LoRAs** (LoRA loader nodes, and rgthree's Power Lora Loader) are listed with a switch and a strength slider, −2 to 2, or type any value.
   - **Switching one off** leaves it out of the render entirely, so its file isn't even loaded.
+  - **Strength 0 counts as off**: the LoRA is left out the same way, so it can't change the render.
   - **↺** puts the workflow's strength back.
 - **＋ Add LoRA** lists only the LoRAs for the selected model. Prompt Maker matches the model to its folder in ComfyUI's `models/loras` (e.g. `krea2/` for Krea 2 RAW, `LTX_2.3/` for LTX 2.3). If the match is wrong, pick the folder in the list. Search narrows it down, and the LoRA goes in at strength 1.
 - **Added LoRAs go in right after the workflow's model loader,** so there's nothing to wire up in ComfyUI.
