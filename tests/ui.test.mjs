@@ -1449,22 +1449,46 @@ esac
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
   });
 
-  await test('render: favorite from the lightbox, find it in the Gallery', async () => {
+  await test('render: rate from the lightbox and This session, find it in the Gallery', async () => {
+    const rated = async () => (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.rating);
     await click('.take .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
-    await click('[data-lb="fav"]');
-    await waitFor('document.querySelector(\'[data-lb="fav"]\').getAttribute("aria-pressed") === "true"', 'starred');
-    const favs = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.favorite);
-    eq(favs.length, 1, 'saved on the render');
+    await click('[data-lb-rate="2"]');
+    await shot('24a-lightbox-rating');
+    await waitFor('document.querySelector(\'[data-lb-rate="2"]\').getAttribute("aria-pressed") === "true"', 'rated very good');
+    eq((await rated()).map(r => r.rating).join(), '2', 'saved on the render');
+    await press('3');
+    await waitFor('document.querySelector(\'[data-lb-rate="3"]\').getAttribute("aria-pressed") === "true"', 'key 3: excellent');
+    await press('Escape');
+    // This session shows every render since start-up, with its rating; its stars rate in place.
+    await waitFor('document.querySelectorAll("#reel .reel-cell").length >= 3 && !!document.querySelector(\'#reel .reel-cell[data-rating="3"]\')', 'the session box shows the renders, rated');
+    eq(await count('#reel .reel-cell[data-rating="3"] .rate-bar button.on'), 3, 'three lit stars');
+    await js('document.querySelector(\'#reel .reel-cell[data-rating="0"]\').classList.add("rate-me")');
+    await click('#reel .reel-cell.rate-me [data-rate="1"]');
+    await waitFor('document.querySelectorAll(\'#reel .reel-cell[data-rating="1"]\').length === 1', 'rated pretty good from the session box');
+    eq((await rated()).map(r => r.rating).sort().join(), '1,3', 'both saved');
+    await click('#reel .reel-cell[data-rating="1"] [data-rate="1"]');
+    await waitFor('!document.querySelector(\'#reel .reel-cell[data-rating="1"]\')', 'clicking the lit star takes it off');
+    await js('document.querySelector("#reel").scrollIntoView()');
+    await js('document.querySelector(\'#reel .reel-cell[data-rating="0"]\').dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))');
+    await shot('24b-this-session');
+    await click('#reelBig');
+    assert(await js('document.querySelector("#reel").classList.contains("big")'), 'Bigger');
+    await shot('24c-this-session-bigger');
+    await click('#reelBig');
+    await click('#reel .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'a session render opens in the lightbox');
     await press('Escape');
     await click('.tabs button[data-view="gallery"]');
-    await click('#galleryKinds button[data-kind="fav"]');
-    await waitFor('document.querySelectorAll("#galleryGrid .gtile").length === 1 && !!document.querySelector("#galleryGrid .g-fav")', 'only the favorite, with its heart');
+    await click('#galleryRated button[data-min="2"]');
+    await waitFor('document.querySelectorAll("#galleryGrid .gtile").length === 1 && document.querySelector("#galleryGrid .g-fav")?.textContent === "★★★"', 'very good and up: only the excellent one, with its stars');
     await click('#galleryGrid .gtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
-    await click('[data-lb="fav"]');
-    await waitFor('document.querySelector(\'[data-lb="fav"]\').getAttribute("aria-pressed") === "false"', 'unstarred');
+    await click('[data-lb-rate="3"]');
+    await waitFor('document.querySelector(\'[data-lb-rate="3"]\').getAttribute("aria-pressed") === "false"', 'rating taken off');
+    eq((await rated()).length, 0, 'no rating left');
     await press('Escape');
+    await click('#galleryRated button[data-min="2"]');
     await click('#galleryKinds button[data-kind=""]');
     await click('#galleryGrid .gtile:nth-of-type(2)');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
@@ -1575,7 +1599,7 @@ esac
     eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
   });
 
-  await test('assistant: on by default, sees the renders and says which it likes; favorites; asks before deleting', async () => {
+  await test('assistant: on by default, sees the renders and says which it likes; ratings; asks before deleting', async () => {
     const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
     const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
     // On by default: with no choice saved, the panel opens with the app.
@@ -1602,12 +1626,12 @@ esac
     const sent = JSON.stringify(lastCall().messages);
     assert(/data:image\/jpeg;base64,/.test(sent), 'the Brain got the pictures');
 
-    await type('#asInput', 'favorite the first one');
+    await type('#asInput', 'rate the first one excellent');
     await press('Enter');
     await idle();
-    assert((await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join("|")')).includes('Marked as a favorite'), 'favorited');
-    const fav = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.favorite);
-    assert(fav.length >= 1, 'saved as a favorite');
+    assert((await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join("|")')).includes('Rated excellent'), 'rated');
+    const fav = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.rating === 3);
+    assert(fav.length >= 1, 'saved as excellent');
 
     const before = (await (await fetch(`${APP}/api/history`)).json()).length;
     await type('#asInput', 'delete this prompt');
@@ -2554,7 +2578,7 @@ esac
     assert(await fileExists(path.join(comfyRoot, 'output', 'not-ours.png')), 'other files are never touched');
   });
 
-  await test('delete: a render or a run leaves Earlier runs and the disk at once', async () => {
+  await test('delete: a render or a run leaves This session and the disk at once', async () => {
     const history = async () => (await fetch(`${APP}/api/history`)).json();
     await click('.tabs button[data-view="create"]');
     if (await visible('.dz-preview')) await click('#imageClear');
@@ -2567,26 +2591,26 @@ esac
     await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
     if ((await count('.take .rtile img')) < 2) await click('.take .rb-go');
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 2 && !document.querySelector(".take .rtile.running")', 'rendered twice', 10000);
-    // A new run moves this one under Earlier runs.
+    // A new run takes the stage; this one stays in This session, with an Open button.
     await type('#theme', 'a tin robot fast asleep');
     await click('#generateBtn');
     await genDone();
-    await waitFor('document.querySelectorAll("#prevStrip .prev-row").length > 0', 'Earlier runs');
-    // The first earlier run, and its renders as History has them.
-    const shownFiles = await js(`[...document.querySelector("#prevStrip .prev-row").querySelectorAll(".rtile img")].map(i => decodeURIComponent(i.getAttribute("src").split("/").pop()))`);
+    await waitFor('!!document.querySelector("#reel .reel-run:not(.here) .rtile img")', 'This session keeps the run that left the stage');
+    // That run, and its renders as History has them.
+    const shownFiles = await js(`[...document.querySelector("#reel .reel-run:not(.here)").querySelectorAll(".rtile img")].map(i => decodeURIComponent(i.getAttribute("src").split("/").pop()))`);
     const owner = (await history()).find(e => e.variations.some(v => (v.renders || []).some(r => r.files.some(f => f.file === shownFiles[0]))));
     const all = owner.variations.flatMap(v => v.renders || []);
     assert(all.length >= 2, `the earlier run has renders to delete (${all.length})`);
     const files = all.map(r => r.files[0].file);
-    const tiles = `[...document.querySelectorAll("#prevStrip .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
-    eq(await js(`${tiles}.length`), all.length, 'all its renders show under Earlier runs');
+    const tiles = `[...document.querySelectorAll("#reel .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
+    eq(await js(`${tiles}.length`), all.length, 'all its renders show in This session');
     await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
-    await waitFor(`${tiles}.length === ${all.length}`, 'Earlier runs survive a reload');
+    await waitFor(`${tiles}.length === ${all.length}`, 'This session survives a reload');
     const originalOf = r => path.join(comfyRoot, 'output', `mock_${r.promptId.slice(0, 6)}.png`);
 
     await js(`${tiles}[0].closest(".rtile").classList.add("pick-me")`);
-    await click('#prevStrip .rtile.pick-me');
+    await click('#reel .rtile.pick-me');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await click('[data-lb="delete"]');
     await click('[data-lb="delete"]');
@@ -2595,7 +2619,7 @@ esac
     const left = (await history()).find(e => e.id === owner.id).variations.flatMap(v => v.renders || []);
     eq(left.length, all.length - 1, 'one render fewer');
     const gone = all.find(r => !left.some(x => x.id === r.id));
-    eq(await js(`${tiles}.length`), all.length - 1, 'Earlier runs shows one fewer, right away');
+    eq(await js(`${tiles}.length`), all.length - 1, 'This session shows one fewer, right away');
     assert(!(await fileExists(path.join(dataDir, 'renders', gone.files[0].file))), 'the deleted one is gone from the data folder');
     if (gone.promptId) assert(!(await fileExists(originalOf(gone))) && !comfy.history[gone.promptId], 'and ComfyUI\'s file and job');
 
@@ -2606,7 +2630,7 @@ esac
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await toastText('Deleted for good');
     await click('.tabs button[data-view="create"]');
-    eq(await js(`${tiles}.length`), 0, 'Earlier runs lets go of the deleted run');
+    eq(await js(`${tiles}.length`), 0, 'This session lets go of the deleted run');
   });
 
   await test('delete: a History card leaves nothing behind, here or in ComfyUI', async () => {

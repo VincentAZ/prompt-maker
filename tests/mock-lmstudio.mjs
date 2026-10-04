@@ -58,7 +58,7 @@ function assistantTurn(body) {
     : /fix the playbook/.test(said) ? [{ calls: [['edit_playbook', { model: 'krea', description: 'Edited by the assistant', resolutions: ['1024×1024', '1536×1024'] }]] }, { text: results.includes('Saved the') ? 'Saved it. Say undo to put it back.' : 'That failed.' }]
     : /\bundo\b/.test(said) ? [{ calls: [['undo_playbook_edit', {}]] }, { text: results.includes('back as it was') ? 'Put it back.' : 'That failed.' }]
     : /like best/.test(said) ? [{ calls: [['look_at', {}]] }, { text: sawPictures ? 'I\'d pick **take 1, render 1**: the light is softer and the subject reads better.' : 'I couldn\'t see them.' }]
-    : /favorite the first/.test(said) ? [{ calls: [['favorite_render', { take: 1, render: 1 }]] }, { text: results.includes('Marked as a favorite') ? 'Done, it\'s a favorite.' : 'That failed.' }]
+    : /rate the first one excellent/.test(said) ? [{ calls: [['rate_render', { take: 1, render: 1, rating: 3 }]] }, { text: results.includes('Rated excellent') ? 'Done, rated excellent.' : 'That failed.' }]
     : /delete this prompt/.test(said) ? [{ calls: [['delete_entry', {}]] }, { text: results.includes('"declined":true') ? 'Okay, I kept it.' : results.includes('Deleted') ? 'Deleted it for good.' : 'That failed.' }]
     : /^job:/.test(said) ? (() => {
       const folder = textOf(msgs[at].content).match(/(\/[^\s,]+)/)[1];

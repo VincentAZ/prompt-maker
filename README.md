@@ -72,6 +72,8 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
 - **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
   - Watch live progress (and previews) right on the take.
+  - **🎞 This session**, above the takes, collects every render since Prompt Maker started, newest run first, so nothing gets lost below a long prompt.
+  - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
   - Browse every result in the **Gallery**, and view it in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
 - **🧠 Brain profiles.** **Models → Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
@@ -271,10 +273,10 @@ The motion video is kept with the take (History puts it back), and deleting the 
 Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
 - **Ask what it thinks.** *"Which of these renders do you like better?"*, *"Should the princess be in the high tower or the dungeon?"*, *"Based on this prompt, what aspect ratio should it be?"* It gives a real opinion with a reason, and offers to act on it.
-- **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, earlier runs and the Gallery. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
-- **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, earlier runs, renders in progress.
+- **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, 🎞 This session and the Gallery. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
+- **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, this session's runs and their ratings, renders in progress.
 - **Tell it what to make.** *"Set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them."* Or *"use seconds 12 to 15 of the motion video and crop its black bars."*
-  - It runs the app with the same controls you have: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, motion videos (trimmed, cropped, 24 fps) and characters (Wan Animate 2), chains, History, playbooks, favorites, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
+  - It runs the app with the same controls you have: model, theme, dials, workflow, LoRAs, seed, takes, renders, refining, animating, motion videos (trimmed, cropped, 24 fps) and characters (Wan Animate 2), chains, History, playbooks, ratings, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
   - Each step shows in the chat ("✓ Model → Krea 2 RAW") and on screen.
   - **■ Stop** or **Esc** stops it.
 - **🗂 Give it long jobs.** *"Use the 4 pictures in folder ABC to do 2 takes each, the first with low temperature, the second with high. Skip any problems and log them for me to review later."*
@@ -452,14 +454,24 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 
 > Chains continue from images for now: a video can't feed the next step yet. Extending a clip from its last frame is coming next.
 
-Every render also appears in the **Gallery** tab, with filters for images, videos, ♥ favorites and models. The newest render becomes the thumbnail of its History card.
+**🎞 This session** sits above the takes on Create. It holds every render made since Prompt Maker last started, from every run, so you can scroll back through all of them in one place.
 
-- **♡ Favorite** a render from its lightbox; it gets a ♥ on its Gallery tile.
+- **Live.** A render shows up the moment it starts, with its preview, progress and **✕ Cancel**, and stays when it's done.
+- **Grouped by run,** newest first. The run on screen is marked *On screen*; **Open** puts any other run back on the stage (your Create form stays as it is).
+- **⤢ Bigger** gives the box most of the screen for comparing; **▾** folds it away. Both are remembered.
+- Click a render to see it full screen. It survives a page reload; restarting Prompt Maker starts a fresh session (every render stays in the Gallery).
+
+**Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
+
+- Click the stars on a render in **This session** (hover a render to see them), or the buttons under the lightbox, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**).
+- Renders you marked ♥ favorite before ratings count as ★★★ Excellent.
+
+Every render also appears in the **Gallery** tab, with filters for images, videos, ratings (★ and up, ★★ and up, ★★★ only) and models. Rated renders show their stars on their tile. The newest render becomes the thumbnail of its History card.
+
 - After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
 - Video tiles show a still of their first frame and play while you hover them.
 - **🎨 Rendering** in the top bar shows while anything renders, with how many are left. Click it for every render still going, from any take (also ones you moved off the stage, started in another tab, or before a reload): its live preview and progress, **Open** to bring its take back with live tiles, **✕ Cancel**, and **Cancel all**.
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
-- **Earlier runs** (the runs above a new one, to compare renders) are kept across reloads too.
 - **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Gallery, History, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
 
 > **Tip:** if a workflow runs its own prompt-writing LLM node (some LTX workflows do), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.

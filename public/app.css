@@ -31,6 +31,7 @@
   --lime: #c6ff4d;
   --ok: #3ee08f;
   --warn: #ffc44d;
+  --star: #ffc94d; /* ratings: ★ pretty good, ★★ very good, ★★★ excellent */
   --danger: #ff5a6e;
   --grad: linear-gradient(100deg, #ff4d8d 0%, #ff7a59 48%, #ffb347 100%);
   --grad-cool: linear-gradient(100deg, #a47bff 0%, #22d3ee 100%);
@@ -100,7 +101,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .btn.danger { color: #ff8a98; }
 .btn.danger:hover:not(:disabled) { border-color: var(--danger); background: rgb(255 90 110 / 14%); }
 .btn.danger.armed { background: var(--danger); color: #fff; border-color: var(--danger); }
-.btn.fav.on { color: #ff6b8b; border-color: rgb(255 107 139 / 55%); background: rgb(255 107 139 / 12%); }
 .btn.glass { background: rgb(10 9 16 / 70%); backdrop-filter: blur(8px); }
 .btn.copied, .btn.copied:hover { background: var(--ok) !important; color: #06210f !important; border-color: var(--ok) !important; }
 .icon-btn { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 0; background: transparent; color: var(--muted); }
@@ -767,6 +767,9 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 .lb-facts dd { margin: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
 .lb-prompt { font-family: var(--font); white-space: pre-wrap; font-size: 14px; line-height: 1.6; color: var(--text-2); background: rgb(0 0 0 / 25%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px 14px; max-height: 40vh; overflow-y: auto; margin: 0; }
 .lb-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.lb-rate { --m: var(--star); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lb-rate-q { width: 100%; font-size: 12.5px; font-weight: 750; color: var(--text-2); }
+.lb-rate b { color: var(--star); font-weight: 400; letter-spacing: 1px; }
 
 /* =================== Gallery =================== */
 .gallery { --g-cols: 4; --g-min: 260; --g-gap: 14; position: relative; }
@@ -782,7 +785,8 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 .g-cap b { display: block; font-size: 13.5px; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .g-cap span { font-size: 11.5px; color: var(--text-2); }
 .gtile .rt-kind { position: absolute; left: 10px; top: 10px; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: rgb(10 9 16 / 75%); color: #fff; }
-.gtile .g-fav { position: absolute; right: 10px; top: 10px; font-size: 13px; line-height: 1; padding: 4px 7px; border-radius: 999px; background: rgb(10 9 16 / 75%); color: #ff6b8b; }
+.gtile .g-fav { position: absolute; right: 10px; top: 10px; font-size: 13px; line-height: 1; padding: 4px 7px; border-radius: 999px; background: rgb(10 9 16 / 75%); color: var(--star); letter-spacing: 1px; }
+.chip-btn.rated { --m: var(--star); }
 
 /* =================== Models → workflows =================== */
 .models-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
@@ -1170,13 +1174,46 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .sub > .panel-head .collapse-btn { margin-left: auto; }
 .model-form.collapsed { gap: 8px; }
 
-/* Earlier runs kept above the stage, to compare renders */
-.prev-strip { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; margin-bottom: 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); min-width: 0; }
-.prev-title { font-size: 12px; font-weight: 800; opacity: 0.7; }
-.prev-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.prev-head .spacer { flex: 1; }
-.prev-tiles { display: flex; gap: 8px; overflow-x: auto; padding-top: 6px; }
-.prev-tiles .rtile { flex: 0 0 auto; height: 160px; width: auto; }
+/* This session: every render since start-up, above the takes, grouped by run */
+.reel { --tile-h: 150px; --reel-max: min(440px, 62vh); display: flex; flex-direction: column; min-width: 0; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); }
+.reel.big { --tile-h: 240px; --reel-max: calc(100vh - 150px); }
+.reel-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 6px; }
+.reel.closed .reel-head { padding-block: 6px; }
+.reel-head .spacer { flex: 1; }
+.reel-title { margin: 0; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; }
+.reel-count { font-size: 12.5px; color: var(--muted); }
+.reel-toggle { width: 30px; height: 30px; font-size: 14px; }
+.reel-body { max-height: var(--reel-max); overflow-y: auto; overscroll-behavior: contain; padding: 0 14px 14px; border-top: 1px solid var(--line); }
+.reel-empty { margin: 12px 0 0; font-size: 13.5px; color: var(--text-2); }
+.reel-list { display: flex; flex-direction: column; }
+.reel-run { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.reel-run:last-child { border-bottom: 0; padding-bottom: 0; }
+.reel-run.here { border-left: 3px solid var(--m); margin-left: -14px; padding-left: 11px; }
+.reel-run-head { display: flex; align-items: center; gap: 8px; min-width: 0; margin-bottom: 8px; }
+.reel-run-head .tag.model { background: color-mix(in srgb, var(--m) 20%, var(--panel-3)); color: var(--text); flex: none; }
+.reel-theme { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 700; }
+.reel-when { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.reel-run-head .spacer { flex: 1; }
+.reel-here { flex: none; font-size: 11.5px; font-weight: 800; color: var(--m); }
+.reel-run-head .btn { flex: none; }
+.reel-tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+.reel-tiles > .rtile, .reel-cell { flex: 0 0 auto; height: var(--tile-h); aspect-ratio: var(--ar); max-width: 100%; }
+.reel-cell { position: relative; }
+.reel-cell > .rtile { display: block; width: 100%; height: 100%; }
+.reel-cell .rt-meta { padding-right: 70px; }
+.rate-slot { position: absolute; right: 6px; bottom: 6px; }
+.rate-bar { display: flex; flex-direction: row-reverse; padding: 2px 4px; border-radius: 999px; background: rgb(10 9 16 / 72%); backdrop-filter: blur(6px); }
+.rate-bar button { width: 20px; height: 22px; padding: 0; border: 0; background: none; color: rgb(255 255 255 / 45%); font-size: 15px; line-height: 1; cursor: pointer; transition: color 0.1s, transform 0.1s; }
+.rate-bar button.on { color: var(--star); }
+.rate-bar:hover button { color: rgb(255 255 255 / 45%); }
+.rate-bar button:hover, .rate-bar button:hover ~ button { color: var(--star); }
+.rate-bar button:hover { transform: scale(1.2); }
+.rate-bar button:focus-visible { outline: 2px solid var(--star); outline-offset: -2px; border-radius: 6px; }
+/* Not rated yet: the stars show on hover (always on touch screens) */
+.reel-cell[data-rating="0"] .rate-bar { opacity: 0; transition: opacity 0.15s; }
+.reel-cell[data-rating="0"]:hover .rate-bar, .reel-cell[data-rating="0"] .rate-bar:focus-within { opacity: 1; }
+@media (hover: none) { .reel-cell[data-rating="0"] .rate-bar { opacity: 1; } }
+@media (max-width: 760px) { .reel { --tile-h: 120px; } .reel.big { --tile-h: 200px; } .reel-when { display: none; } }
 
 /* Rendering now: the top-bar pill (only while something renders) and its panel. */
 .rp-wrap { position: relative; flex: none; }

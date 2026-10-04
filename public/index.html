@@ -256,8 +256,20 @@
             <ol id="lineList" class="line-list"></ol>
           </div>
           <div id="runStrip" class="run-strip" role="region" aria-label="Chain run" hidden></div>
-          <div id="prevStrip" class="prev-strip" role="region" aria-label="Earlier runs" hidden></div>
           <div id="stageHead" class="stage-head" hidden></div>
+          <section id="reel" class="reel" aria-labelledby="reelTitle" hidden>
+            <div class="reel-head">
+              <button type="button" id="reelToggle" class="icon-btn reel-toggle" aria-controls="reelBody" aria-expanded="true">▾</button>
+              <h2 id="reelTitle" class="reel-title">🎞 This session</h2>
+              <span id="reelCount" class="reel-count"></span>
+              <span class="spacer"></span>
+              <button type="button" id="reelBig" class="btn small" aria-pressed="false">⤢ Bigger</button>
+            </div>
+            <div id="reelBody" class="reel-body">
+              <p id="reelEmpty" class="reel-empty">Every render you make shows up here as it finishes, newest first, until Prompt Maker restarts. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.</p>
+              <div id="reelList" class="reel-list"></div>
+            </div>
+          </section>
           <div id="stageError" class="error-card" role="alert" hidden></div>
           <div id="resultsList" class="takes"></div>
           <div id="resultsEmpty" class="empty">
@@ -301,7 +313,11 @@
           <button type="button" class="chip-btn" data-kind="" aria-pressed="true">All</button>
           <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">📷 Images</button>
           <button type="button" class="chip-btn" data-kind="video" aria-pressed="false">🎬 Videos</button>
-          <button type="button" class="chip-btn" data-kind="fav" aria-pressed="false">♥ Favorites</button>
+        </div>
+        <div id="galleryRated" class="filter-chips" role="group" aria-label="Filter by rating">
+          <button type="button" class="chip-btn rated" data-min="1" aria-pressed="false" title="Rated pretty good or better">★ Pretty good &amp; up</button>
+          <button type="button" class="chip-btn rated" data-min="2" aria-pressed="false" title="Rated very good or excellent">★★ Very good &amp; up</button>
+          <button type="button" class="chip-btn rated" data-min="3" aria-pressed="false" title="Rated excellent">★★★ Excellent</button>
         </div>
         <div id="galleryModels" class="filter-chips" role="group" aria-label="Filter by model"></div>
       </div>

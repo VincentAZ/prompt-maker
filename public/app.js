@@ -6,7 +6,6 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const scrollMode = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
 const state = {
-  prev: [], // earlier runs kept on the stage so their renders can be compared with the new one
   models: [],
   settings: null,
   llms: [],
@@ -48,6 +47,7 @@ const state = {
   comfy: null,
   renderRuns: new Set(),
   galleryKind: '',
+  galleryMin: 0, // the Gallery shows renders rated at least this (0: all)
   galleryModel: '',
 };
 
@@ -1889,9 +1889,17 @@ let rendersNow = [];
 
 async function pollRenders() {
   clearTimeout(pollRenders.timer);
-  const open = !$('#rendersPanel').hidden;
+  const open = !$('#rendersPanel').hidden || reelLive(); // live pictures only where they show
+  const before = rendersNow;
   rendersNow = await api(`/api/renders${open ? '?previews' : ''}`).catch(() => rendersNow);
   drawRenders();
+  // A render finished (or a job ended): its entry, fresh, for This session, its takes and the Gallery.
+  // (Runs this page follows bring their renders in themselves.)
+  const followed = new Set([...state.renderRuns].map(r => r.runId));
+  const moved = new Set(before.filter(j => !followed.has(j.runId) && !rendersNow.some(n => n.runId === j.runId && n.finished === j.finished)).map(j => j.historyId));
+  for (const j of rendersNow) if (!sessionCache.has(j.historyId) && state.entry?.id !== j.historyId) moved.add(j.historyId);
+  renderReel();
+  await Promise.all([...moved].map(refreshSessionEntry));
   pollRenders.timer = setTimeout(pollRenders, rendersNow.length ? (open ? 1000 : 2000) : 5000);
 }
 
@@ -1974,58 +1982,218 @@ $('#rendersCancelAll').addEventListener('click', e => confirmClick(e.currentTarg
   pollRenders();
 }));
 
-// ---------- create: previous runs ----------
+// ---------- create: this session ----------
+// Every render made since Prompt Maker started, in one box above the takes: the ones still going (live, with their
+// progress and ✕ Cancel) and the finished ones, grouped by run, newest run first, to compare, rate and open. It
+// scrolls, and ⤢ Bigger gives it most of the screen. Open puts a run back on the stage.
 
-// A new Generate replaces the stage, so the run it replaces (with its renders) stays above it to compare.
-function keepPrevious(entry) {
+// How good a render is. Renders saved before ratings had a ♥ favorite instead: it counts as excellent.
+const RATINGS = ['Not rated', 'Pretty good', 'Very good', 'Excellent'];
+const ratingOf = r => r?.rating || (r?.favorite ? 3 : 0);
+const starsOf = n => '★'.repeat(n);
+
+async function rateRender(entry, render, rating) {
+  const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'PATCH', body: { rating } });
+  forgetRender(updated); // every copy of the entry gets the new rating
+  return updated.variations.flatMap(v => v.renders || []).find(r => r.id === render.id) || render;
+}
+
+// Three stars to rate a render with: click one to rate, click the lit one again to take the rating off.
+// (Laid out last-first, so hovering a star lights it and the ones before it.)
+function rateBarHtml(rating, label = 'this render') {
+  return `<div class="rate-bar" role="group" aria-label="Rate ${esc(label)}">${[3, 2, 1].map(n => `<button type="button" class="${n <= rating ? 'on' : ''}" data-rate="${n}" aria-pressed="${n === rating}" title="${RATINGS[n]}${n === rating ? ' (click to take the rating off)' : ''}" aria-label="${RATINGS[n]}">★</button>`).join('')}</div>`;
+}
+
+const sessionCache = new Map(); // entry id → the entry, for runs that aren't on the stage
+const sinceStart = () => state.settings?.startedAt || '';
+const sessionEntry = id => (state.entry?.id === id ? state.entry : sessionCache.get(id) || null);
+// An entry's renders made since start-up, newest first, one item per file (as the lightbox takes them).
+const sessionItems = entry => entry.variations
+  .flatMap((v, index) => (v.renders || []).filter(r => (r.createdAt || '') >= sinceStart()).map(render => ({ index, render })))
+  .sort((a, b) => (a.render.createdAt < b.render.createdAt ? 1 : -1))
+  .flatMap(({ index, render }) => render.files.map(file => ({ entry, index, render, file })));
+
+// A run that rendered (or is rendering) this session. Its copy of the entry joins the others the page keeps in step.
+function noteSession(entry) {
   if (!entry?.id) return;
-  setPrev([entry, ...state.prev.filter(e => e.id !== entry.id)].slice(0, 3));
+  sessionCache.set(entry.id, entry);
+  renderReel();
 }
 
-// Earlier runs are remembered (by entry) so a page reload keeps them; their renders come from History.
-function setPrev(list) {
-  state.prev = list;
-  saved.set('prev', list.map(e => e.id));
-  renderPrevStrip();
+function sessionFromHistory(history) {
+  for (const e of history) if (!sessionCache.has(e.id) && sessionItems(e).length) sessionCache.set(e.id, e);
+  renderReel();
 }
 
-function restorePrev(history) {
-  if (state.prev.length) return;
-  state.prev = saved.get('prev', []).map(id => history.find(e => e.id === id)).filter(Boolean);
-  renderPrevStrip();
+// A render that finished somewhere the page wasn't following (another tab, or a run that left the stage): fetch its
+// entry, so it shows here, on its takes and in the Gallery.
+async function refreshSessionEntry(id) {
+  const fresh = await api(`/api/history/${id}`).catch(() => null);
+  if (!fresh) return;
+  if (!sessionCache.has(id)) sessionCache.set(id, fresh);
+  forgetRender(fresh);
 }
 
-// Render tiles still running, per entry, so a run that left the stage keeps showing its progress.
-const liveTiles = new WeakMap();
+const reelOpen = () => !saved.get('reelClosed', false);
+const reelLive = () => isView('create') && !$('#reel').hidden && reelOpen();
 
-function renderPrevStrip() {
-  const box = $('#prevStrip');
-  const shown = state.prev.filter(e => e.id !== state.entry?.id && (liveTiles.get(e)?.size || e.variations?.some(v => v.renders?.length)));
-  box.hidden = !shown.length;
-  box.innerHTML = shown.length ? '<div class="prev-title">Earlier runs, to compare</div>' : '';
-  for (const entry of shown) {
-    const items = entry.variations.flatMap((v, index) => (v.renders || []).slice().reverse().flatMap(r => r.files.map(f => ({ entry, index, render: r, file: f }))));
-    const row = document.createElement('div');
-    row.className = 'prev-row';
-    const tags = [entry.modelName, `🌡 ${Number(entry.temperature).toFixed(2)}`, entry.duration, entry.batch && `🎞 ${entry.batch}`].filter(Boolean);
-    row.innerHTML = `<div class="prev-head">${tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}<span class="spacer"></span><button type="button" class="btn small prev-open">Open</button><button type="button" class="icon-btn prev-x" aria-label="Stop showing this run">✕</button></div><div class="prev-tiles"></div>`;
-    const ar = ASPECT_CSS(entry.aspectRatio);
-    liveTiles.get(entry)?.forEach(t => { t.style.setProperty('--ar', ar); $('.prev-tiles', row).append(t); });
-    items.slice(0, 8).forEach((it, n) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = `rtile${it.file.kind === 'audio' ? ' audio' : ''}`;
-      b.style.setProperty('--ar', ar);
-      b.setAttribute('aria-label', `Open earlier render ${n + 1}`);
-      b.innerHTML = `${mediaTag(it.file, { hover: true })}<span class="rt-meta">Take ${it.index + 1}${it.render.seed != null ? ` · seed ${it.render.seed}` : ''}</span>`;
-      b.addEventListener('click', () => openLightbox(items, n));
-      $('.prev-tiles', row).append(b);
-    });
-    $('.prev-open', row).addEventListener('click', () => { if (state.busy) return showEntry(entry); keepPrevious(state.entry); showEntry(entry); });
-    $('.prev-x', row).addEventListener('click', () => setPrev(state.prev.filter(e => e !== entry)));
-    box.append(row);
+function reelGroups() {
+  const ids = new Set([...sessionCache.keys(), ...rendersNow.map(j => j.historyId)]);
+  if (state.entry?.id && sessionItems(state.entry).length) ids.add(state.entry.id);
+  const groups = [];
+  for (const id of ids) {
+    const entry = sessionEntry(id);
+    const items = entry ? sessionItems(entry) : [];
+    const jobs = rendersNow.filter(j => j.historyId === id);
+    if (!items.length && !jobs.length) continue;
+    const last = Math.max(...jobs.map(j => j.startedAt || 0), ...items.map(it => Date.parse(it.render.createdAt) || 0));
+    groups.push({ id, entry, items, jobs, last, running: jobs.length > 0 });
+  }
+  return groups.sort((a, b) => b.running - a.running || b.last - a.last);
+}
+
+// Drawn in place: rows and tiles are kept by key and only their numbers change, so a click never lands on a tile
+// being redrawn and a video playing under the mouse keeps playing.
+function renderReel() {
+  const box = $('#reel');
+  if (!box) return;
+  const groups = reelGroups();
+  const finished = groups.reduce((n, g) => n + g.items.length, 0);
+  const going = rendersLeft();
+  box.hidden = !groups.length && !state.workflows.length;
+  if (box.hidden) return;
+  const open = reelOpen();
+  const big = saved.get('reelBig', false);
+  box.classList.toggle('big', big);
+  box.classList.toggle('closed', !open);
+  $('#reelCount').textContent = finished || going
+    ? [finished && `${finished} render${finished > 1 ? 's' : ''}`, going && `${going} rendering`].filter(Boolean).join(' · ')
+    : '';
+  $('#reelBig').hidden = !open || !groups.length;
+  $('#reelBig').textContent = big ? '⤡ Smaller' : '⤢ Bigger';
+  $('#reelBig').setAttribute('aria-pressed', big);
+  $('#reelToggle').setAttribute('aria-expanded', open);
+  $('#reelToggle').setAttribute('aria-label', open ? 'Hide this session\'s renders' : 'Show this session\'s renders');
+  $('#reelToggle').textContent = open ? '▾' : '▸';
+  const body = $('#reelBody');
+  body.hidden = !open;
+  if (!open) return;
+  $('#reelEmpty').hidden = groups.length > 0;
+  const all = groups.flatMap(g => g.items);
+  const rows = groups.map(g => reelRow(g, all));
+  const list = $('#reelList');
+  if (rows.length !== list.children.length || rows.some((r, i) => list.children[i] !== r)) list.replaceChildren(...rows);
+}
+
+function reelRow(g, all) {
+  const list = $('#reelList');
+  let row = $(`.reel-run[data-id="${CSS.escape(g.id)}"]`, list);
+  const e = g.entry;
+  const job = g.jobs[0];
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'reel-run';
+    row.dataset.id = g.id;
+    row.innerHTML = '<div class="reel-run-head"><span class="tag model"></span><b class="reel-theme"></b><span class="reel-when"></span><span class="spacer"></span><span class="reel-here">On screen</span><button type="button" class="btn small reel-open">Open</button></div><div class="reel-tiles"></div>';
+    $('.reel-open', row).addEventListener('click', () => openSessionRun(g.id));
+    $('.reel-tiles', row).addEventListener('click', e => onReelTile(e, row));
+  }
+  const modelId = e?.modelId || job?.modelId;
+  row.style.setProperty('--m', modelColor(modelById(modelId) || { id: modelId }));
+  row.style.setProperty('--ar', ASPECT_CSS(e?.aspectRatio || job?.aspectRatio));
+  $('.tag.model', row).textContent = `${kindIcon(e?.modelKind || modelById(modelId)?.kind)} ${e?.modelName || job?.modelName || ''}`;
+  const theme = e ? e.theme || 'From an image' : job?.theme || 'From an image';
+  $('.reel-theme', row).textContent = theme;
+  $('.reel-theme', row).title = theme;
+  const time = g.last ? new Date(g.last).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  $('.reel-when', row).textContent = [time, g.items.length && `${g.items.length} render${g.items.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+  const here = state.entry?.id === g.id;
+  row.classList.toggle('here', here);
+  $('.reel-here', row).hidden = !here;
+  $('.reel-open', row).hidden = here || !e;
+  const tiles = $('.reel-tiles', row);
+  const want = [...g.jobs.map(j => reelJobTile(j, tiles)), ...g.items.map(it => reelTile(it, all.indexOf(it), tiles))];
+  if (want.length !== tiles.children.length || want.some((t, i) => tiles.children[i] !== t)) tiles.replaceChildren(...want);
+  return row;
+}
+
+// A render still going: its live picture (when the reel is open), how far, and ✕ Cancel.
+function reelJobTile(j, tiles) {
+  let t = $(`.reel-job[data-run="${CSS.escape(j.runId)}"]`, tiles);
+  if (!t) {
+    t = document.createElement('div');
+    t.className = 'reel-job rtile running';
+    t.dataset.run = j.runId;
+    t.innerHTML = '<div class="rt-shimmer"></div><div class="rt-live"><span class="rt-pct">…</span><span class="rt-stage"></span></div><div class="rt-bar"></div><button type="button" class="rt-cancel" data-act="cancel" aria-label="Cancel render" title="Cancel this render">✕ Cancel</button>';
+  }
+  const pct = j.pct ?? null;
+  $('.rt-pct', t).textContent = pct != null ? `${pct}%` : '⏳';
+  $('.rt-bar', t).style.width = `${pct ?? 0}%`;
+  $('.rt-stage', t).textContent = t.classList.contains('cancelling') ? 'Cancelling…'
+    : [j.count > 1 ? `${Math.min(j.count, j.finished + 1)} of ${j.count}` : '', j.stage].filter(Boolean).join(' · ');
+  if (j.preview) {
+    let img = $('img.rt-preview', t);
+    if (!img) { img = Object.assign(document.createElement('img'), { className: 'rt-preview', alt: '' }); t.prepend(img); }
+    if (img.getAttribute('src') !== j.preview) img.src = j.preview;
+  }
+  return t;
+}
+
+function reelTile(it, n, tiles) {
+  const key = `${it.render.id}/${it.file.file}`;
+  let cell = [...tiles.children].find(c => c.dataset.key === key);
+  if (!cell) {
+    cell = document.createElement('div');
+    cell.className = 'reel-cell';
+    cell.dataset.key = key;
+    cell.innerHTML = `<button type="button" class="rtile${it.file.kind === 'audio' ? ' audio' : ''}" data-act="open">${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-meta">Take ${it.index + 1}${it.render.seed != null ? ` · seed ${it.render.seed}` : ''}</span></button><div class="rate-slot"></div>`;
+  }
+  cell.dataset.n = n;
+  $('.rtile', cell).setAttribute('aria-label', `Open render: take ${it.index + 1}${ratingOf(it.render) ? `, rated ${RATINGS[ratingOf(it.render)].toLowerCase()}` : ''}`);
+  const rating = ratingOf(it.render);
+  if (cell.dataset.rating !== String(rating)) {
+    cell.dataset.rating = rating;
+    $('.rate-slot', cell).innerHTML = rateBarHtml(rating, `take ${it.index + 1}'s render`);
+  }
+  return cell;
+}
+
+async function onReelTile(e, row) {
+  const b = e.target.closest('[data-act], [data-rate]');
+  if (!b) return;
+  const all = reelGroups().flatMap(g => g.items);
+  if (b.dataset.act === 'cancel') {
+    const t = b.closest('.reel-job');
+    t.classList.add('cancelling');
+    b.disabled = true;
+    $('.rt-stage', t).textContent = 'Cancelling…';
+    await api(`/api/runs/${t.dataset.run}/cancel`, { method: 'POST' }).catch(err => toast(err.message, true));
+    return pollRenders();
+  }
+  const cell = b.closest('.reel-cell');
+  const it = all.find(x => `${x.render.id}/${x.file.file}` === cell?.dataset.key);
+  if (!it) return;
+  if (b.dataset.act === 'open') return openLightbox(all, all.indexOf(it));
+  const want = Number(b.dataset.rate) === ratingOf(it.render) ? 0 : Number(b.dataset.rate);
+  try {
+    await rateRender(it.entry, it.render, want);
+    toast(want ? `${starsOf(want)} ${RATINGS[want]}` : 'Rating taken off');
+    $(`.reel-cell[data-key="${CSS.escape(cell.dataset.key)}"] [data-rate="${want || b.dataset.rate}"]`, row)?.focus();
+  } catch (err) {
+    toast(err.message, true);
   }
 }
+
+// Puts a run from this session back on the stage (the Create form stays as it is).
+function openSessionRun(id) {
+  const entry = sessionEntry(id);
+  if (!entry) return;
+  showEntry(entry);
+  $('.stage').scrollIntoView({ block: 'start', behavior: scrollMode() });
+}
+
+$('#reelToggle').addEventListener('click', () => { saved.set('reelClosed', reelOpen()); renderReel(); pollRenders(); });
+$('#reelBig').addEventListener('click', () => { saved.set('reelBig', !saved.get('reelBig', false)); renderReel(); });
 
 // Opens the take a chained entry came from.
 async function openSource(src) {
@@ -2199,7 +2367,7 @@ function showVersion(card, i) {
 
 function renderResults(entry, { totalSecs } = {}) {
   state.entry = entry;
-  renderPrevStrip();
+  renderReel();
   const list = $('#resultsList');
   list.innerHTML = '';
   state.cards = [];
@@ -2536,7 +2704,6 @@ async function formRequest() {
 
 // Writes the takes for a request into the stage, streaming. Returns the saved history entry, or null.
 async function runGeneration(body, m) {
-  keepPrevious(state.entry);
   // Placeholder entry so the stage header and meters work while streaming.
   state.entry = { ...body, modelName: m.name, modelKind: m.kind, variations: [] };
   state.timings = {};
@@ -2710,6 +2877,7 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeLightbox();
     else if (e.key === 'ArrowLeft') stepLightbox(-1);
     else if (e.key === 'ArrowRight') stepLightbox(1);
+    else if (/^[0-3]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('input, textarea, select, [contenteditable]')) rateInLightbox(Number(e.key) || ratingOf(lb.items[lb.index]?.render));
     return;
   }
   if ($('#wfDialog').open) return;
@@ -2883,13 +3051,13 @@ $('#historyList').addEventListener('click', async e => {
 });
 
 // Every copy of an entry the page holds: the stage, History, earlier runs and the chain run each may have their own.
-const copiesOf = id => new Set([state.entry, ...state.history, ...state.prev, ...(state.run?.entries || [])].filter(e => e?.id === id));
+const copiesOf = id => new Set([state.entry, ...state.history, ...sessionCache.values(), ...(state.run?.entries || [])].filter(e => e?.id === id));
 
 // A deleted (or re-starred) render changes every view at once, so no stale thumbnail stays on screen.
 function forgetRender(updated) {
   for (const e of copiesOf(updated.id)) e.variations.forEach((v, i) => { v.renders = (updated.variations[i]?.renders || []).slice(); });
   if (state.entry?.id === updated.id) state.cards.forEach(renderTiles);
-  renderPrevStrip();
+  renderReel();
   if (state.run) renderRunStrip();
   if (isView('gallery')) renderGallery();
   if (isView('history')) renderHistory();
@@ -2899,7 +3067,8 @@ function forgetRender(updated) {
 // link from the takes made from it, or in the Create form (its theme and image) when it's still what the form holds.
 function forgetEntry(entry) {
   if (state.entry?.id === entry.id) renderResults(null);
-  setPrev(state.prev.filter(e => e.id !== entry.id));
+  sessionCache.delete(entry.id);
+  renderReel();
   if (state.run?.entries.some(e => e.id === entry.id)) {
     state.run.entries = state.run.entries.filter(e => e.id !== entry.id);
     for (const [k, it] of state.run.picks) if (it.entry.id === entry.id) state.run.picks.delete(k);
@@ -4755,7 +4924,7 @@ async function renderMaybeGone(file) {
   goneFiles.add(file);
   const seen = new Set();
   let held = false;
-  for (const e of [state.entry, ...state.history, ...state.prev, ...(state.run?.entries || [])]) {
+  for (const e of [state.entry, ...state.history, ...sessionCache.values(), ...(state.run?.entries || [])]) {
     if (!e?.variations || seen.has(e)) continue;
     seen.add(e);
     for (const v of e.variations) {
@@ -4767,7 +4936,7 @@ async function renderMaybeGone(file) {
   }
   if (!held) return;
   state.cards.forEach(c => { if (!c.interrupted) renderTiles(c); });
-  renderPrevStrip();
+  renderReel();
   if (isView('gallery')) renderGallery();
   if (isView('history')) renderHistory();
 }
@@ -4994,8 +5163,6 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
   const keys = Array.from({ length: count }, (_, i) => `${Date.now()}-${i}`);
   const tiles = keys.map(() => runningTile(card));
   keys.forEach((k, i) => card.running.set(k, tiles[i]));
-  if (!liveTiles.has(entry)) liveTiles.set(entry, new Set());
-  tiles.forEach(t => liveTiles.get(entry).add(t));
   // Newest first: the tile for render 1 goes first.
   renderTiles(card);
   // The server's job is what renders, so cancelling tells it (leaving the page or reloading doesn't).
@@ -5050,11 +5217,10 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
       } else if (ev.type === 'render') {
         done.add(i);
         card.running.delete(keys[i]);
-        liveTiles.get(entry)?.delete(tiles[i]);
         const v = entry.variations?.[card.index];
         if (v && !(v.renders || []).some(r => r.id === ev.render.id)) (v.renders ||= []).push(ev.render); // (replayed when picked up again)
         renderTiles(card);
-        if (entry !== state.entry) renderPrevStrip();
+        noteSession(entry);
         announce(`Render ${i + 1} of ${count} done`);
         if (state.batchRun) {
           state.batchRun.done++;
@@ -5075,28 +5241,20 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
     if (err.name !== 'AbortError') failed = friendly(err);
   }
   state.renderRuns.delete(run);
-  tiles.forEach(t => liveTiles.get(entry)?.delete(t));
-  if (entry !== state.entry) renderPrevStrip();
   if (card.rb) card.rb.newSeed = false;
   refreshSeeds(); // increment / decrement moved the workflow's next seed on
   // Clear tiles that never finished (stopped); keep failed ones briefly so the reason is visible.
   keys.forEach((k, i) => {
     if (done.has(i)) return;
     const t = card.running.get(k);
-    card.running.delete(k);
-    if (t?.classList.contains('failed')) setTimeout(() => t.remove(), 12000);
+    if (!t?.classList.contains('failed')) return card.running.delete(k);
+    setTimeout(() => { card.running.delete(k); t.remove(); }, 12000); // (kept through a redraw of the take)
   });
   renderTiles(card);
   pollRenders();
   if (run.detached) return;
-  if (failed) {
-    showError(failed);
-    const box = $('.renders', card.el);
-    if (box) {
-      tiles.filter(t => t.classList.contains('failed')).forEach(t => box.prepend(t));
-      box.hidden = !box.children.length;
-    }
-  } else if (quiet) { /* a batch says it once, at the end */ } else if (!done.size) toast('■ Render stopped');
+  if (failed) showError(failed);
+  else if (quiet) { /* a batch says it once, at the end */ } else if (!done.size) toast('■ Render stopped');
   else toast(`🎨 ${done.size} render${done.size > 1 ? 's' : ''} ready`);
   setTitle(document.hidden && done.size ? '✓ Rendered' : '');
   loadComfyStatus();
@@ -5818,6 +5976,8 @@ function lbRender() {
   if (!it) return closeLightbox();
   const { entry, render, file } = it;
   const m = modelById(entry.modelId);
+  const rating = ratingOf(render);
+  const onStage = !lb.fromGallery && state.entry?.id === entry.id && state.cards.some(c => c.index === it.index && c.rb);
   $('#lightbox').style.setProperty('--m', modelColor(m || { id: entry.modelId }));
   $('#lbStage').innerHTML = mediaTag(file, { controls: true });
   $('#lbPrev').disabled = $('#lbNext').disabled = lb.items.length < 2;
@@ -5845,23 +6005,13 @@ function lbRender() {
       ${file.kind === 'video' && characterTarget() ? `<button type="button" class="btn small" data-lb="motion" title="Use this video's moves for a character, with ${esc(characterTarget().name)}">🕺 Use as motion video</button>` : ''}
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
-      ${lb.fromGallery ? '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>' : '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>'}
-      <button type="button" class="btn small fav${render.favorite ? ' on' : ''}" data-lb="fav" aria-pressed="${Boolean(render.favorite)}" title="${render.favorite ? 'Remove from favorites' : 'Add to favorites (Gallery → ♥ Favorites)'}">${render.favorite ? '♥ Favorite' : '♡ Favorite'}</button>
+      ${onStage ? '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>' : '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>'}
       <button type="button" class="btn small danger" data-lb="delete">🗑 Delete</button>
     </div>
-    <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · Esc to close</p>`;
+    <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
+    <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · 1 2 3 to rate · Esc to close</p>`;
   $('[data-lb="copy"]', $('#lbInfo')).addEventListener('click', e => copyText(render.text, e.currentTarget));
-  $('[data-lb="fav"]', $('#lbInfo')).addEventListener('click', async () => {
-    try {
-      const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'PATCH', body: { favorite: !render.favorite } });
-      forgetRender(updated); // every copy of the entry gets the new state
-      it.render = updated.variations[it.index].renders.find(r => r.id === render.id) || render;
-      lbRender();
-      $('[data-lb="fav"]', $('#lbInfo'))?.focus();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  });
+  $$('[data-lb-rate]', $('#lbInfo')).forEach(b => b.addEventListener('click', () => rateInLightbox(Number(b.dataset.lbRate))));
   $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); openEntry(entry); });
   $('[data-lb="animate"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: true }); });
   $('[data-lb="use"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false }); });
@@ -5898,6 +6048,21 @@ function lbRender() {
       toast(err.message, true);
     }
   }));
+}
+
+// Rates the render in the lightbox (its buttons, or keys 1 2 3); the rating it has already takes it off.
+async function rateInLightbox(n) {
+  const it = lb.items[lb.index];
+  if (!it) return;
+  const want = n === ratingOf(it.render) ? 0 : n;
+  try {
+    it.render = await rateRender(it.entry, it.render, want);
+    lbRender();
+    $(`[data-lb-rate="${n}"]`, $('#lbInfo'))?.focus();
+    announce(want ? `Rated ${RATINGS[want].toLowerCase()}` : 'Rating taken off');
+  } catch (err) {
+    toast(err.message, true);
+  }
 }
 
 // Deletes one render for good (the lightbox's Delete, and the assistant after you confirm).
@@ -5945,7 +6110,8 @@ function renderGallery() {
   if (state.galleryModel && !models.some(([id]) => id === state.galleryModel)) state.galleryModel = '';
   $('#galleryModels').innerHTML = models.length > 1 ? [['', 'All models'], ...models].map(([id, name]) => `<button type="button" class="chip-btn" data-id="${esc(id)}" aria-pressed="${state.galleryModel === id}" style="--m:${id ? modelColor(modelById(id) || { id }) : 'var(--text-2)'}">${esc(name)}</button>`).join('') : '';
   $$('#galleryKinds button').forEach(b => b.setAttribute('aria-pressed', b.dataset.kind === state.galleryKind));
-  const items = all.filter(it => (!state.galleryKind || it.file.kind === state.galleryKind || (state.galleryKind === 'fav' && it.render.favorite)) && (!state.galleryModel || it.entry.modelId === state.galleryModel));
+  $$('#galleryRated button').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.min) === state.galleryMin));
+  const items = all.filter(it => (!state.galleryKind || it.file.kind === state.galleryKind) && ratingOf(it.render) >= state.galleryMin && (!state.galleryModel || it.entry.modelId === state.galleryModel));
   $('#galleryCount').textContent = all.length ? all.length : '';
   const grid = $('#galleryGrid');
   grid.style.height = '';
@@ -5967,7 +6133,7 @@ function renderGallery() {
     b.dataset.key = galleryKey(it);
     b.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
     b.setAttribute('aria-label', `Open render: ${it.entry.theme || 'from an image'}`);
-    b.innerHTML = `${it.file.kind === 'audio' ? '<div class="rtile audio" style="aspect-ratio:1">🔊</div>' : mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}${it.render.favorite ? '<span class="g-fav" aria-label="Favorite">♥</span>' : ''}<span class="g-cap"><b>${esc(it.entry.theme || 'From an image')}</b><span>${esc(it.entry.modelName)} · ${esc(it.render.workflowName)}</span></span>`;
+    b.innerHTML = `${it.file.kind === 'audio' ? '<div class="rtile audio" style="aspect-ratio:1">🔊</div>' : mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}${ratingOf(it.render) ? `<span class="g-fav" title="${RATINGS[ratingOf(it.render)]}" aria-label="Rated ${RATINGS[ratingOf(it.render)].toLowerCase()}">${starsOf(ratingOf(it.render))}</span>` : ''}<span class="g-cap"><b>${esc(it.entry.theme || 'From an image')}</b><span>${esc(it.entry.modelName)} · ${esc(it.render.workflowName)}</span></span>`;
     b.addEventListener('click', () => openLightbox(items, n, { fromGallery: true }));
     grid.append(b);
   });
@@ -6018,6 +6184,7 @@ let galleryWidth = 0;
 new ResizeObserver(([e]) => { if (e.contentRect.width !== galleryWidth) { galleryWidth = e.contentRect.width; relayoutGallery(); } }).observe($('#galleryGrid'));
 
 $('#galleryKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryKind = b.dataset.kind; renderGallery(); } });
+$('#galleryRated').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryMin = Number(b.dataset.min) === state.galleryMin ? 0 : Number(b.dataset.min); renderGallery(); } });
 $('#galleryModels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryModel = b.dataset.id; renderGallery(); } });
 
 // ---------- models → workflows ----------
@@ -6488,7 +6655,7 @@ const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
 // The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
-const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'favorite_render', 'favorite_entry']);
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
 
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
@@ -6539,14 +6706,14 @@ const TOOLS = [
   T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
   T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
   T('look_at', 'See renders (images, or frames of videos) or the input image with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest.', {
-    what: E(['takes', 'lightbox', 'input_image', 'earlier_runs', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; earlier_runs: the runs above the new one; gallery: the newest renders anywhere'),
+    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started (the 🎞 This session box), newest run first; gallery: the newest renders anywhere'),
     take: I('Only this take'),
     renders: { type: 'array', items: { type: 'integer' }, description: 'Only these renders of the take (1 = newest)' },
     limit: I('At most this many pictures, up to 8; default 6'),
   }),
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
-  T('favorite_render', 'Mark a render as a favorite (♥, shown in Gallery → Favorites), or unmark it. Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), on: B('true = favorite (default), false = not') }),
+  T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (Gallery and This session show it; Gallery filters by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
   T('favorite_entry', 'Star (★) the prompt on screen in History, or unstar it.', { on: B('true = star (default), false = unstar') }),
   T('delete_render', 'Delete a render for good (asks the user to confirm on screen). Default: the one in the lightbox. Only when the user asked.', { take: I('Take number'), render: I('1 = newest render of that take') }),
   T('delete_entry', 'Delete a prompt from History for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
@@ -6579,7 +6746,7 @@ const lightboxItem = () => ($('#lightbox').hidden ? null : lb.items[lb.index] ||
 function describeItem(it) {
   const renders = (it.entry.variations?.[it.index]?.renders || []).slice().reverse();
   const n = renders.findIndex(r => r.id === it.render.id) + 1;
-  return { take: it.index + 1, render: n || null, kind: it.file.kind, model: it.entry.modelName, theme: it.entry.theme, seed: it.render.seed ?? null, favorite: Boolean(it.render.favorite) };
+  return { take: it.index + 1, render: n || null, kind: it.file.kind, model: it.entry.modelName, theme: it.entry.theme, seed: it.render.seed ?? null, rating: RATINGS[ratingOf(it.render)] };
 }
 // A take's renders as lightbox items, newest first (render 1 = newest).
 const takeItems = card => takeRenders(card).slice().reverse().flatMap(r => r.files.map(f => ({ entry: state.entry, index: card.index, render: r, file: f })));
@@ -6687,9 +6854,9 @@ function assistantState() {
     batch_runs: pickedBatches().map(b => b.name), // what Generate runs: none, one batch, or all in order
     chain: state.chain.steps.length ? state.chain.steps.map(s => ({ model: modelById(s.modelId)?.name, use: s.use, whatHappens: s.direction, gate: s.gate, takes: s.takes })) : null,
     chainRun: state.run ? { status: state.run.status, steps: state.run.entries.length } : null,
-    takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, favorites: takeRenders(c).filter(r => r.favorite).length, text: $('.prompt-text', c.el).value.slice(0, 1500) })) : [],
+    takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, rated: takeRenders(c).filter(r => ratingOf(r)).map(r => RATINGS[ratingOf(r)]), text: $('.prompt-text', c.el).value.slice(0, 1500) })) : [],
     lightbox: lightboxItem() ? describeItem(lightboxItem()) : null, // what the user is looking at, full screen
-    earlier_runs: state.prev.filter(e => e.id !== state.entry?.id).map(e => ({ theme: e.theme, model: e.modelName, renders: e.variations.reduce((n, v) => n + (v.renders?.length || 0), 0) })),
+    this_session: reelGroups().map(g => ({ theme: g.entry?.theme ?? g.jobs[0]?.theme, model: g.entry?.modelName || g.jobs[0]?.modelName, on_screen: g.id === state.entry?.id, renders: g.items.length, rendering: g.jobs.length, rated: g.items.filter(it => ratingOf(it.render)).length })),
     rendering_now: rendersNow.map(j => ({ theme: j.theme, model: j.modelName, take: j.index + 1, left: j.count - j.finished, stage: j.stage, pct: j.pct })),
     settings: { adult_content: Boolean(state.settings?.adultContent), thinking: state.settings?.thinking },
     busy: lineBusy(),
@@ -6731,8 +6898,8 @@ const TOOL_IMPL = {
       if (!state.image) throw new Error('There\'s no image in step 3.');
       const pics = await picturesOf(state.image.dataUrl || `/images/${encodeURIComponent(state.image.file)}`, 'image');
       return { summary: 'Looked at the input image', pictures: ['the input image (step 3)'], _images: pics.map(url => ({ label: 'the input image', url })) };
-    } else if (what === 'earlier_runs') {
-      items = state.prev.filter(e => e.id !== state.entry?.id).flatMap((e, run) => e.variations.flatMap((v, index) => (v.renders || []).slice().reverse().flatMap(r => r.files.map(f => ({ it: { entry: e, index, render: r, file: f }, label: `earlier run ${run + 1} (“${(e.theme || 'from an image').slice(0, 40)}”), take ${index + 1}` })))));
+    } else if (what === 'this_session' || what === 'earlier_runs') {
+      items = reelGroups().flatMap((g, run) => g.items.map(it => ({ it, label: `${g.id === state.entry?.id ? 'the run on screen' : `session run ${run + 1}`} (“${(it.entry.theme || 'from an image').slice(0, 40)}”), take ${it.index + 1}` })));
     } else if (what === 'gallery') {
       if (!state.history.length) state.history = await api('/api/history');
       items = galleryItems().map(it => ({ it, label: `“${(it.entry.theme || 'from an image').slice(0, 40)}” (${it.entry.modelName})` }));
@@ -6748,7 +6915,7 @@ const TOOL_IMPL = {
     for (const { it, label } of items) {
       if (images.length >= max || it.file.kind === 'audio') continue;
       const pics = await picturesOf(`/renders/${encodeURIComponent(it.file.file)}`, it.file.kind).catch(() => []);
-      const name = `${label}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}${it.render.favorite ? ', ♥ favorite' : ''}${it.file.kind === 'video' ? ' (video: its start and middle)' : ''}`;
+      const name = `${label}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}${ratingOf(it.render) ? `, rated ${RATINGS[ratingOf(it.render)].toLowerCase()}` : ''}${it.file.kind === 'video' ? ' (video: its start and middle)' : ''}`;
       pics.slice(0, max - images.length).forEach(url => images.push({ label: name, url }));
       seen.push(name);
     }
@@ -6765,14 +6932,14 @@ const TOOL_IMPL = {
     return { summary: `Showing take ${card.index + 1}, render ${n + 1}` };
   },
   close_lightbox: () => { if (!$('#lightbox').hidden) closeLightbox(); return { summary: 'Closed the lightbox' }; },
-  favorite_render: async ({ take, render, on }) => {
+  rate_render: async ({ take, render, rating }) => {
     const it = needRender({ take, render });
-    const want = on !== false;
-    const updated = await api(`/api/history/${it.entry.id}/renders/${it.render.id}`, { method: 'PATCH', body: { favorite: want } });
-    forgetRender(updated);
-    if (lightboxItem()?.render.id === it.render.id) { lightboxItem().render = updated.variations[it.index].renders.find(r => r.id === it.render.id) || it.render; lbRender(); }
-    return { summary: want ? '♥ Marked as a favorite' : 'No longer a favorite' };
+    const want = clampInt(rating ?? 3, 0, 3);
+    const rated = await rateRender(it.entry, it.render, want);
+    if (lightboxItem()?.render.id === it.render.id) { lightboxItem().render = rated; lbRender(); }
+    return { summary: want ? `${starsOf(want)} Rated ${RATINGS[want].toLowerCase()}` : 'Rating taken off' };
   },
+  favorite_render: ({ take, render, on }) => TOOL_IMPL.rate_render({ take, render, rating: on === false ? 0 : 3 }), // jobs saved before ratings
   favorite_entry: async ({ on }) => {
     if (!state.entry?.id) throw new Error('There\'s no prompt on screen.');
     const want = on !== false;
@@ -7926,7 +8093,7 @@ async function loadModels() {
   } catch (err) {
     showError(`Could not start: ${friendly(err)}`);
   }
-  api('/api/history').then(h => { state.history = h; restorePrev(h); $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
+  api('/api/history').then(h => { state.history = h; sessionFromHistory(h); $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
   loadAutostart();
   loadProviders();
   await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins(), loadRecipes()]);

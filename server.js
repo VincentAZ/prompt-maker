@@ -1008,6 +1008,8 @@ function watchRenderJob(job, res) {
   res.on('close', () => job.watchers.delete(res));
 }
 
+// When this server started: Create's "This session" box shows the renders made since then.
+const STARTED_AT = new Date().toISOString();
 // The version people see in Settings (for bug reports): package.json's, plus the exact commit when run from git.
 const VERSION = await (async () => {
   const { version } = JSON.parse(await fs.readFile(path.join(import.meta.dirname, 'package.json'), 'utf8'));
@@ -1068,7 +1070,7 @@ async function route(req, res) {
   }
 
   // Both responses carry the defaults the Settings page needs (e.g. for "Reset to default").
-  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR, version: VERSION });
+  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR, version: VERSION, startedAt: STARTED_AT });
   if (p === '/api/settings' && m === 'GET') return sendJson(res, 200, settingsView(await store.getSettings()));
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
@@ -1376,7 +1378,14 @@ async function route(req, res) {
     return sendJson(res, 200, await store.withPresentFiles(await store.updateHistory(match[1], e => {
       const r = e.variations.flatMap(v => v.renders || []).find(x => x.id === match[2]);
       if (!r) throw store.httpError(404, 'Render not found.');
-      if (typeof body.favorite === 'boolean') r.favorite = body.favorite;
+      // How good it is: 1 pretty good, 2 very good, 3 excellent, 0 not rated. (Renders saved before ratings
+      // have favorite: true, which counts as excellent until they're rated.)
+      const rating = typeof body.rating === 'number' ? body.rating : typeof body.favorite === 'boolean' ? (body.favorite ? 3 : 0) : null;
+      if (rating != null) {
+        if (![0, 1, 2, 3].includes(rating)) throw store.httpError(400, 'A rating is 0 (none), 1, 2 or 3.');
+        if (rating) r.rating = rating; else delete r.rating;
+        delete r.favorite;
+      }
     })));
   }
   if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'DELETE') {
