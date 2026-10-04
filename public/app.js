@@ -348,9 +348,12 @@ function matchImageAspect() {
 // Resolution choices plus "✎ Your own size…": a W×H the user types, kept as the last option ("Your size: 1000×700").
 const CUSTOM_RES = '__custom';
 const isSize = v => /^\d+\s*[×x]\s*\d+$/.test(String(v || ''));
-function fillResolution(choices, value) {
+// A size the user typed (not a preset, nor a preset redrawn for an image's shape: those follow the aspect as usual).
+const isOwnSize = (v, choices, typed) => isSize(v) && !choices.includes(v) && (typed || v === $('#resolution').dataset.own);
+function fillResolution(choices, value, typed = false) {
   const sel = $('#resolution');
-  const own = isSize(value) && !choices.includes(value) ? value : null;
+  const own = isOwnSize(value, choices, typed) ? value : null;
+  if (own) sel.dataset.own = own;
   fillSelect(sel, own ? [...choices, own] : choices, value);
   if (own) sel.options[sel.options.length - 1].textContent = `Your size: ${own}`;
   sel.dataset.last = sel.value;
@@ -367,7 +370,7 @@ function applyCustomRes() {
   const w = Math.round(Number($('#resW').value)), h = Math.round(Number($('#resH').value));
   if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return;
   const m = currentModel();
-  fillResolution(sizeChoices(m, $('#aspect').value), `${w}×${h}`);
+  fillResolution(sizeChoices(m, $('#aspect').value), `${w}×${h}`, true);
   showCustomRes(true);
   savePrefs();
 }
@@ -380,10 +383,11 @@ function syncResolution() {
   const aspect = $('#aspect').value;
   const choices = sizeChoices(m, aspect);
   const cur = sel.value; // its size picks the nearest new one
-  if (isSize(cur) && !choices.includes(cur)) { fillResolution(choices, cur); return; } // a typed size stays as typed
+  if (isOwnSize(cur, choices)) { fillResolution(choices, cur); return; } // a typed size stays as typed
   if (choices.join() !== [...sel.options].map(o => o.value).filter(v => v !== CUSTOM_RES).join()) fillResolution(choices, cur);
   const r = resolutionFor({ ...m, resolutions: choices }, aspect, cur);
   if (r) sel.value = r;
+  sel.dataset.last = sel.value;
 }
 
 // The image roles a model offers: its own list (e.g. only "character" for Wan Animate 2), else reference and recreate,
@@ -1077,7 +1081,7 @@ function selectModel(id, { values } = {}) {
   if (!m) return;
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
   fillAspect(m, v.aspectRatio);
-  fillResolution(sizeChoices(m, $('#aspect').value), v.resolution);
+  fillResolution(sizeChoices(m, $('#aspect').value), v.resolution, !m.resolutions.includes(v.resolution)); // saved off-preset = typed
   fillSelect($('#duration'), m.durations, v.duration);
   $('#aspectField').hidden = !m.aspectRatios.length;
   $('#resolutionField').hidden = !m.resolutions.length;
@@ -1165,6 +1169,7 @@ $('#aspect').addEventListener('change', () => {
   syncResolution();
   savePrefs();
 });
+$('#resolution').addEventListener('focus', e => { if (e.target.value !== CUSTOM_RES) e.target.dataset.last = e.target.value; });
 $('#resolution').addEventListener('change', e => {
   if (e.target.value !== CUSTOM_RES) { e.target.dataset.last = e.target.value; return showCustomRes(false); }
   e.target.value = e.target.dataset.last || e.target.options[0].value; // stays on the size in use until one is typed
@@ -7147,10 +7152,13 @@ const TOOLS = [
   T('undo_playbook_edit', 'Put back the playbook as it was before your last edit_playbook.'),
   T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
   T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
-  T('look_at', 'See renders (images, or frames of videos) or the input image with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest.', {
-    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started, newest run first; gallery: the newest renders anywhere. Each picture comes with its render id (for use_render_as_image)'),
+  T('look_at', 'See renders (images, or frames of videos), the input image, or pictures and videos in a folder, with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest. When the user speaks of renders they made ("in the gallery", "my renders", "the ones of the diver"), use gallery with find: every render Prompt Maker ever made is there.', {
+    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery', 'files'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started, newest run first; gallery: every render ever made, newest first; files: pictures or videos in a folder on this computer (folder, files). Each render comes with its render id (for use_render_as_image)'),
+    find: S('this_session or gallery: words of what the renders show or of their prompt, e.g. "woman walking apartment"; the best matches come first'),
     take: I('Only this take'),
     renders: { type: 'array', items: { type: 'integer' }, description: 'Only these renders of the take (1 = newest)' },
+    folder: S('files: the folder (full path, ~/…, or its name)'),
+    files: { type: 'array', items: { type: 'string' }, description: 'files: file names in that folder, or full paths; leave out for the folder\'s first pictures' },
     limit: I('At most this many pictures, up to 8; default 6'),
   }),
   T('pick_best', 'Look at renders and pick the best one for a purpose, then (if asked) put it in step 3 for the next step. In a job it picks among what the job made so far, so a job can go: stills, then pick the best, then animate it. Only stills can go in step 3.', {
@@ -7167,7 +7175,8 @@ const TOOLS = [
   T('delete_entry', 'Delete a prompt from History for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
   T('cancel_renders', 'Cancel renders in progress (🎨 Rendering): those of one take on screen, or all.', { take: I('Take number on screen; leave out for every render') }),
   T('set_brain', 'Switch the Brain (the LLM in the top bar) that writes prompts and runs you. A ☁️ cloud Brain asks the user first.', { name: S('Brain name or part of it') }, ['name']),
-  T('list_folder', 'List the pictures (and videos) in a folder on this computer (for a job, use_image or use_motion_video). A bare name is looked for in the home folder, Pictures, Desktop, Downloads and Documents.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
+  T('list_folder', 'List the pictures (and videos) in a folder on this computer (for a job, look_at, use_image or use_motion_video). A name alone, or one close to it ("renderings" finds "renders"), is looked for in Prompt Maker\'s and ComfyUI\'s folders, then everywhere in the home folder and on other drives; others lists more folders that fit.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
+  T('find', 'Find files or folders on this computer by name, anywhere in the home folder and on every drive (USB, second disk). Names close to it count too.', { name: S('The name or part of it'), kind: E(['folder', 'file', 'any'], 'default: any'), in: S('Optional: only inside this folder') }, ['name']),
   T('use_image', 'Put a picture from a folder into step 3.', { folder: S('The folder, as list_folder took it'), file: S('The file name, from list_folder') }, ['folder', 'file']),
   T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). A step can judge too: pick_best looks at what the job made so far and can put the winner in step 3 (e.g. stills, then the best one animated, then the same video at other settings with set_sampler and render). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Put the whole task in one job. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}]. Example, "3 stills of a diver, different each time, same seed; animate the best in LTX at 20 steps, then 10": no folder, runs [{label:"still 1", steps:[{tool:"set_model",args:{model:"Krea 2"}},{tool:"set_seed",args:{mode:"fixed",value:7}},{tool:"set_dials",args:{takes:1}},{tool:"set_theme",args:{text:"a diver in a kelp forest, sun rays"}},{tool:"generate"},{tool:"render"}]}, {label:"still 2", steps:[{tool:"set_theme",args:{text:"a diver over a coral reef at dusk"}},{tool:"generate"},{tool:"render"}]}, {label:"still 3", steps:[{tool:"set_theme",args:{text:"a diver in a wreck, torch light"}},{tool:"generate"},{tool:"render"}]}, {label:"best, 20 steps", steps:[{tool:"pick_best",args:{for:"a diver who turns to the camera",then:"animate",model:"LTX 2.3"}},{tool:"set_theme",args:{text:"the diver turns to the camera"}},{tool:"set_sampler",args:{steps:20}},{tool:"generate"},{tool:"render"}]}, {label:"10 steps", steps:[{tool:"set_sampler",args:{steps:10}},{tool:"render"}]}].`, {
     title: S('A short name for the job'),
@@ -7189,7 +7198,7 @@ const TOOLS = [
 const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
-  look_at: 'Looking…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
+  look_at: 'Looking…', find: 'Searching this computer…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
   pick_best: 'Choosing the best…', use_render_as_image: 'Putting it in step 3…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
 };
 
@@ -7546,11 +7555,46 @@ async function brainPicks(items, purpose) {
   return { it: pool[0].it, why };
 }
 
+// Renders whose prompt fits the words, best first (then newest): most of the words found in the theme or the take.
+const FIND_STOP = new Set(['the', 'and', 'her', 'his', 'with', 'from', 'that', 'this', 'are', 'was', 'for', 'images', 'image', 'pictures', 'picture', 'renders', 'render', 'created', 'made', 'gallery', 'ones', 'seen']);
+function rendersLike(items, find) {
+  const words = [...new Set(String(find).toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [])].filter(w => !FIND_STOP.has(w)).map(w => w.replace(/(ing|s)$/, '').slice(0, 7));
+  if (!words.length) return items;
+  const need = Math.max(1, Math.ceil(words.length / 2));
+  return items.map(x => {
+    const v = x.it.entry.variations?.[x.it.index];
+    const text = `${x.it.entry.theme || ''} ${v?.versions?.at(-1)?.text || ''} ${x.it.entry.modelName || ''}`.toLowerCase();
+    return { x, score: words.filter(w => text.includes(w)).length };
+  }).filter(m => m.score >= need).sort((a, b) => b.score - a.score).map(m => m.x);
+}
+
+// look_at for pictures and videos in a folder on this computer (read-only, the way list_folder and use_image are).
+async function lookAtFiles({ folder, files, max }) {
+  const f = folder ? await api(`/api/folder?path=${encodeURIComponent(folder)}`) : null;
+  const names = Array.isArray(files) && files.length ? files.map(String) : f ? [...f.images.map(i => i.name), ...(f.videos || [])] : [];
+  if (!names.length) throw new Error(folder ? `There are no pictures or videos in ${f.shown}.` : 'Say which folder (folder) or which files (full paths).');
+  const images = [];
+  const seen = [];
+  for (const name of names) {
+    if (images.length >= max) break;
+    const video = /\.(mp4|m4v|webm|mov|mkv)$/i.test(name);
+    if (!video && !/\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(name)) continue;
+    const full = f && !/[/\\]/.test(name) ? `${f.folder}/${name}` : name;
+    const pics = await picturesOf(`/api/folder/${video ? 'video' : 'image'}?path=${encodeURIComponent(full)}`, video ? 'video' : 'image').catch(() => []);
+    const label = `${name.split(/[/\\]/).pop()}${video ? ' (video: its start and middle)' : ''}`;
+    pics.slice(0, max - images.length).forEach(url => images.push({ label, url }));
+    if (pics.length) seen.push(label);
+  }
+  if (!images.length) throw new Error('Couldn\'t open any of those as pictures or videos.');
+  return { summary: `Looked at ${seen.length === 1 ? seen[0] : `${seen.length} files`}${f ? ` in ${f.shown}` : ''}`, pictures: seen, ...(names.length > seen.length ? { not_shown: names.length - seen.length } : {}), _images: images };
+}
+
 const TOOL_IMPL = {
-  look_at: async ({ what = 'takes', take, renders, limit }) => {
+  look_at: async ({ what = 'takes', take, renders, limit, find, folder, files }) => {
     const llm = selectedLlm();
     if (llm && llm.vision === false) throw new Error(`${llm.name} can't see images. Switch the Brain (top bar) to a 👁 vision model, then ask again.`);
     const max = clampInt(limit ?? 6, 1, 8);
+    if (what === 'files') return lookAtFiles({ folder, files, max });
     let items = [];
     if (what === 'lightbox') {
       if (!lightboxItem()) throw new Error('Nothing is open in the lightbox.');
@@ -7562,7 +7606,7 @@ const TOOL_IMPL = {
     } else if (what === 'this_session' || what === 'earlier_runs') {
       items = reelGroups().flatMap((g, run) => g.items.map(it => ({ it, label: `${g.id === state.entry?.id ? 'the run on screen' : `session run ${run + 1}`} (“${(it.entry.theme || 'from an image').slice(0, 40)}”), take ${it.index + 1}` })));
     } else if (what === 'gallery') {
-      if (!state.history.length) state.history = await api('/api/history');
+      state.history = await api('/api/history'); // renders made since History was last opened count too
       items = galleryItems().map(it => ({ it, label: `“${(it.entry.theme || 'from an image').slice(0, 40)}” (${it.entry.modelName})` }));
     } else {
       const cards = take ? [needCard(take)] : state.cards.filter(c => !c.interrupted);
@@ -7570,6 +7614,10 @@ const TOOL_IMPL = {
         takeItems(card).forEach((it, i) => { if (!renders?.length || renders.includes(i + 1)) items.push({ it, label: `take ${card.index + 1}, render ${i + 1}` }); });
       }
       if (!items.length) throw new Error(take ? `Take ${take} has no renders yet.` : 'There are no renders on screen yet. Render first.');
+    }
+    if (find && (what === 'gallery' || what === 'this_session')) {
+      items = rendersLike(items, find);
+      if (!items.length) throw new Error(`No render's prompt has words like “${find}”. Look with fewer or other words, or without find for the newest.`);
     }
     const images = [];
     const seen = [];
@@ -7691,7 +7739,16 @@ const TOOL_IMPL = {
   },
   list_folder: async ({ folder }) => {
     const f = await api(`/api/folder?path=${encodeURIComponent(folder || '')}`);
-    return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'}${f.videos?.length ? ` and ${f.videos.length} video${f.videos.length === 1 ? '' : 's'}` : ''} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 200).map(i => i.name), ...(f.images.length > 200 || f.more ? { more: f.images.length - 200 + f.more } : {}), ...(f.videos?.length ? { videos: f.videos } : {}), subfolders: f.folders };
+    return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'}${f.videos?.length ? ` and ${f.videos.length} video${f.videos.length === 1 ? '' : 's'}` : ''} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 200).map(i => i.name), ...(f.images.length > 200 || f.more ? { more: f.images.length - 200 + f.more } : {}), ...(f.videos?.length ? { videos: f.videos } : {}), subfolders: f.folders, ...(f.others ? { others: f.others } : {}), ...(f.note ? { note: f.note } : {}) };
+  },
+  find: async ({ name, kind = 'any', in: inside }) => {
+    const r = await api(`/api/find?q=${encodeURIComponent(name || '')}&kind=${encodeURIComponent(kind)}${inside ? `&in=${encodeURIComponent(inside)}` : ''}`);
+    const what = kind === 'folder' ? 'folder' : kind === 'file' ? 'file' : 'match';
+    return {
+      summary: r.found.length ? `Found ${r.found.length}${r.more ? '+' : ''} ${what}${r.found.length === 1 ? '' : what === 'match' ? 'es' : 's'} like “${name}”` : `Nothing called “${name}”`,
+      found: r.found.map(x => `${x.shown}${x.folder ? '/' : ''}`), ...(r.more ? { more: r.more } : {}),
+      looked_in: r.looked_in, ...(r.finished ? {} : { note: 'Stopped looking after a few seconds: give a folder to look in (in) to look deeper.' }),
+    };
   },
   use_image: async ({ folder, file, path }) => {
     const q = path ? `path=${encodeURIComponent(path)}` : `folder=${encodeURIComponent(folder || '')}&name=${encodeURIComponent(file || '')}`;
@@ -7821,7 +7878,7 @@ const TOOL_IMPL = {
     choose('aspect', '#aspect', options('#aspect'), 'aspect');
     if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
     if (isSize(args.resolution) && !options('#resolution').includes(String(args.resolution).replace(/\s*x\s*/, '×'))) {
-      fillResolution(sizeChoices(m, $('#aspect').value), String(args.resolution).replace(/\s*[×x]\s*/, '×'));
+      fillResolution(sizeChoices(m, $('#aspect').value), String(args.resolution).replace(/\s*[×x]\s*/, '×'), true);
       done.push(`resolution ${$('#resolution').value}`);
     } else choose('resolution', '#resolution', options('#resolution'), 'resolution');
     if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');

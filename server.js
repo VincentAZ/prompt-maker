@@ -475,7 +475,7 @@ async function assistantChat(req, res) {
   const settings = await store.getSettings();
   const chat = assistant.cleanMessages(body.messages);
   const llm = await prepareLlm(settings, body.llmModel, assistant.hasImages(chat)); // looking at images needs a 👁 Brain
-  const system = assistant.systemPrompt(body.state);
+  const system = assistant.systemPrompt(body.state, { rendersDir: folders.tidy(store.RENDERS_DIR) });
   const tools = assistant.cleanTools(body.tools);
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
@@ -1256,6 +1256,8 @@ async function route(req, res) {
   if (p === '/api/folder' && m === 'GET') return sendJson(res, 200, await folders.listFolder(url.searchParams.get('path')));
   if (p === '/api/folder/video' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name'), video: true }), PRIVATE);
   if (p === '/api/folder/image' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name') }), PRIVATE);
+  if (p === '/api/find' && m === 'GET') return sendJson(res, 200, await folders.search(url.searchParams.get('q'), { kind: ['folder', 'file', 'any'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'any', from: url.searchParams.get('in') || null }));
+
   if (p === '/api/jobs' && m === 'GET') return sendJson(res, 200, await store.listJobs());
   if ((match = p.match(/^\/api\/jobs\/([\w-]+)$/)) && m === 'PUT') {
     const body = await readBody(req);

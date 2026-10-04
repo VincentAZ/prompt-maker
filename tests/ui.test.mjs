@@ -545,7 +545,7 @@ esac
     // A video's first frame sets its shape: no LTX preset fits 1.6, so it gets the image's own ratio.
     eq(await value('#aspect'), '8:5', 'LTX takes the image\'s own ratio');
     eq(await text('#aspect option:checked'), '8:5 🖼️', 'and says so');
-    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '1216×768|1280×800|1824×1152|2432×1504|3648×2272', 'its sizes, redrawn in that shape');
+    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '1216×768|1280×800|1824×1152|2432×1504|3648×2272|__custom', 'its sizes, redrawn in that shape');
     eq(await value('#resolution'), '1824×1152', 'the one nearest the 1080p it had');
     assert(await visible('#aspectNote'), '"from image" note on the video model too');
     assert(await visible('#roleBlock [data-value="animate"]'), 'animate for video model');
@@ -572,6 +572,19 @@ esac
     eq(await value('#resolution'), '1080×1920', 'back on a preset: the preset sizes');
     await choose('#aspect', '1:1');
     eq(await value('#resolution'), '1024×1024', 'resolution follows a manual aspect change');
+    await choose('#resolution', '__custom');
+    assert(await visible('#resCustom'), 'width and height boxes for your own size');
+    eq(await value('#resolution'), '1024×1024', 'still on the size in use until one is typed');
+    await type('#resW', '1000'); await type('#resH', '700');
+    await js('document.querySelector("#resH").dispatchEvent(new Event("change"))');
+    eq(await value('#resolution'), '1000×700', 'your own size is picked');
+    eq(await text('#resolution option:checked'), 'Your size: 1000×700', 'and says so');
+    eq(await js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).resolution'), '1000×700', 'and remembered');
+    await choose('#aspect', '16:9');
+    eq(await value('#resolution'), '1000×700', 'an aspect change keeps a typed size');
+    await choose('#resolution', '1024×1024');
+    assert(!(await visible('#resCustom')), 'boxes hide on a preset');
+    await choose('#aspect', '1:1');
     assert(!(await visible('#aspectNote')), 'note cleared after a manual change');
     const prefs = () => js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).aspectRatio');
     eq(await prefs(), '1:1', 'a preset is remembered for the model');
@@ -1785,6 +1798,16 @@ esac
     assert(await count('#asLog .as-seen img') >= 1, 'the chat shows what it looked at');
     const sent = JSON.stringify(lastCall().messages);
     assert(/data:image\/jpeg;base64,/.test(sent), 'the Brain got the pictures');
+
+    // Renders you made, found by what they show (not just the newest ones).
+    await type('#asInput', 'show me my renders of the red balloon over rooftops');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Found them') && (await bot()).includes('red balloon'), `it finds renders by the words of their prompt: ${await bot()}`);
+    await type('#asInput', 'show me my renders of a purple elephant skating');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('None of your renders'), `and says so when none match: ${await bot()}`);
 
     await type('#asInput', 'rate the first one excellent');
     await press('Enter');
@@ -3300,7 +3323,20 @@ esac
     const listed = await js(`fetch("/api/folder?path=" + encodeURIComponent(${q(pics)})).then(r => r.json())`);
     eq(JSON.stringify(listed.images.map(i => i.name)), JSON.stringify(['a.png', 'b2.png', 'b10.png', 'broken.png']), 'a folder lists its pictures in natural order');
     const missing = await js('fetch("/api/folder?path=NoSuchFolderAnywhere").then(async r => [r.status, (await r.json()).error])');
-    assert(missing[0] === 404 && missing[1].includes('I looked in'), `a missing folder says where it looked: ${missing[1]}`);
+    assert(missing[0] === 404 && missing[1].includes('home folder'), `a missing folder says where it looked: ${missing[1]}`);
+    await fs.mkdir(path.join(tmp, 'Work', 'Client A', 'Renders'), { recursive: true });
+    const found = await js(`fetch("/api/find?kind=folder&q=renderings&in=" + encodeURIComponent(${q(path.join(tmp, "Work"))})).then(r => r.json())`);
+    assert(found.found[0]?.path === path.join(tmp, 'Work', 'Client A', 'Renders'), `a folder is found by a name close to it, deep down: ${JSON.stringify(found.found[0])}`);
+    const file = await js(`fetch("/api/find?kind=file&q=notes&in=" + encodeURIComponent(${q(tmp)})).then(r => r.json())`);
+    assert(file.found.some(x => x.path === path.join(pics, 'notes.txt')), 'and a file by part of its name');
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await type('#asInput', `show me the pictures in ${pics}`);
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    const saw = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    assert(saw.includes('I see them') && saw.includes('2 files'), `the assistant looks at pictures in a folder: ${saw}`);
+    await click('#asClear');
+    await click('#asClear');
     eq(await js(`fetch("/api/folder/image?path=" + encodeURIComponent(${q(path.join(pics, 'notes.txt'))})).then(r => r.status)`), 400, 'only pictures are handed out');
 
     const before = (await js('fetch("/api/history").then(r => r.json())')).length;
