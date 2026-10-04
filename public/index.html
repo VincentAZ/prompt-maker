@@ -150,12 +150,30 @@
                 </div>
               </div>
               <p id="motionHint" class="hint">The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.</p>
-              <div id="trimBox" class="trim-box" role="group" aria-label="Use part of the motion video" hidden>
-                <label>From <input type="number" id="trimStart" min="0" step="0.1" value="0" inputmode="decimal"> s</label>
-                <label>for <input type="number" id="trimLen" min="0.2" step="0.1" inputmode="decimal"> s</label>
-                <button type="button" id="trimGo" class="btn small primary">✂️ Use this part</button>
-                <button type="button" id="trimCancel" class="btn small">Cancel</button>
+              <div id="trimBox" class="trim-box" role="group" aria-label="Pick the part of the motion video to use" hidden>
+                <div class="trim-strip">
+                  <div class="trim-thumbs" aria-hidden="true"></div>
+                  <div class="trim-sel" aria-hidden="true"></div>
+                  <input type="range" id="trimScrub" min="0" max="1" step="1" value="0" aria-label="Scrub through the video, frame by frame (← → one frame, Shift for a second)">
+                </div>
+                <div class="trim-row">
+                  <button type="button" id="trimBack" class="btn small" title="One frame back (←)">‹ frame</button>
+                  <button type="button" id="trimPlay" class="btn small" title="Play the part you picked (Space)">▶ Play part</button>
+                  <button type="button" id="trimFwd" class="btn small" title="One frame on (→)">frame ›</button>
+                  <span id="trimNow" class="trim-now" aria-live="polite"></span>
+                </div>
+                <div class="trim-row">
+                  <button type="button" id="trimSetStart" class="btn small" title="Start at the frame you see (I)">⇤ Start here</button>
+                  <label>Start <input type="number" id="trimStart" min="0" step="any" inputmode="decimal"> s</label>
+                  <label>End <input type="number" id="trimEnd" min="0" step="any" inputmode="decimal"> s</label>
+                  <button type="button" id="trimSetEnd" class="btn small" title="End with the frame you see (O)">End here ⇥</button>
+                </div>
                 <p id="trimNote" class="hint"></p>
+                <div class="trim-row">
+                  <button type="button" id="trimGo" class="btn small primary">✂️ Use this part</button>
+                  <button type="button" id="trimCancel" class="btn small">Cancel</button>
+                  <span class="muted small">← → one frame · Shift: a second · I start · O end · Space play</span>
+                </div>
               </div>
             </div>
           </section>

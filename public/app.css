@@ -378,10 +378,25 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .wfp-settings { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; border: 0; background: none; text-align: left; align-self: flex-start; }
 .wfp-settings span { padding: 2px 9px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font: 11.5px var(--mono); color: var(--text-2); transition: border-color 0.15s, color 0.15s; }
 .wfp-settings:hover span { border-color: color-mix(in srgb, var(--m) 70%, transparent); color: var(--text); }
-.trim-box { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--line, rgb(255 255 255 / 12%)); }
-.trim-box label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--text-2); }
-.trim-box input { width: 76px; }
-.trim-box .hint { flex-basis: 100%; margin: 0; }
+.trim-box { display: grid; gap: 8px; margin-top: 8px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--line, rgb(255 255 255 / 12%)); }
+.trim-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.trim-row label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--text-2); }
+#trimBox input[type="number"] { width: 84px; flex: none; padding: 6px 8px; }
+.trim-box .hint { margin: 0; }
+.trim-now { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+/* The timeline: frames from the video, the part you picked lit up, and a playhead you drag. */
+.trim-strip { position: relative; height: 56px; border-radius: 8px; overflow: hidden; background: #000; }
+.trim-thumbs { position: absolute; inset: 0; display: flex; }
+.trim-thumbs canvas { flex: 1 1 0; min-width: 0; height: 100%; object-fit: cover; }
+/* Outside the part you picked is dimmed (the shadow), its edges in the accent color. */
+.trim-sel { position: absolute; top: 0; bottom: 0; left: var(--a, 0%); width: var(--w, 100%); border-inline: 3px solid var(--hot); border-block: 2px solid var(--hot); border-radius: 4px; box-shadow: 0 0 0 9999px rgb(8 6 16 / 68%); pointer-events: none; }
+#trimScrub { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border-radius: 0; background: transparent; appearance: none; -webkit-appearance: none; cursor: ew-resize; }
+#trimScrub::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+#trimScrub::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 56px; border: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0 1px #000, 0 0 8px rgb(0 0 0 / 80%); }
+#trimScrub::-moz-range-track { height: 100%; background: transparent; }
+#trimScrub::-moz-range-thumb { width: 4px; height: 56px; border: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0 1px #000; }
+#trimScrub:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+.mz-preview.trimming video { max-height: 420px; }
 .wfp-models { padding: 9px 12px; border-radius: var(--radius-sm); background: rgb(255 196 77 / 12%); border: 1px solid rgb(255 196 77 / 35%); color: #ffe2a8; font-size: 13.5px; }
 .wfp-models p { margin: 0; }
 .wfp-models .hint { margin-top: 6px; color: var(--text-2); font-size: 12.5px; }

@@ -43,7 +43,7 @@ const state = {
   loraPicker: { open: false, q: '' },
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   wfMissing: new Map(), // workflow id → model files it needs that ComfyUI doesn't have
-  trim: null, // { start, seconds } while picking part of the motion video (✂️ Trim)
+  trim: null, // { a, b }: the frames kept (a first, b after the last) while picking part of the motion video (✂️ Trim)
   downloads: [], // model downloads into ComfyUI (running in the server)
   comfy: null,
   renderRuns: new Set(),
@@ -1442,48 +1442,159 @@ async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
   }
 }
 
-// ✂️ Trim: pick the stretch of a long motion video to animate. The preview plays just that stretch while you pick.
-// It starts as long as the picked workflow animates (81 frames for some), else the whole video.
+// ✂️ Trim: pick the stretch of a long motion video to animate, to the frame. A timeline of the video's frames with a
+// playhead to drag, one-frame steps (← →, Shift for a second), start and end set at the frame you see (I, O), and
+// ▶ to play just that part. It starts out as long as the picked workflow animates (81 frames for some), else all of it.
+// Frames count at the video's frame rate: start = first frame kept, end = the frame after the last one.
+const trimFps = () => state.video?.fps || 24;
+const trimTotal = () => Math.max(1, Math.round((state.video?.seconds || 0) * trimFps()));
+const clockLabel = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(2).padStart(5, '0')}`;
+const frameAt = t => Math.min(trimTotal() - 1, Math.max(0, Math.floor(t * trimFps() + 1e-4)));
+let trimRaf = 0;
+
 function openTrim() {
   const v = state.video;
   if (!v?.file) return;
+  const total = trimTotal();
   const flow = activeFlow();
-  const clip = typeof flow?.motionFrames === 'number' && v.fps ? flow.motionFrames / v.fps : null;
-  $('#trimStart').value = '0';
-  $('#trimStart').max = String(Math.max(0, (v.seconds || 0) - 0.2));
-  $('#trimLen').value = String(Math.round(Math.min(v.seconds || clip || 5, clip || v.seconds || 5) * 10) / 10);
-  $('#trimLen').max = String(v.seconds || '');
+  const clip = typeof flow?.motionFrames === 'number' ? flow.motionFrames : total;
+  state.trim = { a: 0, b: Math.min(total, clip) };
+  const scrub = $('#trimScrub');
+  scrub.max = String(total - 1);
+  scrub.value = '0';
   $('#trimBox').hidden = false;
+  $('.mz-preview').classList.add('trimming');
+  const pv = $('#motionPreview');
+  pv.pause();
+  showTrimFrame(0);
   syncTrim();
-  $('#trimStart').focus();
+  trimThumbs();
+  renderMotionHint();
+  scrub.focus();
 }
+
 function closeTrim() {
   $('#trimBox').hidden = true;
+  $('.mz-preview')?.classList.remove('trimming');
   state.trim = null;
-}
-function syncTrim() {
-  const v = state.video;
-  const start = Math.max(0, Number($('#trimStart').value) || 0);
-  const seconds = Math.max(0.2, Number($('#trimLen').value) || 0);
-  state.trim = { start, seconds };
-  const end = Math.min(v?.seconds || Infinity, start + seconds);
-  const flow = activeFlow();
-  const frames = v?.fps ? Math.round((end - start) * v.fps) : null;
-  $('#trimNote').textContent = `${secsLabel(start)} → ${secsLabel(end)}${frames ? ` · ${frames} frames` : ''}${typeof flow?.motionFrames === 'number' && frames > flow.motionFrames + 1 ? ` · “${flow.name}” animates the first ${flow.motionFrames} of them` : ''}`;
+  cancelAnimationFrame(trimRaf);
   const pv = $('#motionPreview');
-  if (pv.currentTime < start || pv.currentTime > end) pv.currentTime = start;
+  if (pv.getAttribute('src')) pv.play().catch(() => {});
 }
-$('#trimStart').addEventListener('input', syncTrim);
-$('#trimLen').addEventListener('input', syncTrim);
-$('#trimGo').addEventListener('click', e => videoCopy(e.currentTarget, 'trim', state.trim));
+
+// Shows a frame in the preview (seeking to the middle of it, so the browser lands on that one).
+function showTrimFrame(frame) {
+  const pv = $('#motionPreview');
+  const f = Math.min(trimTotal() - 1, Math.max(0, frame));
+  pv.pause();
+  pv.currentTime = (f + 0.5) / trimFps();
+  $('#trimScrub').value = String(f);
+  trimClock(f);
+}
+
+function trimClock(f = frameAt($('#motionPreview').currentTime)) {
+  $('#trimNow').textContent = `${clockLabel(f / trimFps())} · frame ${f + 1} of ${trimTotal()}`;
+}
+
+// The part picked: the lit-up stretch on the timeline, the Start and End boxes, and what it adds up to.
+function syncTrim({ fields = true } = {}) {
+  const t = state.trim;
+  if (!t) return;
+  const total = trimTotal();
+  const fps = trimFps();
+  t.a = Math.min(total - 1, Math.max(0, t.a));
+  t.b = Math.min(total, Math.max(t.a + 1, t.b));
+  $('.trim-sel').style.setProperty('--a', `${(t.a / total) * 100}%`);
+  $('.trim-sel').style.setProperty('--w', `${((t.b - t.a) / total) * 100}%`);
+  if (fields) {
+    $('#trimStart').value = (t.a / fps).toFixed(2);
+    $('#trimEnd').value = (t.b / fps).toFixed(2);
+  }
+  const flow = activeFlow();
+  const n = t.b - t.a;
+  $('#trimNote').textContent = `Frames ${t.a + 1}–${t.b} · ${n} frames · ${secsLabel(n / fps)} (${clockLabel(t.a / fps)} → ${clockLabel(t.b / fps)})${typeof flow?.motionFrames === 'number' && n > flow.motionFrames + 1 ? ` · “${flow.name}” animates the first ${flow.motionFrames} of them` : ''}`;
+  $('#trimGo').disabled = n >= total && t.a === 0; // the whole video: nothing to cut
+}
+
+// Small frames along the timeline, taken in this page from a second copy of the video (never saved).
+async function trimThumbs() {
+  const box = $('.trim-thumbs');
+  const src = $('#motionPreview').currentSrc || $('#motionPreview').getAttribute('src');
+  if (!src || box.dataset.src === src) return;
+  box.dataset.src = src;
+  box.replaceChildren();
+  const v = await openVideo(src).catch(() => null);
+  if (!v || box.dataset.src !== src) return;
+  const n = 12;
+  const h = 56;
+  const w = Math.max(1, Math.round((h * (v.videoWidth || 16)) / (v.videoHeight || 9)));
+  for (let i = 0; i < n && box.dataset.src === src; i++) {
+    await seekTo(v, ((i + 0.5) * (state.video?.seconds || v.duration || 1)) / n);
+    const c = Object.assign(document.createElement('canvas'), { width: w, height: h });
+    c.getContext('2d').drawImage(v, 0, 0, w, h);
+    box.append(c);
+  }
+  v.removeAttribute('src');
+  v.load();
+}
+
+function playTrim() {
+  const t = state.trim;
+  const pv = $('#motionPreview');
+  if (!t) return;
+  if (!pv.paused) { pv.pause(); return; }
+  const f = frameAt(pv.currentTime);
+  if (f < t.a || f >= t.b - 1) pv.currentTime = (t.a + 0.5) / trimFps();
+  pv.play().catch(() => {});
+  const follow = () => {
+    if (!state.trim || pv.paused) { $('#trimPlay').textContent = '▶ Play part'; return; }
+    const now = frameAt(pv.currentTime);
+    if (now >= state.trim.b || now < state.trim.a) pv.currentTime = (state.trim.a + 0.5) / trimFps(); // loop the part
+    $('#trimScrub').value = String(now);
+    trimClock(now);
+    trimRaf = requestAnimationFrame(follow);
+  };
+  $('#trimPlay').textContent = '⏸ Pause';
+  cancelAnimationFrame(trimRaf);
+  trimRaf = requestAnimationFrame(follow);
+}
+
+const trimStep = n => showTrimFrame(frameAt($('#motionPreview').currentTime) + n);
+const trimMark = end => {
+  const f = Number($('#trimScrub').value) || 0;
+  if (end) { state.trim.b = f + 1; if (state.trim.a > f) state.trim.a = f; }
+  else { state.trim.a = f; if (state.trim.b <= f) state.trim.b = Math.min(trimTotal(), f + 1); }
+  syncTrim();
+};
+$('#trimScrub').addEventListener('input', e => showTrimFrame(Number(e.target.value)));
+$('#trimBack').addEventListener('click', () => trimStep(-1));
+$('#trimFwd').addEventListener('click', () => trimStep(1));
+$('#trimPlay').addEventListener('click', playTrim);
+$('#trimSetStart').addEventListener('click', () => trimMark(false));
+$('#trimSetEnd').addEventListener('click', () => trimMark(true));
+for (const [sel, key] of [['#trimStart', 'a'], ['#trimEnd', 'b']]) {
+  $(sel).addEventListener('input', e => {
+    if (!state.trim || e.target.value === '') return;
+    state.trim[key] = Math.round(Math.max(0, Number(e.target.value) || 0) * trimFps());
+    syncTrim({ fields: false });
+    showTrimFrame(key === 'a' ? state.trim.a : state.trim.b - 1);
+  });
+  $(sel).addEventListener('change', () => syncTrim());
+}
+$('#trimGo').addEventListener('click', e => {
+  const t = state.trim;
+  videoCopy(e.currentTarget, 'trim', { start: t.a / trimFps(), seconds: (t.b - t.a) / trimFps() });
+});
 $('#trimCancel').addEventListener('click', () => { closeTrim(); renderMotionHint(); });
 $('#trimBox').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); $('#trimGo').click(); } // inside the Create form: Enter must not generate
-  if (e.key === 'Escape') { e.preventDefault(); closeTrim(); }
-});
-$('#motionPreview').addEventListener('timeupdate', e => {
-  const t = state.trim;
-  if (t && (e.target.currentTime < t.start - 0.05 || e.target.currentTime > t.start + t.seconds)) e.target.currentTime = t.start;
+  const typing = e.target.matches('input[type="number"]');
+  if (e.key === 'Enter') { e.preventDefault(); if (typing) syncTrim(); else $('#trimGo').click(); return; } // in the Create form: Enter must not generate
+  if (e.key === 'Escape') { e.preventDefault(); closeTrim(); renderMotionHint(); return; }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); trimStep((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? Math.round(trimFps()) : 1)); }
+  else if (e.key === ' ' && !e.target.matches('button')) { e.preventDefault(); playTrim(); }
+  else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); trimMark(false); }
+  else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); trimMark(true); }
 });
 
 function setVideo(v) {
@@ -4012,7 +4123,7 @@ function renderLoraPanel() {
   const row = (l, key) => `
     <li class="lora-row${l.on ? '' : ' off'}" data-key="${esc(key)}">
       <label class="switch mini" title="${l.on ? 'On' : 'Off'}"><input type="checkbox" class="lr-on"${l.on ? ' checked' : ''} aria-label="Use ${esc(loraShort(l.name))}"><span class="track" aria-hidden="true"></span></label>
-      <span class="lr-name" title="${esc(l.name)}">${esc(loraShort(l.name))}${l.own ? '<small>in workflow</small>' : ''}</span>
+      <span class="lr-name" title="${esc(l.name)}${l.pieces > 1 ? ` · loaded by each of the workflow's ${l.pieces} pieces: this sets them all` : ''}">${esc(loraShort(l.name))}${l.own ? `<small>in workflow${l.pieces > 1 ? ` · ×${l.pieces} pieces` : ''}</small>` : ''}</span>
       ${l.own ? (l.edited ? `<button type="button" class="icon-btn lr-reset" data-act="lora-reset" title="Back to the workflow's ${l.original.on ? Number(l.original.strength).toFixed(2) : 'off'}" aria-label="Reset ${esc(loraShort(l.name))}">↺</button>` : '<span></span>') : `<button type="button" class="icon-btn" data-act="lora-remove" aria-label="Remove ${esc(loraShort(l.name))}" title="Remove">✕</button>`}
       <input type="range" class="lr-range" min="-2" max="2" step="0.05" value="${Math.max(-2, Math.min(2, l.strength))}" aria-label="Strength of ${esc(loraShort(l.name))}"${l.on ? '' : ' disabled'}>
       <input type="number" class="lr-num" min="-5" max="5" step="0.05" value="${Number(l.strength).toFixed(2)}" aria-label="Strength of ${esc(loraShort(l.name))}, exact"${l.on ? '' : ' disabled'}>

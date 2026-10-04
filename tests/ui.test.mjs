@@ -1519,7 +1519,7 @@ esac
 
   await test('render: a page reload doesn\'t stop it; the page picks it up, and ✕ Cancel still works', async () => {
     const reload = async () => {
-      await js('location.reload()');
+      await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
       await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
     };
     await type('#theme', 'SLOWRENDER lanterns on a river');
@@ -1579,7 +1579,8 @@ esac
     const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
     const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
     // On by default: with no choice saved, the panel opens with the app.
-    await js('localStorage.removeItem("pm.assistantOpen"); sessionStorage.setItem("default-assistant", "1"); location.reload()');
+    // (ready is cleared first, so the wait below can't be met by the page that's going away)
+    await js('document.documentElement.dataset.ready = ""; localStorage.removeItem("pm.assistantOpen"); sessionStorage.setItem("default-assistant", "1"); location.reload()');
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
     assert(await visible('#assistant'), 'the assistant is open from the start');
     await js('sessionStorage.removeItem("default-assistant")');
@@ -1633,7 +1634,7 @@ esac
     const picked = await js('document.querySelector(".take .rb-wf")?.selectedOptions[0]?.textContent || ""');
     const flow = (await flows()).find(f => f.modelId === 'krea2-raw' && f.name === picked);
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'fixed', value: 4242 } }) });
-    await js('location.reload()');
+    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
     await click('.model-card[data-id="krea2-raw"]');
     await click('#varSeg button[data-value="1"]');
@@ -1645,7 +1646,7 @@ esac
     await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered ×2', 10000);
     // Change the setup: random seed, ×1, another prompt.
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'random' } }) });
-    await js('location.reload()');
+    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
     await type('#theme', 'something else entirely');
     await click('.tabs button[data-view="history"]');
@@ -2579,7 +2580,7 @@ esac
     const files = all.map(r => r.files[0].file);
     const tiles = `[...document.querySelectorAll("#prevStrip .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
     eq(await js(`${tiles}.length`), all.length, 'all its renders show under Earlier runs');
-    await js('location.reload()');
+    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
     await waitFor(`${tiles}.length === ${all.length}`, 'Earlier runs survive a reload');
     const originalOf = r => path.join(comfyRoot, 'output', `mock_${r.promptId.slice(0, 6)}.png`);
@@ -2677,7 +2678,7 @@ esac
     await click('.tabs button[data-view="create"]');
     eq(await value('#theme'), '', 'the Create form lets go of its theme');
     assert(!(await visible('.dz-preview')), 'and its image');
-    await js('location.reload()');
+    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
     eq(await value('#theme'), '', 'still empty after a reload');
     assert(!(await visible('.dz-preview')), 'no image after a reload');
@@ -2854,7 +2855,8 @@ esac
       [`${n}:3`]: { class_type: 'PrimitiveInt', inputs: { value: 896 }, _meta: { title: 'Int (Width)' } },
       [`${n}:4`]: { class_type: 'PrimitiveInt', inputs: { value: 512 }, _meta: { title: 'Int (Height)' } },
       [`${n}:5`]: { class_type: 'WanAnimate2ToVideo', inputs: { positive: [`${n}:1`, 0], negative: [`${n}:2`, 0], reference_image: ['7', 0], pose_video: ['8', 0], width: [`${n}:3`, 0], height: [`${n}:4`, 0] } },
-      [`${n}:6`]: { class_type: 'KSampler', inputs: { seed: 1, positive: [`${n}:5`, 0], negative: [`${n}:5`, 1], model: ['9', 0] } },
+      [`${n}:6`]: { class_type: 'KSampler', inputs: { seed: 1, positive: [`${n}:5`, 0], negative: [`${n}:5`, 1], model: [`${n}:7`, 0] } },
+      [`${n}:7`]: { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'speed.safetensors', strength_model: 0.8, model: ['9', 0] }, _meta: { title: 'Load LoRA' } },
     });
     const prompt = {
       ...piece(10), ...piece(20),
@@ -2880,6 +2882,14 @@ esac
     eq(`${built['10:1'].inputs.text}|${built['20:1'].inputs.text}`, 'a robot|a robot', 'every piece gets the prompt');
     eq(`${built['20:3'].inputs.value}×${built['20:4'].inputs.value}`, '848×480', 'and the size');
     eq(built['20:2'].inputs.text, 'blurry', 'never the negative');
+    // Each piece loads the same LoRA: one row, and a change reaches every piece.
+    const { leads } = wfLib.loraGroups(prompt);
+    eq(leads.map(l => `${l.key}×${l.pieces}`).join(), '10:7×2', 'the LoRA shows once, for both pieces');
+    const tuned = wfLib.buildPrompt({ ...w, loras: { tweaks: { '10:7': { on: true, strength: 0.5 } }, added: [] } }, { text: 'a robot' });
+    eq(`${tuned.prompt['10:7'].inputs.strength_model}|${tuned.prompt['20:7'].inputs.strength_model}`, '0.5|0.5', 'its strength goes to both');
+    eq(tuned.applied.loras.length, 1, 'and the render lists it once');
+    const off = wfLib.buildPrompt({ ...w, loras: { tweaks: { '10:7': { on: false, strength: 0.8 } }, added: [] } }, { text: 'a robot' }).prompt;
+    assert(!off['10:7'] && !off['20:7'], 'switched off, it leaves both pieces');
     const info = { CheckpointLoaderSimple: { input: { required: { ckpt_name: [['other.safetensors', 'wan-2.1/sam3.1.safetensors']] } } }, CLIPVisionLoader: { input: { required: { clip_name: [[]] } } } };
     built[11] = { class_type: 'CLIPVisionLoader', inputs: { clip_name: 'clip_vision_h.safetensors' }, _meta: { title: 'Load CLIP Vision' } };
     const check = modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://huggingface.co/x/clip_vision_h.safetensors', directory: 'clip_vision' }]);
@@ -3009,13 +3019,26 @@ esac
     assert((await text('#wfpWarn')).includes('the first 6.8s of your 10s motion video'), `and how much: ${await text('#wfpWarn')}`);
     await click('#videoTrim');
     await waitFor('!document.querySelector("#trimBox").hidden', 'the trim tools');
-    eq(await value('#trimLen'), '6.8', 'it starts as long as the workflow animates');
-    await type('#trimStart', '2');
-    await type('#trimLen', '4');
-    assert((await text('#trimNote')).includes('2s → 6s') && (await text('#trimNote')).includes('48 frames'), `it says what you picked: ${await text('#trimNote')}`);
+    eq(await value('#trimEnd'), '6.75', 'it starts as long as the workflow animates (81 frames)');
+    assert((await text('#trimNow')).includes('frame 1 of 120'), `the playhead is on the first frame: ${await text('#trimNow')}`);
+    await waitFor('document.querySelectorAll(".trim-thumbs canvas").length === 12', 'the timeline shows the video\'s frames');
+    // Frame by frame to where it should start (a button, then the arrow key), and start there.
+    await click('#trimFwd');
+    await press('ArrowRight');
+    await press('ArrowRight');
+    assert((await text('#trimNow')).includes('frame 4 of 120'), `one frame per step: ${await text('#trimNow')}`);
+    await click('#trimSetStart');
+    eq(await value('#trimStart'), '0.25', 'it starts at that frame');
+    // Drag the playhead to 6 s and end there.
+    await js('(() => { const s = document.querySelector("#trimScrub"); s.value = "71"; s.dispatchEvent(new Event("input", { bubbles: true })); })()');
+    assert((await text('#trimNow')).startsWith('0:05.92 · frame 72'), `the playhead shows the frame: ${await text('#trimNow')}`);
+    await click('#trimSetEnd');
+    eq(await value('#trimEnd'), '6.00', 'and ends with it');
+    assert((await text('#trimNote')).includes('Frames 4–72 · 69 frames'), `it says what you picked: ${await text('#trimNote')}`);
+    await shot('49-trim');
     await click('#trimGo');
-    await toastText('of your motion video, from 2s');
-    await waitFor('/🕺 4(\\.\\d)?s ·/.test(document.querySelector("#mzInfo").textContent) && document.querySelector("#trimBox").hidden', 'now that part alone');
+    await toastText('of your motion video, from');
+    await waitFor('/🕺 5\\.[78]s ·/.test(document.querySelector("#mzInfo").textContent) && document.querySelector("#trimBox").hidden', 'now that part alone (69 frames at 12 fps)');
     await waitFor('!(document.querySelector("#wfpWarn")?.textContent || "").includes("animates")', 'and the workflow does all of it');
     await click('#videoClear');
     await click('#imageClear');
