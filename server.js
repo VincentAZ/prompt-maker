@@ -852,8 +852,14 @@ async function renderTake(req, res) {
     videoName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.video.file}`, VIDEO_MIME[entry.video.file.split('.').pop()] || 'video/mp4');
   }
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
-  // A workflow that loops over the whole motion video: how many pieces it takes, for the progress line.
-  const pieces = workflow.mapping.video && entry.video?.seconds && entry.video?.fps ? wf.loopPieces(workflow.prompt, Math.round(entry.video.seconds * entry.video.fps)) : null;
+  // How many frames the motion video has: a workflow made of pieces gets as many as it needs, and one that loops over
+  // the whole video says how many pieces it's on.
+  let videoFrames = null;
+  if (workflow.mapping.video && entry.video?.file) {
+    const info = entry.video.seconds && entry.video.fps ? entry.video : await videotools.probe(store.videoPath(entry.video.file));
+    if (info?.seconds && info?.fps) videoFrames = Math.round(info.seconds * info.fps);
+  }
+  const pieces = videoFrames ? wf.loopPieces(workflow.prompt, videoFrames) : null;
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
   const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio });
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
@@ -874,6 +880,7 @@ async function renderTake(req, res) {
         resolution: entry.resolution,
         duration: entry.duration,
         seed,
+        videoFrames,
       }, info);
       models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
       promptId = await comfy.queuePrompt(base, prompt, clientId);

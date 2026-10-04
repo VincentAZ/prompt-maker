@@ -2871,6 +2871,11 @@ esac
       40: { class_type: 'ImageStitch', inputs: { image1: ['32', 0], image2: ['8', 0] } },
       41: { class_type: 'SaveVideo', inputs: { video: ['40', 0] }, _meta: { title: 'Side by side' } },
     };
+    // The second piece carries on from the first (SCAIL 2's "Extend"): 81 frames each, 5 repeated, its number in a primitive.
+    for (const n of [10, 20]) prompt[`${n}:5`].inputs.length = 81;
+    Object.assign(prompt['20:5'].inputs, { previous_frames: ['10:6', 0], previous_frame_count: 5, pose_video: ['20:9', 0] });
+    prompt['20:8'] = { class_type: 'PrimitiveInt', inputs: { value: 2 }, _meta: { title: 'Int' } };
+    prompt['20:9'] = { class_type: 'ImageFromBatch', inputs: { image: ['8', 0], batch_index: ['20:8', 0], length: 81 } };
     const notes = wfLib.repair(prompt);
     assert(!prompt['41'] && !prompt['31'] && prompt['34'], `only the full render is saved (${Object.keys(prompt).filter(k => /^3|^4/.test(k)).join()})`);
     eq(notes.length, 2, 'and both are said');
@@ -2882,6 +2887,16 @@ esac
     eq(`${built['10:1'].inputs.text}|${built['20:1'].inputs.text}`, 'a robot|a robot', 'every piece gets the prompt');
     eq(`${built['20:3'].inputs.value}×${built['20:4'].inputs.value}`, '848×480', 'and the size');
     eq(built['20:2'].inputs.text, 'blurry', 'never the negative');
+    // A longer video gets more pieces like the last, each carrying on from the one before, all joined.
+    eq(wfLib.clipFrames(prompt), 'all', 'it covers any length');
+    const long = wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 400 });
+    eq(long.applied.pieces, 6, '81 + 5 × 76 frames cover 400');
+    eq(JSON.stringify(long.prompt['pm2:5'].inputs.previous_frames), '["pm1:6",0]', 'a new piece carries on from the one before');
+    eq(long.prompt['pm3:8'].inputs.value, 5, 'and knows which piece it is');
+    eq(JSON.stringify(long.prompt['pm3:5'].inputs.positive), '["20:1",0]', 'with the same prompt (shared, not copied)');
+    eq(JSON.stringify(long.prompt['32'].inputs['images.image5']), '["pm4:6",0]', 'all joined into one video');
+    assert(!long.prompt['pm1:7'], 'the LoRA stays shared, not copied');
+    eq(wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 120 }).applied.pieces, 2, 'a short video keeps its two');
     // Each piece loads the same LoRA: one row, and a change reaches every piece.
     const { leads } = wfLib.loraGroups(prompt);
     eq(leads.map(l => `${l.key}×${l.pieces}`).join(), '10:7×2', 'the LoRA shows once, for both pieces');
