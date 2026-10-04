@@ -104,6 +104,22 @@ export function startMock(port) {
     res.on('close', () => { closed = true; });
 
     await sleep(slow ? 800 : 350);
+    // A Brain whose chat template breaks as soon as tools are sent, the way LM Studio reports it.
+    const said = body.messages.filter(m => m.role === 'user' && !Array.isArray(m.content)).at(-1);
+    if (body.tools && /broken template/.test(said?.content)) {
+      res.end(`event: error\ndata: ${JSON.stringify({ error: { message: 'Error rendering prompt with jinja template: "Cannot call something that is not a function: got UndefinedValue".' } })}\n\n`);
+      return;
+    }
+    // Then its tools come in writing: it calls one as text (a bracket wrong, then words written too early), and
+    // answers once the result is back.
+    if (body.messages[0].content.includes('# Your tools')) {
+      const after = textOf(body.messages.at(-1).content).includes('<tool_result name="set_theme">{"ok":true');
+      const reply = after ? 'Theme set, the long way round.' : 'On it.\n<tool_call>{"name": "set_theme", "arguments": {"text": "from the written tools"]\n</tool_call>\nDone, it is set!';
+      for (const w of reply.split(/(?<=\s)/)) send({ choices: [{ delta: { content: w } }] });
+      send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (body.tools) {
       const step = assistantTurn(body);
       (step.calls || []).forEach(([name, args], i) => {

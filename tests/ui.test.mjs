@@ -2492,9 +2492,19 @@ esac
     await idle();
     eq(await value('#theme'), 'from a tag', 'tool calls written as text work too');
 
+    await type('#asInput', 'broken template please');
+    await press('Enter');
+    await idle();
+    eq(await value('#theme'), 'from the written tools', 'a Brain whose chat template breaks on tools gets them in writing');
+    assert((await acts()).includes('Theme → “from the written tools”'), 'the step shows');
+    const log = await text('#asLog');
+    assert((await bot()).includes('long way round') && log.includes('On it.') && !log.includes('Done, it is set') && !log.includes('tool_call'), `only what it said before the call and after it ran shows: ${log.slice(-200)}`);
+    const written = lastCall();
+    assert(!written.tools && written.messages[0].content.includes('- set_theme:') && written.messages.every(m => m.role !== 'tool'), 'it was asked again with the tools described, calls and results as text');
+
     await goto(`${APP}/#create`);
     await waitFor('!document.querySelector("#assistant").hidden', 'left open, it opens again with the app');
-    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 6', 'the conversation is still there after a reload');
+    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 7', 'the conversation is still there after a reload');
     await viewport(390, 844, true);
     await sleep(200);
     eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');

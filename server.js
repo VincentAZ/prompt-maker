@@ -475,24 +475,37 @@ async function assistantChat(req, res) {
   const settings = await store.getSettings();
   const chat = assistant.cleanMessages(body.messages);
   const llm = await prepareLlm(settings, body.llmModel, assistant.hasImages(chat)); // looking at images needs a 👁 Brain
-  const messages = [{ role: 'system', content: assistant.systemPrompt(body.state) }, ...chat];
+  const system = assistant.systemPrompt(body.state);
   const tools = assistant.cleanTools(body.tools);
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
   if (llm.loaded === false) stream.send({ type: 'status', text: `Loading ${llm.name} into memory…` });
   try {
     const maxTokens = Math.max(settings.maxTokens, 2048);
-    const out = await complete(settings, llm, {
+    // inWriting: the tools described in the instructions (see assistant.toolsText) instead of sent as tools.
+    const ask = inWriting => complete(settings, llm, {
       model: llm.id,
-      messages,
-      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+      messages: inWriting
+        ? [{ role: 'system', content: `${system}\n\n${assistant.toolsText(tools)}` }, ...assistant.textToolChat(chat)]
+        : [{ role: 'system', content: system }, ...chat],
+      ...(tools.length && !inWriting ? { tools, tool_choice: 'auto' } : {}),
       ...sampling(settings, 0.3, llm),
       max_tokens: maxTokens,
     }, {
       signal: stream.signal,
-      onUpdate: u => stream.send({ type: 'delta', text: u.text, thinking: u.thinking }),
+      onUpdate: u => stream.send({ type: 'delta', text: assistant.shownText(u.text), thinking: u.thinking }),
       onStatus: text => stream.send({ type: 'status', text }),
     });
+    let out;
+    try {
+      out = await ask(false);
+    } catch (err) {
+      // LM Studio couldn't fit the tools into this Brain's chat template (it fails in a moment, before any answer).
+      if (!tools.length || llm.cloud || !assistant.templateFailed(err)) throw err;
+      out = await ask(true).catch(e => {
+        throw assistant.templateFailed(e) ? store.httpError(502, `${llm.name} can't chat here: LM Studio can't put a conversation into the form this model expects. Pick another Brain in the top bar.`) : e;
+      });
+    }
     const { text, toolCalls } = out.toolCalls.length ? out : assistant.fallbackToolCalls(out.text);
     if (!text && !toolCalls.length) {
       throw store.httpError(502, out.finishReason === 'length'
