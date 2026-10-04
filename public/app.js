@@ -1870,12 +1870,14 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   const tags = [entry.aspectRatio, entry.resolution, entry.duration, `${entry.length} length`, `🌡 ${Number(entry.temperature).toFixed(2)}`]
     .filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('');
   const via = entry.llmName || state.llms.find(l => l.id === entry.llmModel)?.name || entry.llmModel;
-  const takes = entry.variations?.length || 0;
+  // While writing, the buttons show greyed out, so the takes under them don't move down when they're done.
+  const takes = running ? state.cards.length : entry.variations?.length || 0;
+  const off = running ? ' disabled' : '';
   head.style.setProperty('--m', m ? modelColor(m) : 'var(--hot)');
   head.innerHTML = `<span class="tag model">${kindIcon(entry.modelKind)} ${esc(entry.modelName)}</span>${entry.batch ? `<span class="tag batch" title="From the batch “${esc(entry.batch)}”">🎞 ${esc(entry.batch)}</span>` : ''}${entry.source ? `<button type="button" class="tag src-link" id="srcLink" title="Open the take this came from">⬑ from ${esc(takeLabel(entry.source))}</button>` : ''}${tags}
     ${via ? `<span class="via">${running ? 'rolling on' : 'written by'} ${esc(via)}${totalSecs ? ` in ${totalSecs.toFixed(1)}s` : ''}</span>` : ''}
-    ${!running && takes > 1 && entry.id && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn">🎨 Render all ${takes}</button>` : ''}
-    ${!running && takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn">📋 Copy all ${takes} takes</button>` : ''}`;
+    ${takes > 1 && (running || entry.id) && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn"${off}>🎨 Render all ${takes}</button>` : ''}
+    ${takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn"${off}>📋 Copy all ${takes} takes</button>` : ''}`;
   head.hidden = false;
   $('#srcLink')?.addEventListener('click', () => openSource(entry.source));
   $('#renderAllBtn')?.addEventListener('click', () => state.cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); }));
@@ -2563,11 +2565,11 @@ function createTake(index, count, model) {
     </div>
     <div class="take-meta"><span class="meter" hidden></span><span class="time"></span><span class="change"></span></div>
     <div class="render-zone" hidden></div>
-    <form class="refine" hidden>
+    <form class="refine"${model ? ' inert' : ' hidden'}>
       <input placeholder="Tweak it… e.g. make it golden hour, add a dog" aria-label="What should change in ${esc(name)}?">
       <button type="submit" title="Refine (Enter)" aria-label="Refine ${esc(name)}">➜</button>
     </form>
-    <div class="chips" hidden>${chips.map(([e, c]) => `<button type="button" class="chip-btn" data-instr="${esc(c)}">${e} ${esc(c)}</button>`).join('')}</div>`;
+    <div class="chips"${model ? ' inert' : ' hidden'}>${chips.map(([e, c]) => `<button type="button" class="chip-btn" data-instr="${esc(c)}">${e} ${esc(c)}</button>`).join('')}</div>`;
   el.dataset.panel = 'take';
   decoratePanel(el);
   const card = { el, index, view: 0, model, running: new Map(), rb: null };
@@ -2684,6 +2686,7 @@ function showVersion(card, i) {
   ta.hidden = false;
   ta.readOnly = false;
   ta.value = v.text;
+  autosize(ta); // now, so the box never has its default height in between (the take would shrink, then grow)
   requestAnimationFrame(() => autosize(ta));
   updateMeter(card, v.text);
   setStatus(card, '');
@@ -2692,6 +2695,7 @@ function showVersion(card, i) {
   $('.save-edit', card.el).hidden = true;
   $('.refine', card.el).hidden = !canRefine;
   $('.chips', card.el).hidden = !canRefine;
+  $('.refine', card.el).inert = $('.chips', card.el).inert = false;
   $('.versions', card.el).hidden = versions.length < 2;
   $('.vlabel', card.el).textContent = `v${card.view + 1}/${versions.length}`;
   $('.prev', card.el).disabled = card.view === 0;
@@ -2702,11 +2706,15 @@ function showVersion(card, i) {
   renderZone(card);
 }
 
+// Wide screens: the takes scroll on their own, next to the steps. Narrow ones: the page scrolls, takes under the steps.
+const stageScrolls = () => getComputedStyle($('.stage')).overflowY !== 'visible';
+
 function renderResults(entry, { totalSecs } = {}) {
   state.entry = entry;
   renderReel();
   const list = $('#resultsList');
   list.innerHTML = '';
+  $('.stage').scrollTop = 0; // other takes: from the top (on wide screens the takes scroll on their own)
   state.cards = [];
   $('#resultsEmpty').hidden = Boolean(entry);
   renderStageHead(entry, { totalSecs });
@@ -2818,6 +2826,7 @@ async function newSession() {
   renderResults(null);
   setTitle('');
   window.scrollTo({ top: 0, behavior: scrollMode() });
+  $('.director-steps').scrollTo({ top: 0, behavior: scrollMode() });
   $('#theme').focus({ preventScroll: true });
   announce('New session. The theme, image and takes are cleared.');
   const rendering = state.renderRuns.size ? ' Renders still running will land in the Gallery.' : '';
@@ -2928,23 +2937,27 @@ async function pumpLine() {
 async function runOrder(order) {
   closeRun();
   if (order.batches.length) return runBatches(order);
-  const entry = await runGeneration(order.body, order.model);
-  if (!entry) return false;
-  if (!order.render) return true;
-  if (!state.comfy?.ok) await loadComfyStatus();
-  if (!state.comfy?.ok) {
-    showError(state.comfy?.error || 'ComfyUI is not reachable.');
-    return false;
+  const entry = await runGeneration(order.body, order.model, { rendersNext: Boolean(order.render) });
+  try {
+    if (!entry) return false;
+    if (!order.render) return true;
+    if (!state.comfy?.ok) await loadComfyStatus();
+    if (!state.comfy?.ok) {
+      showError(state.comfy?.error || 'ComfyUI is not reachable.');
+      return false;
+    }
+    if (state.entry !== entry) return true; // you opened something else meanwhile; its render bar is still there
+    state.cards.forEach(c => {
+      if (!c.rb || c.interrupted) return;
+      c.rb.workflowId = order.render.workflowId;
+      const sel = $('.rb-wf', c.el);
+      if (sel) sel.value = c.rb.workflowId;
+      startRender(c, { setup: order.render });
+    });
+    return true;
+  } finally {
+    state.cards.forEach(c => { if (c.pending) { c.pending = false; renderTiles(c); } }); // no render took its place
   }
-  if (state.entry !== entry) return true; // you opened something else meanwhile; its render bar is still there
-  state.cards.forEach(c => {
-    if (!c.rb || c.interrupted) return;
-    c.rb.workflowId = order.render.workflowId;
-    const sel = $('.rb-wf', c.el);
-    if (sel) sel.value = c.rb.workflowId;
-    startRender(c, { setup: order.render });
-  });
-  return true;
 }
 
 // Takes an order out of line, with a toast to put it back where it was.
@@ -3040,7 +3053,8 @@ async function formRequest() {
 }
 
 // Writes the takes for a request into the stage, streaming. Returns the saved history entry, or null.
-async function runGeneration(body, m) {
+// rendersNext: auto-render renders the takes when they're written, so each shows where its render will be.
+async function runGeneration(body, m, { rendersNext = false } = {}) {
   // Placeholder entry so the stage header and meters work while streaming.
   state.entry = { ...body, modelName: m.name, modelKind: m.kind, variations: [] };
   state.timings = {};
@@ -3051,15 +3065,16 @@ async function runGeneration(body, m) {
   list.innerHTML = '';
   const count = body.variations;
   state.cards = Array.from({ length: count }, (_, i) => createTake(i, count, m));
-  state.cards.forEach(c => list.append(c.el));
+  state.cards.forEach(c => { c.pending = rendersNext; list.append(c.el); renderZone(c); });
   state.cards.forEach((c, i) => setStatus(c, i === 0 ? 'Warming up…' : 'Queued', i === 0));
   renderStageHead(state.entry, { running: true });
   state.controller = new AbortController();
   setBusy(true);
   setTitle(count > 1 ? `✍️ Take 1/${count}` : '✍️ Writing');
   announce(`Generating ${count > 1 ? `${count} takes` : 'a prompt'} for ${m.name}`);
-  const stageTop = $('.stage').getBoundingClientRect().top;
-  if (stageTop < 70 || stageTop > innerHeight * 0.6) $('.stage').scrollIntoView({ behavior: scrollMode(), block: 'start' });
+  const stage = $('.stage');
+  if (stageScrolls()) stage.scrollTo({ top: 0, behavior: scrollMode() });
+  else if (stage.getBoundingClientRect().top < 70 || stage.getBoundingClientRect().top > innerHeight * 0.6) stage.scrollIntoView({ behavior: scrollMode(), block: 'start' });
 
   const t0 = performance.now();
   let takeStart = t0;
@@ -5308,10 +5323,12 @@ document.addEventListener('mouseout', e => {
 function renderZone(card) {
   const zone = $('.render-zone', card.el);
   const entry = state.entry;
-  if (!zone || !entry?.id || card.interrupted) { if (zone) zone.hidden = true; return; }
+  if (!zone || !entry || card.interrupted) { if (zone) zone.hidden = true; return; }
+  const writing = !entry.id; // greyed out until the take is written, so the take doesn't grow when it's done
   const model = card.model;
   const flows = model ? workflowsFor(model.id) : [];
   zone.hidden = false;
+  zone.inert = writing;
   let bar = '';
   if (flows.length) {
     card.rb ??= { count: 1 };
@@ -5349,7 +5366,7 @@ function renderZone(card) {
   $('.rh-add', zone)?.addEventListener('click', () => openWorkflowDialog({ modelId: model.id }));
   $('.rh-x', zone)?.addEventListener('click', () => { saved.set('hideRenderHint', true); state.cards.forEach(renderZone); toast('Tip hidden. Add workflows any time in Models.'); });
   renderTiles(card);
-  updateRenderStatus(card);
+  if (!writing) updateRenderStatus(card);
 }
 
 // What a workflow will actually use (sampler, steps, CFG, seed), as small chips.
@@ -5438,8 +5455,17 @@ function renderTiles(card) {
     cell.append(b, go);
     return cell;
   });
-  box.replaceChildren(...card.running.values(), ...tiles);
+  box.replaceChildren(...card.running.values(), ...(card.pending && !card.running.size ? [card.waitTile ??= pendingTile()] : []), ...tiles);
   box.hidden = !box.children.length;
+}
+
+// Where the render will show while the prompt is still being written (auto-render), so the take doesn't grow then.
+function pendingTile() {
+  const t = document.createElement('div');
+  t.className = 'rtile running pending';
+  t.style.setProperty('--ar', ASPECT_CSS(state.entry?.aspectRatio));
+  t.innerHTML = '<div class="rt-live"><span class="rt-stage">🎨 Renders when it\'s written</span></div>';
+  return t;
 }
 
 function runningTile(card) {
@@ -5500,6 +5526,7 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
   const keys = Array.from({ length: count }, (_, i) => `${Date.now()}-${i}`);
   const tiles = keys.map(() => runningTile(card));
   keys.forEach((k, i) => card.running.set(k, tiles[i]));
+  card.pending = false;
   // Newest first: the tile for render 1 goes first.
   renderTiles(card);
   // The server's job is what renders, so cancelling tells it (leaving the page or reloading doesn't).
@@ -8765,6 +8792,34 @@ document.addEventListener('click', e => {
   const el = head.parentElement;
   setPanel(el, !el.classList.contains('collapsed'));
 });
+
+// ---------- steady layout ----------
+// Folding a panel or swapping takes for shorter ones makes the page shorter. Scrolled near the end, the browser then
+// pulls everything down to fill the gap, so the header just clicked jumps away. A floor under the page (and under
+// the steps and the takes, which scroll on their own on wide screens) keeps each as long as what's on screen: the gap
+// stays at the end and closes as you scroll back up.
+function holdFloor(scroller, parent) {
+  const floor = Object.assign(document.createElement('div'), { className: 'scroll-floor' });
+  floor.setAttribute('aria-hidden', 'true');
+  parent.append(floor);
+  const win = scroller === window;
+  const update = () => { floor.style.height = `${win ? scrollY + innerHeight : scroller.scrollTop + scroller.clientHeight}px`; };
+  scroller.addEventListener('scroll', update, { passive: true });
+  if (win) addEventListener('resize', update); else new ResizeObserver(update).observe(scroller);
+  update();
+}
+holdFloor(window, document.body);
+holdFloor($('.director-steps'), $('.director-steps'));
+holdFloor($('.stage'), $('.stage'));
+
+// On wide screens Create fills the window under the top bar, and under the LM Studio banner while it shows.
+const barsObserver = new ResizeObserver(() => {
+  const root = document.documentElement.style;
+  root.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`);
+  root.setProperty('--banner-h', `${$('#banner').hidden ? 0 : $('#banner').offsetHeight + 14}px`); // + its margin
+});
+barsObserver.observe($('.topbar'));
+barsObserver.observe($('#banner'));
 
 // ---------- boot ----------
 

@@ -80,9 +80,10 @@
   <main>
     <!-- ================= CREATE ================= -->
     <section id="view-create" class="view" aria-label="Create">
-      <div id="jobBar" class="job-bar" role="status" hidden></div>
       <div class="create">
+        <div id="jobBar" class="job-bar" role="status" hidden></div>
         <form id="createForm" class="director" autocomplete="off" novalidate>
+          <div class="director-steps">
           <section class="step" data-panel="create-model">
             <header class="step-head"><span class="num">1</span><h2>Pick your model</h2></header>
             <div id="modelChips" class="model-grid" role="radiogroup" aria-label="Target model"></div>
@@ -234,6 +235,7 @@
             <div id="chainBox" class="chain"></div>
             <input type="file" id="chainImportInput" accept=".json,application/json" hidden>
           </section>
+          </div>
 
           <div class="generate-bar">
             <p id="genCost" class="gen-cost" hidden></p>

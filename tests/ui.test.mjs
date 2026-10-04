@@ -675,6 +675,57 @@ esac
     await click('#varSeg button[data-value="1"]');
   });
 
+  await test('nothing jumps: takes keep their size when written, folds keep their header, the steps stay put', async () => {
+    const top = sel => js(`Math.round(document.querySelector(${q(sel)}).getBoundingClientRect().top)`);
+    // Like a person, without scrolling first (click() does): presses the button where it is now.
+    const pressAt = async sel => {
+      const b = await js(`(() => { const r = document.querySelector(${q(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: b.x, y: b.y, button: 'left', clickCount: 1 });
+      await sleep(80);
+    };
+    try {
+      await click('#varSeg button[data-value="3"]');
+      await type('#theme', 'SLOWSECOND nothing jumps');
+      const theme = await top('#theme');
+      await click('#generateBtn');
+      await waitFor('document.querySelectorAll(".take").length === 3', 'three takes');
+      // While they're written, each take's buttons are there already, greyed out, and so is Copy all.
+      assert(await js('[...document.querySelectorAll(".take")].every(t => !t.querySelector(".refine").hidden && t.querySelector(".refine").inert && t.querySelector(".chips").inert)'), 'tweak box and chips show greyed out while writing');
+      eq(await js('document.querySelector("#copyAllBtn")?.disabled'), true, 'Copy all shows greyed out while writing');
+      await waitFor('!document.querySelector(".take:nth-child(3) .prompt-view").hidden && document.querySelector(".take:nth-child(2) .status").textContent.includes("Done")', 'take 3 being written', 15000);
+      await sleep(150);
+      const take3 = await top('.take:nth-child(3)');
+      await genDone();
+      const moved = (await top('.take:nth-child(3)')) - take3;
+      assert(Math.abs(moved) <= 6, `take 3 stays where it was when the takes are done (moved ${moved}px)`);
+      assert(await js('[...document.querySelectorAll(".take")].every(t => !t.querySelector(".refine").inert)'), 'and their buttons work');
+      eq(await top('#theme'), theme, 'the steps never moved');
+      // A wide window: the steps and the takes scroll on their own, the page doesn't.
+      assert(await js('document.documentElement.scrollHeight <= innerHeight + 1'), 'the page itself does not scroll');
+      await js('document.querySelector(".stage").scrollTop = 1e6');
+      await sleep(100);
+      eq(await top('#theme'), theme, 'scrolling the takes leaves the steps where they are');
+
+      // Fold a take, or a step, scrolled to the end: the header you clicked stays under the mouse.
+      const take3Head = '.take:nth-child(3) > .take-head';
+      const takeHead = await top(take3Head);
+      await pressAt(`${take3Head} .collapse-btn`);
+      assert(await js('document.querySelector(".take:nth-child(3)").classList.contains("collapsed")'), 'take 3 folded');
+      eq(await top(take3Head), takeHead, 'the folded take\'s header stays put');
+      await pressAt(`${take3Head} .collapse-btn`);
+      await js('document.querySelector(".director-steps").scrollTop = 1e6');
+      await sleep(100);
+      const dialsHead = '[data-panel="create-dials"] > .step-head';
+      const stepHead = await top(dialsHead);
+      await pressAt(`${dialsHead} .collapse-btn`);
+      assert(await js('document.querySelector(\'[data-panel="create-dials"]\').classList.contains("collapsed")'), 'step 4 folded');
+      eq(await top(dialsHead), stepHead, 'the folded step\'s header stays put');
+    } finally {
+      await openPanel('create-dials');
+      await click('#varSeg button[data-value="1"]');
+    }
+  });
+
   await test('LM Studio dies mid-answer → friendly error, partial kept', async () => {
     await type('#theme', 'SLOWTEST dropout');
     await click('#generateBtn');
@@ -2106,7 +2157,7 @@ esac
     assert((await text('.take .rb-settings')).includes('9 steps'), 'the take shows them too');
     await click('#wfpSettings');
     await setupOpen();
-    assert(await js('document.activeElement?.closest("#samplerCtl")'), 'settings chips jump to the sampler');
+    await waitFor('document.activeElement?.closest("#samplerCtl")', 'settings chips jump to the sampler'); // on the next frame
     await click('#wfClose');
 
     await choose('#wfpSelect', turboId);

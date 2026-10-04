@@ -228,7 +228,31 @@ main { padding: 24px; max-width: 1560px; margin: 0 auto; }
 /* ---------- create ---------- */
 .create { display: grid; grid-template-columns: minmax(340px, 460px) minmax(0, 1fr); gap: 24px; align-items: start; }
 .create > * { min-width: 0; }
-.director { display: flex; flex-direction: column; gap: 26px; padding: 22px 22px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 26px; backdrop-filter: blur(18px); box-shadow: var(--shadow); }
+.director { --bar-fade: 34px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 26px; backdrop-filter: blur(18px); box-shadow: var(--shadow); }
+.director-steps { position: relative; display: flex; flex-direction: column; gap: 26px; padding: 22px 22px calc(26px + var(--bar-fade)); }
+/* Wide screens: the steps and the takes each scroll on their own and the page stays put, so takes being written,
+   renders arriving and panels folding never move the controls. A running job's bar sits over the takes. */
+@media (min-width: 901px) {
+  .create {
+    height: calc(100dvh - var(--topbar-h, 76px) - var(--banner-h, 0px) - 48px); min-height: 420px;
+    grid-template-rows: auto minmax(0, 1fr); row-gap: 0;
+  }
+  .create > .job-bar { grid-column: 2; grid-row: 1; margin-bottom: 16px; }
+  .director { grid-column: 1; grid-row: 1 / span 2; max-height: 100%; }
+  .director-steps {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; scroll-padding-bottom: var(--bar-fade);
+    border-radius: 26px 26px 0 0; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
+  }
+  .create > .stage {
+    grid-column: 2; grid-row: 2; align-self: stretch; position: relative; overflow-y: auto; overscroll-behavior: contain;
+    margin-right: -14px; padding-right: 14px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
+  }
+  .create > .stage > * { flex-shrink: 0; }
+}
+/* Keeps a scroller as long as what's on screen (see holdFloor in app.js). */
+.scroll-floor { position: absolute; top: 0; left: 0; width: 1px; visibility: hidden; pointer-events: none; }
+body:not(:has(#view-create.active)) > .scroll-floor { display: none; }
+@media (max-width: 900px) { .create .scroll-floor { display: none; } }
 .step { display: flex; flex-direction: column; gap: 12px; }
 .step-head { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
 .step-head h2 { font-size: 18px; font-weight: 750; white-space: nowrap; }
@@ -327,8 +351,8 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .range-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
 
 .generate-bar {
-  position: sticky; bottom: 0; z-index: 2; display: flex; gap: 8px;
-  margin: 0 -22px; padding: 34px 22px 20px;
+  position: sticky; bottom: 0; z-index: 2; flex: none; display: flex; gap: 8px;
+  margin-top: calc(-1 * var(--bar-fade)); padding: var(--bar-fade) 22px 20px;
   background: linear-gradient(to top, var(--panel-solid) 62%, rgb(22 19 34 / 0%));
   border-radius: 0 0 26px 26px;
 }
@@ -498,6 +522,9 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 .refine button { width: 38px; height: 38px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--m); color: #0a0910; font-size: 18px; font-weight: 900; flex: none; }
 .refine button:hover:not(:disabled) { filter: brightness(1.1); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* While a take is written its controls show greyed out, so it keeps its size when it's done. */
+.take :is(.refine, .chips, .render-zone) { transition: opacity 0.25s; }
+.take :is(.refine, .chips, .render-zone)[inert] { opacity: 0.4; }
 
 .take.interrupted .status { color: var(--warn); background: rgb(255 196 77 / 12%); }
 
@@ -665,6 +692,7 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 }
 @media (max-width: 900px) {
   .create { grid-template-columns: 1fr; }
+  .create > .job-bar { margin-bottom: -12px; }
   .models-layout { grid-template-columns: 1fr; }
   .models-side { position: static; }
 }
@@ -685,8 +713,9 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
   .tabs .badge { position: absolute; margin: -4px 0 0 26px; font-size: 10px; min-width: 16px; padding: 0 4px; }
   .tabs button { position: relative; }
   .llm-label, .wordmark { display: none; }
-  .director { padding: 16px 16px 0; border-radius: 22px; }
-  .generate-bar { margin: 0 -16px; padding: 14px 16px 16px; }
+  .director { --bar-fade: 14px; border-radius: 22px; }
+  .director-steps { padding: 16px 16px calc(26px + var(--bar-fade)); }
+  .generate-bar { padding: var(--bar-fade) 16px 16px; }
   .btn-generate kbd, .btn-stop kbd { display: none; }
   .btn-stop, .btn-new, .btn-queue { padding: 0 14px; }
   .wfp-empty { flex-direction: column; align-items: stretch; text-align: center; }
