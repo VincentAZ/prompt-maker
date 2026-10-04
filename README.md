@@ -57,7 +57,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
 - **Image alone.** Leave the theme empty and it suggests a prompt from the image.
 - **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you. A model file your ComfyUI lacks is one **⬇ Download** away, and a video's black bars one **✂️ Crop** away.
-- **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length. None of the resolutions fit? Pick **✎ Type your own size…**, enter a width and height and click **✓ Use**: the size stays in that model's menu as "Your size: …", even after a restart. Pick it again and **✕ Forget** takes it out.
+- **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length. None of the resolutions fit? Pick **✎ Type your own size…**, enter a width and height and click **✓ Use**: Aspect turns to the size's shape (1280×720 → 16:9), so the render and the prompt are never sideways; the size stays in that model's menu as "Your size: …", even after a restart. Pick it again and **✕ Forget** takes it out.
   - Uploading an image **matches the aspect ratio to it** automatically.
   - Each model remembers your last choices.
 - **Takes.** Generate 1–4 variations at once. Each take deliberately goes a different way (angle, lighting, setting, moment).

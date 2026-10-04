@@ -375,6 +375,8 @@ function applyCustomRes() {
   const w = Math.round(Number($('#resW').value)), h = Math.round(Number($('#resH').value));
   if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return toast('Width and height: 64 to 8192 each', true);
   keepOwnSize(`${w}×${h}`);
+  const best = closestAspect(currentModel(), w / h); // the size's shape: 1280×720 turns a 2:3 Aspect to 16:9
+  if (best && ratioDist(ratioOf($('#aspect').value) || 1, w / h) > 0.05) { $('#aspect').value = best; $('#aspectNote').hidden = true; }
   fillResolution(sizeChoices(currentModel(), $('#aspect').value), `${w}×${h}`);
   savePrefs();
 }

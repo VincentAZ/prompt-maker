@@ -248,12 +248,25 @@ function roleFor(model, wanted) {
   return offered.includes(wanted) ? wanted : offered[0];
 }
 
+// A typed W×H size decides the shape: its aspect wins over an Aspect that doesn't match it (1280×720 with 2:3 → 16:9).
+function sizeAspect(resolution, aspectRatio) {
+  const m = /^(\d+)\s*[×x]\s*(\d+)$/.exec(resolution.trim());
+  if (!m) return aspectRatio;
+  const w = Number(m[1]), h = Number(m[2]);
+  const a = /^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/.exec(aspectRatio);
+  if (a && Math.abs(Math.log((Number(a[1]) / Number(a[2])) / (w / h))) < 0.05) return aspectRatio;
+  const gcd = (x, y) => (y ? gcd(y, x % y) : x);
+  const g = gcd(w, h);
+  return w / g <= 64 && h / g <= 64 ? `${w / g}:${h / g}` : `${(w / h).toFixed(2)}:1`;
+}
+
 function pickParams(body, model) {
+  const resolution = String(body.resolution || model.defaults.resolution || '');
   return {
     theme: String(body.theme || '').trim(),
     imageRole: roleFor(model, body.imageRole),
-    aspectRatio: String(body.aspectRatio || model.defaults.aspectRatio || ''),
-    resolution: String(body.resolution || model.defaults.resolution || ''),
+    aspectRatio: sizeAspect(resolution, String(body.aspectRatio || model.defaults.aspectRatio || '')),
+    resolution,
     duration: model.kind === 'video' ? String(body.duration || model.defaults.duration || '') : '',
     length: store.LENGTHS.includes(body.length) ? body.length : model.defaults.length,
   };
