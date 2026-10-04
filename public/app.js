@@ -4749,6 +4749,44 @@ $('#wfpDenoise').addEventListener('click', e => {
   renderDenoise();
 });
 
+// ---------- create: step 5, background (character animation) ----------
+// A SCAIL 2 workflow can keep the picture's background (it animates the picture) or the motion video's (the character
+// replaces the video's performer). Saved on the workflow like its sampler settings.
+
+function renderBackground() {
+  const box = $('#wfpBackground');
+  const bg = activeFlow()?.background;
+  box.hidden = !bg;
+  if (!bg) return;
+  $$('[role="radio"]', box).forEach(b => {
+    const on = b.dataset.value === bg.value;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+  });
+}
+
+$('#wfpBackground').addEventListener('click', async e => {
+  const b = e.target.closest('[role="radio"]');
+  const flow = activeFlow();
+  if (!b || !flow?.background || b.dataset.value === flow.background.value) return;
+  const value = b.dataset.value;
+  const on = value === 'video';
+  const patch = Object.fromEntries(flow.background.keys.map(k => [k, value === flow.background.original ? null : on]));
+  const before = flow.background;
+  flow.background = { ...before, value };
+  renderBackground();
+  try {
+    const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { overridePatch: patch } });
+    const i = state.workflows.findIndex(f => f.id === flow.id);
+    if (i >= 0) state.workflows[i] = { ...state.workflows[i], ...updated };
+    renderBackground();
+  } catch (err) {
+    flow.background = before;
+    renderBackground();
+    toast(`Couldn't save the background: ${err.message}`, true);
+  }
+});
+
 // ---------- create: step 5, LoRAs ----------
 // A workflow's LoRAs: its own (switch off or re-weight them) plus ones you add from the model's LoRA folder.
 // Saved on the workflow in your data folder; renders record what they used.
@@ -4958,6 +4996,7 @@ function renderWorkflowPicker() {
     sel.title = flows.find(f => f.id === id)?.name || '';
     $('#wfpSettings').innerHTML = settingsHtml(flows.find(f => f.id === id));
     renderSeedRow();
+    renderBackground();
     renderDenoise();
     renderLoraPanel();
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);

@@ -3187,6 +3187,31 @@ esac
     assert(!modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://example.com/clip_vision_h.safetensors', directory: 'clip_vision' }]).missing[0].download, 'a link elsewhere is shown, not downloaded');
   });
 
+  await test('character animation: SCAIL 2 keeps the picture\'s background or the video\'s, as picked', async () => {
+    // A character-replacement workflow: replacement_mode from one boolean per piece, wired to its mask and its sampler.
+    const prompt = {
+      7: { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+      8: { class_type: 'LoadVideo', inputs: { file: 'y.mp4' } },
+    };
+    for (const n of [10, 20]) Object.assign(prompt, {
+      [`${n}:1`]: { class_type: 'CLIPTextEncode', inputs: { text: 'a dancer' } },
+      [`${n}:2`]: { class_type: 'PrimitiveBoolean', inputs: { value: true } },
+      [`${n}:3`]: { class_type: 'SCAIL2ColoredMask', inputs: { sort_by: 'left_to_right', replacement_mode: [`${n}:2`, 0] } },
+      [`${n}:4`]: { class_type: 'WanSCAILToVideo', inputs: { positive: [`${n}:1`, 0], reference_image: ['7', 0], pose_video: ['8', 0], pose_video_mask: [`${n}:3`, 0], replacement_mode: [`${n}:2`, 0] } },
+    });
+    const w = { id: 'w', prompt, mapping: { prompt: [{ node: '10:1', input: 'text' }], seed: [] }, options: { snap: 16, fps: 24, frameRule: 'exact' }, overrides: {}, loras: {} };
+    const bg = wfLib.summary(w).background;
+    eq(`${bg.value}|${bg.original}|${bg.keys.join()}`, 'video|video|10:2|value,20:2|value', 'it keeps the video\'s, as the workflow has it, set in each piece');
+    const picked = { ...w, overrides: { '10:2|value': false, '20:2|value': false } };
+    eq(wfLib.summary(picked).background.value, 'picture', 'picking the picture shows');
+    const sent = wfLib.buildPrompt(picked, { text: 'a robot' }).prompt;
+    eq(`${sent['10:2'].inputs.value}|${sent['20:2'].inputs.value}`, 'false|false', 'and every piece animates the picture');
+    eq(wfLib.summary({ ...w, prompt: { 1: { class_type: 'WanAnimate2ToVideo', inputs: { reference_image: ['7', 0], pose_video: ['8', 0] } } } }).background, null, 'Wan Animate 2 has no such choice');
+    // Written on the node itself, without a primitive.
+    const direct = { 1: { class_type: 'WanSCAILToVideo', inputs: { replacement_mode: false } } };
+    eq(wfLib.summary({ ...w, prompt: direct }).background.keys.join(), '1|replacement_mode', 'a switch on the node itself is found too');
+  });
+
   await test('models: a workflow needing a model ComfyUI lacks: step 5 says so, ⬇ Download puts it in ComfyUI, then it renders', async () => {
     await click('.tabs button[data-view="create"]');
     if (await visible('.dz-preview')) await click('#imageClear');
