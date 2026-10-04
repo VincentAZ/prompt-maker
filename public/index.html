@@ -336,22 +336,9 @@
     <section id="view-gallery" class="view" aria-label="Gallery">
       <div class="page-head">
         <h1>Gallery <span id="galleryCount" class="count-pill"></span></h1>
-        <p>Everything you've rendered with ComfyUI, straight from your prompts.</p>
+        <p>Everything you've rendered, the same grid as 🎞 Your renders: drag a picture to move it, and the order stays.</p>
       </div>
-      <div class="toolbar">
-        <div id="galleryKinds" class="filter-chips" role="group" aria-label="Filter by type">
-          <button type="button" class="chip-btn" data-kind="" aria-pressed="true">All</button>
-          <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">📷 Images</button>
-          <button type="button" class="chip-btn" data-kind="video" aria-pressed="false">🎬 Videos</button>
-        </div>
-        <div id="galleryRated" class="filter-chips" role="group" aria-label="Filter by rating">
-          <button type="button" class="chip-btn rated" data-min="1" aria-pressed="false" title="Rated pretty good or better">★ Pretty good &amp; up</button>
-          <button type="button" class="chip-btn rated" data-min="2" aria-pressed="false" title="Rated very good or excellent">★★ Very good &amp; up</button>
-          <button type="button" class="chip-btn rated" data-min="3" aria-pressed="false" title="Rated excellent">★★★ Excellent</button>
-        </div>
-        <div id="galleryModels" class="filter-chips" role="group" aria-label="Filter by model"></div>
-      </div>
-      <div id="galleryGrid" class="gallery"></div>
+      <div id="galleryHome"></div><!-- (Your renders moves here while the Gallery shows) -->
     </section>
 
     <!-- ================= MODELS ================= -->

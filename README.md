@@ -74,7 +74,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - Watch live progress (and previews) right on the take.
   - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
-  - Browse every result in the **Gallery**, and view it in a full-screen lightbox.
+  - Browse every result in the **Gallery**: the same grid as 🎞 Your renders, as tall as the window, in the same order you dragged them into. View any of them in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
 - **🧠 Brain profiles.** **Models → Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
 - **🔞 Adult content (optional, off by default).** A switch under **Settings → Master instructions** lets the Brain write explicit prompts between adults: plain anatomical language, who does what to whom kept exact, the act at the center of the shot. Each model can also have **Adult examples**, used only while the switch is on.
@@ -470,7 +470,7 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 
 - **Live.** A render shows up the moment it starts, with its preview, progress and **✕ Cancel**, and stays when it's done.
 - **Filters:** 📷 Images or 🎬 Videos, **🕘 This session** (only what you made since Prompt Maker last started), **★ & up**, **★★ & up** or **★★★**, a model, and **Find…** to search the words of the prompt. The count says how many show (*12 of 183*). The filters are remembered, except Find.
-- **Arrange them your way.** Drag a card where you want it and the others make room. On a touch screen, hold it a moment first; with the keyboard, **Shift + ←** or **→** moves the card you're on. Your order is saved in your data folder, so it stays. New renders come in first, ahead of the ones you've placed. **↺ Newest first** goes back to newest first.
+- **Arrange them your way.** Drag a card where you want it and the others slide aside to make room: over a card's left half it goes before it, over its right half after it. On a touch screen, hold it a moment first; with the keyboard, **Shift + ←** or **→** moves the card you're on. Your order is saved in your data folder, so it stays. New renders come in first, ahead of the ones you've placed. **↺ Newest first** goes back to newest first.
 - **As big as you want.** Drag the box's bottom edge to make it taller or shorter. It keeps that height while renders arrive, so the takes below don't move. **🔍** makes the pictures bigger or smaller, up to one picture as tall as the box. **⛶ Full screen** gives the box the whole window (**Esc** goes back). **▾** folds it away. All of this is remembered.
 - **🙈 Hide** one you don't want in the box: hover it and click **🙈** at its top right (**↶ Undo** brings it back). Nothing is deleted; it stays in History, the Gallery and its take. **🙈 Hidden (n)** in the filters shows the ones you hid; **👁 Show** puts one back.
 - Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage.
@@ -480,7 +480,7 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - Click the stars on a render in **Your renders** (hover a render to see them), or the buttons under the lightbox, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**).
 - Renders you marked ♥ favorite before ratings count as ★★★ Excellent.
 
-Every render also appears in the **Gallery** tab, with filters for images, videos, ratings (★ and up, ★★ and up, ★★★ only) and models. Rated renders show their stars on their tile. The newest render becomes the thumbnail of its History card.
+Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Gallery and it's moved on Create too). The Gallery always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its History card.
 
 - After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
 - Video tiles show a still of their first frame and play while you hover them.

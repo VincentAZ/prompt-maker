@@ -1509,22 +1509,14 @@ esac
     await toastText('ComfyUI is connected');
   });
 
-  await test('gallery: every render, opens back into Create', async () => {
+  await test('gallery: every render, in Your renders\' grid, opens back into Create', async () => {
     await click('.tabs button[data-view="gallery"]');
-    await waitFor('document.querySelectorAll(".gtile").length >= 3', 'gallery tiles');
-    eq(await text('#galleryCount'), String(await count('.gtile')), 'count');
-    // Newest first, left to right: the second render sits beside the first, not under it.
-    const [a, b] = await js('[...document.querySelectorAll(".gtile")].slice(0, 2).map(t => t.getBoundingClientRect()).map(r => [r.left, r.top])');
-    assert(b[0] > a[0] && b[1] === a[1], `second tile is beside the first (${a} → ${b})`);
+    await waitFor('document.querySelector("#galleryHome #reel") && document.querySelectorAll("#reelGrid .reel-cell").length >= 3', 'Your renders moved into the Gallery');
+    eq(await text('#galleryCount'), String(await count('#reelGrid .reel-cell')), 'count');
+    assert(!(await visible('#reelToggle')) && !(await visible('#reelGrip')), 'always open, as tall as the window');
     await shot('25-gallery', { full: true });
-    // A render whose file was moved away leaves the layout instead of showing a blank tile.
-    await js('document.querySelector(".gtile:last-child img").src = "/renders/moved-away.png"');
-    await waitFor('document.querySelectorAll(".gtile[hidden]").length === 1', 'missing render left out');
-    // The browser logs that 404 itself; it's the point of this check, not a problem.
-    for (let n = problems.length - 1; n >= 0; n--) if (problems[n].includes('moved-away.png')) problems.splice(n, 1);
-    await click('#galleryKinds [data-kind=""]');
-    await waitFor('!document.querySelectorAll(".gtile[hidden]").length', 'drawn fresh, every tile tried again');
-    await click('.gtile');
+    await click('#reelKinds [data-kind=""]');
+    await click('#reelGrid .reel-cell .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await click('[data-lb="open"]');
     await waitFor('document.querySelector("#view-create").classList.contains("active")', 'back on Create');
@@ -1565,24 +1557,25 @@ esac
     await waitFor('!document.querySelector("#lightbox").hidden', 'a render opens in the lightbox');
     await press('Escape');
     await click('.tabs button[data-view="gallery"]');
-    await click('#galleryRated button[data-min="2"]');
-    await waitFor('document.querySelectorAll("#galleryGrid .gtile").length === 1 && document.querySelector("#galleryGrid .g-fav")?.textContent === "★★★"', 'very good and up: only the excellent one, with its stars');
-    await click('#galleryGrid .gtile');
+    await click('#reelRated button[data-min="2"]');
+    await waitFor('document.querySelectorAll("#galleryHome .reel-cell").length === 1 && !!document.querySelector(\'#galleryHome .reel-cell[data-rating="3"]\')', 'very good and up: only the excellent one');
+    await click('#galleryHome .reel-cell .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await click('[data-lb-rate="3"]');
     await waitFor('document.querySelector(\'[data-lb-rate="3"]\').getAttribute("aria-pressed") === "false"', 'rating taken off');
     eq((await rated()).length, 0, 'no rating left');
     await press('Escape');
-    await click('#galleryRated button[data-min="2"]');
-    await click('#galleryKinds button[data-kind=""]');
-    await click('#galleryGrid .gtile:nth-of-type(2)');
+    await click('#reelRated button[data-min="2"]');
+    await click('#reelKinds button[data-kind=""]');
+    await click('#reelGrid .reel-cell:nth-of-type(2) .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await press('ArrowRight');
     await press('Escape');
-    eq(await count('#galleryGrid .gtile.seen'), 1, 'the Gallery marks the render you looked at last');
-    assert(await js('document.querySelector("#galleryGrid .gtile:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
-    assert(await js('document.activeElement === document.querySelector("#galleryGrid .gtile.seen")'), 'and focus is back on it');
+    eq(await count('#reelGrid .reel-cell.seen'), 1, 'the Gallery marks the render you looked at last');
+    assert(await js('document.querySelector("#reelGrid .reel-cell:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
+    assert(await js('document.activeElement === document.querySelector("#reelGrid .reel-cell.seen .rtile")'), 'and focus is back on it');
     await click('.tabs button[data-view="create"]');
+    await waitFor('document.querySelector("#view-create #reel") && !document.querySelector("#reelGrid .reel-cell.seen")', 'back on Create, the same box, unmarked');
   });
 
   await test('your renders: every render, from before start-up too, in one grid; filters, drag to arrange, height, picture size, full screen', async () => {
@@ -1618,7 +1611,7 @@ esac
     const keys = () => js('[...document.querySelectorAll("#reelGrid > .reel-cell")].map(c => c.dataset.key)');
     const [k0, k1, k2] = await keys();
     await js('document.querySelector("#reelBody").scrollTop = 0; document.querySelector("#reel").scrollIntoView({ block: "start" })');
-    const at = n => js(`(() => { const r = document.querySelectorAll("#reelGrid > .reel-cell")[${n}].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const at = n => js(`(() => { const r = document.querySelectorAll("#reelGrid > .reel-cell")[${n}].getBoundingClientRect(); return { x: r.left + r.width * 0.7, y: r.top + r.height / 2 }; })()`); // (right half: it goes after)
     const from = await at(0);
     const to = await at(2);
     await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 });
@@ -1627,7 +1620,7 @@ esac
     await shot('24c-your-renders-dragging');
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 });
     await sleep(100);
-    eq((await keys()).slice(0, 3).join(), [k1, k2, k0].join(), 'it lands after the card it was dropped on');
+    eq((await keys()).slice(0, 3).join(), [k1, k2, k0].join(), 'over a card\'s right half, it lands after it');
     assert(await js('document.querySelector("#lightbox").hidden && !document.querySelector(".reel-ghost")'), 'dropping it opens nothing');
     await waitFor(`(async () => { const o = (await (await fetch('/api/render-order')).json()).order; return o.indexOf(${q(k0)}) > o.indexOf(${q(k2)}) && o.indexOf(${q(k2)}) >= 0; })()`, 'the order is saved');
     await js(`document.querySelector('#reelGrid > .reel-cell[data-key="${k0}"] .rtile').focus()`);
@@ -1693,8 +1686,8 @@ esac
     all.unshift({ id: 'poster-test', createdAt: new Date().toISOString(), favorite: false, modelId: 'ltx-2-3', modelName: 'LTX 2.3', modelKind: 'video', theme: 'a test pattern', variations: [{ versions: [{ text: 'a test pattern', createdAt: new Date().toISOString() }], renders: [{ id: 'poster-r', versionIndex: 0, text: 'a test pattern', workflowName: 'Mock', files: [{ file: 'poster-test_0.mp4', kind: 'video', name: 'test.mp4' }], createdAt: new Date().toISOString() }] }] });
     await fs.writeFile(file, JSON.stringify(all));
     await click('.tabs button[data-view="gallery"]');
-    await waitFor('/^data:image\\/jpeg/.test(document.querySelector(\'#galleryGrid video[src*="poster-test_0.mp4"]\')?.getAttribute("poster") || "")', 'the video tile got its still', 15000);
-    eq(await js('document.querySelector(\'#galleryGrid video[src*="poster-test_0.mp4"]\').preload'), 'none', 'the video itself loads only when played');
+    await waitFor('/^data:image\\/jpeg/.test(document.querySelector(\'#reelGrid video[src*="poster-test_0.mp4"]\')?.getAttribute("poster") || "")', 'the video tile got its still', 15000);
+    eq(await js('document.querySelector(\'#reelGrid video[src*="poster-test_0.mp4"]\').preload'), 'none', 'the video itself loads only when played');
     await fs.writeFile(file, JSON.stringify(all.slice(1)));
     await fs.rm(mp4);
     await click('.tabs button[data-view="create"]');
@@ -3285,9 +3278,9 @@ esac
     assert(!files.includes(file) && !files.includes('moved-video_0.mp4'), 'the page isn\'t sent renders whose file is gone');
     assert(shown.find(e => e.id === 'moved-video').variations[0].versions.length === 1, 'their takes stay');
     await click('.tabs button[data-view="gallery"]');
-    await waitFor('document.querySelectorAll("#galleryGrid .gtile").length > 0', 'gallery');
-    eq(await count(`#galleryGrid [src*="${file}"], #galleryGrid [src*="moved-video_0"]`), 0, 'no tile for them, not even a blank one');
-    eq(await text('#galleryCount'), String(await count('#galleryGrid .gtile')), 'and the count agrees');
+    await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length > 0', 'gallery');
+    eq(await count(`#reelGrid [src*="${file}"], #reelGrid [src*="moved-video_0"]`), 0, 'no tile for them, not even a blank one');
+    eq(await text('#galleryCount'), String(await count('#reelGrid .reel-cell')), 'and the count agrees');
     await click('.tabs button[data-view="history"]');
     await waitFor('document.querySelectorAll(".hcard").length > 0', 'history');
     eq(await count(`.hcard [src*="${file}"], .hcard [src*="moved-video_0"]`), 0, 'no History card shows them');
@@ -3295,11 +3288,11 @@ esac
     await fs.rename(away, path.join(dataDir, 'renders', file));
     await fs.writeFile(histFile, JSON.stringify(raw.slice(1)));
     await click('.tabs button[data-view="gallery"]');
-    await waitFor(`!!document.querySelector('#galleryGrid [src*="${file}"]')`, 'back in the Gallery with its file');
+    await waitFor(`!!document.querySelector('#reelGrid [src*="${file}"]')`, 'back in the Gallery with its file');
     // Gone while it's on screen: the tile leaves too.
     await fs.rename(path.join(dataDir, 'renders', file), away);
-    await js(`(() => { const el = document.querySelector('#galleryGrid [src*="${file}"]'); el.src = el.src + '?again'; })()`);
-    await waitFor(`!document.querySelector('#galleryGrid [src*="${file}"]') || document.querySelector('#galleryGrid [src*="${file}"]').closest('.gtile').hidden`, 'the tile leaves while you look');
+    await js(`(() => { const el = document.querySelector('#reelGrid [src*="${file}"]'); el.src = el.src + '?again'; })()`);
+    await waitFor(`!document.querySelector('#reelGrid [src*="${file}"]') || document.querySelector('#reelGrid [src*="${file}"]').closest('.reel-cell').hidden`, 'the tile leaves while you look');
     for (let n = problems.length - 1; n >= 0; n--) if (problems[n].includes(file)) problems.splice(n, 1); // the browser logs the 404 it was meant to hit
     await fs.rename(away, path.join(dataDir, 'renders', file));
     await click('.tabs button[data-view="create"]');

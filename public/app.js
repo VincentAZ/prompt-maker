@@ -46,9 +46,6 @@ const state = {
   downloads: [], // model downloads into ComfyUI (running in the server)
   comfy: null,
   renderRuns: new Set(),
-  galleryKind: '',
-  galleryMin: 0, // the Gallery shows renders rated at least this (0: all)
-  galleryModel: '',
 };
 
 // ---------- utilities ----------
@@ -430,7 +427,8 @@ function showView(name, { push = true } = {}) {
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
-  if (name !== 'create') reelFullScreen(false); // (your renders' full screen belongs to Create)
+  reelFullScreen(false);
+  placeReel(name);
   const hash = name === 'models' && modelsPane === 'brains' ? '#models/brains' : `#${name}`;
   if (push && location.hash !== hash) history.pushState(null, '', hash);
   if (name === 'history') loadHistory();
@@ -2110,8 +2108,22 @@ async function refreshSessionEntry(id) {
   forgetRender(fresh);
 }
 
-const reelOpen = () => !saved.get('reelClosed', false);
-const reelLive = () => isView('create') && !$('#reel').hidden && reelOpen();
+const reelOpen = () => inGallery() || !saved.get('reelClosed', false);
+const reelLive = () => (isView('create') || isView('gallery')) && !$('#reel').hidden && reelOpen();
+
+// The Gallery is Your renders, all of it: the same box (same cards, filters, order and drag) moves there while the
+// Gallery shows, open and as tall as the window, and back to Create after. Hiding is Create's alone: the Gallery
+// shows every render.
+const reelHome = { parent: $('#reel').parentElement, next: $('#reel').nextSibling };
+const inGallery = () => $('#reel').parentElement?.id === 'galleryHome';
+function placeReel(view) {
+  const box = $('#reel');
+  if (view === 'gallery' && !inGallery()) $('#galleryHome').append(box);
+  else if (view === 'create' && inGallery()) reelHome.parent.insertBefore(box, reelHome.next);
+  else return;
+  box.classList.toggle('in-gallery', inGallery());
+  renderReel();
+}
 
 // This session's renders (since start-up), grouped by run, newest run first: what the assistant calls this_session.
 function reelGroups() {
@@ -2190,7 +2202,7 @@ const madeOn = iso => {
 
 function reelMatch(it) {
   const f = reelFilter;
-  if (Boolean(it.render.hidden) !== f.hidden) return false;
+  if (!inGallery() && Boolean(it.render.hidden) !== f.hidden) return false;
   if (f.kind && it.file.kind !== f.kind) return false;
   if (f.session && (it.render.createdAt || '') < sinceStart()) return false;
   if (ratingOf(it.render) < f.min || (f.model && it.entry.modelId !== f.model)) return false;
@@ -2201,7 +2213,7 @@ function reelMatch(it) {
 // A render still going shows while the filters would let it in once it's done (it has no rating yet).
 function reelJobMatch(j) {
   const f = reelFilter;
-  if (f.hidden) return false;
+  if (f.hidden && !inGallery()) return false;
   const kind = modelById(j.modelId)?.kind === 'video' ? 'video' : 'image';
   if (f.min || (f.kind && kind !== f.kind) || (f.model && j.modelId !== f.model)) return false;
   const text = `${j.theme || ''} ${j.modelName || ''} ${j.workflowName || ''}`.toLowerCase();
@@ -2224,15 +2236,16 @@ function renderReel() {
   const box = $('#reel');
   if (!box) return;
   const all = allRenders();
-  box.hidden = !all.length && !rendersNow.length && !state.workflows.length;
+  box.hidden = !all.length && !rendersNow.length && !state.workflows.length && !inGallery();
   if (box.hidden) return reelFullScreen(false);
   const open = reelOpen();
   const full = box.classList.contains('full');
   const none = !all.length && !rendersNow.length;
   box.classList.toggle('closed', !open);
   box.classList.toggle('empty', none);
-  const hiddenCount = all.filter(it => it.render.hidden).length;
+  const hiddenCount = inGallery() ? 0 : all.filter(it => it.render.hidden).length;
   if (!hiddenCount) reelFilter.hidden = false;
+  $('#galleryCount').textContent = all.length || '';
   const items = inReelOrder(all).filter(reelMatch);
   const jobs = rendersNow.filter(reelJobMatch);
   const going = rendersLeft();
@@ -2247,7 +2260,7 @@ function renderReel() {
   $('#reelToggle').setAttribute('aria-label', open ? 'Hide your renders' : 'Show your renders');
   $('#reelToggle').textContent = open ? '▾' : '▸';
   $('#reelBody').hidden = !open;
-  $('#reelGrip').hidden = !open || none || full;
+  $('#reelGrip').hidden = !open || none || full || inGallery();
   if (!open) return reelFullScreen(false);
   renderReelFilters(all);
   $('#reelHidden').hidden = !hiddenCount;
@@ -2257,9 +2270,10 @@ function renderReel() {
   $('#reelFilters').hidden = none;
   const empty = $('#reelEmpty');
   empty.hidden = Boolean(items.length || jobs.length);
-  if (empty.dataset.none !== String(none)) {
-    empty.dataset.none = none;
-    empty.innerHTML = none ? 'Every render you make lands here, newest first, and stays. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.'
+  if (empty.dataset.none !== `${none}${inGallery()}`) {
+    empty.dataset.none = `${none}${inGallery()}`;
+    empty.innerHTML = none && inGallery() ? 'No renders yet. Attach a ComfyUI workflow to a model (Models tab), then hit <b>▶ Render</b> on any take: every picture and video lands here.'
+      : none ? 'Every render you make lands here, newest first, and stays. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.'
       : 'Nothing matches these filters. <button type="button" class="btn small" data-reel="all">Show everything</button>';
   }
   reelItems = items;
@@ -2268,6 +2282,7 @@ function renderReel() {
   const grid = $('#reelGrid');
   cards.forEach((c, i) => { if (grid.children[i] !== c) grid.insertBefore(c, grid.children[i] || null); });
   while (grid.children.length > cards.length) grid.lastElementChild.remove();
+  markSeen();
   $('#reelNewest').hidden = !reelOrder.length;
   $('#reelMore').hidden = items.length <= reelShown;
   // Cards of renders that are gone (deleted, moved away) are let go.
@@ -2378,7 +2393,7 @@ $('#reelGrid').addEventListener('click', async e => {
   const n = reelItems.findIndex(x => reelKey(x) === cell?.dataset.key);
   const it = reelItems[n];
   if (!it) return;
-  if (b.dataset.act === 'open') return openLightbox(reelItems, n);
+  if (b.dataset.act === 'open') return openLightbox(reelItems, n, { fromGallery: inGallery() });
   if (b.dataset.act === 'hide') {
     const want = !it.render.hidden;
     try {
@@ -2411,6 +2426,12 @@ for (const type of ['load', 'loadedmetadata']) {
     cell.style.setProperty('--ar', w / h);
   }, true);
 }
+
+// A render whose file was moved or deleted outside the app quietly leaves the grid.
+$('#reelGrid').addEventListener('error', e => {
+  const cell = e.target.closest?.('.reel-cell');
+  if (cell) cell.hidden = true;
+}, true);
 
 // More pictures as you scroll near the end.
 new IntersectionObserver(([e]) => {
@@ -2466,7 +2487,7 @@ $('#reelGrid').addEventListener('click', e => {
 function startReelDrag(d) {
   if (d.ghost || !d.cell.isConnected) return;
   const r = d.cell.getBoundingClientRect();
-  const k = Math.min(1, 220 / Math.max(r.width, r.height)); // a big card is carried small
+  const k = Math.min(1, 160 / Math.max(r.width, r.height)); // a big card is carried small
   d.dx = (d.x - r.left) * k;
   d.dy = (d.y - r.top) * k;
   d.ghost = d.cell.cloneNode(true);
@@ -2482,11 +2503,31 @@ function startReelDrag(d) {
 
 function dragReel(d) {
   d.ghost.style.transform = `translate(${d.x - d.dx}px, ${d.y - d.dy}px)`;
+  if (d.sliding) return; // (cards still sliding into place would be measured where they pass)
   const over = document.elementFromPoint(d.x, d.y)?.closest('#reelGrid > .reel-cell');
   if (!over || over === d.cell) return;
-  // Past a card going forward, it goes after it; going back, before it (so it doesn't flip back and forth).
-  const cards = [...$('#reelGrid').children];
-  moveReelCard(d.key, over.dataset.key, cards.indexOf(d.cell) < cards.indexOf(over));
+  // Over a card's right half it goes after it, over its left half before it; already there, nothing moves (so
+  // cards don't flip back and forth under the pointer).
+  const r = over.getBoundingClientRect();
+  const after = d.x > r.left + r.width / 2;
+  if ((after ? over.nextElementSibling : over.previousElementSibling) === d.cell) return;
+  slideReel(d, () => moveReelCard(d.key, over.dataset.key, after));
+}
+
+// The cards that make room slide there instead of jumping.
+function slideReel(d, change) {
+  const cells = [...$$('#reelGrid > .reel-cell')];
+  const was = new Map(cells.map(c => [c, c.getBoundingClientRect()]));
+  change();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  for (const c of cells) {
+    const a = was.get(c);
+    const b = c.isConnected && c.getBoundingClientRect();
+    if (!b || (a.left === b.left && a.top === b.top)) continue;
+    c.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)` }, { transform: 'none' }], { duration: 160, easing: 'ease-out' });
+  }
+  d.sliding = true;
+  setTimeout(() => { d.sliding = false; if (d.ghost) dragReel(d); }, 160);
 }
 
 // Near the top or bottom of the box, it scrolls.
@@ -2544,7 +2585,8 @@ const reelMaxH = () => Math.max(REEL_MIN_H, innerHeight - 90);
 function sizeReel() {
   const box = $('#reel');
   if (box.hidden) return;
-  box.style.setProperty('--reel-h', `${Math.round(Math.min(reelMaxH(), Math.max(REEL_MIN_H, saved.get('reelHeight', 400))))}px`);
+  const h = inGallery() ? innerHeight - box.getBoundingClientRect().top - window.scrollY - 24 : saved.get('reelHeight', 400);
+  box.style.setProperty('--reel-h', `${Math.round(Math.min(reelMaxH(), Math.max(REEL_MIN_H, h)))}px`);
   const body = $('#reelBody');
   if (body.hidden || box.classList.contains('empty')) return;
   const room = Math.max(80, body.clientHeight - $('#reelFilters').offsetHeight - 28);
@@ -2604,7 +2646,7 @@ function reelFullScreen(on) {
   $('#reelFull .ico').textContent = on ? '⤡' : '⛶';
   $('#reelFull .lbl').textContent = on ? 'Exit full screen' : 'Full screen';
   $('#reelFull').setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
-  $('#reelGrip').hidden = on || box.classList.contains('empty') || !reelOpen();
+  $('#reelGrip').hidden = on || box.classList.contains('empty') || !reelOpen() || inGallery();
   sizeReel();
   if (on) $('#reelFull').focus();
 }
@@ -3507,7 +3549,7 @@ function forgetRender(updated) {
   if (state.entry?.id === updated.id) state.cards.forEach(renderTiles);
   renderReel();
   if (state.run) renderRunStrip();
-  if (isView('gallery')) renderGallery();
+  if (isView('gallery')) renderReel();
   if (isView('history')) renderHistory();
 }
 
@@ -5443,7 +5485,7 @@ async function renderMaybeGone(file) {
   if (!held) return;
   state.cards.forEach(c => { if (!c.interrupted) renderTiles(c); });
   renderReel();
-  if (isView('gallery')) renderGallery();
+  if (isView('gallery')) renderReel();
   if (isView('history')) renderHistory();
 }
 document.addEventListener('error', e => {
@@ -6479,7 +6521,7 @@ function closeLightbox() {
 const galleryKey = it => `${it.render.id}/${it.file.file}`;
 function markSeen() {
   let hit = null;
-  $$('#galleryGrid .gtile').forEach(t => { const on = t.dataset.key === state.gallerySeen; t.classList.toggle('seen', on); if (on) hit = t; });
+  $$('#reelGrid > .reel-cell').forEach(t => { const on = inGallery() && t.dataset.key === state.gallerySeen; t.classList.toggle('seen', on); if (on) hit = $('.rtile', t); });
   return hit;
 }
 
@@ -6606,10 +6648,12 @@ $('#lightbox').addEventListener('click', e => { if (e.target.id === 'lightbox' |
 async function loadGallery() {
   try {
     state.history = await api('/api/history');
+    // (Copies kept from this session give way to the fresh ones: a render whose file is gone leaves.)
+    for (const e of state.history) if (sessionCache.has(e.id)) sessionCache.set(e.id, e);
   } catch (err) {
     toast(err.message, true);
   }
-  renderGallery();
+  renderReel();
 }
 
 function galleryItems() {
@@ -6621,89 +6665,6 @@ function galleryItems() {
   }
   return items.sort((a, b) => (a.render.createdAt < b.render.createdAt ? 1 : -1));
 }
-
-function renderGallery() {
-  const all = galleryItems();
-  const models = [...new Map(all.map(it => [it.entry.modelId, it.entry.modelName])).entries()];
-  if (state.galleryModel && !models.some(([id]) => id === state.galleryModel)) state.galleryModel = '';
-  $('#galleryModels').innerHTML = models.length > 1 ? [['', 'All models'], ...models].map(([id, name]) => `<button type="button" class="chip-btn" data-id="${esc(id)}" aria-pressed="${state.galleryModel === id}" style="--m:${id ? modelColor(modelById(id) || { id }) : 'var(--text-2)'}">${esc(name)}</button>`).join('') : '';
-  $$('#galleryKinds button').forEach(b => b.setAttribute('aria-pressed', b.dataset.kind === state.galleryKind));
-  $$('#galleryRated button').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.min) === state.galleryMin));
-  const items = all.filter(it => (!state.galleryKind || it.file.kind === state.galleryKind) && ratingOf(it.render) >= state.galleryMin && (!state.galleryModel || it.entry.modelId === state.galleryModel));
-  $('#galleryCount').textContent = all.length ? all.length : '';
-  const grid = $('#galleryGrid');
-  grid.style.height = '';
-  if (!items.length) {
-    const none = !all.length;
-    grid.innerHTML = `<div class="empty">
-      <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
-      <h3>${none ? 'No renders yet' : 'Nothing matches'}</h3>
-      <p>${none ? 'Attach a ComfyUI workflow to a model (Models tab), then hit <b>▶ Render</b> on any take. Every image and video lands here.' : 'Try another filter.'}</p>
-      ${none ? '<div class="try"><button type="button" class="btn primary" data-go="models">🎨 Set up a workflow</button></div>' : ''}</div>`;
-    $('[data-go]', grid)?.addEventListener('click', () => showView('models/models'));
-    return;
-  }
-  grid.innerHTML = '';
-  items.forEach((it, n) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'gtile';
-    b.dataset.key = galleryKey(it);
-    b.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
-    b.setAttribute('aria-label', `Open render: ${it.entry.theme || 'from an image'}`);
-    b.innerHTML = `${it.file.kind === 'audio' ? '<div class="rtile audio" style="aspect-ratio:1">🔊</div>' : mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}${ratingOf(it.render) ? `<span class="g-fav" title="${RATINGS[ratingOf(it.render)]}" aria-label="Rated ${RATINGS[ratingOf(it.render)].toLowerCase()}">${starsOf(ratingOf(it.render))}</span>` : ''}<span class="g-cap"><b>${esc(it.entry.theme || 'From an image')}</b><span>${esc(it.entry.modelName)} · ${esc(it.render.workflowName)}</span></span>`;
-    b.addEventListener('click', () => openLightbox(items, n, { fromGallery: true }));
-    grid.append(b);
-  });
-  markSeen();
-  layoutGallery();
-}
-
-// Masonry in reading order: each tile, newest first, goes into whichever column is shortest,
-// so the next render sits beside the last one rather than below it. Tiles stay in DOM order
-// (for Tab and screen readers); only their position is set here.
-function layoutGallery() {
-  const grid = $('#galleryGrid');
-  const tiles = $$('.gtile:not([hidden])', grid);
-  if (!tiles.length) return;
-  const css = getComputedStyle(grid);
-  const gap = +css.getPropertyValue('--g-gap') || 14;
-  const min = +css.getPropertyValue('--g-min') || 260;
-  const width = grid.clientWidth;
-  const cols = Math.max(1, Math.min(+css.getPropertyValue('--g-cols') || 4, Math.floor((width + gap) / (min + gap))));
-  const colW = (width - gap * (cols - 1)) / cols;
-  const heights = Array(cols).fill(0);
-  for (const t of tiles) t.style.width = `${colW}px`;
-  for (const t of tiles) {
-    const c = heights.indexOf(Math.min(...heights));
-    t.style.left = `${c * (colW + gap)}px`;
-    t.style.top = `${heights[c]}px`;
-    heights[c] += t.offsetHeight + gap;
-  }
-  grid.style.height = `${Math.max(...heights) - gap}px`;
-}
-
-// Until a picture loads its tile is a square; once its real size is known, place everything again.
-let galleryFrame = 0;
-function relayoutGallery() {
-  cancelAnimationFrame(galleryFrame);
-  galleryFrame = requestAnimationFrame(layoutGallery);
-}
-$('#galleryGrid').addEventListener('load', relayoutGallery, true);
-$('#galleryGrid').addEventListener('loadedmetadata', relayoutGallery, true);
-// A render whose file was moved or deleted outside the app quietly leaves the layout.
-$('#galleryGrid').addEventListener('error', e => {
-  const tile = e.target.closest?.('.gtile');
-  if (!tile || tile.hidden) return;
-  tile.hidden = true;
-  relayoutGallery();
-}, true);
-let galleryWidth = 0;
-new ResizeObserver(([e]) => { if (e.contentRect.width !== galleryWidth) { galleryWidth = e.contentRect.width; relayoutGallery(); } }).observe($('#galleryGrid'));
-
-$('#galleryKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryKind = b.dataset.kind; renderGallery(); } });
-$('#galleryRated').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryMin = Number(b.dataset.min) === state.galleryMin ? 0 : Number(b.dataset.min); renderGallery(); } });
-$('#galleryModels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.galleryModel = b.dataset.id; renderGallery(); } });
 
 // ---------- models → workflows ----------
 
