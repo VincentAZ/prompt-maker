@@ -337,6 +337,10 @@ body:not(:has(#view-create.active)) > .scroll-floor { display: none; }
 .dials.two { grid-template-columns: 1.3fr 1fr; }
 .dial { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .dial > span { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+#resolutionField > label > span { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.res-custom { display: flex; align-items: center; gap: 6px; }
+.res-custom input { width: 0; flex: 1; min-width: 0; }
+.res-custom b { color: var(--muted); }
 .dial-note { font-style: normal; font-size: 12px; font-weight: 700; color: var(--m); margin-top: -2px; white-space: nowrap; }
 .seg { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line-2); }
 .seg button { flex: 1; padding: 7px 4px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font-weight: 650; font-size: 14px; transition: all 0.15s; }

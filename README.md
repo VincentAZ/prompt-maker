@@ -57,7 +57,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
 - **Image alone.** Leave the theme empty and it suggests a prompt from the image.
 - **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you. A model file your ComfyUI lacks is one **⬇ Download** away, and a video's black bars one **✂️ Crop** away.
-- **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length.
+- **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length. None of the resolutions fit? Pick **✎ Type your own size…** and enter a width and height.
   - Uploading an image **matches the aspect ratio to it** automatically.
   - Each model remembers your last choices.
 - **Takes.** Generate 1–4 variations at once. Each take deliberately goes a different way (angle, lighting, setting, moment).
@@ -187,7 +187,7 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 | **① Pick your model** | The generator you're writing for. Its color follows you across the app. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
-| **④ Dial it in** | Aspect ratio, resolution, duration (video), prompt length, number of takes, temperature. |
+| **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, temperature. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
 | **⑥ Then…** | Optional. Chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
 

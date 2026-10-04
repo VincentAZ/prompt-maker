@@ -345,6 +345,33 @@ function matchImageAspect() {
   return best;
 }
 
+// Resolution choices plus "✎ Your own size…": a W×H the user types, kept as the last option ("Your size: 1000×700").
+const CUSTOM_RES = '__custom';
+const isSize = v => /^\d+\s*[×x]\s*\d+$/.test(String(v || ''));
+function fillResolution(choices, value) {
+  const sel = $('#resolution');
+  const own = isSize(value) && !choices.includes(value) ? value : null;
+  fillSelect(sel, own ? [...choices, own] : choices, value);
+  if (own) sel.options[sel.options.length - 1].textContent = `Your size: ${own}`;
+  sel.dataset.last = sel.value;
+  sel.insertAdjacentHTML('beforeend', `<option value="${CUSTOM_RES}">✎ Type your own size…</option>`);
+  showCustomRes(false);
+}
+function showCustomRes(on) {
+  $('#resCustom').hidden = !on;
+  if (!on) return;
+  const [w, h] = ($('#resolution').value.match(/\d+/g) || []).map(Number);
+  $('#resW').value = w || ''; $('#resH').value = h || '';
+}
+function applyCustomRes() {
+  const w = Math.round(Number($('#resW').value)), h = Math.round(Number($('#resH').value));
+  if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return;
+  const m = currentModel();
+  fillResolution(sizeChoices(m, $('#aspect').value), `${w}×${h}`);
+  showCustomRes(true);
+  savePrefs();
+}
+
 // Keeps the resolution in step with the aspect ratio (and its choices, for an image's own ratio).
 function syncResolution() {
   const m = currentModel();
@@ -353,7 +380,8 @@ function syncResolution() {
   const aspect = $('#aspect').value;
   const choices = sizeChoices(m, aspect);
   const cur = sel.value; // its size picks the nearest new one
-  if (choices.join() !== [...sel.options].map(o => o.value).join()) fillSelect(sel, choices, cur);
+  if (isSize(cur) && !choices.includes(cur)) { fillResolution(choices, cur); return; } // a typed size stays as typed
+  if (choices.join() !== [...sel.options].map(o => o.value).filter(v => v !== CUSTOM_RES).join()) fillResolution(choices, cur);
   const r = resolutionFor({ ...m, resolutions: choices }, aspect, cur);
   if (r) sel.value = r;
 }
@@ -1049,7 +1077,7 @@ function selectModel(id, { values } = {}) {
   if (!m) return;
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
   fillAspect(m, v.aspectRatio);
-  fillSelect($('#resolution'), sizeChoices(m, $('#aspect').value), v.resolution);
+  fillResolution(sizeChoices(m, $('#aspect').value), v.resolution);
   fillSelect($('#duration'), m.durations, v.duration);
   $('#aspectField').hidden = !m.aspectRatios.length;
   $('#resolutionField').hidden = !m.resolutions.length;
@@ -1137,6 +1165,13 @@ $('#aspect').addEventListener('change', () => {
   syncResolution();
   savePrefs();
 });
+$('#resolution').addEventListener('change', e => {
+  if (e.target.value !== CUSTOM_RES) { e.target.dataset.last = e.target.value; return showCustomRes(false); }
+  e.target.value = e.target.dataset.last || e.target.options[0].value; // stays on the size in use until one is typed
+  showCustomRes(true);
+  $('#resW').focus();
+});
+for (const id of ['#resW', '#resH']) $(id).addEventListener('change', applyCustomRes);
 for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', savePrefs);
 $('#theme').addEventListener('input', e => {
   renderRole();
@@ -7056,7 +7091,7 @@ const TOOLS = [
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
-  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('e.g. "1920×1080"'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
+  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
   T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate', 'character'], 'animate = first frame of a video (video models only); character = the character a motion video animates (character-animation models like Wan Animate 2 only)') }, ['role']),
   T('clear_image', 'Remove the image from step 3.'),
   T('use_motion_video', 'Set the motion video in step 3 for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
@@ -7782,10 +7817,13 @@ const TOOL_IMPL = {
       $(sel).value = v;
       done.push(`${label} ${v}`);
     };
-    const options = sel => [...$(sel).options].map(o => o.value); // includes the image's own ratio, if any
+    const options = sel => [...$(sel).options].map(o => o.value).filter(v => v !== CUSTOM_RES); // includes the image's own ratio, if any
     choose('aspect', '#aspect', options('#aspect'), 'aspect');
     if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
-    choose('resolution', '#resolution', options('#resolution'), 'resolution');
+    if (isSize(args.resolution) && !options('#resolution').includes(String(args.resolution).replace(/\s*x\s*/, '×'))) {
+      fillResolution(sizeChoices(m, $('#aspect').value), String(args.resolution).replace(/\s*[×x]\s*/, '×'));
+      done.push(`resolution ${$('#resolution').value}`);
+    } else choose('resolution', '#resolution', options('#resolution'), 'resolution');
     if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');
     if (args.batch) {
       const want = String(args.batch).trim().toLowerCase();

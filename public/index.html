@@ -160,7 +160,7 @@
             <header class="step-head"><span class="num">4</span><h2>Dial it in</h2></header>
             <div class="dials">
               <label class="dial" id="aspectField"><span>Aspect</span><select id="aspect"></select><em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">🖼️ from image</em></label>
-              <label class="dial" id="resolutionField"><span>Resolution</span><select id="resolution"></select></label>
+              <div class="dial" id="resolutionField"><label for="resolution"><span>Resolution</span></label><select id="resolution"></select><span id="resCustom" class="res-custom" hidden><input id="resW" type="number" min="64" max="8192" step="16" inputmode="numeric" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="number" min="64" max="8192" step="16" inputmode="numeric" aria-label="Height" placeholder="Height"></span></div>
               <label class="dial" id="durationField"><span>Duration</span><select id="duration"></select></label>
             </div>
             <div class="dials two">

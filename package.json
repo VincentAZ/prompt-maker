@@ -1,6 +1,6 @@
 {
   "name": "prompt-maker",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "description": "Offline prompt writer for image and video models, powered by a local LLM in LM Studio.",
   "license": "MIT",
   "type": "module",
