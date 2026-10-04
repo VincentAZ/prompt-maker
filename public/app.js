@@ -4749,7 +4749,7 @@ $('#wfpDenoise').addEventListener('click', e => {
   renderDenoise();
 });
 
-// ---------- create: step 5, background (character animation) ----------
+// ---------- create: step 3, background (character animation) ----------
 // A SCAIL 2 workflow can keep the picture's background (it animates the picture) or the motion video's (the character
 // replaces the video's performer). Saved on the workflow like its sampler settings.
 
@@ -4775,6 +4775,7 @@ $('#wfpBackground').addEventListener('click', async e => {
   const before = flow.background;
   flow.background = { ...before, value };
   renderBackground();
+  soonRefreshSummaries();
   try {
     const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { overridePatch: patch } });
     const i = state.workflows.findIndex(f => f.id === flow.id);
@@ -4996,11 +4997,11 @@ function renderWorkflowPicker() {
     sel.title = flows.find(f => f.id === id)?.name || '';
     $('#wfpSettings').innerHTML = settingsHtml(flows.find(f => f.id === id));
     renderSeedRow();
-    renderBackground();
     renderDenoise();
     renderLoraPanel();
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
+  renderBackground(); // in step 3, so it follows the picked workflow even when there is none
   renderBatch();
   renderWorkflowWarning();
   renderStaleNotice();
@@ -8959,7 +8960,8 @@ const PANEL_SUMMARY = {
   'create-image': () => {
     const img = state.image ? `🖼️ Image attached · ${effectiveRole()}` : 'No image';
     if (!currentModel()?.motionVideo && !chainNeedsVideo()) return img;
-    return `${state.image ? '🧍 Character attached' : 'No character'} · ${state.video ? `🕺 Motion video${state.video.seconds ? ` ${secsLabel(state.video.seconds)}` : ''}` : 'no motion video'}`;
+    const bg = !$('#wfpBackground').hidden && activeFlow()?.background;
+    return `${state.image ? '🧍 Character attached' : 'No character'} · ${state.video ? `🕺 Motion video${state.video.seconds ? ` ${secsLabel(state.video.seconds)}` : ''}` : 'no motion video'}${bg ? ` · 🏞️ background from your ${bg.value}` : ''}`;
   },
   'create-dials': () => [
     !$('#aspectField').hidden && $('#aspect').value, !$('#resolutionField').hidden && $('#resolution').value,

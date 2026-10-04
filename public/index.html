@@ -153,7 +153,14 @@
                 </div>
               </div>
               <p id="motionHint" class="hint">The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.</p>
-            </div>
+              <div id="wfpBackground" class="wfp-bg" hidden>
+                <p class="zone-label">🏞️ <b>Background</b> <span class="muted">which one the video keeps</span></p>
+                <div class="seg" role="radiogroup" aria-label="Background of the video">
+                  <button type="button" role="radio" data-value="picture" title="Your picture comes to life: its character moves like the person in your video, and its background stays">🖼️ From your picture</button>
+                  <button type="button" role="radio" data-value="video" title="Your character replaces the person in your video, and the video's background stays">🎬 From your video</button>
+                </div>
+              </div>
+          </div>
           </section>
 
           <section class="step" data-panel="create-dials">
@@ -205,13 +212,6 @@
                 <button type="button" id="wfpAdd" class="btn small" title="Add another workflow" aria-label="Add another workflow">＋</button>
               </div>
               <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
-              <div id="wfpBackground" class="wfp-bg" hidden>
-                <span class="wfp-bg-label">Background</span>
-                <div class="seg" role="radiogroup" aria-label="Background of the video">
-                  <button type="button" role="radio" data-value="picture" title="Your picture comes to life: its character moves like the person in your video, and its background stays">🖼️ From your picture</button>
-                  <button type="button" role="radio" data-value="video" title="Your character replaces the person in your video, and the video's background stays">🎬 From your video</button>
-                </div>
-              </div>
               <div class="wfp-adv" data-panel="create-render-adv" data-default="collapsed">
                 <div class="panel-head"><b>Advanced</b><span class="opt">seed, denoise, LoRAs</span></div>
                 <div id="wfpSeed" class="wfp-seed" role="group" aria-label="Seed" hidden></div>

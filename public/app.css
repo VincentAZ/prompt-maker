@@ -1072,9 +1072,9 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
   .llm { margin-left: 0; }
 }
 
-/* =================== background (step 5, character animation) =================== */
-.wfp-bg { display: flex; flex-direction: column; gap: 6px; }
-.wfp-bg-label { font-size: 13.5px; font-weight: 700; }
+/* =================== background (step 3, character animation) =================== */
+.wfp-bg { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.wfp-bg .zone-label { margin: 0; }
 .wfp-bg .seg button { padding: 8px 6px; }
 
 /* =================== denoise (step 5, image-to-image) =================== */
