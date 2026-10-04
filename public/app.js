@@ -4406,6 +4406,7 @@ function renderSettings() {
   $('#sThinking').value = s.thinking;
   $('#sMaster').value = s.masterPrompt;
   $('#sAdult').checked = Boolean(s.adultContent);
+  $('#sComputer').checked = Boolean(s.assistantComputer);
   $('#sAdultPrompt').value = s.adultPrompt || '';
   $('#sDataDir').textContent = s.dataDir ? `📁 Your data lives in ${s.dataDir}` : '';
   $('#sVersion').textContent = s.version ? `Prompt Maker ${s.version}` : '';
@@ -4447,7 +4448,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultPrompt: $('#sAdultPrompt').value, adultContent: $('#sAdult').checked },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultPrompt: $('#sAdultPrompt').value, adultContent: $('#sAdult').checked, assistantComputer: $('#sComputer').checked },
     });
     renderSettings();
     toast('💾 Settings saved');
@@ -7191,14 +7192,27 @@ const TOOLS = [
   T('fill', 'Type into a box from see_screen, replacing what is in it.', { control: S('Its number from see_screen'), text: S('What to type') }, ['control', 'text']),
   T('choose', 'Pick an option in a menu from see_screen.', { control: S('Its number from see_screen'), option: S('The option, as see_screen shows it') }, ['control', 'option']),
   T('wait', 'Wait (up to 2 minutes) for something started on screen to finish, e.g. a download or a Quick check, then look again.', { seconds: I('How long, 1–120') }, ['seconds']),
+  T('run_command', `Run a command or program on this computer, as the user, and get its output. ${navigator.platform.startsWith('Win') ? 'PowerShell' : 'bash'}; it starts in the home folder. A program that keeps running (an app with a window) goes in the background: \`gimp file.png &\`. Anything that deletes asks the user first.`, { command: S('The command'), folder: S('Optional: the folder to run it in'), seconds: I('How long it may take, 1–600; default 60') }, ['command']),
+  T('read_file', 'Read a text file anywhere on this computer (or what is in a folder). Long files come in parts: give from to read on.', { path: S('Full path or ~/…'), from: I('Where to go on reading (more_from of the last part)') }, ['path']),
+  T('write_file', 'Write a text file anywhere on this computer (makes its folder if needed). Replacing a file that is already there asks the user first.', { path: S('Full path or ~/…'), text: S('What to write'), append: B('Add to the end instead of replacing') }, ['path', 'text']),
   T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
 ];
+
+// Tools for this computer beyond Prompt Maker: only sent, and only run, while Settings allows it.
+const COMPUTER_TOOLS = new Set(['run_command', 'read_file', 'write_file']);
+const mayUseComputer = () => Boolean(state.settings?.assistantComputer);
+const assistantTools = () => TOOLS.filter(t => mayUseComputer() || !COMPUTER_TOOLS.has(t.function.name));
+function needComputer() {
+  if (!mayUseComputer()) throw new Error('I\'m not allowed to do that outside Prompt Maker. You can allow it in Settings → ✦ Assistant → 💻 Let the assistant use my computer.');
+}
+// Commands that may delete something for good: the user says yes first.
+const DELETES = /(^|[\s;&|(`$])(sudo\s+)?(rm|rmdir|unlink|shred|srm|wipe|trash|trash-put|trash-rm|del|erase|rd|ri|rimraf|Remove-Item|Clear-RecycleBin|Format-Volume|mkfs(\.\w+)?|wipefs|dd|truncate|fdisk|parted)(\s|$|;|&|\|)|\bgio\s+(trash|remove)\b|\s-delete\b|\bgit\s+(clean|reset\s+--hard|push\s.*(-f|--force))\b|>\s*\/dev\/(sd|nvme|hd|mmc)|\bdrop\s+(table|database)\b/i;
 
 // What the assistant shows while a tool runs.
 const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
-  look_at: 'Looking…', find: 'Searching this computer…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
+  run_command: 'Running it…', read_file: 'Reading…', write_file: 'Writing…', look_at: 'Looking…', find: 'Searching this computer…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
   pick_best: 'Choosing the best…', use_render_as_image: 'Putting it in step 3…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
 };
 
@@ -7262,9 +7276,9 @@ function forgetSeenImages() {
 }
 
 // Asks the user on screen, in the conversation (for what can't be undone).
-function confirmInChat(question, yes) {
+function confirmInChat(question, yes, { no = 'Keep it', detail = '' } = {}) {
   return new Promise(resolve => {
-    as.confirm = { question, yes, resolve };
+    as.confirm = { question, yes, no, detail, resolve };
     renderAssistantLog();
   });
 }
@@ -7321,7 +7335,7 @@ function assistantState() {
     lightbox: lightboxItem() ? describeItem(lightboxItem()) : null, // what the user is looking at, full screen
     this_session: reelGroups().map(g => ({ theme: g.entry?.theme ?? g.jobs[0]?.theme, model: g.entry?.modelName || g.jobs[0]?.modelName, on_screen: g.id === state.entry?.id, renders: g.items.length, rendering: g.jobs.length, rated: g.items.filter(it => ratingOf(it.render)).length })),
     rendering_now: rendersNow.map(j => ({ theme: j.theme, model: j.modelName, take: j.index + 1, left: j.count - j.finished, stage: j.stage, pct: j.pct })),
-    settings: { adult_content: Boolean(state.settings?.adultContent), thinking: state.settings?.thinking },
+    settings: { adult_content: Boolean(state.settings?.adultContent), thinking: state.settings?.thinking, use_this_computer: mayUseComputer() },
     busy: lineBusy(),
     in_line: line.orders.map(o => ({ theme: o.body.theme, model: o.model.name })), // queued Generates, waiting their turn
     line_on_hold: line.held,
@@ -7355,7 +7369,7 @@ const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
 const shown = el => (el.checkVisibility ? el.checkVisibility({ checkVisibilityCSS: true }) : el.getClientRects().length > 0);
 // What can be used: a dialog that's open (or the lightbox) covers the rest. Never the assistant's own panel.
 const screenTop = () => document.querySelector('dialog:modal') || ($('#lightbox').hidden ? null : $('#lightbox'));
-const screenControls = () => [...(screenTop() || document.body).querySelectorAll(CONTROLS)].filter(el => !el.closest('#assistant, [inert]') && shown(el));
+const screenControls = () => [...(screenTop() || document.body).querySelectorAll(CONTROLS)].filter(el => !el.closest('#assistant, [inert], [data-not-assistant]') && shown(el)); // never its own permission switch
 
 // An element's own words, without the controls in it (a label's text, not its menu's options). drop: more to leave
 // out, e.g. a label's buttons and hint.
@@ -7740,6 +7754,31 @@ const TOOL_IMPL = {
   list_folder: async ({ folder }) => {
     const f = await api(`/api/folder?path=${encodeURIComponent(folder || '')}`);
     return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'}${f.videos?.length ? ` and ${f.videos.length} video${f.videos.length === 1 ? '' : 's'}` : ''} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 200).map(i => i.name), ...(f.images.length > 200 || f.more ? { more: f.images.length - 200 + f.more } : {}), ...(f.videos?.length ? { videos: f.videos } : {}), subfolders: f.folders, ...(f.others ? { others: f.others } : {}), ...(f.note ? { note: f.note } : {}) };
+  },
+  run_command: async ({ command, folder, seconds }) => {
+    needComputer();
+    const cmd = String(command || '').trim();
+    if (DELETES.test(cmd) && !(await confirmInChat('Run this command? It may delete something for good.', '▶ Run it', { no: 'Don\'t run it', detail: cmd }))) return { summary: 'Didn\'t run it: the user said no', declined: true };
+    const r = await api('/api/computer/run', { method: 'POST', body: { command: cmd, folder, seconds } });
+    return { summary: `Ran ${cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd}${r.stopped ? ' (stopped: it took too long)' : r.exit_code ? ` (it failed, code ${r.exit_code})` : ''}`, ...r };
+  },
+  read_file: async ({ path, from }) => {
+    needComputer();
+    const r = await api(`/api/computer/read?path=${encodeURIComponent(path || '')}${from ? `&from=${encodeURIComponent(from)}` : ''}`);
+    return { summary: `Read ${r.path}`, ...r };
+  },
+  write_file: async ({ path, text, append }) => {
+    needComputer();
+    const send = overwrite => api('/api/computer/write', { method: 'POST', body: { path, text, append: append === true, overwrite } });
+    let r;
+    try {
+      r = await send(false);
+    } catch (err) {
+      if (err.status !== 409) throw err;
+      if (!(await confirmInChat(`Replace ${path}? What's in it now is lost.`, 'Replace it', { detail: String(text ?? '').slice(0, 600) }))) return { summary: 'Didn\'t replace it: the user said no', declined: true };
+      r = await send(true);
+    }
+    return { summary: `${r.created ? 'Wrote' : r.appended ? 'Added to' : 'Replaced'} ${r.path}`, ...r };
   },
   find: async ({ name, kind = 'any', in: inside }) => {
     const r = await api(`/api/find?q=${encodeURIComponent(name || '')}&kind=${encodeURIComponent(kind)}${inside ? `&in=${encodeURIComponent(inside)}` : ''}`);
@@ -8308,7 +8347,7 @@ async function askAssistant(text) {
       as.live = { text: '', thinking: false, status: '' };
       renderAssistantLog();
       as.controller = new AbortController();
-      await streamApi('/api/assistant', { messages: wireMessages(), state: assistantState(), tools: TOOLS }, ev => {
+      await streamApi('/api/assistant', { messages: wireMessages(), state: assistantState(), tools: assistantTools() }, ev => {
         if (ev.type === 'delta') { as.live.text = ev.text; as.live.thinking = ev.thinking; updateLiveBubble(); }
         else if (ev.type === 'status') { as.live.status = ev.text; updateLiveBubble(); }
         else if (ev.type === 'done') done = ev;
@@ -8403,7 +8442,7 @@ function renderAssistantLog() {
     items.push(`<div class="as-hello"><b>Hi! I'm your creative partner.</b><p>Ask what I think (“which render do you like better?”, “tower or dungeon?”, “what aspect suits this?”), or tell me what to make and I'll run the app: “set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, then render them”.</p>
       <div class="as-starters">${STARTERS.map(([label, text, send], i) => `<button type="button" class="chip-btn" data-starter="${i}">${esc(label)}</button>`).join('')}</div></div>`);
   }
-  if (as.confirm) items.push(`<div class="as-confirm" role="group" aria-label="Confirm"><p>${esc(as.confirm.question)}</p><div class="row"><button type="button" class="btn small danger" data-confirm="yes">${esc(as.confirm.yes)}</button><button type="button" class="btn small" data-confirm="no">Keep it</button></div></div>`);
+  if (as.confirm) items.push(`<div class="as-confirm" role="group" aria-label="Confirm"><p>${esc(as.confirm.question)}</p>${as.confirm.detail ? `<pre class="as-cmd">${esc(as.confirm.detail)}</pre>` : ''}<div class="row"><button type="button" class="btn small danger" data-confirm="yes">${esc(as.confirm.yes)}</button><button type="button" class="btn small" data-confirm="no">${esc(as.confirm.no)}</button></div></div>`);
   if (as.running && !as.confirm) items.push(`<div class="as-act live">⏳ ${esc(as.running)}</div>`);
   if (as.live) items.push('<div class="as-msg bot live" id="asLive"></div>');
   log.innerHTML = items.join('');
@@ -8866,6 +8905,7 @@ const PANEL_SUMMARY = {
   'model-sizes': () => [$('#mAspects').value, $('#mRes').value, $('#mKind').value === 'video' && $('#mDur').value].filter(Boolean).join(' · ') || 'None set',
   'model-sources': () => { const n = $('#mSources').value.split('\n').filter(x => x.trim()).length; return n ? `${n} source${n > 1 ? 's' : ''}` : 'None'; },
   'models-defaults': () => [$('#dAspect').value, $('#dRes').value, $('#dLen').value, $('#dTemp').value && `temp ${$('#dTemp').value}`].filter(Boolean).join(' · '),
+  'set-assistant': () => ($('#sComputer').checked ? '💻 Can use this computer' : 'Only Prompt Maker'),
   'models-lengths': () => [$('#lShort').value, $('#lMed').value, $('#lLong').value].filter(Boolean).join(' · '),
 };
 

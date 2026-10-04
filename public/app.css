@@ -1051,6 +1051,7 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .as-act.as-seen img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; }
 .as-confirm { align-self: stretch; padding: 10px 12px; border-radius: 12px; border: 1px solid rgb(255 90 110 / 45%); background: rgb(255 90 110 / 8%); }
 .as-confirm p { margin: 0 0 8px; }
+.as-cmd { margin: 0 0 8px; padding: 6px 8px; border-radius: 8px; background: rgb(0 0 0 / 25%); font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
 .as-confirm .row { display: flex; gap: 8px; }
 .as-hello { padding: 14px; border-radius: 16px; background: linear-gradient(135deg, rgb(164 123 255 / 12%), rgb(34 211 238 / 8%)); border: 1px solid rgb(164 123 255 / 30%); font-size: 14px; }
 .as-hello p { margin: 6px 0 10px; color: var(--text-2); }

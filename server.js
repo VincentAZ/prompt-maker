@@ -12,6 +12,7 @@ import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
 import * as cloud from './lib/cloud.js';
 import * as folders from './lib/folders.js';
+import * as computer from './lib/computer.js';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
@@ -130,6 +131,7 @@ async function serveFile(req, res, file, extraHeaders = {}) {
 
 // Blocks other websites (cross-site requests) and DNS-rebinding tricks from using this local API.
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const LOOPBACK_ADDRESS = /^(127\.|::1$|::ffff:127\.)/;
 function isTrustedRequest(req) {
   const host = String(req.headers.host || '');
   const hostname = host.replace(/:\d+$/, '');
@@ -475,7 +477,7 @@ async function assistantChat(req, res) {
   const settings = await store.getSettings();
   const chat = assistant.cleanMessages(body.messages);
   const llm = await prepareLlm(settings, body.llmModel, assistant.hasImages(chat)); // looking at images needs a 👁 Brain
-  const system = assistant.systemPrompt(body.state, { rendersDir: folders.tidy(store.RENDERS_DIR) });
+  const system = assistant.systemPrompt(body.state, { rendersDir: folders.tidy(store.RENDERS_DIR), computer: settings.assistantComputer });
   const tools = assistant.cleanTools(body.tools);
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
@@ -1258,6 +1260,20 @@ async function route(req, res) {
   if (p === '/api/folder/image' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name') }), PRIVATE);
   if (p === '/api/find' && m === 'GET') return sendJson(res, 200, await folders.search(url.searchParams.get('q'), { kind: ['folder', 'file', 'any'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'any', from: url.searchParams.get('in') || null }));
 
+  // The assistant using this computer (commands, any file): only when Settings allows it, and only from this computer.
+  if (p.startsWith('/api/computer/')) {
+    if (!(await store.getSettings()).assistantComputer) throw store.httpError(403, 'The assistant isn\'t allowed to use this computer. The user can allow it in Settings → ✦ Assistant → 💻 Let the assistant use my computer.');
+    if (!LOOPBACK_ADDRESS.test(req.socket.remoteAddress || '')) throw store.httpError(403, 'Only from this computer.');
+    if (p === '/api/computer/run' && m === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 200, await computer.run(body.command, { folder: body.folder, seconds: body.seconds }));
+    }
+    if (p === '/api/computer/read' && m === 'GET') return sendJson(res, 200, await computer.read(url.searchParams.get('path'), { from: url.searchParams.get('from') }));
+    if (p === '/api/computer/write' && m === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 200, await computer.write(body.path, body.text, { append: body.append === true, overwrite: body.overwrite === true }));
+    }
+  }
   if (p === '/api/jobs' && m === 'GET') return sendJson(res, 200, await store.listJobs());
   if ((match = p.match(/^\/api\/jobs\/([\w-]+)$/)) && m === 'PUT') {
     const body = await readBody(req);

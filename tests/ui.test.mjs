@@ -2728,6 +2728,32 @@ esac
     await type('#asInput', 'fix the playbook for krea');
     await press('Enter');
     await idle();
+
+    // 💻 Using this computer: off until you switch it on; deleting asks first.
+    const ask = async words => { await type('#asInput', words); await press('Enter'); await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000); };
+    eq(await js('fetch("/api/computer/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{\\"command\\":\\"echo hi\\"}" }).then(r => r.status)'), 403, 'commands are refused while it\'s off');
+    await ask('run: echo hello-there');
+    assert((await bot()).includes('Settings'), `it says where to allow it: ${await bot()}`);
+    await click('.tabs button[data-view="settings"]');
+    await js('document.querySelector("#sComputer").click()');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await ask('run: echo hello-there');
+    assert((await bot()).includes('hello-there'), `it runs a command: ${await bot()}`);
+    const victim = path.join(tmp, 'keep-me.txt');
+    await fs.writeFile(victim, 'x');
+    await type('#asInput', `run: rm ${victim}`);
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'deleting asks on screen first');
+    await click('#asLog [data-confirm="no"]');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert(await fs.access(victim).then(() => true, () => false), 'and nothing goes when you say no');
+    await js('document.querySelector("#sComputer").click()');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('#asClear');
+    await click('#asClear');
+    await click('.tabs button[data-view="create"]');
     assert((await acts()).includes('Saved the Krea 2 RAW'), 'saved, and says what changed');
     let after = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
     eq(after.description, 'Edited by the assistant', 'the playbook changed');
