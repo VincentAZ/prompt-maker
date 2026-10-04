@@ -576,7 +576,8 @@ esac
     assert(await visible('#resCustom'), 'width and height boxes for your own size');
     eq(await value('#resolution'), '1024×1024', 'still on the size in use until one is typed');
     await type('#resW', '1000'); await type('#resH', '700');
-    await js('document.querySelector("#resH").dispatchEvent(new Event("change"))');
+    await shot('04b-own-size');
+    await click('#resUse');
     eq(await value('#resolution'), '1000×700', 'your own size is picked');
     eq(await text('#resolution option:checked'), 'Your size: 1000×700', 'and says so');
     eq(await js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).resolution'), '1000×700', 'and remembered');
@@ -584,6 +585,12 @@ esac
     eq(await value('#resolution'), '1000×700', 'an aspect change keeps a typed size');
     await choose('#resolution', '1024×1024');
     assert(!(await visible('#resCustom')), 'boxes hide on a preset');
+    assert((await js('[...document.querySelectorAll("#resolution option")].map(o => o.value)')).includes('1000×700'), 'your size stays in the menu');
+    eq(JSON.stringify(await js('JSON.parse(localStorage.getItem("pm.sizes.ltx-2-3"))')), '["1000×700"]', 'kept across sessions');
+    await choose('#resolution', '1000×700');
+    assert(await visible('#resForget'), 'a size of yours can be forgotten');
+    await click('#resForget');
+    assert(!(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value)')).includes('1000×700'), 'forgotten');
     await choose('#aspect', '1:1');
     assert(!(await visible('#aspectNote')), 'note cleared after a manual change');
     const prefs = () => js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).aspectRatio');
@@ -2722,12 +2729,6 @@ esac
     await viewport(1440, 900);
     await click('#asClear');
     await click('#asClear');
-    assert(await visible('.as-hello'), 'cleared');
-    // It can write a playbook for you, and undo it.
-    const before = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
-    await type('#asInput', 'fix the playbook for krea');
-    await press('Enter');
-    await idle();
 
     // 💻 Using this computer: off until you switch it on; deleting asks first.
     const ask = async words => { await type('#asInput', words); await press('Enter'); await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000); };
@@ -2754,6 +2755,12 @@ esac
     await click('#asClear');
     await click('#asClear');
     await click('.tabs button[data-view="create"]');
+    assert(await visible('.as-hello'), 'cleared');
+    // It can write a playbook for you, and undo it.
+    const before = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    await type('#asInput', 'fix the playbook for krea');
+    await press('Enter');
+    await idle();
     assert((await acts()).includes('Saved the Krea 2 RAW'), 'saved, and says what changed');
     let after = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
     eq(after.description, 'Edited by the assistant', 'the playbook changed');

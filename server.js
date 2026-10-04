@@ -1422,6 +1422,8 @@ async function route(req, res) {
         if (rating) r.rating = rating; else delete r.rating;
         delete r.favorite;
       }
+      // Kept out of 🎞 Your renders (it stays everywhere else).
+      if (typeof body.hidden === 'boolean') { if (body.hidden) r.hidden = true; else delete r.hidden; }
     })));
   }
   if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'DELETE') {

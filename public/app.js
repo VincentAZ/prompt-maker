@@ -345,33 +345,40 @@ function matchImageAspect() {
   return best;
 }
 
-// Resolution choices plus "✎ Your own size…": a W×H the user types, kept as the last option ("Your size: 1000×700").
+// Resolution choices plus the sizes the user typed for this model ("Your size: 1000×700", kept across sessions),
+// then "✎ Type your own size…".
 const CUSTOM_RES = '__custom';
 const isSize = v => /^\d+\s*[×x]\s*\d+$/.test(String(v || ''));
-// A size the user typed (not a preset, nor a preset redrawn for an image's shape: those follow the aspect as usual).
-const isOwnSize = (v, choices, typed) => isSize(v) && !choices.includes(v) && (typed || v === $('#resolution').dataset.own);
-function fillResolution(choices, value, typed = false) {
+const ownSizes = (m = currentModel()) => (m ? saved.get(`sizes.${m.id}`, []) : []);
+const isOwnSize = (v, choices) => !choices.includes(v) && ownSizes().includes(v);
+function keepOwnSize(size, keep = true) {
+  const m = currentModel();
+  if (!m) return;
+  const rest = ownSizes(m).filter(s => s !== size);
+  saved.set(`sizes.${m.id}`, keep ? [...rest, size].slice(-12) : rest);
+}
+function fillResolution(choices, value) {
   const sel = $('#resolution');
-  const own = isOwnSize(value, choices, typed) ? value : null;
-  if (own) sel.dataset.own = own;
-  fillSelect(sel, own ? [...choices, own] : choices, value);
-  if (own) sel.options[sel.options.length - 1].textContent = `Your size: ${own}`;
+  const own = ownSizes().filter(s => !choices.includes(s));
+  fillSelect(sel, [...choices, ...own], value);
+  for (const o of sel.options) if (own.includes(o.value)) o.textContent = `Your size: ${o.value}`;
   sel.dataset.last = sel.value;
   sel.insertAdjacentHTML('beforeend', `<option value="${CUSTOM_RES}">✎ Type your own size…</option>`);
-  showCustomRes(false);
+  showCustomRes(own.includes(sel.value));
 }
+// The width × height boxes: open on ✎ and on one of your sizes (to change or forget it).
 function showCustomRes(on) {
   $('#resCustom').hidden = !on;
   if (!on) return;
   const [w, h] = ($('#resolution').value.match(/\d+/g) || []).map(Number);
   $('#resW').value = w || ''; $('#resH').value = h || '';
+  $('#resForget').hidden = !ownSizes().includes($('#resolution').value);
 }
 function applyCustomRes() {
   const w = Math.round(Number($('#resW').value)), h = Math.round(Number($('#resH').value));
-  if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return;
-  const m = currentModel();
-  fillResolution(sizeChoices(m, $('#aspect').value), `${w}×${h}`, true);
-  showCustomRes(true);
+  if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return toast('Width and height: 64 to 8192 each', true);
+  keepOwnSize(`${w}×${h}`);
+  fillResolution(sizeChoices(currentModel(), $('#aspect').value), `${w}×${h}`);
   savePrefs();
 }
 
@@ -1081,7 +1088,8 @@ function selectModel(id, { values } = {}) {
   if (!m) return;
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
   fillAspect(m, v.aspectRatio);
-  fillResolution(sizeChoices(m, $('#aspect').value), v.resolution, !m.resolutions.includes(v.resolution)); // saved off-preset = typed
+  if (isSize(v.resolution) && !m.resolutions.includes(v.resolution) && !values) keepOwnSize(v.resolution); // typed before sizes were a list
+  fillResolution(sizeChoices(m, $('#aspect').value), v.resolution);
   fillSelect($('#duration'), m.durations, v.duration);
   $('#aspectField').hidden = !m.aspectRatios.length;
   $('#resolutionField').hidden = !m.resolutions.length;
@@ -1171,12 +1179,21 @@ $('#aspect').addEventListener('change', () => {
 });
 $('#resolution').addEventListener('focus', e => { if (e.target.value !== CUSTOM_RES) e.target.dataset.last = e.target.value; });
 $('#resolution').addEventListener('change', e => {
-  if (e.target.value !== CUSTOM_RES) { e.target.dataset.last = e.target.value; return showCustomRes(false); }
+  if (e.target.value !== CUSTOM_RES) { e.target.dataset.last = e.target.value; return showCustomRes(ownSizes().includes(e.target.value)); }
   e.target.value = e.target.dataset.last || e.target.options[0].value; // stays on the size in use until one is typed
   showCustomRes(true);
   $('#resW').focus();
 });
-for (const id of ['#resW', '#resH']) $(id).addEventListener('change', applyCustomRes);
+$('#resUse').addEventListener('click', applyCustomRes);
+for (const id of ['#resW', '#resH']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applyCustomRes(); } });
+$('#resForget').addEventListener('click', () => {
+  const size = $('#resolution').value;
+  keepOwnSize(size, false);
+  const choices = sizeChoices(currentModel(), $('#aspect').value);
+  fillResolution(choices, resolutionFor({ ...currentModel(), resolutions: choices }, $('#aspect').value, size) || choices[0]);
+  savePrefs();
+  toast(`Forgot ${size}`);
+});
 for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', savePrefs);
 $('#theme').addEventListener('input', e => {
   renderRole();
@@ -2057,6 +2074,12 @@ function rateBarHtml(rating, label = 'this render') {
   return `<div class="rate-bar" role="group" aria-label="Rate ${esc(label)}">${[3, 2, 1].map(n => `<button type="button" class="${n <= rating ? 'on' : ''}" data-rate="${n}" aria-pressed="${n === rating}" title="${RATINGS[n]}${n === rating ? ' (click to take the rating off)' : ''}" aria-label="${RATINGS[n]}">★</button>`).join('')}</div>`;
 }
 
+// Hides a render from 🎞 Your renders, or shows it there again. It stays in History, the Gallery and its take.
+async function hideRender(entry, render, hidden) {
+  const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'PATCH', body: { hidden } });
+  forgetRender(updated);
+}
+
 const sessionCache = new Map(); // entry id → the entry, for runs that aren't on the stage
 const sinceStart = () => state.settings?.startedAt || '';
 const sessionEntry = id => (state.entry?.id === id ? state.entry : sessionCache.get(id) || null);
@@ -2118,7 +2141,7 @@ function allRenders() {
 }
 
 // The filters, remembered (all but the words to find).
-const reelFilter = { kind: '', session: false, min: 0, model: '', ...saved.get('reelFilter', {}), q: '' };
+const reelFilter = { kind: '', session: false, min: 0, model: '', ...saved.get('reelFilter', {}), q: '', hidden: false };
 const REEL_PAGE = 60; // pictures drawn at a time; more as you scroll down
 let reelShown = REEL_PAGE;
 let reelItems = []; // what the box shows, in order (for the lightbox)
@@ -2167,6 +2190,7 @@ const madeOn = iso => {
 
 function reelMatch(it) {
   const f = reelFilter;
+  if (Boolean(it.render.hidden) !== f.hidden) return false;
   if (f.kind && it.file.kind !== f.kind) return false;
   if (f.session && (it.render.createdAt || '') < sinceStart()) return false;
   if (ratingOf(it.render) < f.min || (f.model && it.entry.modelId !== f.model)) return false;
@@ -2177,6 +2201,7 @@ function reelMatch(it) {
 // A render still going shows while the filters would let it in once it's done (it has no rating yet).
 function reelJobMatch(j) {
   const f = reelFilter;
+  if (f.hidden) return false;
   const kind = modelById(j.modelId)?.kind === 'video' ? 'video' : 'image';
   if (f.min || (f.kind && kind !== f.kind) || (f.model && j.modelId !== f.model)) return false;
   const text = `${j.theme || ''} ${j.modelName || ''} ${j.workflowName || ''}`.toLowerCase();
@@ -2206,11 +2231,14 @@ function renderReel() {
   const none = !all.length && !rendersNow.length;
   box.classList.toggle('closed', !open);
   box.classList.toggle('empty', none);
+  const hiddenCount = all.filter(it => it.render.hidden).length;
+  if (!hiddenCount) reelFilter.hidden = false;
   const items = inReelOrder(all).filter(reelMatch);
   const jobs = rendersNow.filter(reelJobMatch);
   const going = rendersLeft();
+  const shown = all.length - hiddenCount;
   $('#reelCount').textContent = [
-    all.length && (reelFiltered() ? `${items.length} of ${all.length}` : `${all.length} render${all.length > 1 ? 's' : ''}`),
+    reelFilter.hidden ? `${items.length} hidden` : shown && (reelFiltered() ? `${items.length} of ${shown}` : `${shown} render${shown > 1 ? 's' : ''}`),
     going && `${going} rendering`,
   ].filter(Boolean).join(' · ');
   $('#reelZoom').hidden = !open || none;
@@ -2222,6 +2250,10 @@ function renderReel() {
   $('#reelGrip').hidden = !open || none || full;
   if (!open) return reelFullScreen(false);
   renderReelFilters(all);
+  $('#reelHidden').hidden = !hiddenCount;
+  $('#reelHidden').textContent = `🙈 Hidden (${hiddenCount})`;
+  $('#reelHidden').setAttribute('aria-pressed', reelFilter.hidden);
+  box.classList.toggle('showing-hidden', reelFilter.hidden);
   $('#reelFilters').hidden = none;
   const empty = $('#reelEmpty');
   empty.hidden = Boolean(items.length || jobs.length);
@@ -2267,7 +2299,7 @@ function renderReelFilters(all) {
 
 function setReelFilter(change) {
   Object.assign(reelFilter, change);
-  const { q, ...kept } = reelFilter;
+  const { q, hidden, ...kept } = reelFilter;
   saved.set('reelFilter', kept);
   reelShown = REEL_PAGE;
   renderReel();
@@ -2310,7 +2342,7 @@ function reelTile(it) {
     cell.className = 'reel-cell';
     cell.dataset.key = key;
     cell.dataset.file = it.file.file;
-    cell.innerHTML = `<button type="button" class="rtile${it.file.kind === 'audio' ? ' audio' : ''}" data-act="open" title="Click to see it big, drag to move it">${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-cap"><b></b><span></span></span></button><div class="rate-slot"></div>`;
+    cell.innerHTML = `<button type="button" class="rtile${it.file.kind === 'audio' ? ' audio' : ''}" data-act="open" title="Click to see it big, drag to move it">${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-cap"><b></b><span></span></span></button><button type="button" class="rt-hide" data-act="hide"></button><div class="rate-slot"></div>`;
     reelCells.set(key, cell);
   }
   cell.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
@@ -2320,6 +2352,10 @@ function reelTile(it) {
   $('.rt-cap b', cell).textContent = theme;
   $('.rt-cap span', cell).textContent = [it.entry.modelName, `take ${it.index + 1}`, it.render.seed != null && `seed ${it.render.seed}`, it.render.createdAt && madeOn(it.render.createdAt)].filter(Boolean).join(' · ');
   $('.rtile', cell).setAttribute('aria-label', `Open render: ${theme.slice(0, 80)}${rating ? `, rated ${RATINGS[rating].toLowerCase()}` : ''}. Shift and an arrow key move it.`);
+  const hide = $('.rt-hide', cell);
+  hide.textContent = it.render.hidden ? '👁 Show' : '🙈';
+  hide.title = it.render.hidden ? 'Show it in Your renders again' : 'Hide it from Your renders (it stays in History and the Gallery)';
+  hide.setAttribute('aria-label', it.render.hidden ? 'Show in Your renders again' : 'Hide from Your renders');
   if (cell.dataset.rating !== String(rating)) {
     cell.dataset.rating = rating;
     $('.rate-slot', cell).innerHTML = rateBarHtml(rating, `the render of “${theme.slice(0, 40)}”`);
@@ -2343,6 +2379,17 @@ $('#reelGrid').addEventListener('click', async e => {
   const it = reelItems[n];
   if (!it) return;
   if (b.dataset.act === 'open') return openLightbox(reelItems, n);
+  if (b.dataset.act === 'hide') {
+    const want = !it.render.hidden;
+    try {
+      await hideRender(it.entry, it.render, want);
+      if (want) toast('🙈 Hidden from Your renders', false, { label: '↶ Undo', run: () => hideRender(it.entry, it.render, false).catch(err => toast(err.message, true)) });
+      else toast('👁 Back in Your renders');
+    } catch (err) {
+      toast(err.message, true);
+    }
+    return;
+  }
   const want = Number(b.dataset.rate) === ratingOf(it.render) ? 0 : Number(b.dataset.rate);
   try {
     await rateRender(it.entry, it.render, want);
@@ -2381,7 +2428,7 @@ let reelDropped = false; // the click that ends a drag doesn't open the card
 
 $('#reelGrid').addEventListener('pointerdown', e => {
   const cell = e.target.closest('.reel-cell');
-  if (!cell || e.button !== 0 || reelDrag || e.target.closest('.rate-bar')) return;
+  if (!cell || e.button !== 0 || reelDrag || e.target.closest('.rate-bar, .rt-hide')) return;
   const d = { cell, key: cell.dataset.key, pointer: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, touch: e.pointerType !== 'mouse' };
   reelDrag = d;
   if (d.touch) d.hold = setTimeout(() => startReelDrag(d), 400);
@@ -2574,6 +2621,7 @@ $('#reelToggle').addEventListener('click', () => { saved.set('reelClosed', reelO
 $('#reelKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ kind: b.dataset.kind }); });
 $('#reelRated').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ min: Number(b.dataset.min) === reelFilter.min ? 0 : Number(b.dataset.min) }); });
 $('#reelSession').addEventListener('click', () => setReelFilter({ session: !reelFilter.session }));
+$('#reelHidden').addEventListener('click', () => setReelFilter({ hidden: !reelFilter.hidden }));
 $('#reelModel').addEventListener('change', e => setReelFilter({ model: e.target.value }));
 $('#reelFind').addEventListener('input', e => setReelFilter({ q: e.target.value }));
 $('#reelEmpty').addEventListener('click', e => {
@@ -7917,7 +7965,8 @@ const TOOL_IMPL = {
     choose('aspect', '#aspect', options('#aspect'), 'aspect');
     if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
     if (isSize(args.resolution) && !options('#resolution').includes(String(args.resolution).replace(/\s*x\s*/, '×'))) {
-      fillResolution(sizeChoices(m, $('#aspect').value), String(args.resolution).replace(/\s*[×x]\s*/, '×'), true);
+      keepOwnSize(String(args.resolution).replace(/\s*[×x]\s*/, '×'));
+      fillResolution(sizeChoices(m, $('#aspect').value), String(args.resolution).replace(/\s*[×x]\s*/, '×'));
       done.push(`resolution ${$('#resolution').value}`);
     } else choose('resolution', '#resolution', options('#resolution'), 'resolution');
     if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');

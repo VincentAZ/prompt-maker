@@ -337,9 +337,9 @@ body:not(:has(#view-create.active)) > .scroll-floor { display: none; }
 .dials.two { grid-template-columns: 1.3fr 1fr; }
 .dial { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .dial > span { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
-#resolutionField > label > span { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.res-custom { display: flex; align-items: center; gap: 6px; }
-.res-custom input { width: 0; flex: 1; min-width: 0; }
+.res-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#resCustom input#resW, #resCustom input#resH { width: 0; flex: 1 1 40%; min-width: 0; padding: 10px 2px; text-align: center; font-variant-numeric: tabular-nums; }
+.res-custom button { flex: 1 1 auto; }
 .res-custom b { color: var(--muted); }
 .dial-note { font-style: normal; font-size: 12px; font-weight: 700; color: var(--m); margin-top: -2px; white-space: nowrap; }
 .seg { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line-2); }
@@ -1270,6 +1270,12 @@ body.reel-full .view { animation: none; } /* (an animated parent would hold the 
 .reel-cell[data-rating="0"] .rate-bar { opacity: 0; transition: opacity 0.15s; }
 .reel-cell[data-rating="0"]:hover .rate-bar, .reel-cell[data-rating="0"] .rate-bar:focus-within { opacity: 1; }
 @media (hover: none) { .reel-cell[data-rating="0"] .rate-bar { opacity: 1; } }
+/* 🙈 hide from Your renders: top right, on hover (always while looking at the hidden ones) */
+.rt-hide { position: absolute; top: 6px; right: 6px; z-index: 1; padding: 3px 8px; border: 0; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: rgb(0 0 0 / 60%); cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+.rt-hide:hover { background: rgb(0 0 0 / 80%); }
+.reel-cell:hover .rt-hide, .rt-hide:focus-visible, .reel.showing-hidden .rt-hide { opacity: 1; }
+@media (hover: none) { .rt-hide { opacity: 1; } }
+.reel.sorting .rt-hide, .reel-ghost .rt-hide { display: none; }
 @media (max-width: 760px) {
   .reel-zoom { flex-basis: 90px; }
   .reel-count, #reelFull .lbl { display: none; }
