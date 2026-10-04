@@ -1434,7 +1434,8 @@ async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
     return r;
   } catch (err) {
     if (quiet) throw err;
-    toast(`Couldn't make the copy: ${err.message}`, true);
+    if ($('#trimDlg').open) $('#trimNote').textContent = `⚠️ Couldn't cut it: ${err.message}`; // a toast would be under the window
+    else toast(`Couldn't make the copy: ${err.message}`, true);
     if (btn) {
       btn.disabled = false;
       btn.textContent = label;
@@ -1442,68 +1443,76 @@ async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
   }
 }
 
-// ✂️ Trim: pick the stretch of a long motion video to animate, to the frame. A timeline of the video's frames with a
-// playhead to drag, one-frame steps (← →, Shift for a second), start and end set at the frame you see (I, O), and
-// ▶ to play just that part. It starts out as long as the picked workflow animates (81 frames for some), else all of it.
-// Frames count at the video's frame rate: start = first frame kept, end = the frame after the last one.
+// ✂️ Trim: pick the stretch of a long motion video to animate, to the frame, in its own big window: the frame at the
+// playhead, a wide timeline of the video's frames with the part you pick lit between two handles you drag, and big
+// buttons (one frame back / on, start here, end here, play the part). Keys: ← → one frame (Shift: a second), I start,
+// O end, Space play. It starts out as long as the picked workflow animates (81 frames for some), else all of it.
+// Frames count at the video's frame rate: a = first frame kept, b = the frame after the last one.
 const trimFps = () => state.video?.fps || 24;
 const trimTotal = () => Math.max(1, Math.round((state.video?.seconds || 0) * trimFps()));
 const clockLabel = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(2).padStart(5, '0')}`;
-const frameAt = t => Math.min(trimTotal() - 1, Math.max(0, Math.floor(t * trimFps() + 1e-4)));
+const tv = () => $('#trimVideo');
 let trimRaf = 0;
+let trimFrame = 0; // the frame at the playhead
+let trimSeekTo = null; // a seek waiting for the one before to land (dragging asks for many)
 
 function openTrim() {
   const v = state.video;
-  if (!v?.file) return;
+  const src = $('#motionPreview').currentSrc || $('#motionPreview').getAttribute('src');
+  if (!v?.file || !src) return;
   const total = trimTotal();
   const flow = activeFlow();
-  const clip = typeof flow?.motionFrames === 'number' ? flow.motionFrames : total;
-  state.trim = { a: 0, b: Math.min(total, clip) };
-  const scrub = $('#trimScrub');
-  scrub.max = String(total - 1);
-  scrub.value = '0';
-  $('#trimBox').hidden = false;
-  $('.mz-preview').classList.add('trimming');
-  const pv = $('#motionPreview');
-  pv.pause();
+  state.trim = { a: 0, b: Math.min(total, typeof flow?.motionFrames === 'number' ? flow.motionFrames : total) };
+  $('#motionPreview').pause();
+  const video = tv();
+  if (video.getAttribute('src') !== src) video.src = src;
+  $('#trimLine').setAttribute('aria-valuemax', String(total));
+  $('#trimDlg').showModal();
   showTrimFrame(0);
   syncTrim();
-  trimThumbs();
-  renderMotionHint();
-  scrub.focus();
+  trimThumbs(src);
+  $('#trimLine').focus();
 }
 
 function closeTrim() {
-  $('#trimBox').hidden = true;
-  $('.mz-preview')?.classList.remove('trimming');
-  state.trim = null;
   cancelAnimationFrame(trimRaf);
+  tv().pause();
+  if ($('#trimDlg').open) $('#trimDlg').close();
+  state.trim = null;
   const pv = $('#motionPreview');
   if (pv.getAttribute('src')) pv.play().catch(() => {});
 }
+$('#trimDlg').addEventListener('close', () => { if (state.trim) closeTrim(); });
 
-// Shows a frame in the preview (seeking to the middle of it, so the browser lands on that one).
-function showTrimFrame(frame) {
-  const pv = $('#motionPreview');
-  const f = Math.min(trimTotal() - 1, Math.max(0, frame));
-  pv.pause();
-  pv.currentTime = (f + 0.5) / trimFps();
-  $('#trimScrub').value = String(f);
-  trimClock(f);
+// Puts the playhead on a frame and shows it (seeking to the middle of the frame, so the browser lands on that one).
+function showTrimFrame(frame, { seek = true } = {}) {
+  trimFrame = Math.min(trimTotal() - 1, Math.max(0, Math.round(frame)));
+  const total = trimTotal();
+  $('.trim-head').style.setProperty('--p', `${((trimFrame + 0.5) / total) * 100}%`);
+  $('#trimLine').setAttribute('aria-valuenow', String(trimFrame + 1));
+  $('#trimLine').setAttribute('aria-valuetext', `frame ${trimFrame + 1}, ${clockLabel(trimFrame / trimFps())}`);
+  $('#trimNow').textContent = `${clockLabel(trimFrame / trimFps())} · frame ${trimFrame + 1} of ${total}`;
+  if (!seek) return;
+  const video = tv();
+  video.pause();
+  const t = (trimFrame + 0.5) / trimFps();
+  if (video.seeking) trimSeekTo = t; else video.currentTime = t;
 }
+tv().addEventListener('seeked', () => {
+  if (trimSeekTo == null) return;
+  const t = trimSeekTo;
+  trimSeekTo = null;
+  tv().currentTime = t;
+});
 
-function trimClock(f = frameAt($('#motionPreview').currentTime)) {
-  $('#trimNow').textContent = `${clockLabel(f / trimFps())} · frame ${f + 1} of ${trimTotal()}`;
-}
-
-// The part picked: the lit-up stretch on the timeline, the Start and End boxes, and what it adds up to.
+// The part picked: lit between its handles, the Start and End boxes, and what it adds up to.
 function syncTrim({ fields = true } = {}) {
   const t = state.trim;
   if (!t) return;
   const total = trimTotal();
   const fps = trimFps();
-  t.a = Math.min(total - 1, Math.max(0, t.a));
-  t.b = Math.min(total, Math.max(t.a + 1, t.b));
+  t.a = Math.min(total - 1, Math.max(0, Math.round(t.a)));
+  t.b = Math.min(total, Math.max(t.a + 1, Math.round(t.b)));
   $('.trim-sel').style.setProperty('--a', `${(t.a / total) * 100}%`);
   $('.trim-sel').style.setProperty('--w', `${((t.b - t.a) / total) * 100}%`);
   if (fields) {
@@ -1513,21 +1522,20 @@ function syncTrim({ fields = true } = {}) {
   const flow = activeFlow();
   const n = t.b - t.a;
   $('#trimNote').textContent = `Frames ${t.a + 1}–${t.b} · ${n} frames · ${secsLabel(n / fps)} (${clockLabel(t.a / fps)} → ${clockLabel(t.b / fps)})${typeof flow?.motionFrames === 'number' && n > flow.motionFrames + 1 ? ` · “${flow.name}” animates the first ${flow.motionFrames} of them` : ''}`;
-  $('#trimGo').disabled = n >= total && t.a === 0; // the whole video: nothing to cut
+  $('#trimGo').disabled = n >= total; // the whole video: nothing to cut
 }
 
-// Small frames along the timeline, taken in this page from a second copy of the video (never saved).
-async function trimThumbs() {
+// Frames along the timeline, taken in this page from a second copy of the video (never saved).
+async function trimThumbs(src) {
   const box = $('.trim-thumbs');
-  const src = $('#motionPreview').currentSrc || $('#motionPreview').getAttribute('src');
-  if (!src || box.dataset.src === src) return;
+  if (box.dataset.src === src && box.children.length) return;
   box.dataset.src = src;
   box.replaceChildren();
   const v = await openVideo(src).catch(() => null);
   if (!v || box.dataset.src !== src) return;
-  const n = 12;
-  const h = 56;
+  const h = 84;
   const w = Math.max(1, Math.round((h * (v.videoWidth || 16)) / (v.videoHeight || 9)));
+  const n = Math.min(40, Math.max(8, Math.round(($('#trimLine').clientWidth || 800) / w)));
   for (let i = 0; i < n && box.dataset.src === src; i++) {
     await seekTo(v, ((i + 0.5) * (state.video?.seconds || v.duration || 1)) / n);
     const c = Object.assign(document.createElement('canvas'), { width: w, height: h });
@@ -1540,18 +1548,16 @@ async function trimThumbs() {
 
 function playTrim() {
   const t = state.trim;
-  const pv = $('#motionPreview');
+  const video = tv();
   if (!t) return;
-  if (!pv.paused) { pv.pause(); return; }
-  const f = frameAt(pv.currentTime);
-  if (f < t.a || f >= t.b - 1) pv.currentTime = (t.a + 0.5) / trimFps();
-  pv.play().catch(() => {});
+  if (!video.paused) { video.pause(); return; }
+  if (trimFrame < t.a || trimFrame >= t.b - 1) video.currentTime = (t.a + 0.5) / trimFps();
+  video.play().catch(() => {});
   const follow = () => {
-    if (!state.trim || pv.paused) { $('#trimPlay').textContent = '▶ Play part'; return; }
-    const now = frameAt(pv.currentTime);
-    if (now >= state.trim.b || now < state.trim.a) pv.currentTime = (state.trim.a + 0.5) / trimFps(); // loop the part
-    $('#trimScrub').value = String(now);
-    trimClock(now);
+    if (!state.trim || video.paused) { $('#trimPlay').textContent = '▶ Play part'; return; }
+    const now = Math.floor(video.currentTime * trimFps() + 1e-4);
+    if (now >= state.trim.b || now < state.trim.a) video.currentTime = (state.trim.a + 0.5) / trimFps(); // loop the part
+    showTrimFrame(now, { seek: false });
     trimRaf = requestAnimationFrame(follow);
   };
   $('#trimPlay').textContent = '⏸ Pause';
@@ -1559,14 +1565,38 @@ function playTrim() {
   trimRaf = requestAnimationFrame(follow);
 }
 
-const trimStep = n => showTrimFrame(frameAt($('#motionPreview').currentTime) + n);
+const trimStep = n => showTrimFrame(trimFrame + n);
 const trimMark = end => {
-  const f = Number($('#trimScrub').value) || 0;
-  if (end) { state.trim.b = f + 1; if (state.trim.a > f) state.trim.a = f; }
-  else { state.trim.a = f; if (state.trim.b <= f) state.trim.b = Math.min(trimTotal(), f + 1); }
+  const t = state.trim;
+  if (end) { t.b = trimFrame + 1; if (t.a > trimFrame) t.a = trimFrame; }
+  else { t.a = trimFrame; if (t.b <= trimFrame) t.b = Math.min(trimTotal(), trimFrame + 1); }
   syncTrim();
 };
-$('#trimScrub').addEventListener('input', e => showTrimFrame(Number(e.target.value)));
+
+// The timeline: press and drag anywhere to move the playhead, or drag a handle to move the start or the end (the
+// frame you're on shows above as you go).
+let trimDrag = null;
+const frameAtX = x => { const r = $('#trimLine').getBoundingClientRect(); return Math.floor(((x - r.left) / r.width) * trimTotal()); };
+function trimDragTo(x) {
+  const t = state.trim;
+  const f = Math.min(trimTotal() - 1, Math.max(0, frameAtX(x)));
+  if (trimDrag === 'a') { t.a = Math.min(f, t.b - 1); syncTrim(); showTrimFrame(t.a); }
+  else if (trimDrag === 'b') { t.b = Math.max(f + 1, t.a + 1); syncTrim(); showTrimFrame(t.b - 1); }
+  else showTrimFrame(f);
+}
+$('#trimLine').addEventListener('pointerdown', e => {
+  if (!state.trim || e.button > 0) return;
+  e.preventDefault();
+  tv().pause();
+  trimDrag = e.target.closest('.trim-handle')?.dataset.h || 'head';
+  $('#trimLine').setPointerCapture(e.pointerId);
+  $('#trimLine').focus();
+  trimDragTo(e.clientX);
+});
+$('#trimLine').addEventListener('pointermove', e => { if (trimDrag) trimDragTo(e.clientX); });
+for (const type of ['pointerup', 'pointercancel']) $('#trimLine').addEventListener(type, () => { trimDrag = null; });
+
+$('#videoTrim').addEventListener('click', openTrim);
 $('#trimBack').addEventListener('click', () => trimStep(-1));
 $('#trimFwd').addEventListener('click', () => trimStep(1));
 $('#trimPlay').addEventListener('click', playTrim);
@@ -1585,13 +1615,14 @@ $('#trimGo').addEventListener('click', e => {
   const t = state.trim;
   videoCopy(e.currentTarget, 'trim', { start: t.a / trimFps(), seconds: (t.b - t.a) / trimFps() });
 });
-$('#trimCancel').addEventListener('click', () => { closeTrim(); renderMotionHint(); });
-$('#trimBox').addEventListener('keydown', e => {
+$('#trimCancel').addEventListener('click', closeTrim);
+$('#trimClose').addEventListener('click', closeTrim);
+$('#trimDlg').addEventListener('keydown', e => {
   const typing = e.target.matches('input[type="number"]');
-  if (e.key === 'Enter') { e.preventDefault(); if (typing) syncTrim(); else $('#trimGo').click(); return; } // in the Create form: Enter must not generate
-  if (e.key === 'Escape') { e.preventDefault(); closeTrim(); renderMotionHint(); return; }
+  if (e.key === 'Enter' && typing) { e.preventDefault(); syncTrim(); return; }
   if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); trimStep((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? Math.round(trimFps()) : 1)); }
+  else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); showTrimFrame(e.key === 'Home' ? state.trim.a : state.trim.b - 1); }
   else if (e.key === ' ' && !e.target.matches('button')) { e.preventDefault(); playTrim(); }
   else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); trimMark(false); }
   else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); trimMark(true); }
@@ -1657,11 +1688,7 @@ function renderMotionHint() {
     hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoRetime">Use a 24 fps copy</button>');
     $('#videoRetime').addEventListener('click', e => videoCopy(e.currentTarget, 'retime'));
   }
-  if (v?.file && v.ffmpeg && v.seconds > 1 && $('#trimBox').hidden) {
-    hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoTrim" title="Use only part of this video">✂️ Trim</button>');
-    $('#videoTrim').addEventListener('click', openTrim);
-  }
-  if (!v?.file && !$('#trimBox').hidden) closeTrim();
+  $('#videoTrim').hidden = !(v?.file && v.ffmpeg && v.seconds > 1); // cutting needs ffmpeg
 }
 
 // The motion video as the server stores it with a take (null while it's still uploading).
@@ -1670,9 +1697,16 @@ const videoForRequest = () => {
   return v?.file ? { file: v.file, preview: v.preview || undefined, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, fps: v.fps || undefined } : null;
 };
 
-// A take's motion video put back on Create (from History).
+// A take's motion video put back on Create (from History, or after a reload). What ffmpeg says about it (black bars,
+// frame rate) isn't kept with the take, so it's asked again.
 function restoreVideo(v) {
   setVideo(v?.file ? { ...v, ratio: v.width && v.height ? v.width / v.height : null } : null);
+  if (v?.file && v.bars === undefined) {
+    api(`/api/videos/${encodeURIComponent(v.file)}/prepare`, { method: 'POST', body: { preview: false } }).then(prep => {
+      if (state.video?.file !== v.file) return;
+      setVideo({ ...state.video, bars: prep.info?.bars || null, fps: state.video.fps || prep.info?.fps || null, ffmpeg: prep.ffmpeg });
+    }).catch(() => {});
+  }
 }
 
 const mz = $('#motionZone');

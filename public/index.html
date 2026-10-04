@@ -143,6 +143,7 @@
                   <video id="motionPreview" muted loop playsinline aria-label="Your motion video"></video>
                   <span id="mzInfo" class="dz-source"></span>
                   <div class="dz-actions">
+                    <button type="button" id="videoTrim" class="btn small glass" title="Use only part of this video, cut to the frame" hidden>✂️ Trim</button>
                     <button type="button" id="videoGallery" class="btn small glass" title="Pick another video from your Gallery">Gallery</button>
                     <button type="button" id="videoReplace" class="btn small glass">Replace</button>
                     <button type="button" id="videoClear" class="btn small glass danger">Remove</button>
@@ -150,31 +151,6 @@
                 </div>
               </div>
               <p id="motionHint" class="hint">The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.</p>
-              <div id="trimBox" class="trim-box" role="group" aria-label="Pick the part of the motion video to use" hidden>
-                <div class="trim-strip">
-                  <div class="trim-thumbs" aria-hidden="true"></div>
-                  <div class="trim-sel" aria-hidden="true"></div>
-                  <input type="range" id="trimScrub" min="0" max="1" step="1" value="0" aria-label="Scrub through the video, frame by frame (← → one frame, Shift for a second)">
-                </div>
-                <div class="trim-row">
-                  <button type="button" id="trimBack" class="btn small" title="One frame back (←)">‹ frame</button>
-                  <button type="button" id="trimPlay" class="btn small" title="Play the part you picked (Space)">▶ Play part</button>
-                  <button type="button" id="trimFwd" class="btn small" title="One frame on (→)">frame ›</button>
-                  <span id="trimNow" class="trim-now" aria-live="polite"></span>
-                </div>
-                <div class="trim-row">
-                  <button type="button" id="trimSetStart" class="btn small" title="Start at the frame you see (I)">⇤ Start here</button>
-                  <label>Start <input type="number" id="trimStart" min="0" step="any" inputmode="decimal"> s</label>
-                  <label>End <input type="number" id="trimEnd" min="0" step="any" inputmode="decimal"> s</label>
-                  <button type="button" id="trimSetEnd" class="btn small" title="End with the frame you see (O)">End here ⇥</button>
-                </div>
-                <p id="trimNote" class="hint"></p>
-                <div class="trim-row">
-                  <button type="button" id="trimGo" class="btn small primary">✂️ Use this part</button>
-                  <button type="button" id="trimCancel" class="btn small">Cancel</button>
-                  <span class="muted small">← → one frame · Shift: a second · I start · O end · Space play</span>
-                </div>
-              </div>
             </div>
           </section>
 
@@ -718,6 +694,42 @@
       </header>
       <p class="muted small jobs-intro">Long tasks you give the assistant run here, one item after another. Whatever goes wrong is skipped and logged for you to look at, and the job goes on.</p>
       <div id="jobsList" class="jobs-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="trimDlg" class="modal trim-dlg" aria-labelledby="trimTitle">
+    <div class="modal-body">
+      <header class="modal-head">
+        <h2 id="trimTitle">✂️ Trim the motion video</h2>
+        <button type="button" class="icon-btn" id="trimClose" aria-label="Close">✕</button>
+      </header>
+      <div class="trim-body">
+        <div class="trim-stage"><video id="trimVideo" muted playsinline preload="auto" aria-label="The frame at the playhead"></video></div>
+        <p class="trim-readout"><span id="trimNow" aria-live="polite"></span></p>
+        <div id="trimLine" class="trim-line" role="slider" tabindex="0" aria-label="Timeline: the playhead's frame. Drag it, or the start and end handles" aria-valuemin="1">
+          <div class="trim-thumbs" aria-hidden="true"></div>
+          <div class="trim-sel" aria-hidden="true"><span class="trim-handle" data-h="a" title="Drag: where the part starts"></span><span class="trim-handle" data-h="b" title="Drag: where the part ends"></span></div>
+          <div class="trim-head" aria-hidden="true"></div>
+        </div>
+        <div class="trim-controls">
+          <button type="button" id="trimSetStart" class="btn" title="Start the part at the frame you see (I)">⇤ Start here</button>
+          <button type="button" id="trimBack" class="btn" title="One frame back (←; Shift: a second)">‹ frame</button>
+          <button type="button" id="trimPlay" class="btn primary" title="Play the part you picked, over and over (Space)">▶ Play part</button>
+          <button type="button" id="trimFwd" class="btn" title="One frame on (→; Shift: a second)">frame ›</button>
+          <button type="button" id="trimSetEnd" class="btn" title="End the part with the frame you see (O)">End here ⇥</button>
+        </div>
+        <div class="trim-fields">
+          <label>Start <input type="number" id="trimStart" min="0" step="any" inputmode="decimal"> s</label>
+          <label>End <input type="number" id="trimEnd" min="0" step="any" inputmode="decimal"> s</label>
+          <p id="trimNote"></p>
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <span class="muted small trim-keys">← → one frame · Shift a second · I start · O end · Space play</span>
+        <span class="spacer"></span>
+        <button type="button" id="trimCancel" class="btn">Cancel</button>
+        <button type="button" id="trimGo" class="btn primary">✂️ Use this part</button>
+      </footer>
     </div>
   </dialog>
 

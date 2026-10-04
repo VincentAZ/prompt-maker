@@ -223,12 +223,14 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
   - **The clip takes your character's shape**, as in Wan-AI's own code: **Aspect** (step ④) follows the character image, and ComfyUI crops the motion video to it at the center. (Until you add a character, Aspect follows the video.) When the two differ a lot, step ③ says which sides of the video get cropped: keep the moves near the middle, or use a character image in the video's shape.
   - Frame it like your character: full body to full body. A close-up character with a full-body dance (or the other way round) is the most common cause of a bad result.
   - **⬛ Black bars** (a webcam or screen recording inside a wider frame, a letterboxed film) would count as part of the video. Step ③ spots them and offers **✂️ Crop the bars**: a copy with just the picture, sound kept.
-  - **✂️ Trim** uses just part of a long video, cut to the frame:
-    - **Scrub** the timeline (a strip of the video's frames) and the preview shows each frame, with its time and number (*0:05.92 · frame 72 of 1159*).
+  - **✂️ Trim** (under the video) uses just part of a long video, cut to the frame, in a big window of its own:
+    - **The frame at the playhead** fills the window, with its time and number below it (*0:05.92 · frame 72 of 1159*).
+    - **The timeline** is a strip of the video's frames. Press and drag anywhere to move the playhead. The part you keep is lit between two handles, and the rest is dimmed: drag a handle to move the start or the end, and the frame it lands on shows as you go.
     - **Step one frame** with **‹ frame / frame ›** or `←` `→` (`Shift` for a second).
-    - **⇤ Start here** (`I`) and **End here ⇥** (`O`) mark the frame you're looking at, or type the times. The part shows lit up on the timeline, with how many frames it is.
+    - **⇤ Start here** (`I`) and **End here ⇥** (`O`) mark the frame you're looking at, or type the times. It says how many frames the part is.
     - **▶ Play part** (`Space`) plays just that stretch, over and over.
     - It starts out as long as the picked workflow animates (81 frames for the Distilled template). **✂️ Use this part** swaps in a copy of just those frames, sound kept.
+  - The video's length, size and frame rate and its buttons sit in a bar under it, so nothing covers the picture.
   - The clip is as long as the video, and its frames are used one for one. Step ③ shows its length, shape and frame rate. Above 30 fps (many phones film at 60 or 120), it takes that much longer to render: **Use a 24 fps copy** swaps in a copy at 24 fps, with the sound kept.
   - **Phone videos (H.265/HEVC)** often don't play in the browser. ComfyUI uses them as they are; for the page, Prompt Maker makes a small upright preview, so you still see it, Aspect still matches it, and the Brain still sees the moves. The preview, the 24 fps copy and the crop need [ffmpeg](https://ffmpeg.org) on this computer (most Linux systems have it). Without it, the video still renders; the Brain then goes by your theme for the moves.
 - **② The theme** says where the character is and from where the camera sees it: *"on a rooftop at dusk, low angle, three-quarter view"*. Leave it empty and the AI picks a setting that suits the character.

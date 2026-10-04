@@ -378,25 +378,39 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .wfp-settings { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; border: 0; background: none; text-align: left; align-self: flex-start; }
 .wfp-settings span { padding: 2px 9px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font: 11.5px var(--mono); color: var(--text-2); transition: border-color 0.15s, color 0.15s; }
 .wfp-settings:hover span { border-color: color-mix(in srgb, var(--m) 70%, transparent); color: var(--text); }
-.trim-box { display: grid; gap: 8px; margin-top: 8px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--line, rgb(255 255 255 / 12%)); }
-.trim-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
-.trim-row label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--text-2); }
-#trimBox input[type="number"] { width: 84px; flex: none; padding: 6px 8px; }
-.trim-box .hint { margin: 0; }
-.trim-now { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
-/* The timeline: frames from the video, the part you picked lit up, and a playhead you drag. */
-.trim-strip { position: relative; height: 56px; border-radius: 8px; overflow: hidden; background: #000; }
-.trim-thumbs { position: absolute; inset: 0; display: flex; }
+/* ✂️ Trim: a big frame, a wide timeline with handles, and large controls. */
+dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
+.trim-body { display: flex; flex-direction: column; gap: 12px; padding: 0 22px; overflow-y: auto; }
+.trim-stage { display: flex; justify-content: center; background: #000; border-radius: 12px; overflow: hidden; }
+.trim-stage video { display: block; width: 100%; max-height: min(56vh, 620px); object-fit: contain; }
+.trim-readout { margin: 0; text-align: center; font-family: var(--mono); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.trim-line { position: relative; height: 84px; border-radius: 10px; overflow: hidden; background: #000; cursor: pointer; touch-action: none; user-select: none; }
+.trim-line:focus-visible { outline: 3px solid var(--hot); outline-offset: 3px; }
+.trim-thumbs { position: absolute; inset: 0; display: flex; pointer-events: none; }
 .trim-thumbs canvas { flex: 1 1 0; min-width: 0; height: 100%; object-fit: cover; }
-/* Outside the part you picked is dimmed (the shadow), its edges in the accent color. */
-.trim-sel { position: absolute; top: 0; bottom: 0; left: var(--a, 0%); width: var(--w, 100%); border-inline: 3px solid var(--hot); border-block: 2px solid var(--hot); border-radius: 4px; box-shadow: 0 0 0 9999px rgb(8 6 16 / 68%); pointer-events: none; }
-#trimScrub { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border-radius: 0; background: transparent; appearance: none; -webkit-appearance: none; cursor: ew-resize; }
-#trimScrub::-webkit-slider-runnable-track { height: 100%; background: transparent; }
-#trimScrub::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 56px; border: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0 1px #000, 0 0 8px rgb(0 0 0 / 80%); }
-#trimScrub::-moz-range-track { height: 100%; background: transparent; }
-#trimScrub::-moz-range-thumb { width: 4px; height: 56px; border: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0 1px #000; }
-#trimScrub:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
-.mz-preview.trimming video { max-height: 420px; }
+/* The part you picked: lit, with a handle at each end; the rest dimmed (the shadow). */
+.trim-sel { position: absolute; top: 0; bottom: 0; left: var(--a, 0%); width: var(--w, 100%); border-block: 3px solid var(--hot); box-shadow: 0 0 0 9999px rgb(8 6 16 / 72%); pointer-events: none; }
+.trim-handle { position: absolute; top: -3px; bottom: -3px; width: 16px; background: var(--hot); cursor: ew-resize; pointer-events: auto; touch-action: none; }
+.trim-handle[data-h="a"] { left: -8px; border-radius: 6px 0 0 6px; }
+.trim-handle[data-h="b"] { right: -8px; border-radius: 0 6px 6px 0; }
+.trim-handle::before { content: ""; position: absolute; inset: 0 -10px; } /* a bigger grip than it looks */
+.trim-handle::after { content: ""; position: absolute; left: 50%; top: 50%; width: 2px; height: 26px; transform: translate(-50%, -50%); border-inline: 2px solid rgb(255 255 255 / 85%); box-sizing: content-box; }
+.trim-head { position: absolute; top: 0; bottom: 0; left: var(--p, 0%); width: 3px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px #000, 0 0 10px rgb(0 0 0 / 80%); pointer-events: none; }
+.trim-head::before { content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%); border: 7px solid transparent; border-top-color: #fff; }
+.trim-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.trim-controls .btn { min-height: 44px; padding-inline: 16px; font-size: 15px; }
+.trim-fields { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; padding-bottom: 6px; }
+.trim-fields label { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+#trimDlg input[type="number"] { width: 96px; flex: none; padding: 8px 10px; font-family: var(--mono); }
+.trim-fields p { flex-basis: 100%; margin: 0; text-align: center; color: var(--text-2); font-size: 14px; }
+@media (max-width: 560px) { .trim-keys { display: none; } .trim-line { height: 64px; } .trim-controls .btn { flex: 1 1 40%; } }
+/* Step 3's motion video: what it is and its buttons sit in a bar under it, not over it (the info on a line of its
+   own when the bar is short of room). */
+.mz-preview:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 8px; }
+.mz-preview video { flex-basis: 100%; }
+.mz-preview .dz-source, .mz-preview .dz-actions { position: static; }
+.mz-preview .dz-source { flex: 1 1 auto; max-width: none; margin: 8px 10px 0; padding-inline: 2px; background: transparent; backdrop-filter: none; white-space: normal; }
+.mz-preview .dz-actions { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; padding: 8px 10px; }
 .wfp-models { padding: 9px 12px; border-radius: var(--radius-sm); background: rgb(255 196 77 / 12%); border: 1px solid rgb(255 196 77 / 35%); color: #ffe2a8; font-size: 13.5px; }
 .wfp-models p { margin: 0; }
 .wfp-models .hint { margin-top: 6px; color: var(--text-2); font-size: 12.5px; }

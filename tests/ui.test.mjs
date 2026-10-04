@@ -3018,10 +3018,10 @@ esac
     await waitFor('(document.querySelector("#wfpWarn")?.textContent || "").includes("animates 81 frames")', 'step 5 says the workflow animates only part of it');
     assert((await text('#wfpWarn')).includes('the first 6.8s of your 10s motion video'), `and how much: ${await text('#wfpWarn')}`);
     await click('#videoTrim');
-    await waitFor('!document.querySelector("#trimBox").hidden', 'the trim tools');
+    await waitFor('document.querySelector("#trimDlg").open', 'the trim window');
     eq(await value('#trimEnd'), '6.75', 'it starts as long as the workflow animates (81 frames)');
     assert((await text('#trimNow')).includes('frame 1 of 120'), `the playhead is on the first frame: ${await text('#trimNow')}`);
-    await waitFor('document.querySelectorAll(".trim-thumbs canvas").length === 12', 'the timeline shows the video\'s frames');
+    await waitFor('document.querySelectorAll(".trim-thumbs canvas").length >= 8', 'the timeline shows the video\'s frames');
     // Frame by frame to where it should start (a button, then the arrow key), and start there.
     await click('#trimFwd');
     await press('ArrowRight');
@@ -3029,16 +3029,28 @@ esac
     assert((await text('#trimNow')).includes('frame 4 of 120'), `one frame per step: ${await text('#trimNow')}`);
     await click('#trimSetStart');
     eq(await value('#trimStart'), '0.25', 'it starts at that frame');
-    // Drag the playhead to 6 s and end there.
-    await js('(() => { const s = document.querySelector("#trimScrub"); s.value = "71"; s.dispatchEvent(new Event("input", { bubbles: true })); })()');
-    assert((await text('#trimNow')).startsWith('0:05.92 · frame 72'), `the playhead shows the frame: ${await text('#trimNow')}`);
+    // Drag along the timeline to 6 s and end there, then drag the start handle to 2 s: real mouse drags.
+    await js('document.querySelector("#trimLine").scrollIntoView({ block: "center" })');
+    const line = await js('(() => { const r = document.querySelector("#trimLine").getBoundingClientRect(); return { l: r.left, w: r.width, y: r.top + r.height / 2 }; })()');
+    const xOf = f => line.l + ((f + 0.5) / 120) * line.w;
+    const drag = async (x0, x1) => {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x0, y: line.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x0 + ((x1 - x0) * k) / 6, y: line.y, button: 'left', buttons: 1 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x1, y: line.y, button: 'left', buttons: 0, clickCount: 1 });
+      await sleep(150);
+    };
+    await drag(xOf(40), xOf(71));
+    assert((await text('#trimNow')).startsWith('0:05.92 · frame 72'), `the playhead shows the frame it's on: ${await text('#trimNow')}`);
     await click('#trimSetEnd');
-    eq(await value('#trimEnd'), '6.00', 'and ends with it');
-    assert((await text('#trimNote')).includes('Frames 4–72 · 69 frames'), `it says what you picked: ${await text('#trimNote')}`);
+    eq(await value('#trimEnd'), '6.00', 'and the part ends with it');
+    await drag(line.l + (3 / 120) * line.w, xOf(24));
+    eq(await value('#trimStart'), '2.00', 'the start handle drags to 2 s');
+    assert((await text('#trimNow')).includes('frame 25'), 'and the frame it lands on shows');
+    assert((await text('#trimNote')).includes('Frames 25–72 · 48 frames'), `it says what you picked: ${await text('#trimNote')}`);
     await shot('49-trim');
     await click('#trimGo');
-    await toastText('of your motion video, from');
-    await waitFor('/🕺 5\\.[78]s ·/.test(document.querySelector("#mzInfo").textContent) && document.querySelector("#trimBox").hidden', 'now that part alone (69 frames at 12 fps)');
+    await toastText('of your motion video, from 2s');
+    await waitFor('/🕺 4(\\.\\d)?s ·/.test(document.querySelector("#mzInfo").textContent) && !document.querySelector("#trimDlg").open', 'now that part alone (48 frames at 12 fps)');
     await waitFor('!(document.querySelector("#wfpWarn")?.textContent || "").includes("animates")', 'and the workflow does all of it');
     await click('#videoClear');
     await click('#imageClear');
