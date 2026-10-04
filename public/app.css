@@ -1174,34 +1174,57 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .sub > .panel-head .collapse-btn { margin-left: auto; }
 .model-form.collapsed { gap: 8px; }
 
-/* This session: every render since start-up, above the takes, grouped by run */
-.reel { --tile-h: 150px; --reel-max: min(440px, 62vh); display: flex; flex-direction: column; min-width: 0; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); }
-.reel.big { --tile-h: 240px; --reel-max: calc(100vh - 150px); }
-.reel-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 6px; }
+/* Your renders: every render, above the takes. Open, it keeps the height you drag it to (--reel-h) and scrolls
+   inside; full screen it fills the window. Cards share a row height (--tile-h, the 🔍 size) and keep their shape. */
+.reel { --tile-h: 160px; --reel-h: 400px; position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); }
+.reel-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 6px; min-width: 0; }
 .reel.closed .reel-head { padding-block: 6px; }
 .reel-head .spacer { flex: 1; }
-.reel-title { margin: 0; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; }
-.reel-count { font-size: 12.5px; color: var(--muted); }
-.reel-toggle { width: 30px; height: 30px; font-size: 14px; }
-.reel-body { max-height: var(--reel-max); overflow-y: auto; overscroll-behavior: contain; padding: 0 14px 14px; border-top: 1px solid var(--line); }
+.reel-head .btn { flex: none; }
+.reel-title { margin: 0; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; }
+.reel-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.reel-toggle { width: 30px; height: 30px; font-size: 14px; flex: none; }
+.reel-zoom { display: flex; align-items: center; gap: 6px; flex: 0 1 150px; min-width: 70px; font-size: 14px; }
+.reel-zoom input { width: 100%; height: 6px; }
+.reel-body { height: var(--reel-h); overflow-y: auto; overscroll-behavior: contain; padding: 0 14px 14px; border-top: 1px solid var(--line); }
+.reel.empty .reel-body { height: auto; }
+.reel-filters { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 -14px; padding: 10px 14px; background: var(--panel-solid, #120f1a); border-bottom: 1px solid var(--line); }
+.reel-filters .chip-btn { padding: 4px 10px; font-size: 12.5px; }
+#reelModel, #reelFind { height: 30px; border-radius: 999px; font-size: 12.5px; }
+.reel-model { width: auto; max-width: 180px; padding: 0 28px 0 12px; background-position: right 9px center; background-size: 13px; }
+#reelFind { flex: 1 1 110px; min-width: 90px; max-width: 240px; padding: 0 12px; }
 .reel-empty { margin: 12px 0 0; font-size: 13.5px; color: var(--text-2); }
-.reel-list { display: flex; flex-direction: column; }
-.reel-run { padding: 12px 0; border-bottom: 1px solid var(--line); }
-.reel-run:last-child { border-bottom: 0; padding-bottom: 0; }
-.reel-run.here { border-left: 3px solid var(--m); margin-left: -14px; padding-left: 11px; }
-.reel-run-head { display: flex; align-items: center; gap: 8px; min-width: 0; margin-bottom: 8px; }
-.reel-run-head .tag.model { background: color-mix(in srgb, var(--m) 20%, var(--panel-3)); color: var(--text); flex: none; }
-.reel-theme { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 700; }
-.reel-when { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; }
-.reel-run-head .spacer { flex: 1; }
-.reel-here { flex: none; font-size: 11.5px; font-weight: 800; color: var(--m); }
-.reel-run-head .btn { flex: none; }
-.reel-tiles { display: flex; flex-wrap: wrap; gap: 8px; }
-.reel-tiles > .rtile, .reel-cell { flex: 0 0 auto; height: var(--tile-h); aspect-ratio: var(--ar); max-width: 100%; }
+.reel-empty .btn { margin-left: 6px; }
+.reel-grid { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px; }
+.reel-grid > .rtile, .reel-cell { --ar: 1; flex: 0 0 auto; width: min(100%, calc(var(--tile-h) * var(--ar))); aspect-ratio: var(--ar); }
 .reel-cell { position: relative; }
 .reel-cell > .rtile { display: block; width: 100%; height: 100%; }
-.reel-cell .rt-meta { padding-right: 70px; }
-.rate-slot { position: absolute; right: 6px; bottom: 6px; }
+.reel-cell .rt-cap { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 1px; padding: 22px 76px 7px 9px; text-align: left; color: #fff; background: linear-gradient(to top, rgb(0 0 0 / 80%), transparent); opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+.reel-cell .rt-cap b { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reel-cell .rt-cap span { font: 600 10.5px var(--mono); color: rgb(255 255 255 / 75%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reel-cell:hover .rt-cap, .reel-cell:focus-within .rt-cap { opacity: 1; }
+.reel-more { height: 1px; }
+/* Dragging a card: it's carried small under the pointer; its place shows where it will land. */
+.reel-cell { touch-action: pan-y; }
+.reel-cell.moving { opacity: 0.35; outline: 2px dashed var(--m); outline-offset: 2px; border-radius: 14px; }
+.reel-cell.moving .rtile { animation: none; }
+.reel.sorting, .reel.sorting * { cursor: grabbing !important; user-select: none; }
+.reel.sorting .rt-cap, .reel.sorting .rate-slot { visibility: hidden; }
+.reel-ghost { position: fixed; left: 0; top: 0; z-index: 90; pointer-events: none; opacity: 0.92; border-radius: 14px; box-shadow: 0 18px 50px -10px rgb(0 0 0 / 80%), 0 0 0 2px var(--m); rotate: -2deg; }
+.reel-ghost .rtile { animation: none; height: 100%; }
+.reel-ghost .rate-slot, .reel-ghost .rt-cap { display: none; }
+/* The bottom edge: drag it to make the box taller or shorter. */
+.reel-grip { display: grid; place-items: center; height: 14px; margin-top: -1px; cursor: ns-resize; touch-action: none; border-radius: 0 0 var(--radius) var(--radius); }
+.reel-grip span { width: 44px; height: 4px; border-radius: 999px; background: var(--line-2); transition: background 0.15s, width 0.15s; }
+.reel-grip:hover span, .reel-grip:focus-visible span, .reel-grip.dragging span { width: 64px; background: var(--text-2); }
+.reel-grip:focus-visible { outline: none; }
+/* Full screen: over everything but the lightbox, toasts and dialogs. */
+.reel.full { position: fixed; inset: 0; z-index: 35; border: 0; border-radius: 0; background: var(--panel-solid, #120f1a); }
+.reel.full .reel-head { padding: 10px 16px 10px 10px; }
+.reel.full .reel-body { flex: 1; height: auto; min-height: 0; }
+body.reel-full { overflow: hidden; }
+body.reel-full .view { animation: none; } /* (an animated parent would hold the box in place of the window) */
+.rate-slot { position: absolute; right: 6px; bottom: 6px; z-index: 1; }
 .rate-bar { display: flex; flex-direction: row-reverse; padding: 2px 4px; border-radius: 999px; background: rgb(10 9 16 / 72%); backdrop-filter: blur(6px); }
 .rate-bar button { width: 20px; height: 22px; padding: 0; border: 0; background: none; color: rgb(255 255 255 / 45%); font-size: 15px; line-height: 1; cursor: pointer; transition: color 0.1s, transform 0.1s; }
 .rate-bar button.on { color: var(--star); }
@@ -1213,7 +1236,13 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .reel-cell[data-rating="0"] .rate-bar { opacity: 0; transition: opacity 0.15s; }
 .reel-cell[data-rating="0"]:hover .rate-bar, .reel-cell[data-rating="0"] .rate-bar:focus-within { opacity: 1; }
 @media (hover: none) { .reel-cell[data-rating="0"] .rate-bar { opacity: 1; } }
-@media (max-width: 760px) { .reel { --tile-h: 120px; } .reel.big { --tile-h: 200px; } .reel-when { display: none; } }
+@media (max-width: 760px) {
+  .reel-zoom { flex-basis: 90px; }
+  .reel-count, #reelFull .lbl { display: none; }
+  .reel-filters, .reel-filters .filter-chips { flex-wrap: nowrap; }
+  .reel-filters { overflow-x: auto; scrollbar-width: none; }
+  .reel-filters > *, .reel-filters .chip-btn { flex: none; }
+}
 
 /* Rendering now: the top-bar pill (only while something renders) and its panel. */
 .rp-wrap { position: relative; flex: none; }

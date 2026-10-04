@@ -1449,7 +1449,7 @@ esac
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
   });
 
-  await test('render: rate from the lightbox and This session, find it in the Gallery', async () => {
+  await test('render: rate from the lightbox and Your renders, find it in the Gallery', async () => {
     const rated = async () => (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.rating);
     await click('.take .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
@@ -1460,24 +1460,26 @@ esac
     await press('3');
     await waitFor('document.querySelector(\'[data-lb-rate="3"]\').getAttribute("aria-pressed") === "true"', 'key 3: excellent');
     await press('Escape');
-    // This session shows every render since start-up, with its rating; its stars rate in place.
-    await waitFor('document.querySelectorAll("#reel .reel-cell").length >= 3 && !!document.querySelector(\'#reel .reel-cell[data-rating="3"]\')', 'the session box shows the renders, rated');
+    // Your renders shows every render, with its rating; its stars rate in place.
+    await waitFor('document.querySelectorAll("#reel .reel-cell").length >= 3 && !!document.querySelector(\'#reel .reel-cell[data-rating="3"]\')', 'the box shows the renders, rated');
     eq(await count('#reel .reel-cell[data-rating="3"] .rate-bar button.on'), 3, 'three lit stars');
     await js('document.querySelector(\'#reel .reel-cell[data-rating="0"]\').classList.add("rate-me")');
     await click('#reel .reel-cell.rate-me [data-rate="1"]');
-    await waitFor('document.querySelectorAll(\'#reel .reel-cell[data-rating="1"]\').length === 1', 'rated pretty good from the session box');
+    await waitFor('document.querySelectorAll(\'#reel .reel-cell[data-rating="1"]\').length === 1', 'rated pretty good from the box');
     eq((await rated()).map(r => r.rating).sort().join(), '1,3', 'both saved');
     await click('#reel .reel-cell[data-rating="1"] [data-rate="1"]');
     await waitFor('!document.querySelector(\'#reel .reel-cell[data-rating="1"]\')', 'clicking the lit star takes it off');
     await js('document.querySelector("#reel").scrollIntoView()');
     await js('document.querySelector(\'#reel .reel-cell[data-rating="0"]\').dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))');
-    await shot('24b-this-session');
-    await click('#reelBig');
-    assert(await js('document.querySelector("#reel").classList.contains("big")'), 'Bigger');
-    await shot('24c-this-session-bigger');
-    await click('#reelBig');
+    await shot('24b-your-renders');
+    // Its filters: only the excellent one, then all again.
+    await click('#reelRated button[data-min="3"]');
+    await waitFor('document.querySelectorAll("#reel .reel-cell").length === 1 && !!document.querySelector(\'#reel .reel-cell[data-rating="3"]\')', '★★★ only');
+    assert((await text('#reelCount')).startsWith('1 of '), `the count says so: ${await text('#reelCount')}`);
+    await click('#reelRated button[data-min="3"]');
+    await waitFor('document.querySelectorAll("#reel .reel-cell").length >= 3', 'all again');
     await click('#reel .reel-cell .rtile');
-    await waitFor('!document.querySelector("#lightbox").hidden', 'a session render opens in the lightbox');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'a render opens in the lightbox');
     await press('Escape');
     await click('.tabs button[data-view="gallery"]');
     await click('#galleryRated button[data-min="2"]');
@@ -1498,6 +1500,101 @@ esac
     assert(await js('document.querySelector("#galleryGrid .gtile:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
     assert(await js('document.activeElement === document.querySelector("#galleryGrid .gtile.seen")'), 'and focus is back on it');
     await click('.tabs button[data-view="create"]');
+  });
+
+  await test('your renders: every render, from before start-up too, in one grid; filters, drag to arrange, height, picture size, full screen', async () => {
+    // (The page fetches History again when the Gallery opens; a filter click redraws the box right away.)
+    const refetch = async () => {
+      await click('.tabs button[data-view="gallery"]');
+      await click('.tabs button[data-view="create"]');
+      await click('#reelKinds button[data-kind=""]');
+    };
+    // A render made before Prompt Maker last started shows too (only 🕘 This session leaves it out).
+    await fs.writeFile(path.join(dataDir, 'renders', 'earlier-run_0.png'), makePng(48, 64));
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8'));
+    const old = '2026-01-02T10:00:00.000Z';
+    all.push({ id: 'earlier-run', createdAt: old, favorite: false, modelId: 'krea2-raw', modelName: 'Krea 2 RAW', modelKind: 'image', theme: 'a paper boat on a puddle', aspectRatio: '3:4', variations: [{ versions: [{ text: 'a paper boat on a puddle', createdAt: old }], renders: [{ id: 'earlier-r', versionIndex: 0, text: 'a paper boat on a puddle', workflowName: 'Mock', files: [{ file: 'earlier-run_0.png', kind: 'image', name: 'boat.png' }], createdAt: old }] }] });
+    await fs.writeFile(file, JSON.stringify(all));
+    await refetch();
+    const boat = 'document.querySelector(\'#reel .reel-cell[data-file="earlier-run_0.png"]\')';
+    await waitFor(`!!${boat}`, 'a render from before start-up is in Your renders');
+    assert(await js('document.querySelectorAll("#reel .reel-cell").length === document.querySelectorAll("#reelGrid > .reel-cell").length'), 'one grid, not a row per run');
+    await waitFor(`Math.abs(${boat}.getBoundingClientRect().width / ${boat}.getBoundingClientRect().height - 0.75) < 0.02`, 'its card has the picture\'s shape');
+    await click('#reelSession');
+    await waitFor(`!${boat} && document.querySelectorAll("#reel .reel-cell").length > 0`, '🕘 This session leaves it out');
+    await click('#reelSession');
+    await type('#reelFind', 'paper boat');
+    await waitFor(`!!${boat} && document.querySelectorAll("#reel .reel-cell").length === 1`, 'find it by the words of its prompt');
+    await type('#reelFind', 'no such words anywhere');
+    await waitFor('!document.querySelector("#reelEmpty").hidden && !document.querySelector("#reel .reel-cell")', 'nothing matches: it says so');
+    await click('#reelEmpty [data-reel="all"]');
+    await waitFor(`!!${boat} && document.querySelector("#reelFind").value === ""`, 'Show everything clears the filters');
+
+    // Drag a card past two others: it lands there, opens nothing, and the order is saved. Shift+← moves it back one.
+    const keys = () => js('[...document.querySelectorAll("#reelGrid > .reel-cell")].map(c => c.dataset.key)');
+    const [k0, k1, k2] = await keys();
+    await js('document.querySelector("#reelBody").scrollTop = 0; document.querySelector("#reel").scrollIntoView({ block: "start" })');
+    const at = n => js(`(() => { const r = document.querySelectorAll("#reelGrid > .reel-cell")[${n}].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const from = await at(0);
+    const to = await at(2);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let k = 1; k <= 12; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x + ((to.x - from.x) * k) / 12, y: from.y + ((to.y - from.y) * k) / 12, button: 'left', buttons: 1 });
+    assert(await js('!!document.querySelector(".reel-ghost") && document.querySelector("#reel").classList.contains("sorting")'), 'the card is carried while dragging');
+    await shot('24c-your-renders-dragging');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(100);
+    eq((await keys()).slice(0, 3).join(), [k1, k2, k0].join(), 'it lands after the card it was dropped on');
+    assert(await js('document.querySelector("#lightbox").hidden && !document.querySelector(".reel-ghost")'), 'dropping it opens nothing');
+    await waitFor(`(async () => { const o = (await (await fetch('/api/render-order')).json()).order; return o.indexOf(${q(k0)}) > o.indexOf(${q(k2)}) && o.indexOf(${q(k2)}) >= 0; })()`, 'the order is saved');
+    await js(`document.querySelector('#reelGrid > .reel-cell[data-key="${k0}"] .rtile').focus()`);
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, modifiers: 8 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, modifiers: 8 });
+    eq((await keys()).slice(0, 3).join(), [k1, k0, k2].join(), 'Shift+← moves it back one place');
+    assert(await js(`document.activeElement === document.querySelector('#reelGrid > .reel-cell[data-key="${k0}"] .rtile')`), 'and it keeps the focus');
+    assert(await visible('#reelNewest'), '↺ Newest first shows once you have your own order');
+    await click('#reelNewest');
+    await click('#reelNewest');
+    eq((await keys()).slice(0, 3).join(), [k0, k1, k2].join(), '↺ Newest first puts them back');
+    await waitFor('(async () => (await (await fetch("/api/render-order")).json()).order.length === 0)()', 'and forgets your order');
+    assert(!(await visible('#reelNewest')), 'and the button goes');
+
+    // Its height stays put (renders scroll inside it); drag the bottom edge, or ↑ ↓ on it, to change it.
+    const bodyH = () => js('document.querySelector("#reelBody").offsetHeight');
+    const h0 = await bodyH();
+    await js('document.querySelector("#reelGrip").scrollIntoView({ block: "center" })');
+    const grip = await js('(() => { const r = document.querySelector("#reelGrip").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: grip.x, y: grip.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grip.x, y: grip.y + (120 * k) / 6, button: 'left', buttons: 1 });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: grip.x, y: grip.y + 120, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(100);
+    eq(await bodyH(), h0 + 120, 'dragged 120 px taller');
+    await js('document.querySelector("#reelGrip").focus()');
+    await press('ArrowUp');
+    eq(await bodyH(), h0 + 80, '↑ makes it shorter');
+    eq(await js('Number(localStorage.getItem("pm.reelHeight"))'), h0 + 80, 'and that height is remembered');
+
+    // ⛶ Full screen fills the window; 🔍 makes pictures as big as the box. The lightbox opens over it; Esc goes back.
+    await click('#reelFull');
+    assert(await js('(() => { const r = document.querySelector("#reel").getBoundingClientRect(); return r.top === 0 && r.left === 0 && r.bottom === innerHeight; })()'), 'full screen fills the window');
+    await js('(() => { const s = document.querySelector("#reelSize"); s.value = s.max; s.dispatchEvent(new Event("input")); })()');
+    const tall = await js('document.querySelector("#reel .reel-cell").getBoundingClientRect().height');
+    assert(tall > 600, `at its biggest, a picture fills the height: ${tall}px`);
+    await shot('24d-your-renders-full-screen');
+    await click('#reel .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'the lightbox opens over it');
+    await press('Escape');
+    assert(await js('document.querySelector("#lightbox").hidden && document.querySelector("#reel").classList.contains("full")'), 'Esc closes the lightbox first');
+    await press('Escape');
+    assert(!(await js('document.querySelector("#reel").classList.contains("full")')), 'then leaves full screen');
+    assert(await js('document.querySelector("#reel .reel-cell").getBoundingClientRect().height <= document.querySelector("#reelBody").offsetHeight'), 'back in the box, pictures fit its height');
+
+    // As it was: the usual sizes, and the earlier render gone again.
+    await js('localStorage.removeItem("pm.reelSize"); localStorage.removeItem("pm.reelHeight"); dispatchEvent(new Event("resize"))');
+    await fs.writeFile(file, JSON.stringify(all.filter(e => e.id !== 'earlier-run')));
+    await fs.rm(path.join(dataDir, 'renders', 'earlier-run_0.png'));
+    await refetch();
+    await waitFor(`!${boat}`, 'the earlier render leaves with its entry');
   });
 
   await test('gallery: video tiles show a still of their first frame, and play on hover', async () => {
@@ -2614,7 +2711,7 @@ esac
     assert(await fileExists(path.join(comfyRoot, 'output', 'not-ours.png')), 'other files are never touched');
   });
 
-  await test('delete: a render or a run leaves This session and the disk at once', async () => {
+  await test('delete: a render or a run leaves Your renders and the disk at once', async () => {
     const history = async () => (await fetch(`${APP}/api/history`)).json();
     await click('.tabs button[data-view="create"]');
     if (await visible('.dz-preview')) await click('#imageClear');
@@ -2627,22 +2724,19 @@ esac
     await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
     if ((await count('.take .rtile img')) < 2) await click('.take .rb-go');
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 2 && !document.querySelector(".take .rtile.running")', 'rendered twice', 10000);
-    // A new run takes the stage; this one stays in This session, with an Open button.
+    // A new run takes the stage; this one's renders stay in Your renders.
+    const owner = (await history()).find(e => e.theme === 'a tin robot waving hello');
+    const all = owner.variations.flatMap(v => v.renders || []);
+    assert(all.length >= 2, `the run has renders to delete (${all.length})`);
+    const files = all.map(r => r.files[0].file);
+    const tiles = `[...document.querySelectorAll("#reel .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
     await type('#theme', 'a tin robot fast asleep');
     await click('#generateBtn');
     await genDone();
-    await waitFor('!!document.querySelector("#reel .reel-run:not(.here) .rtile img")', 'This session keeps the run that left the stage');
-    // That run, and its renders as History has them.
-    const shownFiles = await js(`[...document.querySelector("#reel .reel-run:not(.here)").querySelectorAll(".rtile img")].map(i => decodeURIComponent(i.getAttribute("src").split("/").pop()))`);
-    const owner = (await history()).find(e => e.variations.some(v => (v.renders || []).some(r => r.files.some(f => f.file === shownFiles[0]))));
-    const all = owner.variations.flatMap(v => v.renders || []);
-    assert(all.length >= 2, `the earlier run has renders to delete (${all.length})`);
-    const files = all.map(r => r.files[0].file);
-    const tiles = `[...document.querySelectorAll("#reel .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
-    eq(await js(`${tiles}.length`), all.length, 'all its renders show in This session');
+    await waitFor(`${tiles}.length === ${all.length}`, 'Your renders keeps the renders of the run that left the stage');
     await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
-    await waitFor(`${tiles}.length === ${all.length}`, 'This session survives a reload');
+    await waitFor(`${tiles}.length === ${all.length}`, 'Your renders survives a reload');
     const originalOf = r => path.join(comfyRoot, 'output', `mock_${r.promptId.slice(0, 6)}.png`);
 
     await js(`${tiles}[0].closest(".rtile").classList.add("pick-me")`);
@@ -2655,7 +2749,7 @@ esac
     const left = (await history()).find(e => e.id === owner.id).variations.flatMap(v => v.renders || []);
     eq(left.length, all.length - 1, 'one render fewer');
     const gone = all.find(r => !left.some(x => x.id === r.id));
-    eq(await js(`${tiles}.length`), all.length - 1, 'This session shows one fewer, right away');
+    eq(await js(`${tiles}.length`), all.length - 1, 'Your renders shows one fewer, right away');
     assert(!(await fileExists(path.join(dataDir, 'renders', gone.files[0].file))), 'the deleted one is gone from the data folder');
     if (gone.promptId) assert(!(await fileExists(originalOf(gone))) && !comfy.history[gone.promptId], 'and ComfyUI\'s file and job');
 
@@ -2666,7 +2760,7 @@ esac
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await toastText('Deleted for good');
     await click('.tabs button[data-view="create"]');
-    eq(await js(`${tiles}.length`), 0, 'This session lets go of the deleted run');
+    eq(await js(`${tiles}.length`), 0, 'Your renders lets go of the deleted run');
   });
 
   await test('delete: a History card leaves nothing behind, here or in ComfyUI', async () => {

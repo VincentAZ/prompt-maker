@@ -1305,6 +1305,11 @@ async function route(req, res) {
     await store.saveAssistantChat((await readBody(req)).messages);
     return sendJson(res, 200, { ok: true });
   }
+  if (p === '/api/render-order' && m === 'GET') return sendJson(res, 200, await store.getRenderOrder());
+  if (p === '/api/render-order' && m === 'PUT') {
+    await store.saveRenderOrder((await readBody(req)).order);
+    return sendJson(res, 200, { ok: true });
+  }
   if (p === '/api/comfy/output-dir' && m === 'GET') {
     const settings = await store.getSettings();
     return sendJson(res, 200, { detected: await comfy.detectOutputDir(settings.comfyUrl).catch(() => null), configured: settings.comfyOutputDir });

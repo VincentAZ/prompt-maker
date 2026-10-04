@@ -391,6 +391,7 @@ function showView(name, { push = true } = {}) {
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  if (name !== 'create') reelFullScreen(false); // (your renders' full screen belongs to Create)
   const hash = name === 'models' && modelsPane === 'brains' ? '#models/brains' : `#${name}`;
   if (push && location.hash !== hash) history.pushState(null, '', hash);
   if (name === 'history') loadHistory();
@@ -1893,7 +1894,7 @@ async function pollRenders() {
   const before = rendersNow;
   rendersNow = await api(`/api/renders${open ? '?previews' : ''}`).catch(() => rendersNow);
   drawRenders();
-  // A render finished (or a job ended): its entry, fresh, for This session, its takes and the Gallery.
+  // A render finished (or a job ended): its entry, fresh, for Your renders, its takes and the Gallery.
   // (Runs this page follows bring their renders in themselves.)
   const followed = new Set([...state.renderRuns].map(r => r.runId));
   const moved = new Set(before.filter(j => !followed.has(j.runId) && !rendersNow.some(n => n.runId === j.runId && n.finished === j.finished)).map(j => j.historyId));
@@ -1982,10 +1983,12 @@ $('#rendersCancelAll').addEventListener('click', e => confirmClick(e.currentTarg
   pollRenders();
 }));
 
-// ---------- create: this session ----------
-// Every render made since Prompt Maker started, in one box above the takes: the ones still going (live, with their
-// progress and ✕ Cancel) and the finished ones, grouped by run, newest run first, to compare, rate and open. It
-// scrolls, and ⤢ Bigger gives it most of the screen. Open puts a run back on the stage.
+// ---------- create: your renders ----------
+// Every render ever made, in one box above the takes: the ones still going (live, with their progress and ✕ Cancel)
+// first, then the finished ones, newest first, to compare, rate and open. Filters narrow it down: images or videos,
+// this session, a rating, a model, words of the prompt. The box keeps the height you drag it to and scrolls inside,
+// so the takes below stay put as renders arrive; ⛶ Full screen gives it the whole window, and 🔍 sizes the pictures,
+// up to one filling the box.
 
 // How good a render is. Renders saved before ratings had a ♥ favorite instead: it counts as excellent.
 const RATINGS = ['Not rated', 'Pretty good', 'Very good', 'Excellent'];
@@ -2037,6 +2040,7 @@ async function refreshSessionEntry(id) {
 const reelOpen = () => !saved.get('reelClosed', false);
 const reelLive = () => isView('create') && !$('#reel').hidden && reelOpen();
 
+// This session's renders (since start-up), grouped by run, newest run first: what the assistant calls this_session.
 function reelGroups() {
   const ids = new Set([...sessionCache.keys(), ...rendersNow.map(j => j.historyId)]);
   if (state.entry?.id && sessionItems(state.entry).length) ids.add(state.entry.id);
@@ -2052,80 +2056,189 @@ function reelGroups() {
   return groups.sort((a, b) => b.running - a.running || b.last - a.last);
 }
 
-// Drawn in place: rows and tiles are kept by key and only their numbers change, so a click never lands on a tile
-// being redrawn and a video playing under the mouse keeps playing.
+// Every render the page knows of, newest first, one item per file, each from the liveliest copy of its entry: the
+// one on the stage, then one a render brought in, then History's.
+function allRenders() {
+  const entries = new Map();
+  for (const e of [state.entry, ...sessionCache.values(), ...state.history]) if (e?.id && !entries.has(e.id)) entries.set(e.id, e);
+  return [...entries.values()]
+    .flatMap(entry => (entry.variations || []).flatMap((v, index) => (v.renders || []).map(render => ({ entry, index, render }))))
+    .sort((a, b) => (a.render.createdAt < b.render.createdAt ? 1 : -1))
+    .flatMap(({ entry, index, render }) => (render.files || []).map(file => ({ entry, index, render, file })));
+}
+
+// The filters, remembered (all but the words to find).
+const reelFilter = { kind: '', session: false, min: 0, model: '', ...saved.get('reelFilter', {}), q: '' };
+const REEL_PAGE = 60; // pictures drawn at a time; more as you scroll down
+let reelShown = REEL_PAGE;
+let reelItems = []; // what the box shows, in order (for the lightbox)
+const reelCells = new Map(); // render/file → its card, kept between draws
+const reelJobs = new Map(); // run id → its live card
+const reelRatio = new Map(); // file → width / height, once its picture has loaded
+
+// Your order: the cards as you dragged them (saved in your data folder). Renders you haven't placed (made since) come
+// first, newest first, then the ones you placed. Nothing placed: newest first.
+let reelOrder = [];
+let reelPlace = new Map(); // key → its place in reelOrder
+function setReelOrder(order) {
+  reelOrder = order;
+  reelPlace = new Map(order.map((k, i) => [k, i]));
+}
+function inReelOrder(items) {
+  if (!reelPlace.size) return items;
+  const fresh = [];
+  const placed = [];
+  for (const it of items) (reelPlace.has(reelKey(it)) ? placed : fresh).push(it);
+  return [...fresh, ...placed.sort((a, b) => reelPlace.get(reelKey(a)) - reelPlace.get(reelKey(b)))];
+}
+api('/api/render-order').then(r => { setReelOrder(Array.isArray(r.order) ? r.order : []); renderReel(); }).catch(() => {});
+
+let reelOrderTimer = 0;
+function saveReelOrder() {
+  clearTimeout(reelOrderTimer);
+  reelOrderTimer = setTimeout(() => api('/api/render-order', { method: 'PUT', body: { order: reelOrder } }).catch(err => toast(`Your order wasn't saved: ${friendly(err)}`, true)), 300);
+}
+
+// Puts a card just before (or after) another, among every render (also the ones the filters hide).
+function moveReelCard(key, to, after) {
+  const keys = inReelOrder(allRenders()).map(reelKey).filter(k => k !== key);
+  const at = keys.indexOf(to);
+  if (at < 0) return;
+  keys.splice(at + (after ? 1 : 0), 0, key);
+  setReelOrder(keys);
+  renderReel();
+}
+
+const reelWords = q => String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+const madeOn = iso => {
+  const d = new Date(iso);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+};
+
+function reelMatch(it) {
+  const f = reelFilter;
+  if (f.kind && it.file.kind !== f.kind) return false;
+  if (f.session && (it.render.createdAt || '') < sinceStart()) return false;
+  if (ratingOf(it.render) < f.min || (f.model && it.entry.modelId !== f.model)) return false;
+  const text = `${it.entry.theme || ''} ${it.render.text || ''} ${it.entry.modelName || ''} ${it.render.workflowName || ''}`.toLowerCase();
+  return reelWords(f.q).every(w => text.includes(w));
+}
+
+// A render still going shows while the filters would let it in once it's done (it has no rating yet).
+function reelJobMatch(j) {
+  const f = reelFilter;
+  const kind = modelById(j.modelId)?.kind === 'video' ? 'video' : 'image';
+  if (f.min || (f.kind && kind !== f.kind) || (f.model && j.modelId !== f.model)) return false;
+  const text = `${j.theme || ''} ${j.modelName || ''} ${j.workflowName || ''}`.toLowerCase();
+  return reelWords(f.q).every(w => text.includes(w));
+}
+
+const reelFiltered = () => Boolean(reelFilter.kind || reelFilter.session || reelFilter.min || reelFilter.model || reelWords(reelFilter.q).length);
+
+// Width / height: the picture's own once it has loaded, else the size it was rendered at, else its model's aspect.
+function reelRatioOf(it) {
+  const seen = reelRatio.get(it.file.file);
+  if (seen) return seen;
+  const m = /(\d+)\s*[×x]\s*(\d+)/.exec(it.render.size || '') || /^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/.exec(it.entry.aspectRatio || '');
+  return m && m[1] > 0 && m[2] > 0 ? m[1] / m[2] : 1;
+}
+
+// Drawn in place: cards are kept by key and only their details change, so a click never lands on a card being
+// redrawn and a video playing under the mouse keeps playing.
 function renderReel() {
   const box = $('#reel');
   if (!box) return;
-  const groups = reelGroups();
-  const finished = groups.reduce((n, g) => n + g.items.length, 0);
-  const going = rendersLeft();
-  box.hidden = !groups.length && !state.workflows.length;
-  if (box.hidden) return;
+  const all = allRenders();
+  box.hidden = !all.length && !rendersNow.length && !state.workflows.length;
+  if (box.hidden) return reelFullScreen(false);
   const open = reelOpen();
-  const big = saved.get('reelBig', false);
-  box.classList.toggle('big', big);
+  const full = box.classList.contains('full');
+  const none = !all.length && !rendersNow.length;
   box.classList.toggle('closed', !open);
-  $('#reelCount').textContent = finished || going
-    ? [finished && `${finished} render${finished > 1 ? 's' : ''}`, going && `${going} rendering`].filter(Boolean).join(' · ')
-    : '';
-  $('#reelBig').hidden = !open || !groups.length;
-  $('#reelBig').textContent = big ? '⤡ Smaller' : '⤢ Bigger';
-  $('#reelBig').setAttribute('aria-pressed', big);
+  box.classList.toggle('empty', none);
+  const items = inReelOrder(all).filter(reelMatch);
+  const jobs = rendersNow.filter(reelJobMatch);
+  const going = rendersLeft();
+  $('#reelCount').textContent = [
+    all.length && (reelFiltered() ? `${items.length} of ${all.length}` : `${all.length} render${all.length > 1 ? 's' : ''}`),
+    going && `${going} rendering`,
+  ].filter(Boolean).join(' · ');
+  $('#reelZoom').hidden = !open || none;
+  $('#reelFull').hidden = !open || (none && !full);
   $('#reelToggle').setAttribute('aria-expanded', open);
-  $('#reelToggle').setAttribute('aria-label', open ? 'Hide this session\'s renders' : 'Show this session\'s renders');
+  $('#reelToggle').setAttribute('aria-label', open ? 'Hide your renders' : 'Show your renders');
   $('#reelToggle').textContent = open ? '▾' : '▸';
-  const body = $('#reelBody');
-  body.hidden = !open;
-  if (!open) return;
-  $('#reelEmpty').hidden = groups.length > 0;
-  const all = groups.flatMap(g => g.items);
-  const rows = groups.map(g => reelRow(g, all));
-  const list = $('#reelList');
-  if (rows.length !== list.children.length || rows.some((r, i) => list.children[i] !== r)) list.replaceChildren(...rows);
-}
-
-function reelRow(g, all) {
-  const list = $('#reelList');
-  let row = $(`.reel-run[data-id="${CSS.escape(g.id)}"]`, list);
-  const e = g.entry;
-  const job = g.jobs[0];
-  if (!row) {
-    row = document.createElement('div');
-    row.className = 'reel-run';
-    row.dataset.id = g.id;
-    row.innerHTML = '<div class="reel-run-head"><span class="tag model"></span><b class="reel-theme"></b><span class="reel-when"></span><span class="spacer"></span><span class="reel-here">On screen</span><button type="button" class="btn small reel-open">Open</button></div><div class="reel-tiles"></div>';
-    $('.reel-open', row).addEventListener('click', () => openSessionRun(g.id));
-    $('.reel-tiles', row).addEventListener('click', e => onReelTile(e, row));
+  $('#reelBody').hidden = !open;
+  $('#reelGrip').hidden = !open || none || full;
+  if (!open) return reelFullScreen(false);
+  renderReelFilters(all);
+  $('#reelFilters').hidden = none;
+  const empty = $('#reelEmpty');
+  empty.hidden = Boolean(items.length || jobs.length);
+  if (empty.dataset.none !== String(none)) {
+    empty.dataset.none = none;
+    empty.innerHTML = none ? 'Every render you make lands here, newest first, and stays. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.'
+      : 'Nothing matches these filters. <button type="button" class="btn small" data-reel="all">Show everything</button>';
   }
-  const modelId = e?.modelId || job?.modelId;
-  row.style.setProperty('--m', modelColor(modelById(modelId) || { id: modelId }));
-  row.style.setProperty('--ar', ASPECT_CSS(e?.aspectRatio || job?.aspectRatio));
-  $('.tag.model', row).textContent = `${kindIcon(e?.modelKind || modelById(modelId)?.kind)} ${e?.modelName || job?.modelName || ''}`;
-  const theme = e ? e.theme || 'From an image' : job?.theme || 'From an image';
-  $('.reel-theme', row).textContent = theme;
-  $('.reel-theme', row).title = theme;
-  const time = g.last ? new Date(g.last).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
-  $('.reel-when', row).textContent = [time, g.items.length && `${g.items.length} render${g.items.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
-  const here = state.entry?.id === g.id;
-  row.classList.toggle('here', here);
-  $('.reel-here', row).hidden = !here;
-  $('.reel-open', row).hidden = here || !e;
-  const tiles = $('.reel-tiles', row);
-  const want = [...g.jobs.map(j => reelJobTile(j, tiles)), ...g.items.map(it => reelTile(it, all.indexOf(it), tiles))];
-  if (want.length !== tiles.children.length || want.some((t, i) => tiles.children[i] !== t)) tiles.replaceChildren(...want);
-  return row;
+  reelItems = items;
+  // Only cards that changed place move (a card put back in the page plays its arrival again).
+  const cards = [...jobs.map(reelJobTile), ...items.slice(0, reelShown).map(reelTile)];
+  const grid = $('#reelGrid');
+  cards.forEach((c, i) => { if (grid.children[i] !== c) grid.insertBefore(c, grid.children[i] || null); });
+  while (grid.children.length > cards.length) grid.lastElementChild.remove();
+  $('#reelNewest').hidden = !reelOrder.length;
+  $('#reelMore').hidden = items.length <= reelShown;
+  // Cards of renders that are gone (deleted, moved away) are let go.
+  const keys = new Set(all.map(reelKey));
+  for (const k of reelCells.keys()) if (!keys.has(k)) reelCells.delete(k);
+  for (const id of reelJobs.keys()) if (!rendersNow.some(j => j.runId === id)) reelJobs.delete(id);
+  sizeReel();
 }
 
-// A render still going: its live picture (when the reel is open), how far, and ✕ Cancel.
-function reelJobTile(j, tiles) {
-  let t = $(`.reel-job[data-run="${CSS.escape(j.runId)}"]`, tiles);
+// The filter chips, and a model menu with the models that have renders.
+function renderReelFilters(all) {
+  const f = reelFilter;
+  const models = [...new Map(all.map(it => [it.entry.modelId, it.entry.modelName])).entries()];
+  if (f.model && !models.some(([id]) => id === f.model)) f.model = '';
+  const menu = $('#reelModel');
+  const options = [['', 'All models'], ...models];
+  const key = JSON.stringify(options);
+  if (menu.dataset.key !== key) {
+    menu.dataset.key = key;
+    menu.innerHTML = options.map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join('');
+  }
+  menu.value = f.model;
+  menu.hidden = models.length < 2 && !f.model;
+  $$('#reelKinds button').forEach(b => b.setAttribute('aria-pressed', b.dataset.kind === f.kind));
+  $$('#reelRated button').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.min) === f.min));
+  $('#reelSession').setAttribute('aria-pressed', f.session);
+  if ($('#reelFind') !== document.activeElement) $('#reelFind').value = f.q;
+}
+
+function setReelFilter(change) {
+  Object.assign(reelFilter, change);
+  const { q, ...kept } = reelFilter;
+  saved.set('reelFilter', kept);
+  reelShown = REEL_PAGE;
+  renderReel();
+  $('#reelBody').scrollTop = 0;
+}
+
+const reelKey = it => `${it.render.id}/${it.file.file}`;
+
+// A render still going: its live picture (when the box is open), how far, and ✕ Cancel.
+function reelJobTile(j) {
+  let t = reelJobs.get(j.runId);
   if (!t) {
     t = document.createElement('div');
     t.className = 'reel-job rtile running';
     t.dataset.run = j.runId;
     t.innerHTML = '<div class="rt-shimmer"></div><div class="rt-live"><span class="rt-pct">…</span><span class="rt-stage"></span></div><div class="rt-bar"></div><button type="button" class="rt-cancel" data-act="cancel" aria-label="Cancel render" title="Cancel this render">✕ Cancel</button>';
+    reelJobs.set(j.runId, t);
   }
+  t.style.setProperty('--m', modelColor(modelById(j.modelId) || { id: j.modelId }));
+  const m = /^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/.exec(j.aspectRatio || '');
+  t.style.setProperty('--ar', m ? m[1] / m[2] : 1);
   const pct = j.pct ?? null;
   $('.rt-pct', t).textContent = pct != null ? `${pct}%` : '⏳';
   $('.rt-bar', t).style.width = `${pct ?? 0}%`;
@@ -2139,29 +2252,34 @@ function reelJobTile(j, tiles) {
   return t;
 }
 
-function reelTile(it, n, tiles) {
-  const key = `${it.render.id}/${it.file.file}`;
-  let cell = [...tiles.children].find(c => c.dataset.key === key);
+function reelTile(it) {
+  const key = reelKey(it);
+  let cell = reelCells.get(key);
   if (!cell) {
     cell = document.createElement('div');
     cell.className = 'reel-cell';
     cell.dataset.key = key;
-    cell.innerHTML = `<button type="button" class="rtile${it.file.kind === 'audio' ? ' audio' : ''}" data-act="open">${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-meta">Take ${it.index + 1}${it.render.seed != null ? ` · seed ${it.render.seed}` : ''}</span></button><div class="rate-slot"></div>`;
+    cell.dataset.file = it.file.file;
+    cell.innerHTML = `<button type="button" class="rtile${it.file.kind === 'audio' ? ' audio' : ''}" data-act="open" title="Click to see it big, drag to move it">${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-cap"><b></b><span></span></span></button><div class="rate-slot"></div>`;
+    reelCells.set(key, cell);
   }
-  cell.dataset.n = n;
-  $('.rtile', cell).setAttribute('aria-label', `Open render: take ${it.index + 1}${ratingOf(it.render) ? `, rated ${RATINGS[ratingOf(it.render)].toLowerCase()}` : ''}`);
+  cell.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
+  cell.style.setProperty('--ar', reelRatioOf(it));
+  const theme = it.entry.theme || 'From an image';
   const rating = ratingOf(it.render);
+  $('.rt-cap b', cell).textContent = theme;
+  $('.rt-cap span', cell).textContent = [it.entry.modelName, `take ${it.index + 1}`, it.render.seed != null && `seed ${it.render.seed}`, it.render.createdAt && madeOn(it.render.createdAt)].filter(Boolean).join(' · ');
+  $('.rtile', cell).setAttribute('aria-label', `Open render: ${theme.slice(0, 80)}${rating ? `, rated ${RATINGS[rating].toLowerCase()}` : ''}. Shift and an arrow key move it.`);
   if (cell.dataset.rating !== String(rating)) {
     cell.dataset.rating = rating;
-    $('.rate-slot', cell).innerHTML = rateBarHtml(rating, `take ${it.index + 1}'s render`);
+    $('.rate-slot', cell).innerHTML = rateBarHtml(rating, `the render of “${theme.slice(0, 40)}”`);
   }
   return cell;
 }
 
-async function onReelTile(e, row) {
+$('#reelGrid').addEventListener('click', async e => {
   const b = e.target.closest('[data-act], [data-rate]');
   if (!b) return;
-  const all = reelGroups().flatMap(g => g.items);
   if (b.dataset.act === 'cancel') {
     const t = b.closest('.reel-job');
     t.classList.add('cancelling');
@@ -2171,29 +2289,248 @@ async function onReelTile(e, row) {
     return pollRenders();
   }
   const cell = b.closest('.reel-cell');
-  const it = all.find(x => `${x.render.id}/${x.file.file}` === cell?.dataset.key);
+  const n = reelItems.findIndex(x => reelKey(x) === cell?.dataset.key);
+  const it = reelItems[n];
   if (!it) return;
-  if (b.dataset.act === 'open') return openLightbox(all, all.indexOf(it));
+  if (b.dataset.act === 'open') return openLightbox(reelItems, n);
   const want = Number(b.dataset.rate) === ratingOf(it.render) ? 0 : Number(b.dataset.rate);
   try {
     await rateRender(it.entry, it.render, want);
     toast(want ? `${starsOf(want)} ${RATINGS[want]}` : 'Rating taken off');
-    $(`.reel-cell[data-key="${CSS.escape(cell.dataset.key)}"] [data-rate="${want || b.dataset.rate}"]`, row)?.focus();
+    $(`[data-rate="${want || b.dataset.rate}"]`, reelCells.get(cell.dataset.key))?.focus();
   } catch (err) {
     toast(err.message, true);
   }
+});
+
+// Once a picture has loaded, its card takes its real shape.
+for (const type of ['load', 'loadedmetadata']) {
+  $('#reelGrid').addEventListener(type, e => {
+    const cell = e.target.closest?.('.reel-cell');
+    const w = e.target.naturalWidth || e.target.videoWidth;
+    const h = e.target.naturalHeight || e.target.videoHeight;
+    if (!cell || !w || !h) return;
+    reelRatio.set(cell.dataset.file, w / h);
+    cell.style.setProperty('--ar', w / h);
+  }, true);
 }
 
-// Puts a run from this session back on the stage (the Create form stays as it is).
-function openSessionRun(id) {
-  const entry = sessionEntry(id);
-  if (!entry) return;
-  showEntry(entry);
-  $('.stage').scrollIntoView({ block: 'start', behavior: scrollMode() });
+// More pictures as you scroll near the end.
+new IntersectionObserver(([e]) => {
+  if (!e.isIntersecting || reelItems.length <= reelShown) return;
+  reelShown += REEL_PAGE;
+  renderReel();
+}, { root: $('#reelBody'), rootMargin: '0px 0px 800px 0px' }).observe($('#reelMore'));
+
+// ---------- your renders: drag to arrange ----------
+// Drag a card and the others make room; let go and it stays there (on a touch screen, hold it a moment first).
+// Shift + an arrow key moves the focused card one place. ↺ Newest first undoes your order.
+
+let reelDrag = null;
+let reelDropped = false; // the click that ends a drag doesn't open the card
+
+$('#reelGrid').addEventListener('pointerdown', e => {
+  const cell = e.target.closest('.reel-cell');
+  if (!cell || e.button !== 0 || reelDrag || e.target.closest('.rate-bar')) return;
+  const d = { cell, key: cell.dataset.key, pointer: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, touch: e.pointerType !== 'mouse' };
+  reelDrag = d;
+  if (d.touch) d.hold = setTimeout(() => startReelDrag(d), 400);
+  const move = ev => {
+    if (ev.pointerId !== d.pointer) return;
+    d.x = ev.clientX;
+    d.y = ev.clientY;
+    if (d.ghost) return dragReel(d);
+    const far = Math.hypot(d.x - d.x0, d.y - d.y0) > 6;
+    if (far && d.touch) end(); // a swipe: it scrolls
+    else if (far) startReelDrag(d);
+  };
+  const end = () => {
+    clearTimeout(d.hold);
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', end);
+    removeEventListener('pointercancel', end);
+    if (d.ghost) dropReel(d);
+    reelDrag = null;
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', end);
+  addEventListener('pointercancel', end);
+});
+// (Pictures would start the browser's own drag, and a held one its menu.)
+$('#reelGrid').addEventListener('dragstart', e => e.preventDefault());
+$('#reelGrid').addEventListener('contextmenu', e => { if (reelDrag) e.preventDefault(); });
+$('#reelGrid').addEventListener('touchmove', e => { if (reelDrag?.ghost) e.preventDefault(); }, { passive: false });
+$('#reelGrid').addEventListener('click', e => {
+  if (!reelDropped) return;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
+
+function startReelDrag(d) {
+  if (d.ghost || !d.cell.isConnected) return;
+  const r = d.cell.getBoundingClientRect();
+  const k = Math.min(1, 220 / Math.max(r.width, r.height)); // a big card is carried small
+  d.dx = (d.x - r.left) * k;
+  d.dy = (d.y - r.top) * k;
+  d.ghost = d.cell.cloneNode(true);
+  d.ghost.classList.add('reel-ghost');
+  d.ghost.removeAttribute('data-key');
+  Object.assign(d.ghost.style, { width: `${r.width * k}px`, height: `${r.height * k}px` });
+  document.body.append(d.ghost);
+  d.cell.classList.add('moving');
+  $('#reel').classList.add('sorting');
+  dragReel(d);
+  scrollReelWhileDragging(d);
 }
+
+function dragReel(d) {
+  d.ghost.style.transform = `translate(${d.x - d.dx}px, ${d.y - d.dy}px)`;
+  const over = document.elementFromPoint(d.x, d.y)?.closest('#reelGrid > .reel-cell');
+  if (!over || over === d.cell) return;
+  // Past a card going forward, it goes after it; going back, before it (so it doesn't flip back and forth).
+  const cards = [...$('#reelGrid').children];
+  moveReelCard(d.key, over.dataset.key, cards.indexOf(d.cell) < cards.indexOf(over));
+}
+
+// Near the top or bottom of the box, it scrolls.
+function scrollReelWhileDragging(d) {
+  const body = $('#reelBody');
+  const top = Math.max(body.getBoundingClientRect().top, $('#reelFilters').getBoundingClientRect().bottom);
+  const bottom = body.getBoundingClientRect().bottom;
+  const by = d.y < top + 50 ? d.y - (top + 50) : d.y > bottom - 50 ? d.y - (bottom - 50) : 0;
+  if (by) {
+    body.scrollTop += Math.max(-24, Math.min(24, by / 2));
+    dragReel(d);
+  }
+  d.frame = requestAnimationFrame(() => scrollReelWhileDragging(d));
+}
+
+function dropReel(d) {
+  cancelAnimationFrame(d.frame);
+  d.ghost.remove();
+  d.cell.classList.remove('moving');
+  $('#reel').classList.remove('sorting');
+  reelDropped = true;
+  setTimeout(() => { reelDropped = false; });
+  saveReelOrder();
+  announce('Moved');
+}
+
+$('#reelGrid').addEventListener('keydown', e => {
+  const back = { ArrowLeft: true, ArrowUp: true, ArrowRight: false, ArrowDown: false }[e.key];
+  if (!e.shiftKey || back === undefined || !e.target.matches('.reel-cell > .rtile')) return;
+  e.preventDefault();
+  const cell = e.target.parentElement;
+  const cards = [...$$('#reelGrid > .reel-cell')];
+  const other = cards[cards.indexOf(cell) + (back ? -1 : 1)];
+  if (!other) return;
+  moveReelCard(cell.dataset.key, other.dataset.key, !back);
+  e.target.focus();
+  saveReelOrder();
+  announce(back ? 'Moved back one place' : 'Moved on one place');
+});
+
+$('#reelNewest').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure? Your order goes', () => {
+  setReelOrder([]);
+  renderReel();
+  saveReelOrder();
+  toast('Newest first again');
+}));
+
+// ---------- your renders: size ----------
+// The box is as tall as you drag it (or the whole window, in full screen); pictures are as big as 🔍 says, up to the
+// height the box shows.
+
+const REEL_MIN_H = 160;
+const reelMaxH = () => Math.max(REEL_MIN_H, innerHeight - 90);
+
+function sizeReel() {
+  const box = $('#reel');
+  if (box.hidden) return;
+  box.style.setProperty('--reel-h', `${Math.round(Math.min(reelMaxH(), Math.max(REEL_MIN_H, saved.get('reelHeight', 400))))}px`);
+  const body = $('#reelBody');
+  if (body.hidden || box.classList.contains('empty')) return;
+  const room = Math.max(80, body.clientHeight - $('#reelFilters').offsetHeight - 28);
+  const slider = $('#reelSize');
+  slider.max = Math.max(Number(slider.min) + 40, Math.round(room / 10) * 10);
+  slider.value = Math.min(saved.get('reelSize', 160), Number(slider.max));
+  box.style.setProperty('--tile-h', `${Math.min(Number(slider.value), room)}px`);
+  const grip = $('#reelGrip');
+  grip.setAttribute('aria-valuemin', REEL_MIN_H);
+  grip.setAttribute('aria-valuemax', reelMaxH());
+  grip.setAttribute('aria-valuenow', Math.round(body.offsetHeight));
+}
+
+$('#reelSize').addEventListener('input', e => { saved.set('reelSize', Number(e.target.value)); sizeReel(); });
+window.addEventListener('resize', () => { if (!$('#reel').hidden) sizeReel(); });
+
+function setReelHeight(h) {
+  saved.set('reelHeight', Math.round(Math.min(reelMaxH(), Math.max(REEL_MIN_H, h))));
+  sizeReel();
+}
+
+// Drag the bottom edge (or focus it and press ↑ ↓) to make the box taller or shorter.
+$('#reelGrip').addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const grip = e.currentTarget;
+  const from = e.clientY;
+  const was = $('#reelBody').offsetHeight;
+  grip.setPointerCapture(e.pointerId);
+  grip.classList.add('dragging');
+  const move = ev => setReelHeight(was + ev.clientY - from);
+  const done = () => {
+    grip.classList.remove('dragging');
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', done);
+    grip.removeEventListener('pointercancel', done);
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', done);
+  grip.addEventListener('pointercancel', done);
+});
+$('#reelGrip').addEventListener('keydown', e => {
+  const step = { ArrowUp: -40, ArrowDown: 40, PageUp: -200, PageDown: 200 }[e.key];
+  if (e.key === 'Home') setReelHeight(REEL_MIN_H);
+  else if (e.key === 'End') setReelHeight(reelMaxH());
+  else if (step) setReelHeight($('#reelBody').offsetHeight + step);
+  else return;
+  e.preventDefault();
+});
+
+// Full screen: the box fills the window, over everything but the lightbox. Esc (or the button) goes back.
+function reelFullScreen(on) {
+  const box = $('#reel');
+  if (box.classList.contains('full') === on) return;
+  box.classList.toggle('full', on);
+  document.body.classList.toggle('reel-full', on);
+  $('#reelFull .ico').textContent = on ? '⤡' : '⛶';
+  $('#reelFull .lbl').textContent = on ? 'Exit full screen' : 'Full screen';
+  $('#reelFull').setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+  $('#reelGrip').hidden = on || box.classList.contains('empty') || !reelOpen();
+  sizeReel();
+  if (on) $('#reelFull').focus();
+}
+
+$('#reelFull').addEventListener('click', () => reelFullScreen(!$('#reel').classList.contains('full')));
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !$('#reel').classList.contains('full') || !$('#lightbox').hidden || document.querySelector('dialog[open]')) return;
+  if (e.target.closest?.('#assistant')) return;
+  e.stopPropagation();
+  reelFullScreen(false);
+}, true);
 
 $('#reelToggle').addEventListener('click', () => { saved.set('reelClosed', reelOpen()); renderReel(); pollRenders(); });
-$('#reelBig').addEventListener('click', () => { saved.set('reelBig', !saved.get('reelBig', false)); renderReel(); });
+$('#reelKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ kind: b.dataset.kind }); });
+$('#reelRated').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ min: Number(b.dataset.min) === reelFilter.min ? 0 : Number(b.dataset.min) }); });
+$('#reelSession').addEventListener('click', () => setReelFilter({ session: !reelFilter.session }));
+$('#reelModel').addEventListener('change', e => setReelFilter({ model: e.target.value }));
+$('#reelFind').addEventListener('input', e => setReelFilter({ q: e.target.value }));
+$('#reelEmpty').addEventListener('click', e => {
+  if (!e.target.closest('[data-reel="all"]')) return;
+  $('#reelFind').value = '';
+  setReelFilter({ kind: '', session: false, min: 0, model: '', q: '' });
+});
 
 // Opens the take a chained entry came from.
 async function openSource(src) {
@@ -6700,7 +7037,7 @@ const TOOLS = [
     use: E(['animate', 'character', 'reference', 'recreate'], 'How the next prompt uses it'),
     take: I('Take number on screen'),
     render: I('1 = newest render of that take'),
-    render_id: S('A render\'s id from look_at, for one that isn\'t on screen (This session, Gallery)'),
+    render_id: S('A render\'s id from look_at, for one that isn\'t on screen (Your renders, Gallery)'),
     model: S('The model to use it with, e.g. the video model to animate with; default: the last video model for animate, else the one on Create'),
   }, ['use']),
   T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
@@ -6724,7 +7061,7 @@ const TOOLS = [
   T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
   T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
   T('look_at', 'See renders (images, or frames of videos) or the input image with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest.', {
-    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started (the 🎞 This session box), newest run first; gallery: the newest renders anywhere. Each picture comes with its render id (for use_render_as_image)'),
+    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started, newest run first; gallery: the newest renders anywhere. Each picture comes with its render id (for use_render_as_image)'),
     take: I('Only this take'),
     renders: { type: 'array', items: { type: 'integer' }, description: 'Only these renders of the take (1 = newest)' },
     limit: I('At most this many pictures, up to 8; default 6'),
@@ -6737,7 +7074,7 @@ const TOOLS = [
   }, ['for']),
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
-  T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (Gallery and This session show it; Gallery filters by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
+  T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (🎞 Your renders and the Gallery show it, and filter by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
   T('favorite_entry', 'Star (★) the prompt on screen in History, or unstar it.', { on: B('true = star (default), false = unstar') }),
   T('delete_render', 'Delete a render for good (asks the user to confirm on screen). Default: the one in the lightbox. Only when the user asked.', { take: I('Take number'), render: I('1 = newest render of that take') }),
   T('delete_entry', 'Delete a prompt from History for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),

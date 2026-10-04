@@ -72,7 +72,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
 - **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
   - Watch live progress (and previews) right on the take.
-  - **🎞 This session**, above the takes, collects every render since Prompt Maker started, newest run first, so nothing gets lost below a long prompt.
+  - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
   - Browse every result in the **Gallery**, and view it in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
@@ -273,7 +273,7 @@ The motion video is kept with the take (History puts it back), and deleting the 
 Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
 - **Ask what it thinks.** *"Which of these renders do you like better?"*, *"Should the princess be in the high tower or the dungeon?"*, *"Based on this prompt, what aspect ratio should it be?"* It gives a real opinion with a reason, and offers to act on it.
-- **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, 🎞 This session and the Gallery. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
+- **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, 🎞 Your renders and the Gallery. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
 - **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, this session's runs and their ratings, renders in progress.
 - **Tell it what to make.** *"Set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them."* Or *"use seconds 12 to 15 of the motion video and crop its black bars."*
   - It runs the app with the same controls you have: model, theme, dials, workflow, sampler settings (steps, CFG, sampler, scheduler, denoise), LoRAs, seed, takes, renders, refining, animating, motion videos (trimmed, cropped, 24 fps) and characters (Wan Animate 2), chains, History, playbooks, ratings, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
@@ -459,16 +459,17 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 
 > Chains continue from images for now: a video can't feed the next step yet. Extending a clip from its last frame is coming next.
 
-**🎞 This session** sits above the takes on Create. It holds every render made since Prompt Maker last started, from every run, so you can scroll back through all of them in one place.
+**🎞 Your renders** sits above the takes on Create. It holds a card for every render you've ever made, from every run and batch, all in one grid, newest first. It keeps them when you reload the page or restart Prompt Maker.
 
 - **Live.** A render shows up the moment it starts, with its preview, progress and **✕ Cancel**, and stays when it's done.
-- **Grouped by run,** newest first. The run on screen is marked *On screen*; **Open** puts any other run back on the stage (your Create form stays as it is).
-- **⤢ Bigger** gives the box most of the screen for comparing; **▾** folds it away. Both are remembered.
-- Click a render to see it full screen. It survives a page reload; restarting Prompt Maker starts a fresh session (every render stays in the Gallery).
+- **Filters:** 📷 Images or 🎬 Videos, **🕘 This session** (only what you made since Prompt Maker last started), **★ & up**, **★★ & up** or **★★★**, a model, and **Find…** to search the words of the prompt. The count says how many show (*12 of 183*). The filters are remembered, except Find.
+- **Arrange them your way.** Drag a card where you want it and the others make room. On a touch screen, hold it a moment first; with the keyboard, **Shift + ←** or **→** moves the card you're on. Your order is saved in your data folder, so it stays. New renders come in first, ahead of the ones you've placed. **↺ Newest first** goes back to newest first.
+- **As big as you want.** Drag the box's bottom edge to make it taller or shorter. It keeps that height while renders arrive, so the takes below don't move. **🔍** makes the pictures bigger or smaller, up to one picture as tall as the box. **⛶ Full screen** gives the box the whole window (**Esc** goes back). **▾** folds it away. All of this is remembered.
+- Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage.
 
 **Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
 
-- Click the stars on a render in **This session** (hover a render to see them), or the buttons under the lightbox, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**).
+- Click the stars on a render in **Your renders** (hover a render to see them), or the buttons under the lightbox, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**).
 - Renders you marked ♥ favorite before ratings count as ★★★ Excellent.
 
 Every render also appears in the **Gallery** tab, with filters for images, videos, ratings (★ and up, ★★ and up, ★★★ only) and models. Rated renders show their stars on their tile. The newest render becomes the thumbnail of its History card.
@@ -634,6 +635,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── brains.json     # what the app learned about each LLM: thinking, speed, Quick check, its own Thinking level
 ├── assistant.json  # the assistant conversation
 ├── jobs.json       # the assistant's jobs: their plan, progress and log (the newest 30)
+├── render-order.json # the order you dragged 🎞 Your renders into
 └── models/         # playbooks you added or edited
 ```
 

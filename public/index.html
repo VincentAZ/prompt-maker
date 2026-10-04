@@ -260,15 +260,34 @@
           <section id="reel" class="reel" aria-labelledby="reelTitle" hidden>
             <div class="reel-head">
               <button type="button" id="reelToggle" class="icon-btn reel-toggle" aria-controls="reelBody" aria-expanded="true">▾</button>
-              <h2 id="reelTitle" class="reel-title">🎞 This session</h2>
+              <h2 id="reelTitle" class="reel-title">🎞 Your renders</h2>
               <span id="reelCount" class="reel-count"></span>
               <span class="spacer"></span>
-              <button type="button" id="reelBig" class="btn small" aria-pressed="false">⤢ Bigger</button>
+              <label id="reelZoom" class="reel-zoom" title="Picture size">🔍<input type="range" id="reelSize" min="80" max="1000" step="10" value="160" aria-label="Picture size"></label>
+              <button type="button" id="reelFull" class="btn small" aria-label="Full screen" title="Fill the window (Esc to go back)"><span class="ico" aria-hidden="true">⛶</span> <span class="lbl">Full screen</span></button>
             </div>
             <div id="reelBody" class="reel-body">
-              <p id="reelEmpty" class="reel-empty">Every render you make shows up here as it finishes, newest first, until Prompt Maker restarts. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.</p>
-              <div id="reelList" class="reel-list"></div>
+              <div id="reelFilters" class="reel-filters">
+                <div id="reelKinds" class="filter-chips" role="group" aria-label="Show">
+                  <button type="button" class="chip-btn" data-kind="" aria-pressed="true">All</button>
+                  <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">📷 Images</button>
+                  <button type="button" class="chip-btn" data-kind="video" aria-pressed="false">🎬 Videos</button>
+                </div>
+                <button type="button" id="reelSession" class="chip-btn" aria-pressed="false" title="Only renders made since Prompt Maker last started">🕘 This session</button>
+                <div id="reelRated" class="filter-chips" role="group" aria-label="Filter by rating">
+                  <button type="button" class="chip-btn rated" data-min="1" aria-pressed="false" title="Rated pretty good or better">★ &amp; up</button>
+                  <button type="button" class="chip-btn rated" data-min="2" aria-pressed="false" title="Rated very good or excellent">★★ &amp; up</button>
+                  <button type="button" class="chip-btn rated" data-min="3" aria-pressed="false" title="Rated excellent">★★★</button>
+                </div>
+                <select id="reelModel" class="reel-model" aria-label="Filter by model"></select>
+                <input type="search" id="reelFind" class="reel-find" placeholder="Find…" aria-label="Find renders by their prompt">
+                <button type="button" id="reelNewest" class="chip-btn" title="You've dragged cards into your own order. This puts them back newest first." hidden>↺ Newest first</button>
+              </div>
+              <p id="reelEmpty" class="reel-empty">Every render you make lands here, newest first, and stays. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.</p>
+              <div id="reelGrid" class="reel-grid"></div>
+              <div id="reelMore" class="reel-more" aria-hidden="true"></div>
             </div>
+            <div id="reelGrip" class="reel-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to make the box taller or shorter" tabindex="0" title="Drag to make it taller or shorter"><span></span></div>
           </section>
           <div id="stageError" class="error-card" role="alert" hidden></div>
           <div id="resultsList" class="takes"></div>
