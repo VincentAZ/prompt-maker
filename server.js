@@ -866,9 +866,9 @@ async function renderTake(req, res) {
   const settings = await store.getSettings();
   const entry = await store.getHistory(body.historyId || '');
   if (!entry) throw store.httpError(404, 'That take is no longer in history.');
-  const variation = entry.variations[body.index];
+  const variation = Number.isInteger(body.index) ? entry.variations[body.index] : null;
   if (!variation) throw store.httpError(400, 'Unknown take.');
-  const versionIndex = variation.versions[body.versionIndex] ? body.versionIndex : variation.versions.length - 1;
+  const versionIndex = Number.isInteger(body.versionIndex) && variation.versions[body.versionIndex] ? body.versionIndex : variation.versions.length - 1;
   const text = variation.versions[versionIndex].text;
   const workflow = wf.withSetup(await wf.getWorkflow(body.workflowId || ''), body.setup);
   if (!workflow) throw store.httpError(400, 'Pick a workflow to render with.');
@@ -1149,7 +1149,8 @@ async function route(req, res) {
   const p = url.pathname;
   const m = req.method;
   let match;
-  if (p.startsWith('/api/') && !isTrustedRequest(req)) return sendJson(res, 403, { error: 'Forbidden' });
+  // Your renders, pictures and videos are as private as the API: another website can't fetch them either.
+  if (/^\/(api|renders|videos|images)\//.test(p) && !isTrustedRequest(req)) return sendJson(res, 403, { error: 'Forbidden' });
 
   if (p === '/api/models' && m === 'GET') return sendJson(res, 200, await store.listModels());
   if (p === '/api/models' && m === 'POST') {
@@ -1578,7 +1579,7 @@ const server = http.createServer(async (req, res) => {
   try {
     await route(req, res);
   } catch (err) {
-    const status = err.status || 500;
+    const status = err.status || (err instanceof URIError ? 404 : 500); // an address that can't be read names nothing
     if (status === 500) console.error(err);
     if (!res.headersSent) sendJson(res, status, { error: err.message || 'Server error', ...(err.missingModels ? { missing: err.missingModels } : {}) });
     else res.end();

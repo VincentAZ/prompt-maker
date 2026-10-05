@@ -625,6 +625,7 @@ Settings also shows your data folder and the **version** you run (with the exact
 - **Nothing external loads.** The page's Content-Security-Policy blocks external scripts, fonts and trackers, and the fonts are bundled.
 - **Nothing else is sent anywhere.** No accounts, no telemetry, no analytics.
 - **Model downloads only when you click.** **⬇ Download** (for a model file a workflow needs, see [Missing models](#missing-models)) fetches that one file from Hugging Face into ComfyUI's models folder. Nothing is downloaded otherwise, and no other site.
+- **Your renders are private to this app.** Another website open in your browser can't fetch your renders, pictures or videos from Prompt Maker, just as it can't use the rest of the app.
 - **Deleted means gone.** Deleting from History leaves nothing behind on this computer, in Prompt Maker or in ComfyUI (see [History](#history)), and renders aren't kept in the browser's cache.
 - **Localhost only by default.** The web server binds to `127.0.0.1`, so other devices can't reach it.
 - **Protected from websites you visit.** Requests from other websites (cross-site requests) and DNS-rebinding tricks are rejected, so a web page can't quietly drive your local Prompt Maker.

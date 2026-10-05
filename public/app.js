@@ -1553,6 +1553,8 @@ async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
     if (quiet) throw err;
     if ($('#trimDlg').open) $('#trimNote').textContent = `⚠️ Couldn't cut it: ${err.message}`; // a toast would be under the window
     else toast(`Couldn't make the copy: ${err.message}`, true);
+  } finally {
+    // (Also after it worked: the Trim window keeps its button for the next cut.)
     if (btn) {
       btn.disabled = false;
       btn.textContent = label;
@@ -4888,12 +4890,12 @@ function renderDenoise() {
   if (focus) $(`[data-key="${CSS.escape(focus)}"] .dn-range`, box)?.focus();
 }
 
-let denoiseTimer;
+const denoiseTimers = new Map();
 function saveDenoise(flow, key, value) {
   const p = flow.denoise.find(x => x.key === key);
   p.value = value;
-  clearTimeout(denoiseTimer);
-  denoiseTimer = setTimeout(async () => {
+  clearTimeout(denoiseTimers.get(key)); // (per slider: moving a second one doesn't drop the first one's save)
+  denoiseTimers.set(key, setTimeout(async () => {
     try {
       const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { overridePatch: { [key]: value === p.original ? null : value } } });
       const i = state.workflows.findIndex(f => f.id === flow.id);
@@ -4901,9 +4903,9 @@ function saveDenoise(flow, key, value) {
       $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
       state.cards.forEach(updateSettingsLine);
     } catch (err) {
-      toast(`Couldn't save denoise: ${err.message}`, true);
+      toast(`Couldn't save it: ${err.message}`, true);
     }
-  }, 300);
+  }, 300));
 }
 
 $('#wfpDenoise').addEventListener('input', e => {
@@ -6982,9 +6984,13 @@ $('#wfList').addEventListener('click', async e => {
       toast('⤒ Workflow exported');
     } else if (btn.dataset.act === 'delete') {
       confirmClick(btn, 'Sure?', async () => {
-        await api(`/api/workflows/${id}`, { method: 'DELETE' });
-        await loadWorkflows();
-        toast('🗑️ Workflow removed');
+        try {
+          await api(`/api/workflows/${id}`, { method: 'DELETE' });
+          await loadWorkflows();
+          toast('🗑️ Workflow removed');
+        } catch (err) {
+          toast(`Couldn't remove the workflow: ${err.message}`, true);
+        }
       });
     }
   } catch (err) {
@@ -9237,7 +9243,7 @@ const PANEL_SUMMARY = {
     const l = pickedBatches();
     return !batches().length ? 'No batches yet' : l.length > 1 ? `🎞 All ${l.length} batches, in order` : l.length ? `🎞 ${l[0].name} · ${batchLine(l[0])}` : `Off · ${batches().length} saved`;
   },
-  'create-chain': () => (state.chain?.steps?.length > 1 ? `⛓ ${state.chain.steps.length - 1} more step${state.chain.steps.length > 2 ? 's' : ''}` : 'No more steps'),
+  'create-chain': () => (state.chain?.steps?.length ? `⛓ ${state.chain.steps.length} more step${state.chain.steps.length > 1 ? 's' : ''}` : 'No more steps'),
   take: el => shorten(($('.prompt-text', el)?.value || '').replace(/\s+/g, ' ').trim(), 140),
   'set-services': () => state.services ? `LM Studio ${state.services.lms.running ? 'on' : 'off'} · ComfyUI ${state.services.comfy.running ? 'on' : 'off'}` : '',
   'set-lmstudio': () => $('#sUrl').value,

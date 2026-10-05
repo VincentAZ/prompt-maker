@@ -3823,6 +3823,14 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('small things: odd addresses are answered properly; renders are private to this app', async () => {
+    eq((await fetch(`${APP}/renders/%E0%A4%A`)).status, 404, 'an address that can\'t be read is "not found", not a server error');
+    eq((await fetch(`${APP}/renders/x.png`, { headers: { Origin: 'https://example.com', 'Sec-Fetch-Site': 'cross-site' } })).status, 403, 'another website can\'t fetch your renders');
+    const entry = (await (await fetch(`${APP}/api/history`)).json())[0];
+    const odd = await fetch(`${APP}/api/render`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ historyId: entry.id, index: 'length', workflowId: 'x' }) });
+    eq(odd.status, 400, 'a take number that isn\'t a number is refused politely');
+  });
+
   await test('the app folder is never written to', async () => {
     eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
     for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);
