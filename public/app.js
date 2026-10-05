@@ -7343,8 +7343,29 @@ const assistantTools = () => TOOLS.filter(t => mayUseComputer() || !COMPUTER_TOO
 function needComputer() {
   if (!mayUseComputer()) throw new Error('I\'m not allowed to do that outside Prompt Maker. You can allow it in Settings → ✦ Assistant → 💻 Let the assistant use my computer.');
 }
-// Commands that may delete something for good: the user says yes first.
-const DELETES = /(^|[\s;&|(`$])(sudo\s+)?(rm|rmdir|unlink|shred|srm|wipe|trash|trash-put|trash-rm|del|erase|rd|ri|rimraf|Remove-Item|Clear-RecycleBin|Format-Volume|mkfs(\.\w+)?|wipefs|dd|truncate|fdisk|parted)(\s|$|;|&|\|)|\bgio\s+(trash|remove)\b|\s-delete\b|\bgit\s+(clean|reset\s+--hard|push\s.*(-f|--force))\b|>\s*\/dev\/(sd|nvme|hd|mmc)|\bdrop\s+(table|database)\b/i;
+// Commands that may delete or replace something for good: the user says yes first. A command counts by its name
+// wherever it stands: after a path (/bin/rm), inside quotes (bash -c "rm …"), after -exec or xargs.
+const CMD_START = String.raw`(^|[\s;&|(\`$'"\\/])(sudo\s+)?`;
+const CMD_END = String.raw`(?=$|[\s;&|)'"])`;
+const CHANGES = [
+  // deleting, and wiping disks
+  'rm|rmdir|unlink|shred|srm|wipe|trash|trash-put|trash-rm|trash-empty|del|erase|rd|ri|rimraf|Remove-Item|Clear-RecycleBin|Clear-Content|Format-Volume|mkfs(\\.\\w+)?|wipefs|dd|truncate|fdisk|parted',
+  // moving and copying replace what is already there; xargs runs what it is handed
+  'mv|cp|install|rsync|scp|tee|xargs|move|copy|xcopy|robocopy|ren|Move-Item|Copy-Item|Rename-Item|Set-Content|Out-File|mi|cpi|rni',
+].join('|');
+const DELETES = new RegExp([
+  `${CMD_START}(${CHANGES})${CMD_END}`,
+  String.raw`\bgio\s+(trash|remove|move|copy)\b`,
+  String.raw`\s--?delete\b|--remove-source-files\b`,
+  String.raw`\bgit\s+(clean|reset|checkout|restore|switch|stash\s+(drop|clear)|branch\s+-D|push\s.*(-f|--force))\b`,
+  String.raw`\b(sed|perl)\b[^|;&]*\s-\w*i`, // edits files in place
+  String.raw`\b(ffmpeg|unzip)\b[^|;&]*\s-(y|o)\b`, // overwrites without asking
+  String.raw`(^|[^0-9&>-])>(?!>|&|\s*(\/dev\/null|\$null)\b)`, // > file replaces it (>> adds to it)
+  String.raw`\b(python[\d.]*|perl|ruby|node|php|lua|pwsh|powershell)(\.exe)?\b[^|;&]*\s-{1,2}(c|e|eval|command|encodedcommand)\b`, // code it can't be read from
+  String.raw`\bdrop\s+(table|database)\b`,
+].join('|'), 'i');
+// Prompt Maker's own server: a command that talks to it could do what the app would ask you about first.
+const callsThisApp = cmd => location.port && new RegExp(String.raw`(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):${location.port}\b`, 'i').test(cmd);
 
 // What the assistant shows while a tool runs.
 const TOOL_RUNNING = {
@@ -7591,7 +7612,7 @@ function readScreen(find) {
   }
   const msg = screenNow().message;
   return [
-    `Page: ${VIEWS.find(isView)}${top ? `. Open on top: ${overlayName(top)} (only its controls work until it closes)` : ''}${msg ? `. Message: “${msg}”` : ''}`,
+    `Page: ${VIEWS.find(isView)}${top ? `. Open on top: ${overlayName(top)} (${top.matches('[data-not-assistant]') ? 'a question only the user can answer: tell them it is waiting for their click, and do nothing else until it has closed' : 'only its controls work until it closes'})` : ''}${msg ? `. Message: “${msg}”` : ''}`,
     ...lines,
     ...(left ? [`(${left} more not shown: look with find to narrow it down)`] : []),
   ].join('\n');
@@ -7606,9 +7627,10 @@ function screenControl(control) {
   if (jobs.current && el.closest('#view-create')) throw new Error(`The job “${jobs.current.title}” is using the Create page right now. Pause it (control_job) or wait for it.`);
   return el;
 }
-// Presses that may lose something for good: the user says yes first.
+// Presses that may lose something for good: the user says yes first. A button that reads "Sure?" after a first
+// press (confirmClick) is the app asking the user, so the second press is theirs to allow too.
 const RISKY = /delete|remove|discard|erase|wipe|uninstall|overwrite|🗑/i;
-const risky = el => el.classList.contains('danger') || RISKY.test(`${controlName(el)} ${el.title}`);
+const risky = el => el.classList.contains('danger') || Boolean(el.dataset.armed) || RISKY.test(`${controlName(el)} ${el.title}${el.dataset.armed ? ` ${el.dataset.armLabel}` : ''}`);
 const settle = () => new Promise(r => setTimeout(r, 400));
 
 // After a press (or typing): if the screen changed, number it again and say what's new, so the next step can use it.
@@ -7896,7 +7918,7 @@ const TOOL_IMPL = {
   run_command: async ({ command, folder, seconds }) => {
     needComputer();
     const cmd = String(command || '').trim();
-    if (DELETES.test(cmd) && !(await confirmInChat('Run this command? It may delete something for good.', '▶ Run it', { no: 'Don\'t run it', detail: cmd }))) return { summary: 'Didn\'t run it: the user said no', declined: true };
+    if ((DELETES.test(cmd) || callsThisApp(cmd)) && !(await confirmInChat(callsThisApp(cmd) ? 'Run this command? It talks to Prompt Maker itself, behind the screen.' : 'Run this command? It may delete or replace something for good.', '▶ Run it', { no: 'Don\'t run it', detail: cmd }))) return { summary: 'Didn\'t run it: the user said no', declined: true };
     const r = await api('/api/computer/run', { method: 'POST', body: { command: cmd, folder, seconds } });
     return { summary: `Ran ${cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd}${r.stopped ? ' (stopped: it took too long)' : r.exit_code ? ` (it failed, code ${r.exit_code})` : ''}`, ...r };
   },
@@ -8380,14 +8402,18 @@ const TOOL_IMPL = {
     const el = screenControl(control);
     const name = controlName(el);
     if (el.tagName === 'A' && el.origin !== location.origin) throw new Error('That link goes to a website: tell the user to open it.');
-    if (risky(el) && !(await confirmInChat(`Press “${name}”${sectionName(el) ? ` (${sectionName(el)})` : ''}? It may delete or remove something for good.`, 'Yes, press it'))) {
-      return { summary: `Didn't press “${name}”: the user said no`, declined: true };
+    const ask = risky(el);
+    const what = el.dataset.armed ? clean(el.dataset.armLabel) : name; // armed: its name is the "Sure?" it shows now
+    if (ask && !(await confirmInChat(`Press “${what}”${sectionName(el) ? ` (${sectionName(el)})` : ''}?${el.dataset.armed ? ` It asks: “${name}”.` : ''} It may delete, reset or remove something for good.`, 'Yes, press it'))) {
+      return { summary: `Didn't press “${what}”: the user said no`, declined: true };
     }
+    if (!el.isConnected) throw new Error('The screen changed while the user was asked, and that control isn\'t there now. Look again with see_screen.');
     el.scrollIntoView({ block: 'center' });
     el.focus({ preventScroll: true });
     el.click();
+    if (ask && el.isConnected && el.dataset.armed) el.click(); // it asks "Sure?" now, and the user just said yes
     await settle();
-    return { summary: `Pressed “${name}”`, ...screenNow(), ...screenChange() };
+    return { summary: `Pressed “${what}”`, ...screenNow(), ...screenChange() };
   },
   fill: async ({ control, text }) => {
     const el = screenControl(control);

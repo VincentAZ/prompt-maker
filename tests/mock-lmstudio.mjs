@@ -73,6 +73,26 @@ function assistantTurn(body) {
     })()
     : /pick the best/.test(said) ? [{ calls: [['pick_best', { for: 'a moody poster', then: 'reference' }]] }, { text: results.includes('Picked') ? 'Picked one and put it in step 3.' : 'That failed.' }]
     : /fewer steps/.test(said) ? [{ calls: [['set_sampler', { steps: 12 }]] }, { text: results.includes('steps 12') ? 'Steps set to 12.' : 'That failed.' }]
+    // It tries to answer the "send your prompts to the cloud?" question itself: it waits for it, looks, and presses OK if it can.
+    : /answer the cloud question/.test(said) ? (() => {
+      const ok = [...results.matchAll(/\[(\d+)\] button “OK, use it”/g)].at(-1)?.[1];
+      return [
+        { calls: [['wait', { seconds: 3 }]] },
+        { calls: [['see_screen', {}]] },
+        ok ? { calls: [['press', { control: Number(ok) }]] } : { text: results.includes('only the user can answer') ? 'That one is yours to answer: it is waiting for your click.' : 'There is nothing to answer.' },
+        { text: 'I pressed OK for you.' },
+      ];
+    })()
+    // It tries to reset an edited playbook by pressing the button twice (the second press answers its "Sure?").
+    : /reset the playbook yourself/.test(said) ? (() => {
+      const n = Number([...results.matchAll(/\[(\d+)\] button “↺ Reset to built-in”/g)].at(-1)?.[1]);
+      return [
+        { calls: [['see_screen', { find: 'reset' }]] },
+        { calls: [['press', { control: n }]] },
+        { calls: [['press', { control: n }]] },
+        { text: results.includes('"declined":true') ? 'Okay, I left your playbook alone.' : results.includes('"error"') ? `That failed: ${results.slice(-300)}` : 'I reset it.' },
+      ];
+    })()
     // Settings through the screen: look, type in the box it found, look again, press the button it found.
     : /use the screen/.test(said) ? (() => {
       const last = re => [...results.matchAll(re)].at(-1)?.[1];

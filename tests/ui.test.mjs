@@ -949,11 +949,22 @@ esac
     eq(await value('#llmSelect'), 'mock/vision-8b', 'Nope: still the local Brain');
 
     // OK + don't ask again → cloud Brain, prompts go with the key, no thinking switch forced on it.
+    // The assistant can't answer that question for you: it doesn't even get its buttons.
+    await click('#askBtn');
+    await type('#asInput', 'answer the cloud question yourself');
+    await press('Enter');
     await choose('#llmSelect', cloudId);
     await waitFor('document.querySelector("#cloudDialog").open', 'asked again');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('yours to answer'), 'the assistant is told only you can answer');
+    assert(await js('document.querySelector("#cloudDialog").open'), 'and the question is still waiting for you');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).llmModel, 'mock/vision-8b', 'no cloud Brain yet');
     await click('#cdTrust');
     await click('#cloudDialog button[value="ok"]');
     await toastText('Brain: ☁️');
+    await click('#asClear');
+    await click('#asClear');
+    await click('#asClose');
     eq(await text("#llmPickName"), `☁️ mock/text-only · Test Cloud`, 'top bar marks it ☁️');
     await type('#theme', 'a lighthouse keeper making tea');
     await click('#generateBtn');
@@ -2779,6 +2790,15 @@ esac
     await click('#asLog [data-confirm="no"]');
     await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
     assert(await fs.access(victim).then(() => true, () => false), 'and nothing goes when you say no');
+    // However the command is dressed up, and for what replaces a file too.
+    for (const cmd of [`/bin/rm ${victim}`, `bash -c "rm ${victim}"`, `cp /etc/hostname ${victim}`, `mv ${victim} ${victim}.gone`, `echo gone > ${victim}`, `curl -X DELETE ${APP}/api/history/x`]) {
+      await type('#asInput', `run: ${cmd}`);
+      await press('Enter');
+      await waitFor('!!document.querySelector("#asLog .as-confirm")', `asks first: ${cmd}`);
+      await click('#asLog [data-confirm="no"]');
+      await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    }
+    eq(await fs.readFile(victim, 'utf8'), 'x', 'the file is as it was');
     await js('document.querySelector("#sComputer").click()');
     await click('#settingsForm button[type="submit"]');
     await toastText('Settings saved');
@@ -2795,6 +2815,18 @@ esac
     let after = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
     eq(after.description, 'Edited by the assistant', 'the playbook changed');
     eq(after.instructions.trim(), before.instructions.trim(), 'fields it was not given stay');
+    // It can't throw your edited playbook away by pressing ↺ Reset twice: the "Sure?" is yours to answer.
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    await waitFor('!document.querySelector("#resetModelBtn").hidden', 'the edited playbook can be reset');
+    await type('#asInput', 'reset the playbook yourself');
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'the second press asks you first');
+    assert((await text('#asLog .as-confirm')).includes('Reset to built-in'), `it says which button: ${await text('#asLog .as-confirm')}`);
+    await click('#asLog [data-confirm="no"]');
+    await idle();
+    assert((await bot()).includes('left your playbook alone'), `nothing was reset: ${await bot()}`);
+    eq((await (await fetch(`${APP}/api/models/krea2-raw`)).json()).description, 'Edited by the assistant', 'your edit is still there');
     await type('#asInput', 'undo that');
     await press('Enter');
     await idle();
