@@ -104,30 +104,33 @@ function openStream(res) {
 // Renders and images aren't stored in the browser's cache, so a deleted one doesn't live on there.
 const PRIVATE = { 'Cache-Control': 'no-store' };
 
-// Serves a file, with byte ranges so videos can seek.
+// Serves a file, with byte ranges so videos can seek. Read from disk piece by piece as it's sent: a player asks for
+// many small ranges of a big video, and loading the whole file for each would fill the memory.
 async function serveFile(req, res, file, extraHeaders = {}) {
-  let data;
-  try {
-    data = await fs.readFile(file);
-  } catch {
-    return sendJson(res, 404, { error: 'Not found' });
-  }
+  const st = await fs.stat(file).catch(() => null);
+  if (!st?.isFile()) return sendJson(res, 404, { error: 'Not found' });
+  const size = st.size;
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
   const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache', 'Accept-Ranges': 'bytes', ...extraHeaders };
+  const send = (status, head, start, end) => {
+    res.writeHead(status, { ...headers, ...head, 'Content-Length': end - start + 1 });
+    if (req.method === 'HEAD' || end < start) return res.end();
+    const stream = createReadStream(file, { start, end });
+    stream.on('error', () => res.destroy()); // deleted or unreadable meanwhile: the headers are already out
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+  };
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (range && (range[1] || range[2])) {
-    const size = data.length;
     const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
     const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
     if (start >= size || start > end) {
       res.writeHead(416, { 'Content-Range': `bytes */${size}` });
       return res.end();
     }
-    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
-    return res.end(data.subarray(start, end + 1));
+    return send(206, { 'Content-Range': `bytes ${start}-${end}/${size}` }, start, end);
   }
-  res.writeHead(200, { ...headers, 'Content-Length': data.length });
-  res.end(data);
+  send(200, {}, 0, size - 1);
 }
 
 // Blocks other websites (cross-site requests) and DNS-rebinding tricks from using this local API.
@@ -897,11 +900,14 @@ async function renderTake(req, res) {
   // A video in pieces: ComfyUI saves each piece and Prompt Maker joins them, which needs ffmpeg (see wf.splitPieces).
   const joinInApp = Boolean(pieces) && (await videotools.hasFfmpeg());
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
-  const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio });
+  const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio }, body.runId);
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
-  watchRenderJob(stream.job, res);
+  // A page that named the job follows it over its one connection for all renders; else this request streams it.
+  if (body.runId) sendJson(res, 200, { runId: stream.runId, count, workflowName: workflow.name });
+  else watchRenderJob(stream.job, res);
   const clientId = comfy.newClientId();
   for (let i = 0; i < count; i++) {
+    if (stream.signal.aborted) break; // cancelled between two renders (while one was being copied or joined)
     if (i > 0 && !(await store.getHistory(entry.id))) break; // deleted meanwhile: its prompt isn't sent again
     const t0 = Date.now();
     let promptId = null;
@@ -921,6 +927,10 @@ async function renderTake(req, res) {
       }, info);
       models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
       promptId = await comfy.queuePrompt(base, prompt, clientId);
+      if (stream.signal.aborted) { // cancelled while ComfyUI was taking it
+        await comfy.cancel(base, promptId);
+        break;
+      }
       stream.signal.addEventListener('abort', onAbort, { once: true });
       stream.send({ type: 'queued', i, applied });
       let lastPreview = 0;
@@ -1042,14 +1052,28 @@ async function joinPieces(base, settings, parts, outputs, name, motionVideo, cop
 }
 
 // A render keeps going when the page that started it closes or reloads: the page only watches it, and can pick it
-// up again (GET /api/renders, then /api/renders/:id/watch). Stop and ✕ cancel it through /api/runs/:id/cancel.
+// up again (GET /api/renders, then its events). Stop and ✕ cancel it through /api/runs/:id/cancel.
 // Each job keeps its events to replay to a page that comes back, except previews: only the latest per render.
+// A page follows all its renders over one connection (/api/renders/stream: every job's events, with their runId),
+// because a browser only opens a few connections to one server: one per render left none for Stop or Cancel once
+// several rendered at once. It catches up on a job with /api/renders/:id/events; an event's n (counting up per job)
+// tells it what it already has.
 const renderJobs = new Map();
+const renderHubs = new Set();
 
-function openRenderJob(meta) {
+function watchAllRenders(res) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  res.write('{"type":"hello"}\n');
+  renderHubs.add(res);
+  const alive = setInterval(() => res.write('{"type":"ping"}\n'), 25_000);
+  res.on('close', () => { clearInterval(alive); renderHubs.delete(res); });
+}
+
+// runId: the page's own id for the job (so it can listen for it before asking), unless it's taken.
+function openRenderJob(meta, wantedId = null) {
   const controller = new AbortController();
-  const runId = crypto.randomUUID();
-  const job = { ...meta, runId, events: [], previews: new Map(), watchers: new Set(), done: false, startedAt: Date.now(), now: { i: 0, finished: 0, pct: null, stage: 'Waiting for ComfyUI…' } };
+  const runId = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(wantedId || '') && !renderJobs.has(wantedId) && !runs.has(wantedId) ? wantedId : crypto.randomUUID();
+  const job = { ...meta, runId, events: [], previews: new Map(), watchers: new Set(), seq: 0, done: false, startedAt: Date.now(), now: { i: 0, finished: 0, pct: null, stage: 'Waiting for ComfyUI…' } };
   runs.set(runId, controller);
   renderJobs.set(runId, job);
   // What the Rendering panel shows: which render of the job, how far, doing what.
@@ -1063,16 +1087,20 @@ function openRenderJob(meta) {
     else if (ev.type === 'render') Object.assign(now, { finished: now.finished + 1, pct: null, stage: 'Saving…' });
     else if (ev.type === 'error') now.stage = `⚠️ ${ev.message}`;
   };
-  const send = obj => {
+  const send = ev => {
+    const obj = { ...ev, n: ++job.seq };
     track(obj);
     if (obj.type === 'preview') job.previews.set(obj.i, obj);
     else job.events.push(obj);
     for (const res of job.watchers) if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n');
+    const tagged = JSON.stringify({ ...obj, runId }) + '\n';
+    for (const res of renderHubs) if (!res.writableEnded) res.write(tagged);
   };
   const end = () => {
     job.done = true;
     runs.delete(runId);
     for (const res of job.watchers) res.end();
+    for (const res of renderHubs) if (!res.writableEnded) res.write(JSON.stringify({ type: 'end', runId }) + '\n');
     setTimeout(() => renderJobs.delete(runId), 60_000); // a page reloading right now still gets the ending
   };
   return { send, end, runId, signal: controller.signal, job };
@@ -1473,6 +1501,11 @@ async function route(req, res) {
       aspectRatio: j.aspectRatio, startedAt: j.startedAt, ...j.now,
       ...(url.searchParams.has('previews') ? { preview: j.previews.get(j.now.i)?.src || null } : {}),
     })));
+  }
+  if (p === '/api/renders/stream' && m === 'GET') return watchAllRenders(res);
+  if ((match = p.match(/^\/api\/renders\/([\w-]+)\/events$/)) && m === 'GET') {
+    const job = renderJobs.get(match[1]);
+    return job ? sendJson(res, 200, { events: [...job.events, ...job.previews.values()].sort((a, b) => a.n - b.n), done: job.done }) : sendJson(res, 404, { error: 'That render has finished.' });
   }
   if ((match = p.match(/^\/api\/renders\/([\w-]+)\/watch$/)) && m === 'GET') {
     const job = renderJobs.get(match[1]);

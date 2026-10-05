@@ -3671,6 +3671,40 @@ esac
     assert(!(await fileExists(file)), 'deleted with the last card that used it');
   });
 
+  await test('files are sent piece by piece: a part of a video or picture on request, not the whole file each time', async () => {
+    const one = (await fs.readdir(path.join(dataDir, 'renders')))[0];
+    const whole = await fs.readFile(path.join(dataDir, 'renders', one));
+    const part = await fetch(`${APP}/renders/${one}`, { headers: { Range: 'bytes=10-19' } });
+    eq(part.status, 206, 'a part is a part');
+    eq(part.headers.get('content-range'), `bytes 10-19/${whole.length}`, 'it says which');
+    eq(Buffer.from(await part.arrayBuffer()).equals(whole.subarray(10, 20)), true, 'the right bytes');
+    const tail = await fetch(`${APP}/renders/${one}`, { headers: { Range: 'bytes=-5' } });
+    eq(Buffer.from(await tail.arrayBuffer()).equals(whole.subarray(whole.length - 5)), true, 'the last bytes');
+    eq((await fetch(`${APP}/renders/${one}`, { headers: { Range: `bytes=${whole.length}-` } })).status, 416, 'past the end is refused');
+    eq(Buffer.from(await (await fetch(`${APP}/renders/${one}`)).arrayBuffer()).equals(whole), true, 'and the whole file is the whole file');
+  });
+
+  await test('a damaged settings or history file does not stop the app: the copy from before the last save is used', async () => {
+    const settings = await (await fetch(`${APP}/api/settings`)).json();
+    const put = body => fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await put({ topP: settings.topP }); // two saves, so the copy from before the last one is as good as the file
+    await put({ topP: settings.topP });
+    await fs.writeFile(path.join(dataDir, 'settings.json'), ''); // what a power cut could leave
+    const after = await fetch(`${APP}/api/settings`);
+    eq(after.status, 200, 'settings still load');
+    eq((await after.json()).llmModel, settings.llmModel, 'with what you had set');
+    assert((await fs.readdir(dataDir)).some(f => f.startsWith('settings.json.damaged-')), 'the damaged file is set aside, not thrown away');
+    eq(JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8')).llmModel, settings.llmModel, 'and the file is whole again');
+    // History the same way: its entries (and so their renders) are not lost.
+    const history = await (await fetch(`${APP}/api/history`)).json();
+    const fav = history[0].favorite;
+    const patch = favorite => fetch(`${APP}/api/history/${history[0].id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ favorite }) });
+    await patch(fav);
+    await patch(fav);
+    await fs.writeFile(path.join(dataDir, 'history.json'), '{"cut off');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, history.length, 'every entry is still there');
+  });
+
   await test('the app folder is never written to', async () => {
     eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
     for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);

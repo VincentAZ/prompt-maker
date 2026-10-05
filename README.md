@@ -487,7 +487,8 @@ Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, giv
 - After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
 - Video tiles show a still of their first frame and play while you hover them.
 - **🎨 Rendering** in the top bar shows while anything renders, with how many are left. Click it for every render still going, from any take (also ones you moved off the stage, started in another tab, or before a reload): its live preview and progress, **Open** to bring its take back with live tiles, **✕ Cancel**, and **Cancel all**.
-- **If ComfyUI crashes mid-render** (it ran out of memory, say, or was closed), the render stops within seconds and says so: *ComfyUI stopped before this render finished*, instead of staying stuck at 0% · Starting… Close other big programs (games especially) and render again.
+- **If ComfyUI crashes mid-render** (it ran out of memory, say, or was closed), the render stops within seconds and says so: *ComfyUI stopped before this render finished*, instead of staying stuck at 0% · Starting… Close other big programs (games especially) and render again. A ComfyUI that is only too busy to answer (a heavy step can do that for minutes) is waited for: the render is given up only after 15 minutes without an answer.
+- **Many renders at once don't slow the page.** However many are going, Stop, Cancel, Generate and saving settings answer right away. **✕ Cancel** on a ×2–×4 render also stops the ones that hadn't started yet, whenever you click it.
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
 - **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Gallery, History, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
 
@@ -647,11 +648,14 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── assistant.json  # the assistant conversation
 ├── jobs.json       # the assistant's jobs: their plan, progress and log (the newest 30)
 ├── render-order.json # the order you dragged 🎞 Your renders into
+├── holds.json      # the pictures and videos your Create page still holds (so tidying up leaves them alone)
+├── *.json.bak      # each file as it was before its last save
 └── models/         # playbooks you added or edited
 ```
 
 - **The app folder is read-only to the app.** The only playbooks in it are the built-ins in `playbooks/`.
 - **Back up the data folder** to keep everything.
+- **A damaged file doesn't stop the app.** If a file can't be read (a power cut at the wrong moment, a full disk), Prompt Maker uses the copy from before its last save (`.bak`), so at most your last change is lost. The damaged file is kept next to it as `….damaged-…`, and nothing is tidied away while a damaged History is set aside.
 - **Upgrading from an older version?** Older versions kept data in `./data` inside the app folder. It moves to the data folder automatically the first time you start the new version; if the data folder already has a History, the old one is added to it.
 
 ## Troubleshooting

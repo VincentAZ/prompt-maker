@@ -91,7 +91,7 @@ async function api(path, { method = 'GET', body } = {}) {
     throw Object.assign(new Error(friendly(err)), { appDown: true }); // the Prompt Maker server itself didn't answer
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { status: res.status }, data.missing ? { missing: data.missing } : {});
   return data;
 }
 
@@ -5768,12 +5768,71 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   if (!state.comfy?.ok) await loadComfyStatus();
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
   if (!setup) saved.set(`wf.${card.model.id}`, flow.id);
-  const body = { historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : {}) };
-  const open = (onEvent, signal) => streamApi('/api/render', body, onEvent, signal).catch(err => {
+  const runId = crypto.randomUUID(); // the page's name for the job, so it can listen for it before the server has it
+  const body = { runId, historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : {}) };
+  const start = () => api('/api/render', { method: 'POST', body }).catch(err => {
     if (err.missing) noteMissingModels(flow.id, err.missing); // step ⑤ offers to download them
     throw err;
   });
-  return followRender(card, entry, { count: card.rb.count, flowName: flow.name, quiet, open });
+  return followRender(card, entry, { count: card.rb.count, flowName: flow.name, quiet, open: (onEvent, signal) => watchRender(runId, onEvent, signal, start) });
+}
+
+// Every render this page follows shares one connection to the server (a browser only opens a few to one server:
+// one per render left none for Stop, Cancel or saving once several rendered at once). It carries each job's events
+// with their runId; n counts up per job, so what was already seen isn't shown twice when the page catches up.
+const renderHub = { following: new Map(), conn: null };
+
+function renderHubConnect() {
+  if (renderHub.conn) return;
+  const conn = renderHub.conn = new AbortController();
+  const deliver = (f, ev) => {
+    if (ev.type === 'end') return f.finish();
+    if (ev.n <= f.last) return;
+    f.last = ev.n;
+    f.onEvent(ev);
+  };
+  // What a job has said so far (the page just started it, came back to it, or the connection was down a moment).
+  renderHub.catchUp = async f => {
+    if (!f.started || f.catching) return;
+    f.catching = true;
+    f.queue = [];
+    const got = await api(`/api/renders/${f.runId}/events`).catch(err => (err.status === 404 ? { events: [], done: true } : null));
+    f.catching = false;
+    const queued = f.queue;
+    f.queue = null;
+    if (!renderHub.following.has(f.runId)) return;
+    for (const ev of [...(got?.events || []), ...queued]) deliver(f, ev);
+    if (got?.done) f.finish();
+  };
+  streamApi('/api/renders/stream', undefined, ev => {
+    if (ev.type === 'hello') return renderHub.following.forEach(f => renderHub.catchUp(f));
+    const f = renderHub.following.get(ev.runId);
+    if (!f) return; // another tab's render, or one this page let go of
+    if (f.queue) f.queue.push(ev); else deliver(f, ev);
+  }, conn.signal).catch(() => {}).then(async () => {
+    renderHub.conn = null;
+    if (!renderHub.following.size) return;
+    if (!conn.signal.aborted) await new Promise(r => setTimeout(r, 1000)); // the server restarted, or the connection dropped: again
+    if (renderHub.following.size) renderHubConnect();
+  });
+}
+
+// Follows one render job until it ends. start: asks the server for it first (a new render); without it the job is
+// already running (picked up again). Rejects with an AbortError when signal says to let go.
+function watchRender(runId, onEvent, signal, start = null) {
+  return new Promise((resolve, reject) => {
+    const leave = () => {
+      renderHub.following.delete(runId);
+      signal.removeEventListener('abort', stop);
+      if (!renderHub.following.size) renderHub.conn?.abort(); // nothing renders: the connection is free again
+    };
+    const f = { runId, onEvent, last: 0, queue: [], started: false, catching: false, finish: () => { leave(); resolve(); } };
+    const stop = () => { leave(); reject(Object.assign(new Error('Stopped'), { name: 'AbortError' })); };
+    signal.addEventListener('abort', stop, { once: true });
+    renderHub.following.set(runId, f);
+    renderHubConnect();
+    Promise.resolve(start?.()).then(() => { f.started = true; return renderHub.catchUp(f); }, err => { leave(); reject(err); });
+  });
 }
 
 // Renders run on in Prompt Maker's server when the page reloads or closes. A page showing the entry picks them up
@@ -5786,7 +5845,7 @@ async function resumeRenders(entry) {
     if (following && (!following.runId || state.cards.includes(following.card))) continue;
     following?.detach(); // its tiles were on a stage that's gone: this one shows them now
     const card = state.cards.find(c => c.index === job.index && !c.interrupted);
-    if (card) followRender(card, entry, { count: job.count, flowName: job.workflowName, runId: job.runId, open: (onEvent, signal) => streamApi(`/api/renders/${job.runId}/watch`, undefined, onEvent, signal) });
+    if (card) followRender(card, entry, { count: job.count, flowName: job.workflowName, runId: job.runId, open: (onEvent, signal) => watchRender(job.runId, onEvent, signal) });
   }
 }
 
