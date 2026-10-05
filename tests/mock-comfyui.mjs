@@ -246,7 +246,7 @@ export function startMockComfy(port, { png, root = null }) {
       return json(200, history[id] ? { [id]: history[id] } : {});
     }
     if (p === '/queue' && req.method === 'GET') {
-      const job = id => [prompts.findIndex(x => x.id === id), id, prompts.find(x => x.id === id)?.prompt, {}, ['9']];
+      const job = id => [prompts.findIndex(x => x.id === id), id, prompts.find(x => x.id === id)?.prompt, { client_id: prompts.find(x => x.id === id)?.client_id }, ['9']];
       return json(200, { queue_running: running ? [job(running)] : [], queue_pending: pending.filter(x => !dropped.has(x.id)).map(x => job(x.id)) });
     }
     if (p === '/queue' && req.method === 'POST') {

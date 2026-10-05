@@ -55,6 +55,21 @@ const saved = {
   set(k, v) { try { localStorage.setItem(`pm.${k}`, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
 
+// Tells the server which pictures and videos this page still holds: the form's (the start-up tidy leaves them
+// alone) and those of prompts waiting in line (deleting a History card that shares one leaves them alone too).
+let holdsTimer;
+function syncHolds() {
+  clearTimeout(holdsTimer);
+  holdsTimer = setTimeout(() => {
+    let client = saved.get('client', null);
+    if (!client) saved.set('client', client = crypto.randomUUID());
+    const bodies = [...line.orders, line.running].filter(Boolean).map(o => o.body);
+    const form = [state.image?.file, state.video?.file, state.video?.sheet].filter(Boolean);
+    const inLine = bodies.flatMap(b => [b.imageFile, b.video?.file, b.video?.sheet]).filter(Boolean);
+    api('/api/holds', { method: 'PUT', body: { client, form, line: [...new Set(inLine)] } }).catch(() => {});
+  }, 300);
+}
+
 // Turns browser-level network failures into something a human can act on.
 function friendly(err) {
   const msg = err?.message || String(err);
@@ -205,9 +220,14 @@ function setActive(root, value) {
   });
 }
 
-// "Click again to confirm" instead of blocking dialogs.
+// The click being handled is the 2nd (or 3rd…) of a double click.
+let doubleClick = false;
+document.addEventListener('click', e => { doubleClick = e.detail > 1; }, true);
+
+// "Click again to confirm" instead of blocking dialogs. A double click only asks: its second click isn't the answer.
 function confirmClick(btn, label, action) {
   if (btn.dataset.armed) {
+    if (doubleClick) return;
     clearTimeout(btn._armT);
     delete btn.dataset.armed;
     btn.classList.remove('armed');
@@ -1286,6 +1306,7 @@ function setImage(img) {
   if (!img) saved.set('image', null);
   else if (img.file) saved.set('image', img.file);
   saved.set('imageSource', img?.source || null);
+  syncHolds();
   renderSourceBadge();
   renderRole();
   renderMotionHint(); // says when the character and the video differ in shape
@@ -1714,6 +1735,7 @@ function setVideo(v) {
     ? `🕺 ${[v.seconds ? secsLabel(v.seconds) : '', v.width && v.height ? `${v.width}×${v.height}` : '', v.fps ? `${Math.round(v.fps)} fps` : ''].filter(Boolean).join(' · ') || 'Motion video'}`
     : '⏳ Reading the video…';
   renderMotionHint();
+  syncHolds();
   saved.set('video', v?.file ? { file: v.file, preview: v.preview, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, ratio: v.ratio, fps: v.fps, ffmpeg: v.ffmpeg, bars: v.bars || null } : null);
   if (!v && old) {
     const m = currentModel();
@@ -2364,6 +2386,7 @@ function reelTile(it) {
   }
   cell.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
   cell.style.setProperty('--ar', reelRatioOf(it));
+  cell.classList.toggle('going', going.has(it.render.id) || going.has(it.entry.id));
   const theme = it.entry.theme || 'From an image';
   const rating = ratingOf(it.render);
   $('.rt-cap b', cell).textContent = theme;
@@ -3120,6 +3143,7 @@ function orderLine(o) {
 }
 
 function drawLine() {
+  syncHolds();
   const n = line.orders.length;
   $('#queueBtn').hidden = (!running() && !line.pumping) || state.chain.steps.length > 0;
   $('#queueCount').hidden = !n;
@@ -3385,9 +3409,49 @@ function bumpHistoryBadge(delta) {
   badge.hidden = !n;
 }
 
-// Deletes an entry for good (History's Delete, and the assistant after you confirm). Returns a note if ComfyUI's
-// copies may be out of reach.
+// A delete you clicked waits a few seconds first, with ↶ Undo in the toast and where the Delete button was; what's
+// going stays in place (dimmed) meanwhile, so nothing moves. Closing the page deletes right away.
+const UNDO_MS = 8000;
+const going = new Map(); // entry or render id → { timer, url, run }
+
+function deleteSoon(id, url, what, run, redraw) {
+  if (going.has(id)) return;
+  const item = { url, run, timer: setTimeout(() => { going.delete(id); run().catch(err => { toast(err.message, true); redraw(); }); }, UNDO_MS) };
+  going.set(id, item);
+  redraw();
+  toast(`🗑 Deleting ${what}…`, false, { label: '↶ Undo', run: () => undoDelete(id, redraw) });
+}
+
+// It's being deleted now (its time is up, or the assistant does it): no second delete later.
+function stopWaiting(id) {
+  clearTimeout(going.get(id)?.timer);
+  going.delete(id);
+}
+
+function undoDelete(id, redraw) {
+  const item = going.get(id);
+  if (!item) return toast('Too late: it is already deleted.', true);
+  clearTimeout(item.timer);
+  going.delete(id);
+  redraw();
+  toast('↶ Kept. Nothing was deleted');
+}
+
+// The page is closing: what was waiting to be deleted goes now.
+window.addEventListener('pagehide', () => {
+  for (const [id, item] of going) {
+    clearTimeout(item.timer);
+    going.delete(id);
+    fetch(item.url, { method: 'DELETE', keepalive: true }).catch(() => {});
+  }
+});
+
+const ratedIn = entry => entry.variations.flatMap(v => v.renders || []).filter(r => ratingOf(r)).length;
+
+// Deletes an entry for good (History's Delete once its Undo time is over, and the assistant after you confirm).
+// Returns a note if ComfyUI's copies may be out of reach.
 async function deleteEntryNow(entry) {
+  for (const id of [entry.id, ...entry.variations.flatMap(v => (v.renders || []).map(r => r.id))]) stopWaiting(id);
   const { left } = await api(`/api/history/${entry.id}`, { method: 'DELETE' });
   historyDeletes++;
   state.history = state.history.filter(x => x.id !== entry.id);
@@ -3478,7 +3542,7 @@ function renderHistory() {
     const renderCount = allRenders.length;
     const cover = allRenders.length ? allRenders.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)).files[0] : null;
     return `${heading}
-      <article class="hcard${e.id === state.entry?.id ? ' current' : ''}" data-id="${esc(e.id)}" style="--m:${color}"${e.id === state.entry?.id ? ' aria-current="true" title="Open on Create"' : ''}>
+      <article class="hcard${e.id === state.entry?.id ? ' current' : ''}${going.has(e.id) ? ' going' : ''}" data-id="${esc(e.id)}" style="--m:${color}"${e.id === state.entry?.id ? ' aria-current="true" title="Open on Create"' : ''}>
         <div class="hthumb hopen${cover || e.imageFile ? '' : ' textonly'}" data-act="open" aria-hidden="true">
           ${cover ? mediaTag(cover, { hover: true }) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="" loading="lazy">` : kindIcon(e.modelKind)}
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${{ reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
@@ -3490,8 +3554,8 @@ function renderHistory() {
           <p class="hprompt">${esc(first)}</p>
           <div class="hactions">
             <button type="button" class="btn small" data-act="copy" aria-label="Copy ${takes > 1 ? `all ${takes} takes` : 'prompt'}: ${esc(title)}">${takes > 1 ? `Copy all ${takes}` : 'Copy'}</button>
-            <button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image and renders, here and in ComfyUI">Delete</button>
-            <button type="button" class="btn small primary open" data-act="open" aria-label="Open: ${esc(title)}">Open ➜</button>
+            ${going.has(e.id) ? `<span class="hgoing" role="status">🗑 Deleting…</span><button type="button" class="btn small primary open" data-act="undo" aria-label="Undo deleting: ${esc(title)}">↶ Undo</button>` : `<button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image, motion video and renders, here and in ComfyUI. You get a few seconds to undo">Delete</button>
+            <button type="button" class="btn small primary open" data-act="open" aria-label="Open: ${esc(title)}">Open ➜</button>`}
           </div>
         </div>
       </article>`;
@@ -3533,7 +3597,12 @@ $('#historyList').addEventListener('click', async e => {
       if (state.entry?.id === id) state.entry.favorite = entry.favorite;
       renderHistory();
     } else if (btn.dataset.act === 'delete') {
-      confirmClick(btn, 'Sure?', () => deleteEntryNow(entry));
+      const rated = ratedIn(entry);
+      confirmClick(btn, rated ? `Sure? ${rated} rated render${rated > 1 ? 's' : ''} go too` : 'Sure?', () => deleteSoon(entry.id, `/api/history/${entry.id}`, 'it', () => deleteEntryNow(entry), renderHistory));
+    } else if (btn.dataset.act === 'undo') {
+      undoDelete(id, renderHistory);
+    } else if (going.has(id)) {
+      // On its way out: only ↶ Undo works.
     } else if (btn.dataset.act === 'open') {
       await openEntry(entry);
     }
@@ -3556,7 +3625,8 @@ function forgetRender(updated) {
 }
 
 // A deleted entry leaves no trace on this page either: not on the stage, among earlier runs or in a chain run, as a
-// link from the takes made from it, or in the Create form (its theme and image) when it's still what the form holds.
+// link from the takes made from it, or in the Create form (its theme, image and motion video) when it's still what
+// the form holds.
 function forgetEntry(entry) {
   if (state.entry?.id === entry.id) renderResults(null);
   sessionCache.delete(entry.id);
@@ -3574,6 +3644,9 @@ function forgetEntry(entry) {
     // A copy made for the form (of one of its renders) that nothing else uses goes too.
     if (img.file && !state.history.some(e => e.imageFile === img.file) && !line.orders.some(o => o.body.imageFile === img.file)) api(`/api/images/${encodeURIComponent(img.file)}`, { method: 'DELETE' }).catch(() => {});
   }
+  // Its motion video is deleted with it (unless another entry or a prompt in line uses it), so the form can't keep it.
+  const vid = state.video?.file;
+  if (vid && vid === entry.video?.file && !state.history.some(e => e.video?.file === vid) && !line.orders.some(o => o.body.video?.file === vid)) setVideo(null);
   if (entry.theme && $('#theme').value.trim() === entry.theme.trim()) {
     $('#theme').value = ''; // not replaceTheme: its undo would bring the deleted words back
     $('#theme').dispatchEvent(new Event('input'));
@@ -3638,7 +3711,8 @@ async function loadForm(entry) {
 }
 
 async function openEntry(entry) {
-  if (state.busy || state.chainActive) return toast('Hold on, something is still cooking. Stop it or wait.', true);
+  // (A batch renders the takes on the stage: opening another entry would hand it the wrong ones.)
+  if (state.busy || state.chainActive || state.batchRun) return toast('Hold on, something is still cooking. Stop it or wait.', true);
   if (entry.chain) return openRun(entry);
   await loadForm(entry);
   closeRun();
@@ -5328,7 +5402,15 @@ $('#batchList').addEventListener('click', e => {
   const before = batches();
   const pickBefore = state.batchPick;
   saveBatches(before.filter(x => x.id !== b.id));
-  toast(`🗑 Deleted the batch “${b.name}”`, false, { label: '↶ Undo', run: () => { saveBatches(before); setBatchPick(pickBefore); toast('↶ The batch is back'); } });
+  // Undo puts back this one, where it was; batches made or changed since stay as they are.
+  const undo = () => {
+    const now = batches();
+    if (!now.some(x => x.id === b.id)) now.splice(Math.min(before.findIndex(x => x.id === b.id), now.length), 0, b);
+    saveBatches(now);
+    setBatchPick(pickBefore);
+    toast('↶ The batch is back');
+  };
+  toast(`🗑 Deleted the batch “${b.name}”`, false, { label: '↶ Undo', run: undo });
 });
 
 // Runs an order's batches one after another. Each is its own Generate: its own takes and History entry, named after it.
@@ -5344,7 +5426,7 @@ async function runBatches(order) {
     closeRun();
     const entry = await runGeneration(body, m);
     if (!entry || run.stopped) { ok = Boolean(entry); break; }
-    await renderBatchTakes(b, run, order.render);
+    await renderBatchTakes(b, run, order.render, entry);
     if (!state.comfy?.ok) { ok = false; break; } // ComfyUI went away: the error is on screen, the rest would fail the same way
   }
   state.batchRun = null;
@@ -5358,7 +5440,10 @@ async function runBatches(order) {
 
 // One prompt: its take renders that many times. A prompt each: one take at a time (each render keeps a stream
 // open, and the browser only allows a few per server, so 20 at once would stall the page).
-async function renderBatchTakes(b, run, setup) {
+async function renderBatchTakes(b, run, setup, entry) {
+  // The stage shows something else (it was opened meanwhile): these wouldn't be the batch's takes.
+  const moved = () => state.entry?.id !== entry.id && (run.stopped = true);
+  if (moved()) return;
   const cards = state.cards.filter(c => c.rb && !c.interrupted);
   if (!cards.length) return;
   setBusy(false); // ■ Stop stays, for the batch
@@ -5368,7 +5453,7 @@ async function renderBatchTakes(b, run, setup) {
     return;
   }
   for (const c of cards) {
-    if (run.stopped) break;
+    if (run.stopped || moved()) break;
     c.rb.count = 1;
     await startRender(c, { quiet: true, setup });
     if (!state.comfy?.ok) break;
@@ -6568,7 +6653,7 @@ function lbRender() {
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
       ${onStage ? '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>' : '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>'}
-      <button type="button" class="btn small danger" data-lb="delete">🗑 Delete</button>
+      ${going.has(render.id) ? '<button type="button" class="btn small primary" data-lb="undo">↶ Undo delete</button>' : '<button type="button" class="btn small danger" data-lb="delete" title="Deletes this render for good, here and in ComfyUI. You get a few seconds to undo">🗑 Delete</button>'}
     </div>
     <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
     <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · 1 2 3 to rate · Esc to close</p>`;
@@ -6603,12 +6688,11 @@ function lbRender() {
     renderZone(card);
     startRender(card);
   });
-  $('[data-lb="delete"]', $('#lbInfo')).addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', async () => {
-    try {
-      await deleteRenderNow(entry, render);
-    } catch (err) {
-      toast(err.message, true);
-    }
+  // The lightbox may show another render (or be closed) by the time a delete or its undo lands.
+  const redraw = () => { if (!$('#lightbox').hidden) lbRender(); renderReel(); };
+  $('[data-lb="undo"]', $('#lbInfo'))?.addEventListener('click', () => undoDelete(render.id, redraw));
+  $('[data-lb="delete"]', $('#lbInfo'))?.addEventListener('click', e => confirmClick(e.currentTarget, rating ? `Sure? It's rated ${starsOf(rating)}` : 'Sure?', () => {
+    deleteSoon(render.id, `/api/history/${entry.id}/renders/${render.id}`, 'this render', () => deleteRenderNow(entry, render), redraw);
   }));
 }
 
@@ -6629,11 +6713,14 @@ async function rateInLightbox(n) {
 
 // Deletes one render for good (the lightbox's Delete, and the assistant after you confirm).
 async function deleteRenderNow(entry, render) {
+  stopWaiting(render.id);
   const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'DELETE' });
   forgetRender(updated);
   forgetSeenImages();
   if (!$('#lightbox').hidden) {
+    const at = lb.items.findIndex(x => x.render.id === render.id);
     lb.items = lb.items.filter(x => x.render.id !== render.id);
+    if (at >= 0 && at < lb.index) lb.index--; // you browsed on while it waited: stay on the one you're looking at
     lb.index = Math.min(lb.index, lb.items.length - 1);
     if (lb.items.length) lbRender(); else closeLightbox();
   }
@@ -9063,6 +9150,7 @@ async function loadModels() {
     const vid = saved.get('video', null);
     if (vid?.file && (await api(`/api/videos/${encodeURIComponent(vid.file)}`).catch(() => ({}))).exists) restoreVideo(vid);
     else saved.set('video', null);
+    syncHolds();
     renderRole();
     renderResults(null);
     showView(location.hash.slice(1) || 'create', { push: false });

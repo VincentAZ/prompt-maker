@@ -365,6 +365,7 @@ async function generate(req, res) {
 
   const stream = startStream(res, llm, count, seesImages);
   const texts = [];
+  const letGo = store.holdFiles([imageFile, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
   try {
     for (let index = 0; index < count; index++) {
       const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo }, imageDataUrl, { index, count, previous: texts });
@@ -387,24 +388,28 @@ async function generate(req, res) {
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message, index: texts.length, partial: err.partial ? cleanPrompt(err.partial) : '' });
   }
 
-  if (texts.length) {
-    const now = new Date().toISOString();
-    const entry = await store.addHistory({
-      modelId: model.id,
-      modelName: model.name,
-      modelKind: model.kind,
-      llmModel,
-      llmName: llm.name,
-      ...params,
-      temperature: opts.temperature,
-      imageFile,
-      ...(video ? { video } : {}),
-      ...(source ? { source } : {}),
-      ...(chain ? { chain } : {}),
-      ...(batch ? { batch } : {}),
-      variations: texts.map(text => ({ versions: [{ text, instruction: null, createdAt: now }] })),
-    });
-    stream.send({ type: 'saved', entry });
+  try {
+    if (texts.length) {
+      const now = new Date().toISOString();
+      const entry = await store.addHistory({
+        modelId: model.id,
+        modelName: model.name,
+        modelKind: model.kind,
+        llmModel,
+        llmName: llm.name,
+        ...params,
+        temperature: opts.temperature,
+        imageFile,
+        ...(video ? { video } : {}),
+        ...(source ? { source } : {}),
+        ...(chain ? { chain } : {}),
+        ...(batch ? { batch } : {}),
+        variations: texts.map(text => ({ versions: [{ text, instruction: null, createdAt: now }] })),
+      });
+      stream.send({ type: 'saved', entry });
+    }
+  } finally {
+    letGo();
   }
   stream.end();
 }
@@ -1310,6 +1315,12 @@ async function route(req, res) {
     return sendJson(res, 200, { exists });
   }
   if ((match = p.match(/^\/api\/images\/([\w.]+)$/)) && m === 'DELETE') return sendJson(res, 200, { removed: await store.deleteImageIfUnused(match[1]) });
+  // What this browser's Create page holds (its form and its line), so the start-up tidy doesn't take it, and
+  // deleting a card doesn't take what a prompt in line needs.
+  if (p === '/api/holds' && m === 'PUT') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await store.setHolds(body.client, body));
+  }
   if (p === '/api/refine' && m === 'POST') return refine(req, res);
 
   // The assistant's jobs: a folder's pictures to work through, and each job's plan and log.

@@ -258,9 +258,10 @@ async function goto(url) {
   await waitFor('document.documentElement.dataset.ready === "1"', 'app boot', 10000);
 }
 
-async function toastText(expected = '') {
-  return waitFor(`(() => { const t = document.querySelector("#toast"); return !t.hidden && t.textContent.includes(${q(expected)}) && t.textContent; })()`, `toast "${expected}"`);
+async function toastText(expected = '', timeout = 8000) {
+  return waitFor(`(() => { const t = document.querySelector("#toast"); return !t.hidden && t.textContent.includes(${q(expected)}) && t.textContent; })()`, `toast "${expected}"`, timeout);
 }
+const UNDO_WAIT = 14000; // a clicked delete waits 8 s for ↶ Undo before it happens
 
 const fileExists = p => fs.access(p).then(() => true, () => false);
 // Unfolds a collapsible panel (data-panel="key") if it's folded.
@@ -1091,8 +1092,28 @@ esac
     const badge = Number(await text('#historyBadge'));
     await click('.hcard:last-of-type [data-act="delete"]');
     eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'asks to confirm');
+    // A double click only asks: its second click isn't the answer.
+    await js('document.querySelector(".hcard:last-of-type [data-act=delete]").dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }))');
+    eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'a double click does not confirm');
     await click('.hcard:last-of-type [data-act="delete"]');
-    await waitFor(`document.querySelectorAll(".hcard").length === ${before - 1}`, 'card removed');
+    // It waits, dimmed and in place, with ↶ Undo on the card and in the toast.
+    await toastText('Deleting');
+    eq(await count('.hcard'), before, 'the card is still there');
+    eq(await count('.hcard.going'), 1, 'marked as on its way out');
+    await click('.hcard.going [data-act="undo"]');
+    await toastText('Kept');
+    eq(await count('.hcard.going'), 0, 'undo: back to normal');
+    await sleep(8500);
+    eq(await count('.hcard'), before, 'and it is not deleted later');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, before, 'nor on the server');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await click('#toast .toast-act');
+    await toastText('Kept');
+    eq(await count('.hcard.going'), 0, 'the toast\'s Undo does the same');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await waitFor(`document.querySelectorAll(".hcard").length === ${before - 1}`, 'card removed', UNDO_WAIT);
     eq(Number(await text('#historyBadge')), badge - 1, 'badge decremented');
   });
 
@@ -1711,7 +1732,7 @@ esac
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await click('[data-lb="delete"]');
     await click('[data-lb="delete"]');
-    await toastText('Render deleted');
+    await toastText('Render deleted', UNDO_WAIT);
     await press('Escape');
     eq(await count('.take .rtile img'), before - 1, 'one fewer');
   });
@@ -1983,8 +2004,12 @@ esac
     await click('#batchList li:nth-child(2) .b-del');
     eq(await count('#batchList li'), 1, 'deleted');
     eq(await value('#batchPick'), '', 'its pick went with it');
+    // The other batch changes before the undo: that change stays.
+    await js('(() => { const i = document.querySelector("#batchList li .b-count input"); i.value = "7"; i.dispatchEvent(new Event("change", { bubbles: true })); })()');
     await click('#toast .toast-act');
     await waitFor('document.querySelectorAll("#batchList li").length === 2', 'undo brings it back');
+    eq(await js('[...document.querySelectorAll("#batchList .b-name")].map(i => i.value).join("|")'), 'Hero shots|Explore', 'where it was');
+    eq(await value('#batchList li .b-count input'), '7', 'and what changed meanwhile is kept');
     await choose('#batchPick', '');
     eq(await text('#genLabel'), 'Generate', 'no batch: a plain Generate again');
     assert(!(await js('document.querySelector("#varSeg button").disabled')), 'Takes are yours again');
@@ -2868,7 +2893,7 @@ esac
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await click('[data-lb="delete"]');
     await click('[data-lb="delete"]');
-    await toastText('Render deleted');
+    await toastText('Render deleted', UNDO_WAIT);
     if (await visible('#lightbox')) await press('Escape');
     const left = (await history()).find(e => e.id === owner.id).variations.flatMap(v => v.renders || []);
     eq(left.length, all.length - 1, 'one render fewer');
@@ -2882,14 +2907,15 @@ esac
     const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.dataset.id === ${q(owner.id)}) + 1`);
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
-    await toastText('Deleted for good');
+    await toastText('Deleted for good', UNDO_WAIT);
     await click('.tabs button[data-view="create"]');
     eq(await js(`${tiles}.length`), 0, 'Your renders lets go of the deleted run');
   });
 
   await test('delete: a History card leaves nothing behind, here or in ComfyUI', async () => {
     const history = async () => (await fetch(`${APP}/api/history`)).json();
-    const comfyHas = text => Object.values(comfy.history).some(job => JSON.stringify(job.prompt).includes(JSON.stringify(text).slice(1, -1)));
+    let byHand = null; // a job you queued yourself in ComfyUI: never Prompt Maker's to remove
+    const comfyHas = text => Object.entries(comfy.history).some(([id, job]) => id !== byHand && JSON.stringify(job.prompt).includes(JSON.stringify(text).slice(1, -1)));
     const outputOf = n => path.join(comfyRoot, 'output', `mock_${comfy.prompts.at(n).id.slice(0, 6)}.png`);
     // A still, rendered (ComfyUI keeps its own file: cleanup is off), then animated: the video take uploads the still.
     await click('.tabs button[data-view="create"]');
@@ -2923,13 +2949,19 @@ esac
     // The assistant once quoted the still's prompt.
     await fs.writeFile(path.join(dataDir, 'assistant.json'), JSON.stringify({ messages: [{ role: 'user', content: `Make this moodier: ${stillText}` }, { role: 'assistant', content: 'Sure.' }] }));
 
+    // You also rendered the still's prompt yourself, in ComfyUI's own editor.
+    byHand = (await (await fetch(`http://127.0.0.1:${COMFY_PORT}/prompt`, { method: 'POST', body: JSON.stringify({ prompt: comfy.history[still.variations[0].renders[0].promptId].prompt[2], client_id: 'comfyui-editor' }) })).json()).prompt_id;
+    for (let i = 0; i < 50 && !comfy.history[byHand]; i++) await sleep(100);
+    const handOriginal = path.join(comfyRoot, 'output', `mock_${byHand.slice(0, 6)}.png`);
+    assert(await fileExists(handOriginal), 'your own render of the same prompt is in ComfyUI\'s output folder');
+
     const deleteCard = async theme => {
       await click('.tabs button[data-view="history"]');
       await waitFor(`[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'the card');
       const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes(${q(theme)})) + 1`);
       await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
       await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
-      await waitFor(`![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'card gone');
+      await waitFor(`![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'card gone', UNDO_WAIT);
     };
 
     await deleteCard('a paper boat on a rainy puddle');
@@ -2939,6 +2971,7 @@ esac
     assert(!(await fileExists(stillOriginal)), 'and ComfyUI\'s own file of it');
     assert(!(await fileExists(upload)), 'and the copy uploaded to ComfyUI\'s input folder');
     assert(!comfyHas(stillText), 'and its job in ComfyUI\'s history');
+    assert(comfy.history[byHand] && await fileExists(handOriginal), 'the render you made yourself in ComfyUI, same prompt, is not touched');
     assert(!(await fs.readFile(path.join(dataDir, 'assistant.json'), 'utf8')).includes(stillText.slice(0, 60)), 'the assistant conversation no longer quotes it');
     const kept = (await history()).find(e => e.id === video.id);
     assert(kept && !kept.source, 'the video made from it stays, without its prompt or a link back');
@@ -3113,7 +3146,7 @@ esac
     await click('.tabs button[data-view="history"]');
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
-    await waitFor('![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("on a rooftop at dusk"))', 'card gone');
+    await waitFor('![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("on a rooftop at dusk"))', 'card gone', UNDO_WAIT);
     await toastText('Deleted for good');
     assert(!(await fileExists(path.join(dataDir, 'videos', entry.video.file))), 'the motion video is gone from the data folder');
     assert(!(await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.video.file}`))), 'and from ComfyUI\'s input folder');
@@ -3576,6 +3609,34 @@ esac
     } finally {
       srv.kill();
     }
+  });
+
+  await test('delete: a picture that a prompt in line needs, or one being written from, stays', async () => {
+    const send = (p, body, method = 'POST') => fetch(`${APP}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const img = (await (await send('/api/images', { image: `data:image/png;base64,${makePng(37, 41).toString('base64')}` })).json()).file;
+    const file = path.join(dataDir, 'images', img);
+    const gen = async theme => {
+      const out = await (await send('/api/generate', { modelId: 'krea2-raw', variations: 1, theme, imageFile: img, imageRole: 'reference' })).text();
+      return JSON.parse(out.split('\n').find(l => l.includes('"saved"')).replace(/^data: /, '')).entry;
+    };
+    const holds = line => send('/api/holds', { client: 'test-browser-1', form: [], line }, 'PUT');
+    // A prompt waiting in line uses the same picture as the card being deleted.
+    const first = await gen('a held picture, one');
+    await holds([img]);
+    await fetch(`${APP}/api/history/${first.id}`, { method: 'DELETE' });
+    assert(await fileExists(file), 'the picture stays for the prompt in line');
+    await holds([]);
+    // A prompt is being written from it while the only card with it is deleted.
+    const second = await gen('a held picture, two');
+    const third = gen('SLOWTEST a held picture, three');
+    await sleep(800);
+    await fetch(`${APP}/api/history/${second.id}`, { method: 'DELETE' });
+    assert(await fileExists(file), 'the picture stays while a prompt is written from it');
+    const saved = await third;
+    eq(saved.imageFile, img, 'and the new card has it');
+    // Nothing needs it anymore: it goes with its last card.
+    await fetch(`${APP}/api/history/${saved.id}`, { method: 'DELETE' });
+    assert(!(await fileExists(file)), 'deleted with the last card that used it');
   });
 
   await test('the app folder is never written to', async () => {

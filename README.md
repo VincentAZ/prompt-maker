@@ -318,7 +318,7 @@ Everything you generate is saved automatically:
 
 - **Find things:** search themes and prompts, filter by model, or show only ★ favorites.
 - **Pick up where you left off:** click a card to reopen it exactly as it was made: model, theme, image and its role, aspect, resolution, duration, length, temperature, takes and batch, plus how it was rendered (workflow, renders per take, seed and seed mode, LoRAs and their strengths, sampler settings). Keep refining, or Generate / Render again the same way. The card that's open on Create is ringed in History, which scrolls to it.
-- **Delete is for good.** Deleting a card removes its prompts, its input image (unless another card uses the same one) and its renders, along with ComfyUI's copies of them: the files in its output folder, the image uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. Quotes of it in the assistant chat become "[deleted]", and a video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render or image no History card uses anymore.
+- **Delete gives you a few seconds to undo, then it's for good.** Click **Delete**, then **Sure?** (it says so when rated renders go too; a double click only asks, it doesn't confirm). The card stays in place, dimmed, for 8 seconds with **↶ Undo** on it and in the toast; a render deleted from the full-screen view works the same way. After that, or when you close the page, it's gone. Deleting a card removes its prompts, its input image and motion video (unless another card, or a prompt waiting in line or being written, uses the same one) and its renders, along with ComfyUI's copies of them: the files in its output folder, the image uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. A render you made yourself in ComfyUI with the same prompt is yours and stays. If the Create form still shows the deleted card's theme, picture or motion video, it lets go of them too. Quotes of it in the assistant chat become "[deleted]", and a video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render, image or video no History card uses anymore; a picture or motion video still waiting in the Create form is never one of them.
 
 ### Keyboard shortcuts
 
@@ -375,7 +375,7 @@ Step **⑤ Render it** on the Create page is your control center:
   - **how many** images or videos (any number up to 50),
   - **🔁 One prompt** (one prompt, rendered that many times with a new seed each) or **🔀 A different prompt each** (that many different prompts, each rendered once).
 
-  **Generate runs** picks what the next **Generate** does: no batch, one of your batches, or **all of them, one after another**. Each batch is its own run, with its own takes and its own History entry, tagged 🎞 with its name (search History by it). The button says what will happen and counts along while it renders. **■ Stop** (or `Esc`) cancels the rest and keeps what finished. **✕** deletes a batch (with **↶ Undo**). While a batch is picked, it decides the number of takes; a chain (step ⑥) has its own takes and renders, so Batch hides while you build one.
+  **Generate runs** picks what the next **Generate** does: no batch, one of your batches, or **all of them, one after another**. Each batch is its own run, with its own takes and its own History entry, tagged 🎞 with its name (search History by it). The button says what will happen and counts along while it renders. **■ Stop** (or `Esc`) cancels the rest and keeps what finished. **✕** deletes a batch (**↶ Undo** puts it back where it was, and keeps any batch you made or changed in the meantime). While a batch renders, History cards can't be opened on Create, so the batch always renders its own takes. While a batch is picked, it decides the number of takes; a chain (step ⑥) has its own takes and renders, so Batch hides while you build one.
 
 Every take also has a **🎨 Render** bar:
 
@@ -652,7 +652,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 
 - **The app folder is read-only to the app.** The only playbooks in it are the built-ins in `playbooks/`.
 - **Back up the data folder** to keep everything.
-- **Upgrading from an older version?** Older versions kept data in `./data` inside the app folder. It moves to the data folder automatically the first time you start the new version.
+- **Upgrading from an older version?** Older versions kept data in `./data` inside the app folder. It moves to the data folder automatically the first time you start the new version; if the data folder already has a History, the old one is added to it.
 
 ## Troubleshooting
 
