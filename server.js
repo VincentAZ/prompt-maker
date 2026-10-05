@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import * as store from './lib/store.js';
 import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
@@ -888,6 +889,8 @@ async function renderTake(req, res) {
     if (info?.seconds && info?.fps) videoFrames = Math.round(info.seconds * info.fps);
   }
   const pieces = videoFrames ? wf.loopPieces(workflow.prompt, videoFrames) : null;
+  // A video in pieces: ComfyUI saves each piece and Prompt Maker joins them, which needs ffmpeg (see wf.splitPieces).
+  const joinInApp = Boolean(pieces) && (await videotools.hasFfmpeg());
   const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
   const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio });
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
@@ -900,7 +903,7 @@ async function renderTake(req, res) {
     const onAbort = () => { if (promptId) comfy.cancel(base, promptId); };
     try {
       const seed = seeds[i];
-      const { prompt, applied } = wf.buildPrompt(workflow, {
+      const { prompt, applied, parts } = wf.buildPrompt(workflow, {
         text,
         imageName,
         videoName,
@@ -909,6 +912,7 @@ async function renderTake(req, res) {
         duration: entry.duration,
         seed,
         videoFrames,
+        joinInApp,
       }, info);
       models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
       promptId = await comfy.queuePrompt(base, prompt, clientId);
@@ -933,7 +937,12 @@ async function renderTake(req, res) {
       const copies = [];
       // ComfyUI reuses its numbers (ComfyUI_00001_.png) once files are gone, so copies get their own names.
       const named = [store.slugify(entry.modelName), store.slugify(entry.theme || 'from-image').slice(0, 40), applied.seed ?? null, id.slice(0, 6)].filter(x => x !== null && x !== '').join('_');
-      for (const [n, out] of outputs.entries()) {
+      if (parts) {
+        stream.send({ type: 'node', i, title: 'Joining the pieces into one video…' });
+        const file = await joinPieces(base, settings, parts, outputs, `${id}_0`, entry.video?.file ? store.videoPath(entry.video.file) : null, copies);
+        files.push({ file, kind: 'video', name: `${named}${path.extname(file)}` });
+      }
+      for (const [n, out] of (parts ? [] : outputs).entries()) {
         const ext = (path.extname(out.filename).toLowerCase() || '.bin').replace(/[^.\w]/g, '');
         const file = `${id}_${n}${ext}`;
         const buf = await comfy.download(base, out);
@@ -989,6 +998,42 @@ async function renderTake(req, res) {
     }
   }
   stream.end();
+}
+
+// The pieces of a long video, saved one by one in ComfyUI (wf.splitPieces), downloaded and joined into one video in the
+// renders folder, with the motion video's sound if the workflow had it. Returns the file's name. ComfyUI's copies of
+// the pieces go (with Clean up ComfyUI's output folder on) only once the video is safely joined.
+async function joinPieces(base, settings, parts, outputs, name, motionVideo, copies) {
+  const files = parts.saves.map(node => outputs.find(o => o.node === node && o.kind === 'video'));
+  const missing = files.filter(f => !f).length;
+  if (missing) throw store.httpError(502, `ComfyUI saved ${files.length - missing} of the ${files.length} pieces of this video, so they can't be joined into one.`);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'prompt-maker-pieces-'));
+  try {
+    const local = [];
+    for (const [k, out] of files.entries()) {
+      const buf = await comfy.download(base, out);
+      const file = path.join(dir, `${String(k + 1).padStart(3, '0')}${path.extname(out.filename).toLowerCase() || '.mp4'}`);
+      await fs.writeFile(file, buf);
+      local.push(file);
+      copies.push(comfy.fingerprint(buf));
+    }
+    const file = `${name}${path.extname(local[0])}`;
+    try {
+      await videotools.join(local, path.join(store.RENDERS_DIR, file), { audioFrom: parts.audio ? motionVideo : null });
+    } catch (err) {
+      await fs.rm(path.join(store.RENDERS_DIR, file), { force: true });
+      throw store.httpError(502, `Couldn't join the ${files.length} pieces into one video (${err.message}). They're still in ComfyUI's output folder.`);
+    }
+    if (settings.comfyCleanup) {
+      for (const [k, out] of files.entries()) {
+        const size = (await fs.stat(local[k])).size;
+        await comfy.removeOutput(base, out, size, settings.comfyOutputDir).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
+      }
+    }
+    return file;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }
 
 // A render keeps going when the page that started it closes or reloads: the page only watches it, and can pick it

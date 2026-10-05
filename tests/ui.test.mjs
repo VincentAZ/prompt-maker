@@ -12,6 +12,7 @@ import { startMockComfy, SAVED_WORKFLOW, OBJECT_INFO, MODEL_BYTES } from './mock
 import { convertUiWorkflow, pruneToOutputs } from '../lib/comfy-convert.js';
 import * as wfLib from '../lib/workflows.js';
 import * as modelsLib from '../lib/models.js';
+import * as videotools from '../lib/videotools.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const APP_PORT = Number(process.env.APP_PORT) || 5399;
@@ -3174,6 +3175,17 @@ esac
     eq(JSON.stringify(long.prompt['32'].inputs['images.image5']), '["pm4:6",0]', 'all joined into one video');
     assert(!long.prompt['pm1:7'], 'the LoRA stays shared, not copied');
     eq(wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 120 }).applied.pieces, 2, 'a short video keeps its two');
+    // With ffmpeg, each piece is saved on its own and Prompt Maker joins them: ComfyUI never holds the whole video twice.
+    prompt['33'].inputs.audio = ['8', 1];
+    const split = wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 400, joinInApp: true });
+    assert(!split.prompt['32'] && !split.prompt['33'] && !split.prompt['34'], 'no Batch node gluing the pieces in ComfyUI');
+    eq(split.parts.saves.join(), 'pmsave001,pmsave002,pmsave003,pmsave004,pmsave005,pmsave006', 'a Save Video per piece, in order');
+    eq(['pmvideo001', 'pmvideo002', 'pmvideo006'].map(id => split.prompt[id].inputs.images[0]).join(), '10:6,20:6,pm4:6', 'each makes a video of its own piece');
+    assert(!('audio' in split.prompt.pmvideo002.inputs) && split.parts.audio, 'the sound is left for the joined video');
+    eq(split.prompt.pmsave003.inputs.filename_prefix, 'video/ComfyUI_piece003', 'each piece has its own file name');
+    eq(JSON.stringify(split.prompt.pmsave003.inputs.video), '["pmvideo003",0]', 'and saves its own video');
+    assert(!wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 400 }).parts, 'without ffmpeg, ComfyUI joins them as before');
+    delete prompt['33'].inputs.audio;
     // Each piece loads the same LoRA: one row, and a change reaches every piece.
     const { leads } = wfLib.loraGroups(prompt);
     eq(leads.map(l => `${l.key}×${l.pieces}`).join(), '10:7×2', 'the LoRA shows once, for both pieces');
@@ -3189,6 +3201,32 @@ esac
     eq(check.missing.map(m => `${m.file}→${m.folder}`).join(), 'clip_vision_h.safetensors→clip_vision', 'a missing one is named, with where it goes');
     assert(check.missing[0].url.startsWith('https://huggingface.co/') && check.missing[0].download, 'and its download link, one Prompt Maker may use');
     assert(!modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://example.com/clip_vision_h.safetensors', directory: 'clip_vision' }]).missing[0].download, 'a link elsewhere is shown, not downloaded');
+  });
+
+  await test('a long video\'s pieces are joined into one, with the motion video\'s sound', async () => {
+    if (!(await videotools.hasFfmpeg())) return console.log('    (skipped: no ffmpeg)');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-join-'));
+    const ff = args => new Promise((resolve, reject) => spawn('ffmpeg', ['-y', '-v', 'error', ...args]).on('close', c => (c ? reject(new Error(`ffmpeg ${c}`)) : resolve())));
+    const pieces = [];
+    for (const [k, frames] of [24, 20, 10].entries()) {
+      const file = path.join(dir, `p${k}.mp4`);
+      await ff(['-f', 'lavfi', '-i', `testsrc=size=320x176:rate=24`, '-frames:v', String(frames), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', file]);
+      pieces.push(file);
+    }
+    const sound = path.join(dir, 'motion.mp4');
+    await ff(['-f', 'lavfi', '-i', 'testsrc=size=320x176:rate=24', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', sound]);
+    const out = path.join(dir, 'joined.mp4');
+    await videotools.join(pieces, out, { audioFrom: sound });
+    const count = await new Promise(resolve => { let o = ''; spawn('ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', out]).stdout.on('data', d => { o += d; }).on('close', () => resolve(Number(o.trim()))); });
+    eq(count, 54, 'every frame of every piece, in one video');
+    const streams = await new Promise(resolve => { let o = ''; spawn('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', out]).stdout.on('data', d => { o += d; }).on('close', () => resolve(JSON.parse(o))); });
+    assert(streams.streams.some(st => st.codec_type === 'audio'), 'with the motion video\'s sound');
+    assert(Number(streams.format.duration) < 2.6, `cut to the video's 2.25 s, not the sound's 6 (${streams.format.duration})`);
+    const silent = path.join(dir, 'silent.mp4');
+    await videotools.join(pieces, silent, { audioFrom: pieces[0] }); // a motion video without sound
+    const quiet = await videotools.probe(silent);
+    assert(quiet && quiet.width === 320, 'a motion video without sound still gives the joined video');
+    await fs.rm(dir, { recursive: true, force: true });
   });
 
   await test('character animation: SCAIL 2 keeps the picture\'s background or the video\'s, as picked', async () => {
