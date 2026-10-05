@@ -3,16 +3,16 @@
 # ✦ Prompt Maker
 
 **Write the perfect prompt for any image or video model, from a theme, an image, or both. Then render it with your own ComfyUI workflows.**
-Runs 100% offline on your own machine, powered by a local LLM in [LM Studio](https://lmstudio.ai) and, optionally, [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+Runs 100% offline on your own machine, powered by a local AI model (your **Brain**) in [LM Studio](https://lmstudio.ai) and, optionally, [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 
 ![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![100% offline](https://img.shields.io/badge/runs-100%25%20offline-8b5cf6)
-![Powered by LM Studio](https://img.shields.io/badge/LLM-LM%20Studio-ff4d8d)
+![Powered by LM Studio](https://img.shields.io/badge/Brain-LM%20Studio-ff4d8d)
 ![Renders with ComfyUI](https://img.shields.io/badge/renders-ComfyUI-22d3ee)
 ![MIT license](https://img.shields.io/badge/license-MIT-blue)
 
-<img src="docs/screenshots/create.png" alt="Prompt Maker writing two takes of a Krea 2 RAW prompt" width="900">
+<img src="docs/screenshots/create.png" alt="The Create page: the five built-in models, the steps on the left, and on the right every render you made above the takes of the prompt" width="900">
 
 </div>
 
@@ -25,7 +25,7 @@ Every image and video model wants its prompts written differently:
 - **MiniMax H3** expects a structured "shooting script" with timed shots and dialogue tags.
 - **Wan Animate 2** wants a plain caption of the character and the setting, plus one line naming the moves of its motion video.
 
-Prompt Maker keeps a **playbook for each model** and has a local LLM write the prompt in exactly that style. You describe the idea, and it handles the dialect. Hook up your ComfyUI workflows and each prompt is one click away from the finished image or video.
+Prompt Maker keeps a **playbook for each model** and has your Brain write the prompt in exactly that style. You describe the idea, and it handles the dialect. Hook up your ComfyUI workflows and each prompt is one click away from the finished image or video.
 
 ## Contents
 
@@ -37,7 +37,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
 - [Using Prompt Maker](#using-prompt-maker)
 - [Rendering with ComfyUI (optional)](#rendering-with-comfyui-optional)
 - [Target models](#target-models)
-- [Choosing a brain (LLM)](#choosing-a-brain-llm)
+- [Choosing a Brain](#choosing-a-brain)
 - [Settings](#settings)
 - [Privacy & offline](#privacy--offline)
 - [Your data](#your-data)
@@ -74,19 +74,22 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
   - Watch live progress (and previews) right on the take.
   - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
+  - **⇆ Compare** two renders side by side and **📌 Keep this one** until the best is left.
+  - **🙈 Hide** the ones you don't want to see, without deleting them. **Delete** waits 8 seconds with **↶ Undo**.
   - Browse every result in the **Gallery**: the same grid as 🎞 Your renders, as tall as the window, in the same order you dragged them into. View any of them in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
 - **🧠 Brain profiles.** **Models → Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
 - **🔞 Adult content (optional, off by default).** A switch under **Settings → Master instructions** lets the Brain write explicit prompts between adults: plain anatomical language, who does what to whom kept exact, the act at the center of the shot. Each model can also have **Adult examples**, used only while the switch is on.
-- **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let the local LLM draft the playbook. Import and export models as `.json`.
+- **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let your Brain draft the playbook. Import and export models as `.json`.
 - **Zero install fuss.** Plain Node.js with no dependencies: no `npm install`, no build step.
+- **No terminal after the first start.** On Linux and Windows a launcher puts Prompt Maker in your app menu and starts it with your computer. **Settings → Services** starts and stops LM Studio, ComfyUI and Prompt Maker itself.
 - **Private by design.** Nothing leaves your machine (see [Privacy & offline](#privacy--offline)).
 
 ## How it works
 
 ```
  You (browser) ──▶ Prompt Maker (localhost:5317) ──▶ LM Studio (localhost:1234)
-                    • the target model's playbook      • your local LLM ("the brain")
+                    • the target model's playbook      • your Brain (a local AI model)
                     • your theme / image / settings    • writes the prompt, streamed back
                                    │
                                    └──(optional)──▶ ComfyUI (localhost:8188)
@@ -94,7 +97,7 @@ Prompt Maker keeps a **playbook for each model** and has a local LLM write the p
                                                      • renders the image/video on your GPU
 ```
 
-Prompt Maker builds a request out of three parts and sends it to LM Studio: its shared master rules, the target model's playbook and example prompts, and your theme, image and settings. The LLM's reply streams back into the page as your prompt. When you render, Prompt Maker makes a copy of the workflow you picked, puts the prompt (plus image, size, duration and a fresh seed) into it, and queues it on your ComfyUI. The result is saved alongside the take.
+Prompt Maker builds a request out of three parts and sends it to LM Studio: its shared master rules, the target model's playbook and example prompts, and your theme, image and settings. The Brain's reply streams back into the page as your prompt. When you render, Prompt Maker makes a copy of the workflow you picked, puts the prompt (plus image, size, duration and a fresh seed) into it, and queues it on your ComfyUI. The result is saved alongside the take.
 
 ## Requirements
 
@@ -102,7 +105,7 @@ Prompt Maker builds a request out of three parts and sends it to LM Studio: its 
 |---|---|
 | **Node.js 20.11+** | [nodejs.org](https://nodejs.org). Check with `node --version`. |
 | **LM Studio** | [lmstudio.ai](https://lmstudio.ai), free for macOS (Apple Silicon), Windows and Linux. |
-| **A local LLM** | Any chat model works. Use a **vision** model (tagged "Vision" in LM Studio) if you want to use images. See [Choosing a brain](#choosing-a-brain-llm). |
+| **A Brain** (a local AI model) | Any chat model works. Use a **vision** model (tagged "Vision" in LM Studio) if you want to use images. See [Choosing a Brain](#choosing-a-brain). |
 | **Hardware** | Enough memory to run that model. A small 4–8B vision model needs roughly 4–8 GB of GPU VRAM or Mac unified memory. CPU-only works, just slowly. |
 | **A modern browser** | Chrome/Edge 111+, Firefox 121+, Safari 16.2+ |
 | **ComfyUI** *(optional)* | Only for rendering. Any recent [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally (default port `8188`). Node 22+ gives live progress; older Node versions poll instead. |
@@ -186,7 +189,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 
 | Step | What it does |
 |---|---|
-| **① Pick your model** | The generator you're writing for. Its color follows you across the app. |
+| **① Pick your model** | The generator you're writing for. Its color follows you across the app. The five built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
 | **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, and how adventurous the writing is. |
@@ -239,7 +242,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
   - The video's length, size and frame rate and its buttons sit in a bar under it, so nothing covers the picture.
   - The clip is as long as the video, and its frames are used one for one. Step ③ shows its length, shape and frame rate. Above 30 fps (many phones film at 60 or 120), it takes that much longer to render: **Use a 24 fps copy** swaps in a copy at 24 fps, with the sound kept.
   - **Phone videos (H.265/HEVC)** often don't play in the browser. ComfyUI uses them as they are; for the page, Prompt Maker makes a small upright preview, so you still see it, Aspect still matches it, and the Brain still sees the moves. The preview, the 24 fps copy and the crop need [ffmpeg](https://ffmpeg.org) on this computer (most Linux systems have it). Without it, the video still renders; the Brain then goes by your theme for the moves.
-- **② The theme** says where the character is and from where the camera sees it: *"on a rooftop at dusk, low angle, three-quarter view"*. Leave it empty and the AI picks a setting that suits the character.
+- **② The theme** says where the character is and from where the camera sees it: *"on a rooftop at dusk, low angle, three-quarter view"*. Leave it empty and the Brain picks a setting that suits the character.
 
 **What the Brain writes.** The prompt is in Wan Animate 2's own format: a `Character appearance description:` line (looks only: no actions or emotions), a `Background description:` line (the place, the light, the camera), and a `Motion:` line naming the moves. A 👁 vision Brain sees your character and a **contact sheet of the motion video** (6 frames in order, with their times), so it describes the character faithfully and names the motion from the video. A text-only Brain still works: it goes by your theme.
 
@@ -280,6 +283,8 @@ The motion video is kept with the take (History puts it back), and deleting the 
 
 ### ✦ The assistant
 
+<img src="docs/screenshots/ask.png" alt="The assistant panel beside the Create page: asked which render suits a winter poster, it looked at the renders and picked the fox, with its reason" width="900">
+
 Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. The page takes all the room beside the panel and nothing lies under it: on a smaller window the Create page goes to one column while the panel is open. The top bar's menus (Brain, 🎨 Rendering) open over it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
 - **Ask what it thinks.** *"Which of these renders do you like better?"*, *"Should the princess be in the high tower or the dungeon?"*, *"Based on this prompt, what aspect ratio should it be?"* It gives a real opinion with a reason, and offers to act on it.
@@ -317,7 +322,7 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 
 ### History
 
-<img src="docs/screenshots/history.png" alt="History page" width="900">
+<img src="docs/screenshots/history.jpg" alt="The History page: a card for every prompt, with its newest render, model, shape and theme" width="900">
 
 Everything you generate is saved automatically:
 
@@ -336,10 +341,13 @@ Everything you generate is saved automatically:
 | `Enter` (in *Tweak it…*) | Refine that take |
 | `Ctrl` / `⌘` + `V` | Paste an image |
 | `Ctrl` / `⌘` + `K` | Open or close the assistant |
+| `←` `→` (full-screen view) | The render before or after |
+| `1` `2` `3` (full-screen view) | Rate it ★, ★★ or ★★★; `0` takes the rating off |
+| `Shift` + `←` `→` on a render card | Move the card in 🎞 Your renders or the Gallery |
 
 ## Rendering with ComfyUI (optional)
 
-<img src="docs/screenshots/render.png" alt="A take rendered with a ComfyUI workflow" width="900">
+<img src="docs/screenshots/render.jpg" alt="A render in the full-screen view: the picture, its stars, its prompt, what you can do with it, and how it was made" width="900">
 
 Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfyanonymous/ComfyUI), it can also **render** your prompts, using your own workflows on your own GPU.
 
@@ -400,6 +408,8 @@ Click any result to open the **lightbox**, where you can:
 - **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
 - or delete it.
 
+<img src="docs/screenshots/compare.jpg" alt="Compare: two renders of the same idea side by side, each with its own stars, and Keep this one under the one on the right" width="900">
+
 ### Missing models
 
 A workflow can load a model file your ComfyUI doesn't have yet: a checkpoint, a LoRA, a CLIP vision model… ComfyUI would refuse it. Prompt Maker checks before every render, so nothing is half-done:
@@ -449,8 +459,8 @@ Your LoRA choices are saved with the workflow in your data folder. Every render 
 
 Hover any still you rendered and click **🎬 Animate** (it's also in the lightbox):
 
-- **The still becomes the first frame.** Create switches to your video model (the one you used last) and picks 🎬 *Animate*. The theme box asks **what happens**. Leave it empty and the AI picks fitting motion.
-- **It stays consistent.** The LLM sees the frame and also gets the still's prompt, so people, clothes and places are described the same way.
+- **The still becomes the first frame.** Create switches to your video model (the one you used last) and picks 🎬 *Animate*. The theme box asks **what happens**. Leave it empty and the Brain picks fitting motion.
+- **It stays consistent.** The Brain sees the frame and also gets the still's prompt, so people, clothes and places are described the same way.
 - **Full quality.** ComfyUI gets the original render file as the first frame, not a re-compressed copy.
 - **It remembers where it came from.** The video's results, History card and lightbox link back with **⬑ from Krea 2 RAW · take 1 · seed …**.
 
@@ -461,7 +471,7 @@ You'll need an image-to-video workflow (one with a *Load Image* node) on the vid
 A chain runs several steps in a row, each one continuing from the renders of the step before, like a still that becomes a video. Build it in step **⑥ Then…** on the Create page:
 
 1. Set up step 1 as usual (model, theme, dials, and a workflow in step ⑤).
-2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*; 🧍 *character* on Wan Animate 2, which also uses the motion video in step ③), **what happens** (optional; empty lets the AI choose), its workflow, takes and renders.
+2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*; 🧍 *character* on Wan Animate 2, which also uses the motion video in step ③), **what happens** (optional; empty lets the Brain choose), its workflow, takes and renders.
 3. Between steps, choose **⏸️ Let me pick** (the chain waits while you pick the best renders) or **⚡ Auto** (every render goes on).
 4. Click **Run chain**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
 
@@ -475,6 +485,10 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 **💾 Save as a chain** keeps your steps, so you can run them again with a new idea. Saved chains show up under the steps, next to the starter chains *Still → Video* and *One still, 3 motions*. **⤒** exports one to share, and **⤓ Import** adds one from a file. A chain from someone else picks your matching workflows by name, or asks you to choose.
 
 > Chains continue from images for now: a video can't feed the next step yet. Extending a clip from its last frame is coming next.
+
+### 5. Your renders and the Gallery
+
+<img src="docs/screenshots/gallery.jpg" alt="The Gallery: every render in one grid, with stars, filters and a size slider" width="900">
 
 **🎞 Your renders** sits above the takes on Create. It holds a card for every render you've ever made, from every run and batch, all in one grid, newest first. It keeps them when you reload the page or restart Prompt Maker.
 
@@ -502,15 +516,16 @@ Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, giv
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
 - **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Gallery, History, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
 
-> **Tip:** if a workflow runs its own prompt-writing LLM node (some LTX workflows do), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.
+> **Tip:** if a workflow runs its own prompt-writing node (an LLM inside the workflow; some LTX workflows have one), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.
 
 ## Target models
 
-Four models come with ready-made playbooks, researched from their official prompting guides (September and October 2026):
+Five models come with ready-made playbooks, researched from their official prompting guides (September and October 2026):
 
 | Model | Type | Prompt style |
 |---|---|---|
 | **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. |
+| **Krea 2 RAW i2i** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. Use it with an image-to-image workflow; step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
 | **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
 | **Wan Animate 2** | Video (character animation) | Wan-AI's official caption format: `Character appearance description:` (looks only) and `Background description:` (place, light, camera angle), plus a `Motion:` line for the pose prompt. Takes a character image and a motion video ([more](#character-animation-wan-animate-2)). |
@@ -532,13 +547,13 @@ New models come out constantly. Open the **Models** tab and:
   | Field | What it's for |
   |---|---|
   | **Instructions** | The playbook: prompt structure, vocabulary that works, things to avoid, how to use an attached image. Markdown. |
-  | **Example prompts** | 2–4 gold-standard prompts. The LLM copies their *style*, never their content. |
+  | **Example prompts** | 2–4 gold-standard prompts. The Brain copies their *style*, never their content. |
   | **Aspect ratios / resolutions / durations** | The options shown on the Create page. |
   | **Defaults** | Starting aspect, resolution, duration, length and temperature. |
   | **Length guide** | What *short / medium / long* mean for this model, e.g. `≈70–120 words`. |
   | **Color** | Its accent color in the app. |
 
-- **✨ Draft the instructions from pasted docs:** paste the model's official prompting guide (or a good community write-up) and your local LLM turns it into a playbook in the standard format. Review it, then click **Use this draft**.
+- **✨ Draft the instructions from pasted docs:** paste the model's official prompting guide (or a good community write-up) and your Brain turns it into a playbook in the standard format. Review it, then click **Use this draft**.
 - **Import / Export:** share models as `.json`. Importing a model with an existing ID updates it, which is handy when someone publishes an improved playbook.
 
 - **Built-in vs. yours:** the playbooks that ship with the app live in `playbooks/` and are never modified. When you edit one, your copy is saved in your [data folder](#your-data) and used instead. **↺ Reset to built-in** drops your copy. If you delete a built-in, a **↺ Bring back** button appears under the model list.
@@ -567,9 +582,9 @@ Each model is a single `.json` file (built-ins in `playbooks/<id>.json`, yours i
 }
 ```
 
-## Choosing a brain (LLM)
+## Choosing a Brain
 
-The "brain" is the LM Studio model that writes your prompts. Pick it from the **Brain** menu at the top right. Type a few letters to narrow the list (words in any order: `qwen 27` finds *Qwen3.8 27B…*), use ↑ ↓ and Enter, and sort it **Smart** (suggestions first), by **Last used** or by **Name**:
+The **Brain** is the AI model in LM Studio that writes your prompts. Pick it from the **Brain** menu at the top right. Type a few letters to narrow the list (words in any order: `qwen 27` finds *Qwen3.8 27B…*), use ↑ ↓ and Enter, and sort it **Smart** (suggestions first), by **Last used** or by **Name**:
 
 - **👁 vision** models can see images. Text-only models still work for themes, and the app tells you if you try to use an image with one.
 - **Bigger follows the playbooks better,** especially exact length and structured formats like MiniMax's. Smaller is faster.
@@ -580,7 +595,7 @@ The "brain" is the LM Studio model that writes your prompts. Pick it from the **
 | 12–24 GB VRAM, or a 32 GB+ Mac | Qwen3-VL 8B, Gemma 3/4 12B–27B, Qwen 3.5/3.6 (vision variants) |
 | 24 GB+ VRAM | 27B–35B vision models for the best playbook-following |
 
-> **Reasoning ("thinking") models** such as Qwen 3.5/3.6 can spend thousands of tokens thinking before they write. Prompt Maker turns thinking **off** by default (**Settings → Thinking**), which makes them answer in seconds instead of minutes.
+> **Reasoning ("thinking") models** such as Qwen 3.5/3.6 can spend thousands of tokens thinking before they write. Prompt Maker turns thinking **off** by default (**Settings → 🧠 How the Brain thinks**), which makes them answer in seconds instead of minutes.
 >
 > LM Studio can only switch thinking off for models it recognizes, mostly the official releases. Many community fine-tunes ignore the switch. Prompt Maker handles those itself: if a Brain starts thinking when Thinking is Off, it stops it right away and asks again with the thinking already marked as finished. It remembers which Brains need this, and hovering over the Brain in the top bar shows it.
 
@@ -598,17 +613,23 @@ Search the cards by name and sort them by **Best fit**, **Last used** or **Name*
 
 ## Settings
 
-Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
+Settings is a page of cards: **🖥️ Services**, **🔌 LM Studio**, **☁️ Cloud Brains**, **🎨 ComfyUI**, **🧠 How the Brain thinks**, **📜 Master instructions** and **✦ Assistant**. The technical ones start folded; click a header to open it. Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
 
 | Setting | Default | What it does |
 |---|---|---|
+| **Start Prompt Maker with my computer** (Services) | On after the first start with the launcher | Keeps Prompt Maker running in the background and turns on LM Studio's server. See [Start it](#4-start-it). |
+| **Start ComfyUI along with it** (Services) | Off | ComfyUI comes up with Prompt Maker. |
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
 | **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
 | **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. Deleting from History removes ComfyUI's copies whether this is on or not, so set the folder in that case even with this off. |
+| **ComfyUI folder** and **Start options** | found automatically | Where **▶ Start** in Services starts ComfyUI from, and with which options (live previews are on: `--preview-method auto`). |
 | **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. It's the default for every Brain; a Brain can have its own level on **Models → Brains**. |
-| **Top P** | 0.95 | Nucleus sampling. Temperature is set for each run on the Create page. |
+| **Top P** | 0.95 | Lower is more focused. *How adventurous* (the temperature) is set for each run on the Create page. |
 | **Max tokens** | 4096 | The cap on each answer. Raise it if you turn thinking on. |
 | **Master instructions** | built-in | Shared rules sent before every model's playbook (output format, faithfulness to your theme…). There's a **Reset to default** button. Until you edit them, you always get the built-in ones of the version you run. |
+| **🔞 Adult content** (Master instructions) | Off | Lets the Brain write explicit prompts between adults. A fold shows exactly what it adds to the instructions. |
+| **💻 Let the assistant use my computer** (Assistant) | Off | The assistant may run programs and commands and read and write files outside Prompt Maker (see [The assistant](#-the-assistant)). Only you can switch it. |
+| **☁️ Cloud Brains** | none | Optional providers you add with your own API key (see [Privacy & offline](#privacy--offline)). |
 
 **Environment variables** (optional):
 
@@ -655,7 +676,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── workflows/      # ComfyUI workflows you've attached, with their setup
 ├── chains/         # chains you saved or edited
 ├── providers.json  # cloud providers you added, with your API keys (readable by you only)
-├── brains.json     # what the app learned about each LLM: thinking, speed, Quick check, its own Thinking level
+├── brains.json     # what the app learned about each Brain: thinking, speed, Quick check, its own Thinking level
 ├── assistant.json  # the assistant conversation
 ├── jobs.json       # the assistant's jobs: their plan, progress and log (the newest 30)
 ├── render-order.json # the order you dragged 🎞 Your renders into
@@ -686,15 +707,21 @@ Keep in mind that **opening** the LM Studio app doesn't turn its server on, unle
 </details>
 
 <details>
-<summary><b>"This brain can't see images"</b></summary>
+<summary><b>"… is text-only and can't see images"</b></summary>
 
-The selected LLM is text-only. Pick a model marked 👁 in the **Brain** menu, or remove the image.
+The Brain you picked can't see pictures. Pick a model marked 👁 in the **Brain** menu, or remove the image.
 </details>
 
 <details>
 <summary><b>"The brain ran out of room" / empty prompt</b></summary>
 
-The model used up all its tokens, usually by thinking. Set **Settings → Thinking** to *Off*, or raise **Max tokens**. If the message says the Brain *kept thinking even with Thinking: Off*, that model can't be stopped from thinking: raise **Max tokens**, or pick another Brain.
+The model used up all its tokens, usually by thinking. Set **Thinking** to *Off* under **Settings → 🧠 How the Brain thinks**, or raise **Max tokens** there. If the message says the Brain *kept thinking even with Thinking: Off*, that model can't be stopped from thinking: raise **Max tokens**, or pick another Brain.
+</details>
+
+<details>
+<summary><b>The assistant answers "LM Studio error: The number of tokens to keep … is greater than the context length"</b></summary>
+
+The Brain was loaded in LM Studio with too little room for the assistant, which sends more along than writing a prompt does (about 12,000 tokens; small models often load with 8,192). In LM Studio, open **My Models**, click the ⚙ next to the model and raise **Context Length** to 16,000 or more, then load it again. Writing prompts works either way.
 </details>
 
 <details>
@@ -776,7 +803,7 @@ The workflow has a Load Image node mapped as the image input, but the take has n
 | The app (`npm start`) | ✅ tested | ✅ should work | ✅ should work |
 | Launcher and setup (app menu, start with the computer) | ✅ `./start.sh` | ⚠️ needs `open` instead of `xdg-open` | ⚠️ `start.bat`: written, not yet tried on a real PC |
 | **■ Stop** ComfyUI, and **■ Stop everything** | ✅ | ⚠️ only a ComfyUI that Prompt Maker started | ⚠️ written, not yet tried on a real PC |
-| **▶ Start it** (LM Studio server) | ✅ | ✅ should work | ⚠️ start the server from LM Studio instead |
+| **▶ Start it** (LM Studio server) | ✅ | ✅ should work | ⚠️ written, not yet tried on a real PC |
 | Test suite | ✅ | ⚠️ expects Chrome as `google-chrome` | ⚠️ same |
 
 Developed and tested on Linux with Chrome. Reports from macOS, Windows, Firefox and Safari are welcome.
@@ -790,14 +817,21 @@ prompt-maker/
 ├── server.js               # HTTP server: API, streaming, static files
 ├── lib/
 │   ├── lmstudio.js         # LM Studio client: model list, streaming chat, start server
-│   ├── prompt.js           # builds the messages sent to the LLM (master rules + playbook + request)
+│   ├── cloud.js            # cloud Brains: providers you add yourself, with your own key
+│   ├── brains.js           # what the app knows about each Brain: its record, and the Quick check
+│   ├── prompt.js           # builds the messages sent to the Brain (master rules + playbook + request)
+│   ├── assistant.js        # the assistant: its instructions, and a guide it searches, made from this README
+│   ├── computer.js         # the assistant using this computer (opt-in): commands, programs, files
+│   ├── folders.js          # folders of pictures on this computer, for the assistant's jobs (read-only)
 │   ├── store.js            # file storage in your data folder: models, settings, history, images, renders
 │   ├── comfy.js            # ComfyUI client: status, saved workflows, queue, live progress, downloads
 │   ├── comfy-convert.js    # saved (editor) workflows → API format, incl. subgraphs & bypass
 │   ├── workflows.js        # attached workflows: auto-mapping and building the prompt to queue
 │   ├── models.js           # the model files a workflow loads: missing ones, ones in a subfolder, downloads
-│   └── videotools.js       # optional ffmpeg help for motion videos: what's in one, browser previews, 24 fps and cropped copies
-├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts)
+│   ├── videotools.js       # optional ffmpeg help for motion videos: what's in one, browser previews, 24 fps and cropped copies
+│   ├── services.js         # starting and stopping LM Studio's server, ComfyUI and Prompt Maker (Settings → Services)
+│   └── autostart.js        # setting up the computer: app-menu entry, Start button link, starting with the computer
+├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts; sw.js keeps a copy so the page opens while the server is off)
 ├── playbooks/              # the built-in model playbooks (read-only to the app)
 ├── chains/                 # the starter chains (read-only to the app)
 ├── tests/
@@ -829,7 +863,7 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 
 ## Acknowledgements
 
-- [LM Studio](https://lmstudio.ai), for making local LLMs easy.
+- [LM Studio](https://lmstudio.ai), for making local AI models easy.
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI), for being the best local rendering engine there is.
 - The prompting guides from **Krea**, **Lightricks (LTX)**, **MiniMax** and **Wan-AI** that the bundled playbooks are built on (sources are in each model's editor).
 - Fonts: [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), both under the SIL Open Font License (`public/fonts/OFL.txt`).

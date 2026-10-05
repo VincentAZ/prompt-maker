@@ -6171,6 +6171,8 @@ function updateGenerateLabel() {
     : state.busy ? 'Cooking…' : state.chainActive ? 'Chain running…'
       : chained ? 'Run chain' : list.length > 1 ? `Generate all ${list.length} batches` : list.length ? `Generate “${cut(list[0].name, 22)}”`
         : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
+  // The Ctrl ↵ hint only fits beside the short label; a longer one gets the room.
+  $('#generateBtn').classList.toggle('long-label', $('#genLabel').textContent !== 'Generate');
   const total = list.reduce((n, b) => n + b.count, 0);
   const chainLine = chained && !state.busy && !state.chainActive ? chainCost() : '';
   const cost = chainLine ? `⛓ ${chainLine}`

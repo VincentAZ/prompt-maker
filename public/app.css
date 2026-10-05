@@ -386,7 +386,7 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .btn-queue { height: 58px; padding: 0 18px; border-radius: 18px; border: 1px solid rgb(255 179 71 / 55%); background: rgb(255 179 71 / 12%); color: #ffd59a; font-weight: 750; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; transition: border-color 0.15s, background 0.15s; }
 .btn-queue:hover { border-color: #ffb347; background: rgb(255 179 71 / 20%); }
 .btn-queue b { min-width: 20px; padding: 0 6px; border-radius: 999px; background: #ffb347; color: #1d0a14; font-size: 12px; line-height: 20px; text-align: center; }
-.btn-generate:disabled kbd { display: none; } /* while cooking, Ctrl+Enter queues (＋ Queue says so) */
+.btn-generate:disabled kbd, .btn-generate.long-label kbd { display: none; } /* while cooking, Ctrl+Enter queues (＋ Queue says so); a longer label needs the room */
 
 /* the line: Generates waiting their turn, at the top of the stage */
 .line-box { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; margin-bottom: 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); min-width: 0; }

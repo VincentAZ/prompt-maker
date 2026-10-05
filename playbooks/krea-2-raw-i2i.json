@@ -1,0 +1,46 @@
+{
+  "id": "krea-2-raw-i2i",
+  "name": "Krea 2 RAW i2i",
+  "kind": "image",
+  "description": "Krea 2 RAW image-to-image: edits an attached image from a dense literal caption.",
+  "color": "#34d399",
+  "instructions": "## What this model is\n- Krea 2 RAW used image-to-image: it edits an attached image, guided by a dense, literal natural-language caption of the result.\n\n## Prompt format\n- Write ONE flowing paragraph of dense, literal natural-language caption.\n- Start with the medium and the shot: \"A 50mm photograph…\", \"A vertical 35mm film photograph…\".\n- Then describe what is in the attached image as it actually is: subject, pose, clothing,\n  setting, light, lens, depth of field. Be specific and physical, not poetic.\n- Then state the change you want, in the same plain language. One clear change per prompt.\n- No tag soup, no \"masterpiece, best quality\", no weights like `(x:1.2)`.\n\n## Using the attached image\n- Treat the image as ground truth. Describe it before you change it.\n- Keep what should stay: identity, face, pose, framing, background, wardrobe.\n- Say explicitly what changes and how much: \"the jacket becomes dark green\",\n  \"the light shifts to low golden hour\", \"the background is replaced by a rain-soaked street\".\n- For a light touch, say so: \"keeping the composition and expression unchanged\".\n- Never invent a different person or a different scene unless asked.\n\n## Vocabulary that works\n- Camera: 35mm / 50mm / 85mm, medium format, low-angle, eye-level, close-up, full-body.\n- Light: overcast, golden hour, hard flash, window light, practical neon, rim light.\n- Texture: skin pores, fine hair, fabric weave, film grain, slight motion blur.\n- Restrained color and real skin texture keep it from looking airbrushed.\n\n## Avoid\n- Contradicting the image (new pose, new face, new location) without saying so.\n- Long lists of adjectives, camera-brand names, and quality-booster phrases.\n- Asking for text or logos unless the user wants them.\n\n## Length\n- short ≈ 40–70 words · medium ≈ 80–130 words · long ≈ 150–220 words.",
+  "examples": [
+    "A vertical 35mm film photograph of a man in his forties with short grey hair and a trimmed beard, standing in a narrow cobbled alley with his hands in the pockets of a tan canvas jacket, looking straight at the camera with a faint smile. Laundry hangs between the stone buildings behind him and a bicycle leans against the wall on the right. Eye-level medium shot on a 50mm lens, moderate depth of field, flat overcast daylight. The jacket becomes dark green waxed cotton with a brown corduroy collar; his face, pose, framing and the alley stay exactly as they are. Natural skin texture, muted colors, fine film grain.",
+    "A 50mm photograph of a small wooden kitchen table by a window, set with a white ceramic teapot, two mismatched cups and a half-cut loaf of bread on a board. A wicker chair is pushed back on the left and a potted basil plant sits on the sill. Eye-level shot, moderate depth of field. The light shifts from flat midday to low golden hour: warm sunlight now rakes in from the window on the right, long soft shadows fall across the table and the steam above the teapot glows. Every object keeps its place and the composition is unchanged. Visible wood grain, crumbs on the board, restrained warm palette, subtle film grain.",
+    "A full-body photograph of a woman in her late twenties with shoulder-length black hair, wearing a mustard-yellow raincoat and white sneakers, mid-stride with a folded umbrella in her right hand and her eyes on something off to the left. Low-angle shot on a 35mm lens, deep focus. The background is replaced by a rain-soaked city street at night: wet asphalt mirrors red and blue neon signs, a tram passes out of focus behind her and fine rain shows in the light of a streetlamp. Her face, pose, clothing and place in the frame stay the same, now lit by cool neon from the left with a warm rim from the streetlamp. Real skin texture, slight motion blur in the rain."
+  ],
+  "aspectRatios": [
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4"
+  ],
+  "resolutions": [
+    "1024×1024",
+    "1152×896",
+    "896×1152",
+    "1216×832",
+    "832×1216"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "1:1",
+    "resolution": "1024×1024",
+    "duration": "",
+    "temperature": 0.8,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈40–70 words",
+    "medium": "≈80–130 words",
+    "long": "≈150–220 words"
+  },
+  "sources": [
+    "https://github.com/krea-ai/krea-2",
+    "https://github.com/krea-ai/krea-2/blob/main/docs/prompting.md",
+    "https://huggingface.co/krea/Krea-2-Raw"
+  ],
+  "updatedAt": "2026-10-05"
+}
