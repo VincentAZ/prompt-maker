@@ -568,7 +568,7 @@ async function servicesStatus() {
     autostart.status(),
     services.underService(),
   ]);
-  if (proc) {
+  if (proc?.dir) {
     const learned = { dir: proc.dir, python: proc.python, pre: proc.pre, args: proc.args };
     if (JSON.stringify(learned) !== JSON.stringify(settings.comfyLaunch)) Object.assign(settings, await store.updateSettings({ comfyLaunch: learned }));
   }
@@ -1231,9 +1231,11 @@ async function route(req, res) {
     else if (what === 'lms') await services.stopLmStudio();
     else if (what === 'all' && action === 'stop') {
       // Everything, then this server: frees the GPU. What fails to stop (e.g. a ComfyUI started elsewhere) doesn't block the rest.
-      await services.stopComfy(settings, () => comfyUp(settings)).catch(() => {});
-      if (services.isLocalUrl(settings.lmStudioUrl)) await services.stopLmStudio().catch(() => {});
+      const left = [];
+      await services.stopComfy(settings, () => comfyUp(settings)).catch(err => left.push(err.message));
+      if (services.isLocalUrl(settings.lmStudioUrl)) await services.stopLmStudio().catch(err => left.push(err.message));
       await services.stopApp();
+      return sendJson(res, 200, { ok: true, left }); // what couldn't be stopped, so the page doesn't say everything did
     } else if (what === 'app' && action === 'stop') await services.stopApp();
     else throw store.httpError(400, 'Nothing to do.');
     return sendJson(res, 200, { ok: true });

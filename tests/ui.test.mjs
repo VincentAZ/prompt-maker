@@ -1668,7 +1668,8 @@ esac
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 });
     await sleep(100);
     eq((await keys()).slice(0, 3).join(), [k1, k2, k0].join(), 'over a card\'s right half, it lands after it');
-    assert(await js('document.querySelector("#lightbox").hidden && !document.querySelector(".reel-ghost")'), 'dropping it opens nothing');
+    const after = await js('JSON.stringify({ viewerOpen: !document.querySelector("#lightbox").hidden, stillCarried: !!document.querySelector(".reel-ghost"), sorting: document.querySelector("#reel").classList.contains("sorting") })');
+    eq(after, '{"viewerOpen":false,"stillCarried":false,"sorting":false}', 'dropping it opens nothing, and the card is let go');
     await waitFor(`(async () => { const o = (await (await fetch('/api/render-order')).json()).order; return o.indexOf(${q(k0)}) > o.indexOf(${q(k2)}) && o.indexOf(${q(k2)}) >= 0; })()`, 'the order is saved');
     await js(`document.querySelector('#reelGrid > .reel-cell[data-key="${k0}"] .rtile').focus()`);
     await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, modifiers: 8 });

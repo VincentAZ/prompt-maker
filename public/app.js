@@ -4579,14 +4579,15 @@ async function serviceAction(btn) {
     const all = btn.id === 'stopAllBtn';
     return confirmClick(btn, all ? 'Click again to stop everything' : 'Click again to stop', async () => {
       btn.disabled = true;
-      await api(`/api/services/${all ? 'all' : 'app'}/stop`, { method: 'POST' }).catch(() => {});
+      const stopped = await api(`/api/services/${all ? 'all' : 'app'}/stop`, { method: 'POST' }).catch(() => ({}));
       // Show it stopped right away: the banner turns into "isn't running" (with its Start button) and the rows say so.
       state.stoppedAt = Date.now();
       Object.assign(state, { appDown: true, llmOk: false });
       renderBanner();
       renderLlmSelect();
       renderServicesDown();
-      toast(all ? '■ Stopped everything. Start Prompt Maker again from your app menu.' : '■ Prompt Maker stopped. Start it again with the button above.');
+      if (stopped.left?.length) toast(`■ Prompt Maker stopped, but not everything else did: ${stopped.left.join(' ')}`, true);
+      else toast(all ? '■ Stopped everything. Start Prompt Maker again from your app menu.' : '■ Prompt Maker stopped. Start it again with the button above.');
       btn.disabled = false;
     });
   }

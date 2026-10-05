@@ -168,7 +168,9 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 
 **■ Stop everything (frees the GPU)** stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker. On Create, *ComfyUI offline* has a **▶ Start it** link too.
 
-To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it up again. Logs: `journalctl --user -u prompt-maker -f`. Windows and macOS get the same setup with their own launchers (coming).
+To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it up again. Logs: `journalctl --user -u prompt-maker -f`. macOS gets the same setup with its own launcher (coming).
+
+On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Studio's server if needed, starts the app and opens your browser. The first start also puts **Prompt Maker** in your Start menu and makes it start with your computer (without a window); **Settings → Services** switches that off, and `start.bat --uninstall` removes it. ⚠️ The Windows launcher and setup are new and have **not yet been tried on a real Windows PC**: if something doesn't work, start the app with `npm start` and please report it.
 
 ## Quick start
 
@@ -771,7 +773,8 @@ The workflow has a Load Image node mapped as the image input, but the take has n
 | | Linux | macOS | Windows |
 |---|---|---|---|
 | The app (`npm start`) | ✅ tested | ✅ should work | ✅ should work |
-| `./start.sh` launcher | ✅ | ⚠️ needs `open` instead of `xdg-open` | ❌ use `npm start` |
+| Launcher and setup (app menu, start with the computer) | ✅ `./start.sh` | ⚠️ needs `open` instead of `xdg-open` | ⚠️ `start.bat`: written, not yet tried on a real PC |
+| **■ Stop** ComfyUI, and **■ Stop everything** | ✅ | ⚠️ only a ComfyUI that Prompt Maker started | ⚠️ written, not yet tried on a real PC |
 | **▶ Start it** (LM Studio server) | ✅ | ✅ should work | ⚠️ start the server from LM Studio instead |
 | Test suite | ✅ | ⚠️ expects Chrome as `google-chrome` | ⚠️ same |
 
@@ -800,7 +803,8 @@ prompt-maker/
 │   ├── mock-lmstudio.mjs   # fake LM Studio for tests
 │   ├── mock-comfyui.mjs    # fake ComfyUI (HTTP + WebSocket progress) for tests
 │   └── ui.test.mjs         # end-to-end suite (headless Chrome)
-└── start.sh                # Linux launcher
+├── start.sh                # Linux launcher
+└── start.bat               # Windows launcher (double-click)
 ```
 
 ### Tests
