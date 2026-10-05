@@ -937,6 +937,7 @@ async function renderTake(req, res) {
       const done = await comfy.watch(base, promptId, clientId, prompt, {
         signal: stream.signal,
         pieces,
+        parts: wf.pieceParts(prompt),
         onEvent: ev => {
           if (ev.type !== 'preview') return stream.send({ ...ev, i });
           if (Date.now() - lastPreview < 350) return;
@@ -968,6 +969,9 @@ async function renderTake(req, res) {
           await comfy.removeOutput(base, out, buf.length, settings.comfyOutputDir).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
         }
       }
+      // The size it really came out at: a workflow may round what was asked for (to a multiple of 16, say).
+      const made = files[0] && files[0].kind !== 'audio' ? await videotools.probe(path.join(store.RENDERS_DIR, files[0].file)).catch(() => null) : null;
+      if (made?.width && made?.height) applied.size = `${made.width}×${made.height}`;
       const render = {
         id,
         promptId,

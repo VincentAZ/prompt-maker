@@ -3705,6 +3705,37 @@ esac
     eq((await (await fetch(`${APP}/api/history`)).json()).length, history.length, 'every entry is still there');
   });
 
+  await test('the built-in instructions are not frozen into your settings; a bypassed subgraph passes its input on', async () => {
+    const put = body => fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const s = await (await fetch(`${APP}/api/settings`)).json();
+    await put({ masterPrompt: s.defaultMasterPrompt, adultPrompt: s.defaultAdultPrompt });
+    let file = JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8'));
+    assert(!('masterPrompt' in file) && !('adultPrompt' in file), 'the built-in text is not written out, so a newer version\'s reaches you');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).masterPrompt, s.defaultMasterPrompt, 'and it is still what is used');
+    await put({ masterPrompt: 'My own rules.' });
+    file = JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8'));
+    eq(file.masterPrompt, 'My own rules.', 'your own edit is kept');
+    await put({ masterPrompt: s.masterPrompt });
+
+    const info = OBJECT_INFO;
+    const sub = { id: 'sg-1', name: 'Extra', inputNode: { id: -10 }, outputNode: { id: -20 }, inputs: [{ name: 'image', type: 'IMAGE', linkIds: [1] }], outputs: [{ name: 'IMAGE', type: 'IMAGE', linkIds: [2] }],
+      nodes: [{ id: 5, type: 'LoadImage', mode: 0, inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [2] }], widgets_values: ['inner.png', 'image'] }],
+      links: [{ id: 2, origin_id: 5, origin_slot: 0, target_id: -20, target_slot: 0, type: 'IMAGE' }] };
+    const ui = mode => ({
+      nodes: [
+        { id: 1, type: 'LoadImage', mode: 0, inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [10] }], widgets_values: ['a.png', 'image'] },
+        { id: 2, type: 'sg-1', mode, inputs: [{ name: 'image', type: 'IMAGE', link: 10 }], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [11] }] },
+        { id: 3, type: 'SaveImage', mode: 0, inputs: [{ name: 'images', type: 'IMAGE', link: 11 }], outputs: [], widgets_values: ['ComfyUI'] },
+      ],
+      links: [[10, 1, 0, 2, 0, 'IMAGE'], [11, 2, 0, 3, 0, 'IMAGE']],
+      definitions: { subgraphs: [sub] },
+    });
+    eq(JSON.stringify(convertUiWorkflow(ui(0), info)['3'].inputs.images), '["2:5",0]', 'an active subgraph: its inner node feeds the save');
+    const bypassed = convertUiWorkflow(ui(4), info);
+    eq(JSON.stringify(bypassed['3'].inputs.images), '["1",0]', 'bypassed: what went in goes straight on');
+    assert(!Object.keys(bypassed).some(id => id.startsWith('2:')), 'and none of its inner nodes are sent');
+  });
+
   await test('the app folder is never written to', async () => {
     eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
     for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);

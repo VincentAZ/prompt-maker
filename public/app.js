@@ -1716,6 +1716,7 @@ $('#trimDlg').addEventListener('keydown', e => {
 });
 
 function setVideo(v) {
+  if (!v) videoToken = null; // taken out: one still being read in doesn't come back when it's ready
   const old = state.video;
   if (old?.url?.startsWith('blob:') && old.url !== v?.url) URL.revokeObjectURL(old.url);
   state.video = v;
@@ -3396,7 +3397,8 @@ document.addEventListener('keydown', e => {
     else if (/^[0-3]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('input, textarea, select, [contenteditable]')) rateInLightbox(Number(e.key) || ratingOf(lb.items[lb.index]?.render));
     return;
   }
-  if ($('#wfDialog').open) return;
+  // Esc that closes something (a dialog, a menu, the assistant) isn't also ■ Stop.
+  if (document.querySelector('dialog[open]') || e.defaultPrevented || !$('#llmMenu').hidden || e.target.closest?.('#assistant')) return;
   if (e.key === 'Escape' && (state.busy || state.chainActive || state.batchRun)) stop();
 });
 
@@ -4355,8 +4357,8 @@ $('#providerList').addEventListener('click', e => {
   const id = btn?.closest('.svc')?.dataset.id;
   if (!id) return;
   confirmClick(btn, 'Click again to remove', async () => {
-    await api(`/api/providers/${id}`, { method: 'DELETE' }).catch(err => toast(err.message, true));
-    toast('☁️ Provider removed, and its key deleted');
+    const gone = await api(`/api/providers/${id}`, { method: 'DELETE' }).then(() => true, err => (toast(`Couldn't remove it, so its key is still stored: ${err.message}`, true), false));
+    if (gone) toast('☁️ Provider removed, and its key deleted');
     await Promise.all([loadProviders(), loadLlms()]);
   });
 });
@@ -5859,13 +5861,14 @@ async function resumeAfterReload() {
   toast('🎨 Your render is still going: picked it up where it is');
 }
 
+let runTileSeq = 0;
 async function followRender(card, entry, { count, flowName, quiet = false, runId = null, open }) {
   const controller = new AbortController();
   const run = { controller, runId, entryId: entry.id, card, cancelled: false, detached: false };
   // Another view of this take took over its live tiles: this one just lets go, quietly.
   run.detach = () => { run.detached = true; controller.abort(); };
   state.renderRuns.add(run);
-  const keys = Array.from({ length: count }, (_, i) => `${Date.now()}-${i}`);
+  const keys = Array.from({ length: count }, () => `run-${++runTileSeq}`); // (a time would repeat when several start at once)
   const tiles = keys.map(() => runningTile(card));
   keys.forEach((k, i) => card.running.set(k, tiles[i]));
   card.pending = false;
