@@ -1666,6 +1666,9 @@ esac
     assert(await js('!!document.querySelector(".reel-ghost") && document.querySelector("#reel").classList.contains("sorting")'), 'the card is carried while dragging');
     await shot('24c-your-renders-dragging');
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 });
+    // (Headless Chrome now and then drops the release right after a screenshot: a mouse move with no button down, as a hand would make, ends the drag too.)
+    if (!(await waitFor('!document.querySelector(".reel-ghost")', 'the card is let go', 1500).catch(() => false))) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: to.x + 1, y: to.y, button: 'none', buttons: 0 });
+    await waitFor('!document.querySelector(".reel-ghost")', 'the card is let go');
     await sleep(100);
     eq((await keys()).slice(0, 3).join(), [k1, k2, k0].join(), 'over a card\'s right half, it lands after it');
     const after = await js('JSON.stringify({ viewerOpen: !document.querySelector("#lightbox").hidden, stillCarried: !!document.querySelector(".reel-ghost"), sorting: document.querySelector("#reel").classList.contains("sorting") })');

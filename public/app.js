@@ -2522,6 +2522,7 @@ $('#reelGrid').addEventListener('pointerdown', e => {
   if (d.touch) d.hold = setTimeout(() => startReelDrag(d), 400);
   const move = ev => {
     if (ev.pointerId !== d.pointer) return;
+    if (d.ghost && ev.pointerType === 'mouse' && ev.buttons === 0) return end(); // the release was missed: no button is down anymore
     d.x = ev.clientX;
     d.y = ev.clientY;
     if (d.ghost) return dragReel(d);
@@ -2534,12 +2535,17 @@ $('#reelGrid').addEventListener('pointerdown', e => {
     removeEventListener('pointermove', move);
     removeEventListener('pointerup', end);
     removeEventListener('pointercancel', end);
+    removeEventListener('mouseup', end);
+    removeEventListener('blur', end);
     if (d.ghost) dropReel(d);
     reelDrag = null;
   };
   addEventListener('pointermove', move);
   addEventListener('pointerup', end);
   addEventListener('pointercancel', end);
+  // However the release arrives (or doesn't: the window lost the mouse), the card is never left carried.
+  addEventListener('mouseup', end);
+  addEventListener('blur', end);
 });
 // (Pictures would start the browser's own drag, and a held one its menu.)
 $('#reelGrid').addEventListener('dragstart', e => e.preventDefault());
@@ -2554,6 +2560,8 @@ $('#reelGrid').addEventListener('click', e => {
 
 function startReelDrag(d) {
   if (d.ghost || !d.cell.isConnected) return;
+  // The grid keeps the pointer for the drag, so letting go outside the window still ends it (the card isn't left carried).
+  try { $('#reelGrid').setPointerCapture(d.pointer); } catch { /* no such pointer anymore */ }
   const r = d.cell.getBoundingClientRect();
   const k = Math.min(1, 160 / Math.max(r.width, r.height)); // a big card is carried small
   d.dx = (d.x - r.left) * k;
