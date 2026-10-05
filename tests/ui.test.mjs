@@ -381,6 +381,8 @@ esac
   // And every click and key press that reached the page, so a lost one can be told apart from one the app ignored.
   // The assistant opens by default; most tests want the page as it is without it (one test checks the default).
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.origin === ${JSON.stringify(APP)} && localStorage.getItem('pm.assistantOpen') === null && !sessionStorage.getItem('default-assistant')) localStorage.setItem('pm.assistantOpen', 'false');` });
+  // The technical cards start folded for a new user; the tests work in them, so here they start open.
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.origin === ${JSON.stringify(APP)} && localStorage.getItem('pm.panels') === null) localStorage.setItem('pm.panels', JSON.stringify({ 'set-lmstudio': false, 'set-comfy': false, 'set-thinking': false, 'set-master': false, 'model-instructions': false, 'model-sizes': false, 'models-defaults': false, 'models-lengths': false }));` });
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__toasts = [];
     window.__input = { clicks: 0, keys: 0 };
     addEventListener('click', () => { window.__input.clicks++; }, true);
@@ -815,7 +817,7 @@ esac
     await click('#llmRefresh');
     await waitFor('!document.querySelector("#banner").hidden', 'banner');
     eq(await text('#bannerTitle'), "Prompt Maker's server isn't running.", 'says what is really down');
-    assert((await text('#bannerLong')).includes('./start.sh'), 'says how to start it');
+    assert((await text('#bannerLong')).includes('app menu') && !(await text('#bannerLong')).includes('start.sh'), 'says how to start it, by clicking');
     assert(!(await visible('#bannerStart')), "no Start button: there's nothing to ask");
     await js('window.fetch = window.realFetch');
     await toastText('Prompt Maker is back');
@@ -1024,7 +1026,7 @@ esac
     assert(!(await visible('#theme')), 'step 2 folded');
     eq(await text('[data-panel="create-theme"] .panel-summary'), 'a lighthouse keeper making tea at dawn', 'shows what it holds');
     await click('[data-panel="create-dials"] .step-head h2'); // the header itself folds too
-    assert((await text('[data-panel="create-dials"] .panel-summary')).includes('temp'), 'dials summary');
+    assert(/locked-in|balanced|creative|spicy|unhinged/.test(await text('[data-panel="create-dials"] .panel-summary')), 'dials summary says how adventurous, in a word');
     await goto(`${APP}/#create`);
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
     assert(await js('document.querySelector(\'[data-panel="create-theme"]\').classList.contains("collapsed")'), 'remembered after a reload');
@@ -1039,6 +1041,7 @@ esac
     assert(!(await visible('#mInstr')), 'instructions folded');
     assert(/\d+ words · \d+ sections/.test(await text('[data-panel="model-instructions"] .panel-summary')), 'says how long they are');
     assert(await js('document.querySelector(\'[data-panel="model-adult"]\').classList.contains("collapsed")'), 'adult examples start folded');
+    eq(await js('["set-lmstudio", "set-comfy", "set-thinking", "set-master", "model-instructions", "model-sizes", "models-defaults", "models-lengths"].filter(k => document.querySelector(`[data-panel="${k}"]`).dataset.default === "collapsed").length'), 8, 'the technical cards start folded for a new user');
     await click('#modelForm .form-head .collapse-btn');
     assert(!(await visible('#mName')) && (await text('[data-panel="models-form"] > .panel-summary')).length > 0, 'the whole card folds to its name');
     await click('#modelForm .form-head .collapse-btn');

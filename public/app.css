@@ -546,6 +546,8 @@ body.narrow .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); }
 .error-card b { display: block; font-size: 16px; margin-bottom: 2px; color: #ffc2ca; }
 .error-card p { margin: 0; color: #ffd9de; white-space: pre-wrap; }
 .error-card .e-start { margin-top: 10px; }
+.error-card .e-details { margin-top: 8px; font-size: 13px; }
+.error-card .e-details summary { cursor: pointer; color: #ffc2ca; }
 .error-card .x { margin-left: auto; align-self: flex-start; }
 
 .empty { text-align: center; padding: 56px 28px 60px; border-radius: 26px; border: 1.5px dashed var(--line-2); background: rgb(0 0 0 / 14%); }
@@ -1384,3 +1386,7 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .reel-cell.seen > .rtile { box-shadow: 0 0 0 2px var(--m); }
 .reel-ghost { rotate: 0deg; transition: none; }
 .reel-cell[hidden] { display: none; }
+
+/* Delete stands apart from the buttons beside it, so a slip of the mouse doesn't hit it. */
+#deleteModelBtn { order: -1; margin-right: 14px; }
+#wfDelete { margin-right: 18px; }

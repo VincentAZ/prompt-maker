@@ -187,11 +187,11 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 | **① Pick your model** | The generator you're writing for. Its color follows you across the app. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
-| **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, temperature. |
+| **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, and how adventurous the writing is. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
 | **⑥ Then…** | Optional. Chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
 
-**＋ New** (next to Generate) starts a new session: it clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in History.
+**＋ New session** (next to Generate) starts a new session: it clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in History.
 
 **⏳ Queue: line up as many as you like.** While a prompt is cooking (or a batch is rendering), **＋ Queue** appears next to **■ Stop**; it (or `Ctrl+Enter`) puts the form, as it is right then, in line:
 
@@ -210,11 +210,11 @@ To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it 
 | 🎬 **Animate** | Image-to-video (video models only) | Treats the image as the first frame and describes the motion, camera and sound from there. |
 | 🧍 **Character** | Character animation (Wan Animate 2) | The generator gets the image as the character to animate. The prompt describes how it looks exactly as it is, and where it is. It's the only way those models use an image, so there's nothing to pick. |
 
-**Temperature** runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
+**How adventurous** (the Brain's *temperature*; the number is beside the slider) runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
 
 **Prompt length** (*short / medium / long*) means something different for each model. For example, "medium" is about 70–120 words for Krea and about 160–260 for MiniMax. Every take shows its word count against that target.
 
-**Keep it tidy:** every step on Create, every card in Settings and Models, and every take folds down to a one-line summary. Click its header or the ▾ button; Prompt Maker remembers what you folded. Seed, denoise and LoRAs live under step ⑤ → **Advanced**.
+**Keep it tidy:** every step on Create, every card in Settings and Models, and every take folds down to a one-line summary. Click its header or the ▾ button; Prompt Maker remembers what you folded. The technical parts start folded: in Settings the server addresses, how the Brain thinks and the master instructions; on a model's page its instructions, sizes, defaults and lengths. Seed, LoRAs and the sampler settings live under step ⑤ → **Advanced**.
 
 **Nothing jumps.** On a wide window the steps and your takes sit side by side and each scrolls on its own, so new takes and renders never move the steps. While a take is being written, its buttons are already there, greyed out, and so is the tile for its render when auto-render is on; nothing below moves when the take is done. Fold a step or a take and the header you clicked stays where it is: the space it freed sits at the end until you scroll back up. A running job's bar (from the assistant) sits above the takes.
 
@@ -371,7 +371,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 Step **⑤ Render it** on the Create page is your control center:
 
 - **Pick the workflow** your takes render with. Prompt Maker remembers it for each model.
-- **⚙ Edit** changes its name, inputs and sampler settings; the chips under it show what it will use (sampler, steps, CFG, seed), and clicking them jumps to those settings. **＋** adds another workflow. **Delete workflow** is in the edit dialog.
+- **⚙ Edit** changes its name, inputs and sampler settings; under **Advanced**, chips show what it will use (sampler, steps, CFG), and clicking them jumps to those settings. **＋** adds another workflow. **Delete workflow** is in the edit dialog.
 - **Auto-render every new prompt** sends each new or refined take to ComfyUI as soon as it's written.
 - **Batch** (folds open like Advanced) holds your saved batches, for images and videos alike. Each one stands on its own:
   - **a name** you give it, e.g. *Hero shots* or *Explore*,
@@ -424,7 +424,7 @@ Step ⑤ has a **🎲 Seed** row for the picked workflow, with ComfyUI's four mo
 
 ### Denoise (image-to-image)
 
-When the picked workflow takes an image and has a **denoise** setting, step ⑤ shows a **🎚️ Denoise** slider. Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
+When the picked workflow takes an image and has a **denoise** setting, step ③ shows a **🎚️ How much to change your picture** slider right under your image. Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
 
 ### LoRAs
 

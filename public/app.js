@@ -50,6 +50,9 @@ const state = {
 
 // ---------- utilities ----------
 
+// The writing's temperature in a word (the number is beside the slider for those who know it).
+const adventureWord = v => (v < 0.35 ? 'locked-in' : v < 0.75 ? 'balanced' : v < 1.15 ? 'creative' : v < 1.5 ? 'spicy' : 'unhinged');
+
 // The room the page has is that of a narrow window: the assistant panel (420px) is open beside it. The page then
 // lays itself out as on a narrow window, instead of the panel lying over its right side.
 function syncNarrow() {
@@ -81,7 +84,7 @@ function syncHolds() {
 function friendly(err) {
   const msg = err?.message || String(err);
   if (/^(terminated|Failed to fetch|NetworkError|network error|Load failed)/i.test(msg)) {
-    return 'Lost the connection to the Prompt Maker server. Is it still running? (Start it with ./start.sh)';
+    return 'Lost the connection to the Prompt Maker server. It may have stopped: open Prompt Maker again from your app menu (or click ▶ Start Prompt Maker in the banner at the top), and this page reconnects on its own.';
   }
   return msg;
 }
@@ -551,7 +554,7 @@ function renderBanner() {
     ? `Nothing is answering at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Start it here, or in LM Studio → Developer. It reconnects on its own.`
     : canLaunch
       ? 'It stopped, or your computer restarted. Click Start (the first time, your browser asks to open Prompt Maker: allow it). This page reconnects on its own.'
-      : 'It stopped, or your computer restarted. Open Prompt Maker from your app menu, or run ./start.sh in its folder. This page reconnects on its own.';
+      : 'It stopped, or your computer restarted. Open Prompt Maker again from your app menu. This page reconnects on its own.';
 }
 
 function renderLlmSelect() {
@@ -866,7 +869,7 @@ function updateLlmDot() {
 
 // How "Thinking: Off" works for a Brain: LM Studio's own switch, or what the app learned by using it.
 function thinkNote(m) {
-  if (m.thinkSwitch) return 'LM Studio can switch it off';
+  if (m.thinkSwitch) return 'can have its thinking switched off by LM Studio';
   return {
     quiet: "doesn't think when Thinking is Off",
     trick: 'ignores Thinking: Off, so Prompt Maker switches it off another way',
@@ -908,7 +911,8 @@ function brainFit(m, model) {
     : k.fav || k.rendered ? [k.fav && `⭐ ${k.fav}`, k.rendered && `${k.rendered} rendered`].filter(Boolean).join(' · ') + ` with other ${kind} models`
     : check?.ok ? `passed the ${kind} check`
     : r.takes ? `wrote ${r.takes} take${r.takes > 1 ? 's' : ''}` : '';
-  return { score, why, proven: Boolean(r.fav || r.rendered || k.fav || k.rendered) };
+  // solid: enough of your own renders to call it good, not one lucky try.
+  return { score, why, proven: Boolean(r.fav || r.rendered || k.fav || k.rendered), solid: Boolean(r.fav || k.fav || (r.rendered || 0) + (k.rendered || 0) >= 3) };
 }
 
 // Up to 3 Brains worth suggesting for a model, best first (only ones that see images when there's an image).
@@ -1134,7 +1138,7 @@ function setTemperature(t) {
   const v = Number(t);
   $('#temperature').value = v;
   $('#tempOut').textContent = v.toFixed(2);
-  $('#tempWord').textContent = v < 0.35 ? 'locked-in' : v < 0.75 ? 'balanced' : v < 1.15 ? 'creative' : v < 1.5 ? 'spicy' : 'unhinged';
+  $('#tempWord').textContent = adventureWord(v);
 }
 
 const ROLE_HINTS = {
@@ -1157,8 +1161,9 @@ function renderRole() {
   const motion = Boolean(m?.motionVideo);
   $('#motionBlock').hidden = !motion && !chainNeedsVideo();
   $('#charLabel').hidden = !motion;
+  $('#dzSub').textContent = motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
   $('#imageStepTitle').textContent = motion ? 'Character & motion' : 'Add an image';
-  $('#imageStepOpt').textContent = motion ? 'both needed to render' : 'optional';
+  $('#imageStepOpt').textContent = motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
   $('#roleHint').textContent = ROLE_HINTS[role][hasTheme ? 0 : 1];
   $('#themeOpt').textContent = hasImage || (motion && state.video) ? 'optional' : '';
@@ -1937,9 +1942,9 @@ function errorTitle(msg) {
   if (/reach LM Studio|not reachable/i.test(msg)) return ['🔌', 'Can\'t reach LM Studio'];
   if (/stopped responding/i.test(msg)) return ['🔌', 'LM Studio dropped out mid-answer'];
   if (/Prompt Maker server/i.test(msg)) return ['🔌', 'Lost the app server'];
-  if (/can't see images|text-only/i.test(msg)) return ['🙈', 'This brain can\'t see images'];
-  if (/token limit|thinking/i.test(msg)) return ['🧠', 'The brain ran out of room'];
-  if (/No LLM selected/i.test(msg)) return ['🧠', 'No brain selected'];
+  if (/can't see images|text-only/i.test(msg)) return ['🙈', 'This Brain can\'t see images'];
+  if (/ran out of room|token limit|thinking/i.test(msg)) return ['🧠', 'The Brain ran out of room'];
+  if (/No Brain selected/i.test(msg)) return ['🧠', 'No Brain selected'];
   return ['⚠️', 'That didn\'t work'];
 }
 
@@ -1948,7 +1953,12 @@ function showError(msg) {
   if (!msg) { card.hidden = true; card.innerHTML = ''; return; }
   const [ico, title] = errorTitle(msg);
   const canStart = /reach LM Studio|stopped responding/i.test(msg);
-  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b><p>${esc(msg)}</p>${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
+  // ComfyUI's own words (which step, the raw error) go under Details; what to do about it comes first.
+  const step = /^ComfyUI failed at #\S+ ([^:]+): /.exec(msg)?.[1];
+  const body = step
+    ? `<p>ComfyUI stopped while working on the step “${esc(step.trim())}”. Often it ran out of memory, or a model file or setting in the workflow is wrong. Render again, or open the workflow in ComfyUI to check it.</p><details class="e-details"><summary>Details</summary><p>${esc(msg)}</p></details>`
+    : `<p>${esc(msg)}</p>`;
+  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b>${body}${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
   card.hidden = false;
   card.style.setProperty('--eh', `${card.offsetHeight + (parseFloat(getComputedStyle(card.parentElement).rowGap) || 0)}px`);
   $('.x', card).addEventListener('click', () => showError(''));
@@ -1963,7 +1973,7 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   const head = $('#stageHead');
   if (!entry) { head.hidden = true; return; }
   const m = modelById(entry.modelId);
-  const tags = [entry.aspectRatio, entry.resolution, entry.duration, `${entry.length} length`, `🌡 ${Number(entry.temperature).toFixed(2)}`]
+  const tags = [entry.aspectRatio, entry.resolution, entry.duration, `${entry.length} length`, `🎲 ${adventureWord(Number(entry.temperature))}`]
     .filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('');
   const via = entry.llmName || state.llms.find(l => l.id === entry.llmModel)?.name || entry.llmModel;
   // While writing, the buttons show greyed out, so the takes under them don't move down when they're done.
@@ -3521,6 +3531,16 @@ function renderHistoryFilters() {
   $$('button', box).forEach(b => b.setAttribute('aria-pressed', b.dataset.id === state.historyFilter));
 }
 
+// An entry's shape for its card: a usual ratio as it is; an odd one (13:7, from a typed size) as that size, or in a word.
+const USUAL_RATIOS = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '9:21', '4:5', '5:4']);
+function shapeLabel(e) {
+  const a = e.aspectRatio || '';
+  if (!a || USUAL_RATIOS.has(a)) return a;
+  if (/\d\s*[×x]\s*\d/.test(e.resolution || '')) return e.resolution;
+  const [w, h] = a.split(':').map(Number);
+  return w > h ? 'landscape' : w < h ? 'portrait' : a;
+}
+
 function renderHistory() {
   const q = $('#historySearch').value.trim().toLowerCase();
   const items = state.history.filter(e =>
@@ -3553,7 +3573,7 @@ function renderHistory() {
     const first = e.variations[0].versions.at(-1).text;
     const takes = e.variations.length;
     const edits = e.variations.reduce((n, v) => n + v.versions.length - 1, 0);
-    const bits = [e.aspectRatio, e.duration, takes > 1 ? `${takes} takes` : '', edits ? `${edits} tweak${edits > 1 ? 's' : ''}` : ''].filter(Boolean);
+    const bits = [shapeLabel(e), e.duration, takes > 1 ? `${takes} takes` : '', edits ? `${edits} tweak${edits > 1 ? 's' : ''}` : ''].filter(Boolean);
     const title = e.theme || 'No theme: built from the image';
     const allRenders = e.variations.flatMap(v => v.renders || []);
     const renderCount = allRenders.length;
@@ -3802,7 +3822,8 @@ $$('.models-switch button').forEach(b => b.addEventListener('click', () => showM
 
 // One card per Brain, the best for the "Best for" model first. Brains you haven't used or checked go in a fold.
 function renderBrains() {
-  $('#brainCount').textContent = state.llms.length || '';
+  // The Brains on this computer (cloud ones, hundreds of them, are a filter away).
+  $('#brainCount').textContent = state.llms.filter(m => !m.cloud).length || state.llms.length || '';
   if ($('#brainsPane').hidden) return;
   const pick = $('#brainTarget');
   const target = modelById(pick.value) ? pick.value : state.modelId;
@@ -3873,7 +3894,7 @@ function brainCard(m, fit, model, inUse, q = '') {
           : `<button type="button" class="btn small" data-act="check" title="Loads it in LM Studio (unloading the model there now), writes an image and a video prompt${m.vision !== false ? ' and looks at a test image' : ''}"${state.brainCheck ? ' disabled' : ''}>⚡ Quick check</button>`}
       </span>
     </div>
-    ${fit.why ? `<p class="brain-fit${fit.proven ? '' : ' muted'}">${fit.proven ? `✓ Good for ${esc(model.name)}: ` : `For ${esc(model.name)}: `}${esc(fit.why)}</p>` : ''}
+    ${fit.why ? `<p class="brain-fit${fit.proven ? '' : ' muted'}">${fit.proven && fit.solid ? `✓ Good for ${esc(model.name)}: ` : `For ${esc(model.name)}: `}${esc(fit.why)}</p>` : ''}
     <div class="brain-facts">
       <div><span class="k">Thinking</span>
         <select data-act="thinking" aria-label="Thinking for ${esc(m.name)}">
@@ -4839,7 +4860,7 @@ function renderDenoise() {
   const focus = document.activeElement?.closest?.('#wfpDenoise [data-key]')?.dataset.key;
   box.innerHTML = params.map(p => `
     <div class="dn-row" data-key="${esc(p.key)}">
-      <span class="dn-label">🎚️ Denoise${params.length > 1 ? ` <small>${esc(p.title)}</small>` : ''}</span>
+      <span class="dn-label" title="Called “denoise” in ComfyUI">🎚️ How much to change your picture${params.length > 1 ? ` <small>${esc(p.title)}</small>` : ''}</span>
       <input type="range" class="dn-range" min="0" max="1" step="0.01" value="${Number(p.value)}" aria-label="Denoise${params.length > 1 ? `, ${esc(p.title)}` : ''}: how much the render may change your image">
       <output class="dn-val">${Number(p.value).toFixed(2)}</output>
       ${Number(p.value) !== Number(p.original) ? `<button type="button" class="icon-btn dn-reset" title="Back to the workflow's ${Number(p.original).toFixed(2)}" aria-label="Reset denoise">↺</button>` : '<span></span>'}
@@ -6195,7 +6216,7 @@ function renderChainEditor() {
     ${steps.length ? `<ol class="chain-steps">${steps.map((st, i) => stepCardHtml(st, i, problems.steps[i])).join('')}</ol>` : ''}
     <div class="chain-bar">
       <button type="button" class="btn small" data-act="add"${canAdd ? '' : ' disabled'} title="${canAdd ? 'Add a step that continues from the renders before it' : lastKind === 'video' ? 'A video can\'t feed the next step yet (extending clips is coming)' : 'That\'s as long as a chain gets'}">＋ Then…</button>
-      ${steps.length ? `<button type="button" class="btn small" data-act="save">💾 ${recipe ? 'Save chain' : 'Save as a chain'}</button>` : '<span class="muted small">Turn your stills into videos, or chain any steps.</span>'}
+      ${steps.length ? `<button type="button" class="btn small" data-act="save">💾 ${recipe ? 'Save chain' : 'Save as a chain'}</button>` : `<span class="muted small">${!canAdd && lastKind === 'video' ? 'A video can\'t be carried on yet: pick an image model to add a next step.' : 'Turn your stills into videos, or chain any steps.'}</span>`}
     </div>
     <div class="chain-save" hidden>
       <input maxlength="80" placeholder="Name this chain, e.g. Still → Video" aria-label="Chain name" value="${esc(recipe?.name || '')}">
@@ -6261,7 +6282,7 @@ $('#chainBox').addEventListener('click', async e => {
   } else if (act === 'delete-recipe') {
     const r = state.recipes.find(x => x.id === state.chain.recipeId);
     if (!r) return;
-    return confirmClick(b, '✓?', async () => {
+    return confirmClick(b, 'Sure?', async () => {
       try {
         await api(`/api/chains/${r.id}`, { method: 'DELETE' });
         state.chain.recipeId = null;
@@ -6404,7 +6425,7 @@ async function runChain() {
   const body = await formRequest();
   if (!body) return;
   const llm = selectedLlm();
-  if (llm?.vision === false) return showError(`${llm.name} is text-only, and each Then step shows the image to the brain. Pick a vision model (👁) in the top bar.`);
+  if (llm?.vision === false) return showError(`${llm.name} is text-only, and each Then step shows the image to the Brain. Pick a vision model (👁) in the top bar.`);
   const m0 = currentModel();
   const recipe = chainRecipe();
   const run = { id: crypto.randomUUID(), theme: body.theme, steps: runSteps(recipe.steps), entries: [], picks: new Map(), rendering: new Set(), status: 'running', stopped: false };
@@ -6861,7 +6882,7 @@ function renderWorkflowList() {
       <div class="wf-maps">${mapChips(m).map(([k, label]) => `<span class="${f.maps[k] ? 'on' : ''}" title="${f.maps[k] ? 'Set by Prompt Maker' : 'Left as the workflow has it'}">${label}</span>`).join('')}</div>
       <div class="wf-actions">
         ${state.wfStale.has(f.id) ? '<button type="button" class="btn small primary" data-act="refresh">↻ Update</button>' : ''}
-        <button type="button" class="btn small" data-act="setup">⚙ Set up</button>
+        <button type="button" class="btn small" data-act="setup">⚙ Edit</button>
         <button type="button" class="btn small" data-act="export">Export</button>
         <button type="button" class="btn small danger" data-act="delete">Delete</button>
       </div>
@@ -6910,7 +6931,7 @@ function openWorkflowDialog({ edit = null, modelId = null, focusSampler = false 
   $('#wfRefresh').hidden = !edit;
   if (edit) $('#wfRefresh').textContent = edit.source?.startsWith('comfyui:') || edit.source?.startsWith('comfytemplate:') ? '↻ Update from ComfyUI' : '↻ Update from a file';
   if (edit) {
-    $('#wfDialogTitle').textContent = `Set up “${edit.name}”`;
+    $('#wfDialogTitle').textContent = `Edit “${edit.name}”`;
     showSetup(edit);
   } else {
     $('#wfDialogTitle').textContent = `Add a workflow to ${m?.name || 'this model'}`;
@@ -8744,7 +8765,7 @@ $('#askBtn').addEventListener('click', () => openAssistant());
 $('#asClose').addEventListener('click', () => openAssistant(false));
 $('#asSend').addEventListener('click', sendAssistant);
 $('#asStop').addEventListener('click', stopAssistant);
-$('#asClear').addEventListener('click', e => confirmClick(e.currentTarget, '✓?', () => {
+$('#asClear').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', () => {
   if (as.busy) return;
   as.messages = [];
   renderAssistantLog();
@@ -9127,13 +9148,13 @@ const PANEL_SUMMARY = {
   'create-dials': () => [
     !$('#aspectField').hidden && $('#aspect').value, !$('#resolutionField').hidden && $('#resolution').value,
     !$('#durationField').hidden && $('#duration').value, `${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`,
-    `${state.variations} take${state.variations > 1 ? 's' : ''}`, `temp ${$('#temperature').value}`,
+    `${state.variations} take${state.variations > 1 ? 's' : ''}`, adventureWord(Number($('#temperature').value)),
   ].filter(Boolean).join(' · '),
   'create-render': () => (workflowsFor(state.modelId).length ? `${activeFlow()?.name || ''}${$('#wfpAuto').checked ? ' · ⚡ auto-render' : ''}` : 'No workflow yet'),
   'create-render-adv': () => [
-    !$('#wfpSeed').hidden && `🎲 ${$('#wfpSeed [role="radio"].active')?.textContent.trim() || 'seed'}`,
-    !$('#wfpDenoise').hidden && `denoise ${$('#wfpDenoise .dn-val')?.textContent || ''}`,
-    `🧬 ${$$('#wfpLoras .lora-row:not(.off)').length} LoRA${$$('#wfpLoras .lora-row:not(.off)').length === 1 ? '' : 's'} on`,
+    !$('#wfpSeed').hidden && ({ random: 'Seed: new each render', fixed: 'Seed: the same each render', increment: 'Seed: one higher each render', decrement: 'Seed: one lower each render' }[activeFlow()?.seed?.mode] || 'Seed'),
+    // (Counted from the workflow, not from the rows on screen, which arrive a moment later.)
+    `🧬 ${activeFlow() ? loraCount(activeFlow()) : 0} LoRA${activeFlow() && loraCount(activeFlow()) === 1 ? '' : 's'} on`,
   ].filter(Boolean).join(' · '),
   'create-render-batch': () => {
     const l = pickedBatches();

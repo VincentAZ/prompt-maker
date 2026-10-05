@@ -51,7 +51,7 @@
     <div class="llm" id="llmBox">
       <span class="dot" id="llmDot"></span>
       <span class="llm-label">Brain</span>
-      <select id="llmSelect" aria-label="Local LLM that writes the prompts" hidden></select>
+      <select id="llmSelect" aria-label="Brain that writes the prompts" hidden></select>
       <button type="button" id="llmPick" class="llm-pick" aria-haspopup="dialog" aria-expanded="false" aria-controls="llmMenu"><span id="llmPickName"></span></button>
       <div id="llmMenu" class="llm-menu" role="dialog" aria-label="Pick the Brain" hidden>
         <input id="llmSearch" type="search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="llmList">
@@ -110,7 +110,7 @@
               <div class="dz-empty">
                 <span class="dz-ico">🖼️</span>
                 <span class="dz-title">Drop an image, paste it, or <u>browse</u></span>
-                <span class="dz-sub">JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.</span>
+                <span class="dz-sub" id="dzSub">JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.</span>
                 <button type="button" id="dzGallery" class="chip-btn dz-gallery">🖼️ Pick from your Gallery</button>
               </div>
               <div class="dz-preview" hidden>
@@ -131,6 +131,7 @@
               <button type="button" class="role" data-value="character" role="radio"><span class="role-ico">🧍</span><b>Character</b><small>It does the moves</small></button>
             </div>
             <p id="roleHint" class="hint" hidden></p>
+            <div id="wfpDenoise" class="wfp-denoise" hidden></div>
             <div id="motionBlock" hidden>
               <p class="zone-label">🕺 <b>Motion video</b> <span class="muted">the moves your character copies</span></p>
               <div id="motionZone" class="dropzone" tabindex="0" role="button" aria-label="Add a motion video: drop or browse">
@@ -190,8 +191,8 @@
               </div>
             </div>
             <div class="dial temp">
-              <span>Temperature <output id="tempOut" class="temp-val"></output> <small id="tempWord" class="temp-word"></small></span>
-              <input type="range" id="temperature" min="0" max="2" step="0.05" aria-label="Temperature">
+              <span title="How freely the Brain strays from the obvious (its “temperature”)">How adventurous <small id="tempWord" class="temp-word"></small> <output id="tempOut" class="temp-val" title="Temperature"></output></span>
+              <input type="range" id="temperature" min="0" max="2" step="0.05" aria-label="How adventurous the writing is (temperature)">
               <div class="range-labels"><span>🎯 precise</span><span>🌶️ wild</span></div>
             </div>
           </section>
@@ -211,11 +212,10 @@
                 <button type="button" id="wfpEdit" class="btn small" title="Change this workflow's name, inputs and sampler settings">⚙ Edit</button>
                 <button type="button" id="wfpAdd" class="btn small" title="Add another workflow" aria-label="Add another workflow">＋</button>
               </div>
-              <button type="button" id="wfpSettings" class="wfp-settings" title="Change the sampler settings" aria-label="Sampler settings, click to change"></button>
               <div class="wfp-adv" data-panel="create-render-adv" data-default="collapsed">
-                <div class="panel-head"><b>Advanced</b><span class="opt">seed, denoise, LoRAs</span></div>
+                <div class="panel-head"><b>Advanced</b><span class="opt">seed, LoRAs, sampler</span></div>
+                <button type="button" id="wfpSettings" class="wfp-settings" title="What this workflow renders with. Click to change" aria-label="Sampler settings, click to change"></button>
                 <div id="wfpSeed" class="wfp-seed" role="group" aria-label="Seed" hidden></div>
-                <div id="wfpDenoise" class="wfp-denoise" hidden></div>
                 <div id="wfpLoras" class="loras" role="group" aria-label="LoRAs"></div>
               </div>
               <p id="wfpWarn" class="warn-line" hidden></p>
@@ -252,7 +252,7 @@
             </button>
             <button type="button" id="stopBtn" class="btn-stop" hidden>■ Stop <kbd>Esc</kbd></button>
             <button type="button" id="queueBtn" class="btn-queue" title="Queue the form as it is now (Ctrl+Enter). It runs when what's going is done, and changing the form afterwards won't change it." hidden>＋ Queue<b id="queueCount" hidden></b></button>
-            <button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in History." aria-label="New session">＋ New</button>
+            <button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in History." aria-label="New session">＋ New session</button>
           </div>
         </form>
 
@@ -305,7 +305,7 @@
           <div id="resultsEmpty" class="empty">
             <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
             <h3>Let's make something wild.</h3>
-            <p>Pick a model, describe your shot or drop in an image, then hit <b>Generate</b>. Your local LLM writes the prompt in exactly the style that model wants.</p>
+            <p>Pick a model, describe your shot or drop in an image, then hit <b>Generate</b>. Your Brain (the AI model on your computer that does the writing) writes the prompt in exactly the style that model wants.</p>
             <div class="try">
               <span>Try one:</span>
               <div id="tryChips" class="try-chips"></div>
@@ -346,7 +346,7 @@
       <div class="page-head models-head">
         <div>
           <h1>Models</h1>
-          <p id="modelsIntro">Each model carries its own playbook: the instructions your local LLM follows to write prompts for it. New model out? Add it here.</p>
+          <p id="modelsIntro">Each model carries its own playbook: the instructions your Brain follows to write prompts for it. New model out? Add it here.</p>
           <p id="brainsIntro" hidden>Your LM Studio models ("Brains") write the prompts. Prompt Maker learns how each one thinks, how fast it is and which jobs it does well from your own runs. New models show up here on their own.</p>
         </div>
         <div class="seg models-switch" role="tablist" aria-label="Which models">
@@ -425,11 +425,11 @@
             <p class="muted small">ID: <code id="mId">—</code> <span id="mOrigin" class="muted">· saved in your data folder, never in the app's folder</span></p>
           </section>
 
-          <section class="sub" data-panel="model-instructions">
-            <div class="panel-head"><b>Instructions for the AI</b><small>markdown · this is the model's playbook</small></div>
-            <textarea id="mInstr" class="mono" rows="18" spellcheck="false" aria-label="Instructions for the AI"></textarea>
+          <section class="sub" data-panel="model-instructions" data-default="collapsed">
+            <div class="panel-head"><b>Instructions for the Brain</b><small>markdown · this is the model's playbook</small></div>
+            <textarea id="mInstr" class="mono" rows="18" spellcheck="false" aria-label="Instructions for the Brain"></textarea>
             <details class="assist" id="assist">
-              <summary><span>✨ Draft the instructions from pasted docs</span><small>uses your local LLM</small></summary>
+              <summary><span>✨ Draft the instructions from pasted docs</span><small>uses your Brain</small></summary>
               <p class="hint">Paste the model's official prompting guide, a Reddit write-up or your own notes. Nothing gets replaced until you click <b>Use this draft</b>.</p>
               <textarea id="draftDocs" rows="6" placeholder="Paste documentation here…"></textarea>
               <div class="row">
@@ -448,7 +448,7 @@
           </section>
 
           <section class="sub" data-panel="model-examples">
-            <div class="panel-head"><b>Example prompts</b><small>gold-standard prompts the AI copies the style of, never the content</small></div>
+            <div class="panel-head"><b>Example prompts</b><small>gold-standard prompts the Brain copies the style of, never the content</small></div>
             <p class="hint">Add your own here: paste 2–5 of your best prompts for this model, each one complete and exactly as you'd paste it into the model. The Brain copies their style, structure and length. They're saved in your data folder, on this computer only.</p>
             <div id="examplesList" class="examples"></div>
             <button type="button" id="addExampleBtn" class="btn small">＋ Add example</button>
@@ -461,7 +461,7 @@
             <button type="button" id="addAdultExampleBtn" class="btn small">＋ Add adult example</button>
           </section>
 
-          <section class="sub" data-panel="model-sizes">
+          <section class="sub" data-panel="model-sizes" data-default="collapsed">
             <div class="panel-head"><b>Sizes</b><small>what step ④ offers</small></div>
             <div class="grid-3">
               <label class="field"><span>Aspect ratios <small>comma-separated</small></span><input id="mAspects" placeholder="1:1, 16:9, 9:16"></label>
@@ -471,7 +471,7 @@
             <label class="check-row video-only"><input type="checkbox" id="mMotion"> <span>🕺 <b>Character animation:</b> takes a character image and a motion video, whose moves it copies (like Wan Animate 2). Leave Durations empty: the clip is as long as the video.</span></label>
           </section>
 
-          <section class="sub" data-panel="models-defaults">
+          <section class="sub" data-panel="models-defaults" data-default="collapsed">
             <div class="panel-head"><b>Defaults</b><small>what step ④ starts with</small></div>
             <div class="grid-5">
               <label class="field"><span>Aspect</span><select id="dAspect"></select></label>
@@ -482,7 +482,7 @@
             </div>
           </section>
 
-          <section class="sub" data-panel="models-lengths">
+          <section class="sub" data-panel="models-lengths" data-default="collapsed">
             <div class="panel-head"><b>Lengths</b><small>what short, medium and long mean for this model</small></div>
             <div class="grid-3">
               <label class="field"><span>Short</span><input id="lShort" placeholder="≈40–70 words"></label>
@@ -511,7 +511,7 @@
       </div>
       <form id="settingsForm" class="settings" autocomplete="off" novalidate>
         <section class="card" id="servicesCard" data-panel="set-services">
-          <h2>🖥 Services</h2>
+          <h2>🖥️ Services</h2>
           <ul class="svc-list">
             <li class="svc" data-svc="app">
               <span class="dot ok"></span>
@@ -538,13 +538,13 @@
           <div class="row"><button type="button" class="btn small danger" id="stopAllBtn" title="Stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker">■ Stop everything (frees the GPU)</button></div>
         </section>
 
-        <section class="card" data-panel="set-lmstudio">
+        <section class="card" data-panel="set-lmstudio" data-default="collapsed">
           <h2>🔌 LM Studio</h2>
           <label class="field"><span>Local server URL</span>
             <div class="row"><input id="sUrl" placeholder="http://127.0.0.1:1234"><button type="button" id="sTest" class="btn small">Test connection</button></div>
           </label>
           <p id="sTestResult" class="test-result" hidden></p>
-          <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start and stop LM Studio's server in <b>Services</b> above. Choose the LLM (“Brain”) in the top bar. Image input needs a vision model marked 👁.</p>
+          <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start and stop LM Studio's server in <b>Services</b> above. Choose the Brain in the top bar. Image input needs a vision model marked 👁.</p>
         </section>
 
         <section class="card" id="cloudCard" data-panel="set-cloud">
@@ -561,7 +561,7 @@
           <div class="row"><button type="button" id="cpReset" class="btn small" hidden>Ask again before every cloud Brain</button></div>
         </section>
 
-        <section class="card" data-panel="set-comfy">
+        <section class="card" data-panel="set-comfy" data-default="collapsed">
           <h2>🎨 ComfyUI <span class="tag">optional</span></h2>
           <label class="field"><span>Local ComfyUI URL</span>
             <div class="row"><input id="sComfyUrl" placeholder="http://127.0.0.1:8188"><button type="button" id="sComfyTest" class="btn small">Test connection</button></div>
@@ -577,8 +577,8 @@
           <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI in <b>Services</b> above (or as usual), then attach workflows to a model in the <b>Models</b> tab. Prompt Maker starts it the way it last saw it running, or with live previews on (<code>--preview-method auto</code>).</p>
         </section>
 
-        <section class="card" data-panel="set-thinking">
-          <h2>🧠 How the brain thinks</h2>
+        <section class="card" data-panel="set-thinking" data-default="collapsed">
+          <h2>🧠 How the Brain thinks</h2>
           <div class="grid-3">
             <label class="field"><span>Thinking</span>
               <select id="sThinking">
@@ -595,7 +595,7 @@
           </div>
         </section>
 
-        <section class="card" data-panel="set-master">
+        <section class="card" data-panel="set-master" data-default="collapsed">
           <h2>📜 Master instructions</h2>
           <p class="hint">Shared rules sent before every model's own instructions: output format, staying faithful to the theme, and so on.</p>
           <textarea id="sMaster" class="mono" rows="16" spellcheck="false"></textarea>
@@ -611,7 +611,7 @@
 
         <section class="card" data-panel="set-assistant">
           <h2>✦ Assistant</h2>
-          <p class="hint">The assistant (<b>✦ Ask</b>, top left) always runs Prompt Maker for you, and can find folders and look at pictures anywhere on this computer.</p>
+          <p class="hint">The assistant (<b>✦ Ask</b>, in the top bar) always runs Prompt Maker for you, and can find folders and look at pictures anywhere on this computer.</p>
           <label class="check-row"><input type="checkbox" id="sComputer" data-not-assistant> <span>💻 Let the assistant use my computer</span></label>
           <p class="hint">Off by default. When it's on, the assistant can also do things outside Prompt Maker: run programs and commands, and open, read and write any file on your drives, without asking each time. Anything that would delete something, or replace a file, still asks you first. Only you can switch this on or off.</p>
         </section>

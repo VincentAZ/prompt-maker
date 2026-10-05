@@ -165,7 +165,7 @@ async function prepareLlm(settings, requested, needsVision) {
   } else {
     const loaded = llms.filter(m => m.loaded);
     info = (needsVision && loaded.find(m => m.vision)) || loaded[0];
-    if (!info) throw store.httpError(400, 'No LLM selected. Pick one in the top bar (a vision model 👁 if you use images).');
+    if (!info) throw store.httpError(400, 'No Brain selected. Pick one in the top bar (one that sees images 👁 if you use an image).');
   }
   if (needsVision && info.vision === false) {
     throw store.httpError(400, `"${info.name}" is text-only and can't see images. Pick a vision model (👁) in the top bar.`);
@@ -231,14 +231,14 @@ async function writeText(settings, llm, body, opts) {
 }
 
 function outOfRoom(llm, maxTokens, reasoningChars) {
-  if (!reasoningChars) return `The LLM hit the ${maxTokens}-token limit before writing anything. Raise Max tokens in Settings.`;
+  if (!reasoningChars) return `The Brain ran out of room (its limit of ${maxTokens} tokens) before writing anything. Raise Max tokens in Settings → How the Brain thinks.`;
   if (llm.thinking === 'off') return `${llm.name} kept thinking even with Thinking: Off and hit the ${maxTokens}-token limit before writing anything. Raise Max tokens in Settings, or pick another Brain in the top bar.`;
-  return `The LLM hit the ${maxTokens}-token limit before writing anything (it spent them all thinking). Set Thinking to Off (in Settings, or for this Brain on Models → Brains) or raise Max tokens in Settings.`;
+  return `The Brain hit the ${maxTokens}-token limit before writing anything (it spent them all thinking). Set Thinking to Off (in Settings, or for this Brain on Models → Brains) or raise Max tokens in Settings.`;
 }
 
 // An error that counts against the Brain in its record ('room' or 'empty').
 const brainFailure = (outcome, message) => Object.assign(store.httpError(502, message), { outcome });
-const EMPTY_HINT = 'The LLM returned an empty prompt. If it is a "thinking" model it may have used all its tokens reasoning. Raise Max tokens in Settings or pick a non-thinking model.';
+const EMPTY_HINT = 'The Brain returned an empty prompt. If it is a "thinking" model it may have used all its room thinking. Raise Max tokens in Settings or pick a non-thinking Brain.';
 const secondsSince = t0 => Math.round((Date.now() - t0) / 100) / 10;
 
 // Adds a prompt-writing run to the Brain's record. Runs that included loading the model aren't timed.
@@ -543,7 +543,7 @@ async function assistantChat(req, res) {
     if (!text && !toolCalls.length) {
       throw store.httpError(502, out.finishReason === 'length'
         ? outOfRoom(llm, maxTokens, out.reasoningChars)
-        : 'The brain sent back an empty answer. Try again, or pick a bigger model in the top bar.');
+        : 'The Brain sent back an empty answer. Try again, or pick a bigger Brain in the top bar.');
     }
     stream.send({ type: 'done', text, toolCalls });
   } catch (err) {
