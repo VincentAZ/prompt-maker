@@ -3795,6 +3795,34 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('viewer: the stars come first; ⇆ Compare puts two renders side by side, each with its stars', async () => {
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length >= 2', 'at least two renders in the Gallery');
+    eq(await js('[...document.querySelectorAll("#reelGrid .reel-cell .rate-bar")][0].querySelector("button").dataset.rate'), '1', 'on a card, the stars are in their natural order for the keyboard');
+    assert(await js('document.querySelector("#reelGrid .rate-bar button").getBoundingClientRect().width >= 28'), 'and big enough to hit');
+    await click('#reelGrid .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer open');
+    eq(await js('[...document.querySelector("#lbInfo").children].map(e => e.className.split(" ")[0] || e.tagName).slice(0, 3).join(" ")'), 'H3 lb-rate lb-prompt', 'title, then the stars, then the prompt');
+    assert(!(await text('#lbInfo .lb-facts')).includes('—'), 'facts with nothing to say are left out');
+    await click('#lbInfo [data-lb="compare"]');
+    await waitFor('document.querySelector("#lbStage").classList.contains("pair") && document.querySelectorAll("#lbStage .lb-pane").length === 2', 'two side by side');
+    const names = () => js('[...document.querySelectorAll("#lbStage .lb-pane img, #lbStage .lb-pane video")].map(m => m.getAttribute("src")).join(" | ")');
+    const [left, right] = (await names()).split(' | ');
+    assert(left && right && left !== right, `two different renders: ${await names()}`);
+    await click('#lbStage .lb-pane[data-side="right"] [data-rate="2"]');
+    await waitFor('document.querySelectorAll("#lbStage .lb-pane[data-side=right] .rate-bar button.on").length === 2', 'the right one is rated where it stands');
+    eq(await count('#lbStage .lb-pane[data-side="left"] .rate-bar button.on') < 3, true, 'the left one keeps its own rating');
+    await click('#lbStage .lb-pane[data-side="right"] [data-rate="2"]');
+    await waitFor('document.querySelectorAll("#lbStage .lb-pane[data-side=right] .rate-bar button.on").length === 0', 'and the rating comes off again');
+    await click('#lbStage [data-pane="keep"]');
+    await waitFor(`(document.querySelector('#lbStage .lb-pane[data-side="left"] img, #lbStage .lb-pane[data-side="left"] video')?.getAttribute("src")) === ${q(right)}`, '📌 Keep this one moves it to the left');
+    await click('#lbInfo [data-lb="compare"]');
+    await waitFor('!document.querySelector("#lbStage").classList.contains("pair")', 'back to one at a time');
+    await press('Escape');
+    await waitFor('document.querySelector("#lightbox").hidden', 'closed');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('the app folder is never written to', async () => {
     eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
     for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);

@@ -328,6 +328,8 @@ Everything you generate is saved automatically:
 | Keys | Action |
 |---|---|
 | `Ctrl` / `⌘` + `Enter` | Generate (while one is cooking: queue the next) |
+| `Tab` (first press) | **Skip to your results**: jumps past the steps |
+| `←` `→` on the model cards | Move between models (they are one Tab stop) |
 | `Esc` | Stop the current run (when a dialog, a menu or the assistant has it, it only closes that) |
 | `Enter` (in *Tweak it…*) | Refine that take |
 | `Ctrl` / `⌘` + `V` | Paste an image |
@@ -389,7 +391,8 @@ Every take also has a **🎨 Render** bar:
 - **🎨 Render all** does every take in one go.
 
 Click any result to open the **lightbox**, where you can:
-- see the prompt, seed, size and timing,
+- rate it (the stars come first, right under the title) and read its prompt, seed, size and timing,
+- **⇆ Compare** it with another: it stays on the left while **← →** browse the others on the right, each with its own stars. **📌 Keep this one** moves the one on the right to the left, so you can work through a set and end with the best. **✕ Stop comparing** goes back to one at a time,
 - **download** the file,
 - **render again** with a new seed,
 - **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
@@ -477,12 +480,13 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - **Filters:** 📷 Images or 🎬 Videos, **🕘 This session** (only what you made since Prompt Maker last started), **★ & up**, **★★ & up** or **★★★**, a model, and **Find…** to search the words of the prompt. The count says how many show (*12 of 183*). The filters are remembered, except Find.
 - **Arrange them your way.** Drag a card where you want it and the others slide aside to make room: over a card's left half it goes before it, over its right half after it. On a touch screen, hold it a moment first; with the keyboard, **Shift + ←** or **→** moves the card you're on. Your order is saved in your data folder, so it stays. New renders come in first, ahead of the ones you've placed. **↺ Newest first** goes back to newest first.
 - **As big as you want.** Drag the box's bottom edge to make it taller or shorter. It keeps that height while renders arrive, so the takes below don't move. **🔍** makes the pictures bigger or smaller, up to one picture as tall as the box. **⛶ Full screen** gives the box the whole window (**Esc** goes back). **▾** folds it away. All of this is remembered.
+- **In the Gallery, a hidden one is marked** (dimmed, with **👁 Show** on it), so you can tell it from the others and bring it back there too.
 - **🙈 Hide** one you don't want in the box: hover it and click **🙈** at its top right (**↶ Undo** brings it back). Nothing is deleted; it stays in History, the Gallery and its take. **🙈 Hidden (n)** in the filters shows the ones you hid; **👁 Show** puts one back.
 - Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage.
 
 **Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
 
-- Click the stars on a render in **Your renders** (hover a render to see them), or the buttons under the lightbox, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**).
+- Click the stars on a render in **Your renders** (hover a render to see them), or the buttons at the top of the lightbox's side panel, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**).
 - Renders you marked ♥ favorite before ratings count as ★★★ Excellent.
 
 Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Gallery and it's moved on Create too). The Gallery always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its History card.

@@ -811,6 +811,14 @@ body.narrow .models-side { position: static; }
 .lb-stage { display: grid; place-items: center; padding: 28px 70px; min-height: 0; height: 100vh; }
 .lb-stage img, .lb-stage video { width: 100%; height: 100%; max-height: calc(100vh - 56px); object-fit: contain; border-radius: 14px; filter: drop-shadow(0 30px 60px rgb(0 0 0 / 60%)); }
 .lb-stage audio { width: min(520px, 90%); }
+/* ⇆ Compare: two renders side by side, each with its name and stars under it. */
+.lb-stage.pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 28px 64px; }
+.lb-pane { margin: 0; min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; justify-items: center; }
+.lb-stage.pair img, .lb-stage.pair video { max-height: 100%; min-height: 0; }
+.lb-pane-slot { min-height: 40px; max-width: 100%; }
+.lb-pane-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
+.lb-pane-name { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+@media (max-width: 900px) { .lb-stage.pair { padding: 18px 54px; gap: 8px; } }
 .lb-close { position: absolute; top: 14px; right: 374px; z-index: 2; width: 40px; height: 40px; background: rgb(255 255 255 / 8%); color: #fff; }
 .lb-nav { position: absolute; top: 50%; translate: 0 -50%; z-index: 2; width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--line-2); background: rgb(22 19 34 / 80%); color: #fff; font-size: 26px; line-height: 1; }
 .lb-nav:hover:not(:disabled) { border-color: var(--m); }
@@ -821,9 +829,9 @@ body.narrow .models-side { position: static; }
 .lb-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; margin: 0; }
 .lb-facts dt { color: var(--muted); }
 .lb-facts dd { margin: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
-.lb-prompt { font-family: var(--font); white-space: pre-wrap; font-size: 14px; line-height: 1.6; color: var(--text-2); background: rgb(0 0 0 / 25%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px 14px; max-height: 40vh; overflow-y: auto; margin: 0; }
+.lb-prompt { font-family: var(--font); white-space: pre-wrap; font-size: 14px; line-height: 1.6; color: var(--text-2); background: rgb(0 0 0 / 25%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px 14px; max-height: 40vh; flex-shrink: 0; overflow-y: auto; margin: 0; }
 .lb-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.lb-rate { --m: var(--star); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lb-rate { --m: var(--star); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .lb-rate-q { width: 100%; font-size: 12.5px; font-weight: 750; color: var(--text-2); }
 .lb-rate b { color: var(--star); font-weight: 400; letter-spacing: 1px; }
 
@@ -1278,11 +1286,11 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 body.reel-full { overflow: hidden; }
 body.reel-full .view { animation: none; } /* (an animated parent would hold the box in place of the window) */
 .rate-slot { position: absolute; right: 6px; bottom: 6px; z-index: 1; }
-.rate-bar { display: flex; flex-direction: row-reverse; padding: 2px 4px; border-radius: 999px; background: rgb(10 9 16 / 72%); backdrop-filter: blur(6px); }
-.rate-bar button { width: 20px; height: 22px; padding: 0; border: 0; background: none; color: rgb(255 255 255 / 45%); font-size: 15px; line-height: 1; cursor: pointer; transition: color 0.1s, transform 0.1s; }
+.rate-bar { display: flex; padding: 2px 4px; border-radius: 999px; background: rgb(10 9 16 / 72%); backdrop-filter: blur(6px); }
+.rate-bar button { width: 28px; height: 28px; padding: 0; border: 0; background: none; color: rgb(255 255 255 / 45%); font-size: 17px; line-height: 1; cursor: pointer; transition: color 0.1s, transform 0.1s; }
 .rate-bar button.on { color: var(--star); }
 .rate-bar:hover button { color: rgb(255 255 255 / 45%); }
-.rate-bar button:hover, .rate-bar button:hover ~ button { color: var(--star); }
+.rate-bar button:hover, .rate-bar button:has(~ button:hover) { color: var(--star); } /* the star under the mouse and the ones before it */
 .rate-bar button:hover { transform: scale(1.2); }
 .rate-bar button:focus-visible { outline: 2px solid var(--star); outline-offset: -2px; border-radius: 6px; }
 /* Not rated yet: the stars show on hover (always on touch screens) */
@@ -1383,6 +1391,9 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 /* The Gallery: Your renders, moved there, open and as tall as the window (no fold, no grip, nothing hidden). */
 .reel.in-gallery #reelToggle, .reel.in-gallery #reelTitle, .reel.in-gallery #reelGrip, .reel.in-gallery #reelHidden, .reel.in-gallery .rt-hide { display: none; }
 .reel.in-gallery .reel-head { padding-left: 12px; }
+/* Hidden from Your renders, still in the Gallery: marked, with 👁 Show to bring it back. */
+.reel.in-gallery .reel-cell.is-hidden .rt-hide { display: block; opacity: 1; }
+.reel.in-gallery .reel-cell.is-hidden .rtile > img, .reel.in-gallery .reel-cell.is-hidden .rtile > video { opacity: 0.45; }
 .reel-cell.seen > .rtile { box-shadow: 0 0 0 2px var(--m); }
 .reel-ghost { rotate: 0deg; transition: none; }
 .reel-cell[hidden] { display: none; }
@@ -1390,3 +1401,8 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 /* Delete stands apart from the buttons beside it, so a slip of the mouse doesn't hit it. */
 #deleteModelBtn { order: -1; margin-right: 14px; }
 #wfDelete { margin-right: 18px; }
+
+/* For the keyboard: the first Tab offers a jump past the steps to what you made. */
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 8px 14px; border-radius: 999px; background: var(--text); color: var(--ink); font-weight: 800; translate: 0 -200%; }
+.skip-link:focus { translate: 0 0; }
+.stage:focus { outline: none; }

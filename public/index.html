@@ -10,6 +10,7 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#stage">Skip to your results</a>
   <div class="bg-fx" aria-hidden="true"><i></i><i></i><i></i></div>
 
   <header class="topbar">
@@ -256,7 +257,7 @@
           </div>
         </form>
 
-        <section class="stage" aria-label="Results">
+        <section class="stage" id="stage" aria-label="Results" tabindex="-1">
           <div id="lineBox" class="line-box" role="region" aria-label="Waiting in line" hidden>
             <div class="line-head">
               <b id="lineHead"></b>

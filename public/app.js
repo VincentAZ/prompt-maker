@@ -1087,8 +1087,26 @@ function renderModelChips() {
     const on = c.dataset.id === state.modelId;
     c.classList.toggle('active', on);
     c.setAttribute('aria-checked', on);
+    c.tabIndex = on || !state.modelId ? 0 : -1; // one Tab stop for the group; the arrow keys move between the cards
   });
 }
+
+// The keyboard's shortcut past the steps: to what you made (on Create).
+$('.skip-link').addEventListener('click', e => {
+  e.preventDefault();
+  showView('create');
+  $('#stage').focus();
+});
+
+// ← → ↑ ↓ move between the model cards (Enter or Space picks the one in focus).
+$('#modelChips').addEventListener('keydown', e => {
+  const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+  const cards = [...$$('#modelChips .model-card')];
+  const at = cards.indexOf(document.activeElement);
+  if (!d || at < 0) return;
+  e.preventDefault();
+  cards[(at + d + cards.length) % cards.length].focus();
+});
 
 // Per-model memory of the dials (aspect, resolution, duration, length, temperature).
 const prefsKey = id => `prefs.${id}`;
@@ -2110,9 +2128,8 @@ async function rateRender(entry, render, rating) {
 }
 
 // Three stars to rate a render with: click one to rate, click the lit one again to take the rating off.
-// (Laid out last-first, so hovering a star lights it and the ones before it.)
 function rateBarHtml(rating, label = 'this render') {
-  return `<div class="rate-bar" role="group" aria-label="Rate ${esc(label)}">${[3, 2, 1].map(n => `<button type="button" class="${n <= rating ? 'on' : ''}" data-rate="${n}" aria-pressed="${n === rating}" title="${RATINGS[n]}${n === rating ? ' (click to take the rating off)' : ''}" aria-label="${RATINGS[n]}">★</button>`).join('')}</div>`;
+  return `<div class="rate-bar" role="group" aria-label="Rate ${esc(label)}">${[1, 2, 3].map(n => `<button type="button" class="${n <= rating ? 'on' : ''}" data-rate="${n}" aria-pressed="${n === rating}" title="${RATINGS[n]}${n === rating ? ' (click to take the rating off)' : ''}" aria-label="${RATINGS[n]}">★</button>`).join('')}</div>`;
 }
 
 // Hides a render from 🎞 Your renders, or shows it there again. It stays in History, the Gallery and its take.
@@ -2407,6 +2424,7 @@ function reelTile(it) {
   cell.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
   cell.style.setProperty('--ar', reelRatioOf(it));
   cell.classList.toggle('going', going.has(it.render.id) || going.has(it.entry.id));
+  cell.classList.toggle('is-hidden', Boolean(it.render.hidden)); // the Gallery still shows it, marked, with 👁 Show
   const theme = it.entry.theme || 'From an image';
   const rating = ratingOf(it.render);
   $('.rt-cap b', cell).textContent = theme;
@@ -2492,7 +2510,9 @@ new IntersectionObserver(([e]) => {
 let reelDrag = null;
 let reelDropped = false; // the click that ends a drag doesn't open the card
 
+$('#reelGrid').addEventListener('keydown', () => { reelDropped = false; }, true);
 $('#reelGrid').addEventListener('pointerdown', e => {
+  reelDropped = false; // a new press: the last drag's click isn't coming anymore
   const cell = e.target.closest('.reel-cell');
   if (!cell || e.button !== 0 || reelDrag || e.target.closest('.rate-bar, .rt-hide')) return;
   const d = { cell, key: cell.dataset.key, pointer: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, touch: e.pointerType !== 'mouse' };
@@ -2594,8 +2614,7 @@ function dropReel(d) {
   d.ghost.remove();
   d.cell.classList.remove('moving');
   $('#reel').classList.remove('sorting');
-  reelDropped = true;
-  setTimeout(() => { reelDropped = false; }, 400); // (the click may come a moment after the pointer is let go)
+  reelDropped = true; // until the click that ends this drag, or the next press (see below): however late that click comes
   saveReelOrder();
   announce('Moved');
 }
@@ -2642,8 +2661,8 @@ function sizeReel() {
   if (body.hidden || box.classList.contains('empty')) return;
   const room = Math.max(80, body.clientHeight - $('#reelFilters').offsetHeight - 28);
   const slider = $('#reelSize');
-  slider.max = Math.max(Number(slider.min) + 40, Math.round(room / 10) * 10);
-  slider.value = Math.min(saved.get('reelSize', 160), Number(slider.max));
+  // (One range everywhere, so the knob stands in the same place for the same size; pictures stop growing at what fits.)
+  slider.value = saved.get('reelSize', 160);
   box.style.setProperty('--tile-h', `${Math.min(Number(slider.value), room)}px`);
   const grip = $('#reelGrip');
   grip.setAttribute('aria-valuemin', REEL_MIN_H);
@@ -3584,7 +3603,7 @@ function renderHistory() {
           ${cover ? mediaTag(cover, { hover: true }) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="" loading="lazy">` : kindIcon(e.modelKind)}
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${{ reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
         </div>
-        <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite: ${esc(title)}" title="${e.favorite ? 'Unfavorite' : 'Favorite'}">${e.favorite ? '★' : '☆'}</button>
+        <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite this prompt: ${esc(title)}" title="${e.favorite ? 'Take this prompt out of your favorites' : 'Favorite this prompt, to find it again (its renders have their own ★ ratings)'}">${e.favorite ? '★' : '☆'}</button>
         <div class="hbody">
           <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.batch ? `<span class="tag batch" title="From the batch “${esc(e.batch)}”">🎞 ${esc(e.batch)}</span>` : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
           <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open">${esc(title)}</div>
@@ -6672,12 +6691,15 @@ async function openRun(entry) {
 
 // ---------- lightbox ----------
 
-const lb = { items: [], index: 0, fromGallery: false, returnFocus: null };
+// pin: the render kept on the left while you compare (⇆ Compare), or null. shown: what the stage holds now, so
+// rating or redrawing the side panel doesn't start a playing video again.
+const lb = { items: [], index: 0, fromGallery: false, returnFocus: null, pin: null, shown: '' };
 
 function openLightbox(items, index, { fromGallery = false } = {}) {
   lb.items = items;
   lb.index = index;
   lb.fromGallery = fromGallery;
+  lb.pin = null;
   lb.returnFocus = document.activeElement;
   $('#lightbox').hidden = false;
   document.body.style.overflow = 'hidden';
@@ -6688,6 +6710,8 @@ function openLightbox(items, index, { fromGallery = false } = {}) {
 function closeLightbox() {
   $('#lightbox').hidden = true;
   $('#lbStage').innerHTML = '';
+  lb.shown = '';
+  lb.pin = null;
   document.body.style.overflow = '';
   const seen = lb.items[lb.index];
   if (lb.fromGallery && seen) {
@@ -6716,6 +6740,49 @@ function stepLightbox(d) {
   lbRender();
 }
 
+// The stage: the render, or with ⇆ Compare two side by side (the one you kept on the left, the one you browse on
+// the right), each with its stars. Drawn again only when what it shows changes.
+function drawLbStage(it) {
+  const stage = $('#lbStage');
+  const key = r => `${r.render.id}/${r.file.file}`;
+  const pin = lb.pin && lb.items.find(x => key(x) === key(lb.pin)); // (gone if it was deleted meanwhile)
+  if (lb.pin && !pin) lb.pin = null;
+  const shown = pin ? `${key(pin)}|${key(it)}` : key(it);
+  const stars = (r, side) => `<div class="lb-pane-bar"><span class="lb-pane-name">${side === 'left' ? '📌 ' : ''}${esc(cut(r.entry.theme || 'From an image', 40))} · take ${r.index + 1}${r.render.seed != null ? ` · seed ${r.render.seed}` : ''}</span>${rateBarHtml(ratingOf(r.render), side === 'left' ? 'the one on the left' : 'the one on the right')}${side === 'right' ? '<button type="button" class="btn small" data-pane="keep" title="Keep this one on the left instead, and go on comparing">📌 Keep this one</button>' : ''}</div>`;
+  if (shown !== lb.shown) {
+    lb.shown = shown;
+    stage.classList.toggle('pair', Boolean(pin));
+    stage.innerHTML = pin
+      ? `<figure class="lb-pane" data-side="left">${mediaTag(pin.file, { controls: true })}<div class="lb-pane-slot"></div></figure><figure class="lb-pane" data-side="right">${mediaTag(it.file, { controls: true })}<div class="lb-pane-slot"></div></figure>`
+      : mediaTag(it.file, { controls: true });
+  }
+  if (!pin) return;
+  $('[data-side="left"] .lb-pane-slot', stage).innerHTML = stars(pin, 'left');
+  $('[data-side="right"] .lb-pane-slot', stage).innerHTML = key(pin) === key(it) ? '<div class="lb-pane-bar"><span class="lb-pane-name">The same one: ← → picks another to compare with</span></div>' : stars(it, 'right');
+}
+
+$('#lbStage').addEventListener('click', async e => {
+  const side = e.target.closest('.lb-pane')?.dataset.side;
+  if (!side || !lb.pin) return;
+  const item = side === 'left' ? lb.items.find(x => x.render.id === lb.pin.render.id && x.file.file === lb.pin.file.file) : lb.items[lb.index];
+  const star = e.target.closest('[data-rate]');
+  if (star && item) {
+    e.stopPropagation();
+    const n = Number(star.dataset.rate);
+    try {
+      item.render = await rateRender(item.entry, item.render, n === ratingOf(item.render) ? 0 : n);
+      if (side === 'left') lb.pin = item;
+      lbRender();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  } else if (e.target.closest('[data-pane="keep"]')) {
+    e.stopPropagation();
+    lb.pin = lb.items[lb.index];
+    stepLightbox(1);
+  }
+});
+
 function lbRender() {
   const it = lb.items[lb.index];
   if (!it) return closeLightbox();
@@ -6724,23 +6791,23 @@ function lbRender() {
   const rating = ratingOf(render);
   const onStage = !lb.fromGallery && state.entry?.id === entry.id && state.cards.some(c => c.index === it.index && c.rb);
   $('#lightbox').style.setProperty('--m', modelColor(m || { id: entry.modelId }));
-  $('#lbStage').innerHTML = mediaTag(file, { controls: true });
+  drawLbStage(it);
   $('#lbPrev').disabled = $('#lbNext').disabled = lb.items.length < 2;
   const facts = [
     ['Model', entry.modelName],
     entry.source ? ['From', takeLabel(entry.source)] : null,
     ['Workflow', render.workflowName],
-    ['Seed', render.seed ?? '—'],
+    render.seed != null ? ['Seed', render.seed] : null,
     render.sampler ? ['Sampler', `${render.sampler}${render.steps ? ` · ${render.steps} steps` : ''}${render.cfg != null ? ` · CFG ${render.cfg}` : ''}`] : null,
     render.loras?.length ? ['LoRAs', render.loras.map(l => `${loraShort(l.name)} ${Number(l.strength).toFixed(2)}`).join(', ')] : null,
-    ['Size', render.size || render.aspect || '—'],
+    render.size || render.aspect ? ['Size', render.size || render.aspect] : null,
     render.frames ? ['Frames', `${render.frames}${render.duration ? ` (${render.duration})` : ''}`] : render.duration ? ['Duration', render.duration] : null,
-    ['Took', render.secs ? `${render.secs}s` : '—'],
+    render.secs ? ['Took', `${render.secs}s`] : null,
     ['Made', new Date(render.createdAt).toLocaleString()],
   ].filter(Boolean);
   $('#lbInfo').innerHTML = `
     <h3>${esc(entry.theme || 'From an image')}</h3>
-    <dl class="lb-facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+    <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
     <pre class="lb-prompt">${esc(render.text)}</pre>
     <div class="lb-actions">
       <a class="btn small primary" href="/renders/${encodeURIComponent(file.file)}" download="${esc(file.name || file.file)}">⬇ Download</a>
@@ -6751,10 +6818,20 @@ function lbRender() {
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
       ${onStage ? '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>' : '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>'}
+      ${lb.items.length > 1 ? `<button type="button" class="btn small" data-lb="compare" aria-pressed="${Boolean(lb.pin)}" title="${lb.pin ? 'Back to one at a time' : 'Keep this one on the left and browse the others beside it'}">${lb.pin ? '✕ Stop comparing' : '⇆ Compare'}</button>` : ''}
       ${going.has(render.id) ? '<button type="button" class="btn small primary" data-lb="undo">↶ Undo delete</button>' : '<button type="button" class="btn small danger" data-lb="delete" title="Deletes this render for good, here and in ComfyUI. You get a few seconds to undo">🗑 Delete</button>'}
     </div>
-    <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
+    <dl class="lb-facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
     <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · 1 2 3 to rate · Esc to close</p>`;
+  $('[data-lb="compare"]', $('#lbInfo'))?.addEventListener('click', () => {
+    if (lb.pin) lb.pin = null;
+    else {
+      lb.pin = it;
+      lb.index = (lb.index + 1) % lb.items.length; // the next one comes up beside it; ← → pick another
+    }
+    lbRender();
+    $('[data-lb="compare"]', $('#lbInfo'))?.focus();
+  });
   $('[data-lb="copy"]', $('#lbInfo')).addEventListener('click', e => copyText(render.text, e.currentTarget));
   $$('[data-lb-rate]', $('#lbInfo')).forEach(b => b.addEventListener('click', () => rateInLightbox(Number(b.dataset.lbRate))));
   $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); openEntry(entry); });
