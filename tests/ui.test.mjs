@@ -1488,6 +1488,17 @@ esac
     await toastText('Render stopped');
   });
 
+  await test('render: ComfyUI crashing mid-render ends it instead of leaving it stuck', async () => {
+    await type('#theme', 'COMFYCRASH rooftop');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-go")', 'render bar');
+    await click('.take .rb-go');
+    await waitFor('document.querySelector("#stageError") && !document.querySelector("#stageError").hidden', 'error card', 15000);
+    assert((await text('#stageError')).includes('ComfyUI stopped'), 'crash explained');
+    eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left rendering');
+  });
+
   await test('render: ComfyUI error is explained', async () => {
     await type('#theme', 'COMFYFAIL scene');
     await click('#generateBtn');

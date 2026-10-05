@@ -175,6 +175,9 @@ export function startMockComfy(port, { png, root = null }) {
         running = null;
         return;
       }
+      // COMFYCRASH: like ComfyUI killed mid-render (out of memory) and started again: the job is just gone, with no
+      // message, nothing in history and nothing in the queue.
+      if (v === 3 && text.includes('COMFYCRASH')) { running = null; return; }
       send(clientId, { type: 'progress', data: { value: v, max: 5, prompt_id: id, node: '3' } });
       await sleep(slow ? 700 : 60);
     }
