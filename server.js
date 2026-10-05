@@ -521,16 +521,25 @@ async function assistantChat(req, res) {
       onStatus: text => stream.send({ type: 'status', text }),
     });
     let out;
+    // A Brain whose template failed with tools gets them in writing straight away from then on (asked the other way
+    // again after 30 days, in case LM Studio or the model was updated), instead of failing first every turn.
+    const noted = (await store.getBrainNotes())[llm.id]?.toolsInWriting;
+    const inWritingFirst = tools.length > 0 && !llm.cloud && Date.now() - Date.parse(noted || 0) < 30 * 864e5;
     try {
-      out = await ask(false);
+      out = await ask(inWritingFirst);
     } catch (err) {
       // LM Studio couldn't fit the tools into this Brain's chat template (it fails in a moment, before any answer).
       if (!tools.length || llm.cloud || !assistant.templateFailed(err)) throw err;
+      if (inWritingFirst) throw store.httpError(502, `${llm.name} can't chat here: LM Studio can't put a conversation into the form this model expects. Pick another Brain in the top bar.`);
       out = await ask(true).catch(e => {
         throw assistant.templateFailed(e) ? store.httpError(502, `${llm.name} can't chat here: LM Studio can't put a conversation into the form this model expects. Pick another Brain in the top bar.`) : e;
       });
+      await store.noteBrain(llm.id, { toolsInWriting: new Date().toISOString() }).catch(() => {});
     }
-    const { text, toolCalls } = out.toolCalls.length ? out : assistant.fallbackToolCalls(out.text);
+    const read = out.toolCalls.length ? out : assistant.fallbackToolCalls(out.text);
+    const { toolCalls } = read;
+    // The answer ended in the middle of a step (out of room): what was written of it isn't shown as if it were text.
+    const text = read.cutOff && !toolCalls.length ? [read.text, '(I ran out of room in the middle of a step, so that step wasn\'t done. Say "go on" and I\'ll do it, or raise Max tokens in Settings so I have more room.)'].filter(Boolean).join('\n\n') : read.text;
     if (!text && !toolCalls.length) {
       throw store.httpError(502, out.finishReason === 'length'
         ? outOfRoom(llm, maxTokens, out.reasoningChars)

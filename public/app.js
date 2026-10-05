@@ -2506,6 +2506,7 @@ $('#reelGrid').addEventListener('contextmenu', e => { if (reelDrag) e.preventDef
 $('#reelGrid').addEventListener('touchmove', e => { if (reelDrag?.ghost) e.preventDefault(); }, { passive: false });
 $('#reelGrid').addEventListener('click', e => {
   if (!reelDropped) return;
+  reelDropped = false;
   e.stopPropagation();
   e.preventDefault();
 }, true);
@@ -2575,7 +2576,7 @@ function dropReel(d) {
   d.cell.classList.remove('moving');
   $('#reel').classList.remove('sorting');
   reelDropped = true;
-  setTimeout(() => { reelDropped = false; });
+  setTimeout(() => { reelDropped = false; }, 400); // (the click may come a moment after the pointer is let go)
   saveReelOrder();
   announce('Moved');
 }
@@ -8556,6 +8557,13 @@ function wireMessages() {
     for (const c of m.tool_calls || []) {
       if (!as.messages.some(x => x.role === 'tool' && x.tool_call_id === c.id)) out.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify({ error: 'Stopped by the user.' }) });
     }
+  }
+  // Only the newest pictures go along (the Brain is shown no more than that anyway): every picture it ever looked at,
+  // sent again each turn, would grow until the server refuses the request as too large.
+  let images = 0;
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (!Array.isArray(out[i].content)) continue;
+    out[i].content = out[i].content.map(p => (p.type !== 'image_url' || ++images <= 8 ? p : { type: 'text', text: '(an image shown earlier)' })); // (in the kept conversation too)
   }
   return out;
 }

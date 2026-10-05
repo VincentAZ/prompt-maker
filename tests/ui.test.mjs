@@ -2740,6 +2740,34 @@ esac
     assert((await bot()).includes('long way round') && log.includes('On it.') && !log.includes('Done, it is set') && !log.includes('tool_call'), `only what it said before the call and after it ran shows: ${log.slice(-200)}`);
     const written = lastCall();
     assert(!written.tools && written.messages[0].content.includes('- set_theme:') && written.messages.every(m => m.role !== 'tool'), 'it was asked again with the tools described, calls and results as text');
+    // That is remembered for this Brain: the next turn goes in writing straight away instead of failing first.
+    const brainsFile = path.join(dataDir, 'brains.json');
+    const noted = JSON.parse(await fs.readFile(brainsFile, 'utf8'));
+    assert(Object.values(noted).some(b => b.toolsInWriting), 'the Brain is noted as one that takes its tools in writing');
+    const callsBefore = mockCalls();
+    await type('#asInput', 'broken template please');
+    await press('Enter');
+    await idle();
+    assert(mock.log.slice(callsBefore).every(c => !c.tools), 'no request with tools was tried first this time');
+    for (const b of Object.values(noted)) delete b.toolsInWriting; // (the tests after this one script a Brain that takes tools)
+    await fs.writeFile(brainsFile, JSON.stringify(noted));
+
+    // Written calls that come out a little off are still read; one cut off mid-way is left out, not shown as text.
+    const { fallbackToolCalls, cleanMessages } = await import(path.join(ROOT, 'lib', 'assistant.js'));
+    const read = t => fallbackToolCalls(t).toolCalls.map(c => `${c.name} ${c.arguments}`).join(' | ');
+    eq(read('<tool_call>\n```json\n{"name":"generate","arguments":{}}\n```\n</tool_call>'), 'generate {}', 'in a code fence');
+    eq(read('<tool_call>{"name":"set_theme","arguments":"{\\"text\\":\\"x\\"}"}</tool_call>'), 'set_theme {"text":"x"}', 'arguments written as a text');
+    eq(read('<tool_call>[{"name":"set_model","arguments":{"name":"krea"}},{"name":"generate","arguments":{}}]</tool_call>'), 'set_model {"name":"krea"} | generate {}', 'several in one tag');
+    eq(read('<|tool_call>call:set_theme{text:<|"|>a "quoted" cat\nwith: a colon<|"|>,takes:2}<tool_call|>'), 'set_theme {"text":"a \\"quoted\\" cat\\nwith: a colon","takes":2}', 'Gemma\'s own form, with quotes and a line break in the text');
+    eq(read('<tool_call>{"name":"write_file","arguments":{"path":"~/a.txt","text":"use </tool_call> to end"}}</tool_call>'), 'write_file {"path":"~/a.txt","text":"use </tool_call> to end"}', 'a closing tag inside the text');
+    eq(read('<tool_call>{"name":"list_folder","arguments":{"folder":"C:\\Users\\vince\\Pictures"}}</tool_call>'), 'list_folder {"folder":"C:\\\\Users\\\\vince\\\\Pictures"}', 'a Windows path with single backslashes');
+    const cut = fallbackToolCalls('Let me do it.\n<tool_call>{"name":"set_theme","arguments":{"text":"a very long');
+    assert(cut.cutOff && cut.text === 'Let me do it.' && !cut.toolCalls.length, 'cut off mid-call: only the words before it are kept');
+    eq(fallbackToolCalls('To call a tool I write <tool_call> and then JSON.').toolCalls.length, 0, 'a mention of the tag in a sentence is not a call');
+    // A long tool result keeps its end too.
+    const long = `${'a'.repeat(20000)} THE-END`;
+    const kept = cleanMessages([{ role: 'user', content: 'x' }, { role: 'assistant', content: '', tool_calls: [{ id: 'c1', function: { name: 'read_file', arguments: '{}' } }] }, { role: 'tool', tool_call_id: 'c1', content: long }]).at(-1).content;
+    assert(kept.length < 8200 && kept.endsWith('THE-END') && kept.includes('characters left out here'), 'start and end kept, and it says what was left out');
 
     await type('#asInput', 'fewer steps please');
     await press('Enter');
@@ -2761,7 +2789,7 @@ esac
 
     await goto(`${APP}/#create`);
     await waitFor('!document.querySelector("#assistant").hidden', 'left open, it opens again with the app');
-    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 9', 'the conversation is still there after a reload');
+    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 10', 'the conversation is still there after a reload');
     await viewport(390, 844, true);
     await sleep(200);
     eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');
