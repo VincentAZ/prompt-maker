@@ -4,6 +4,10 @@
   the minor number (1.0.x → 1.1.0) for a notable new feature, and only bump the major number when the user says so.
   Settings shows this version, so people can say which one they run when they report a problem.
 - Any new, changed or removed feature is reflected in `README.md` in the same commit.
+- Nothing that ships carries the user's data. A file taken from the data folder into the repo (`workflows/`, `playbooks/`, `chains/`,
+  screenshots) is scrubbed first: no prompts (positive or negative), no adult examples, seed 0, no personal file or LoRA names.
+  The test suite checks `workflows/`.
+- When the UI changes, the README's screenshots (`docs/screenshots/`) are retaken in the same commit, from a clean data folder.
 
 ## Who this app is for
 

@@ -6948,7 +6948,7 @@ function galleryItems() {
 const MAP_CHIPS = [['prompt', '✍️ Prompt'], ['motion', '🕺 Motion'], ['image', '🖼️ Image'], ['video', '🎞️ Video'], ['size', '📐 Size'], ['duration', '⏱️ Duration'], ['seed', '🎲 Seed']];
 // Motion chips only matter on character-animation models.
 const mapChips = m => MAP_CHIPS.filter(([k]) => m?.motionVideo || (k !== 'motion' && k !== 'video'));
-const sourceLabel = src => (src.startsWith('comfyui:') ? 'from your ComfyUI library' : src.startsWith('comfytemplate:') ? 'ComfyUI template' : 'uploaded file');
+const sourceLabel = src => (src.startsWith('comfyui:') ? 'from your ComfyUI library' : src.startsWith('comfytemplate:') ? 'ComfyUI template' : src.startsWith('starter:') ? 'came with Prompt Maker' : 'uploaded file');
 
 function renderWorkflowList() {
   const list = $('#wfList');
@@ -7023,7 +7023,7 @@ function openWorkflowDialog({ edit = null, modelId = null, focusSampler = false 
   $('#wfPickMsg').hidden = true;
   $('#wfDelete').hidden = !edit;
   $('#wfRefresh').hidden = !edit;
-  if (edit) $('#wfRefresh').textContent = edit.source?.startsWith('comfyui:') || edit.source?.startsWith('comfytemplate:') ? '↻ Update from ComfyUI' : '↻ Update from a file';
+  if (edit) $('#wfRefresh').textContent = edit.source?.startsWith('starter:') ? '↻ Update to this version\'s' : edit.source?.startsWith('comfyui:') || edit.source?.startsWith('comfytemplate:') ? '↻ Update from ComfyUI' : '↻ Update from a file';
   if (edit) {
     $('#wfDialogTitle').textContent = `Edit “${edit.name}”`;
     showSetup(edit);
@@ -7047,8 +7047,25 @@ function switchWfTab(tab) {
   if (tab === 'comfy') loadSavedWorkflows();
 }
 
+// The workflows that come with Prompt Maker for the model, offered first (they show even while ComfyUI is off).
+async function renderStarters() {
+  const modelId = dlg.modelId;
+  $('#wfStarters').hidden = true;
+  const list = await api(`/api/workflows/starters?model=${encodeURIComponent(modelId || '')}`).catch(() => []);
+  if (dlg.modelId !== modelId) return;
+  $('#wfStarters').hidden = !list.length;
+  $('#wfStModel').textContent = modelById(modelId)?.name || '';
+  const have = new Set(workflowsFor(modelId).map(f => f.source));
+  $('#wfStList').innerHTML = list.map(t => `<li><button type="button" data-starter="${esc(t.key)}"><span aria-hidden="true">🎁</span><span class="ws-tpl">${esc(t.title)}${t.note ? `<span class="ws-note">${esc(t.note)}</span>` : ''}</span>${have.has(`starter:${t.key}`) ? '<span class="ws-date">added already</span>' : ''}</button></li>`).join('');
+}
+$('#wfStList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-starter]');
+  if (b) prepareWorkflow({ starter: b.dataset.starter });
+});
+
 async function loadSavedWorkflows() {
   const list = $('#wfSaved');
+  renderStarters();
   list.innerHTML = '<li class="muted small">Looking in ComfyUI…</li>';
   const st = await loadComfyStatus();
   if (!st.ok) {
@@ -7099,7 +7116,7 @@ $('#wfBack').addEventListener('click', () => openWorkflowDialog({ modelId: dlg.m
 $('#wfRefresh').addEventListener('click', () => {
   const flow = state.workflows.find(f => f.id === dlg.editId);
   if (!flow) return;
-  if (flow.source.startsWith('comfyui:') || flow.source.startsWith('comfytemplate:')) updateWorkflow(flow.id, { review: true });
+  if (/^(comfyui|comfytemplate|starter):/.test(flow.source)) updateWorkflow(flow.id, { review: true });
   else $('#wfRefreshFile').click();
 });
 $('#wfRefreshFile').addEventListener('change', async e => {

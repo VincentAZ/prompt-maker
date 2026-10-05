@@ -71,6 +71,7 @@ Prompt Maker keeps a **playbook for each model** and has your Brain write the pr
 - **History.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, star favorites, and reopen any entry to keep refining.
 - **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
+  - **🎁 Starter workflows** come with the app for some models (Krea 2 RAW i2i so far): one click in **＋ Add workflow**, and a model file you don't have yet is one **⬇ Download** away.
   - Watch live progress (and previews) right on the take.
   - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
@@ -356,6 +357,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**.
 2. On **Create**, pick a model (say *Krea 2 RAW*) and click **＋ Add workflow** in step ⑤. (Or do it in **Models**, which lists every model's workflows.)
 3. Choose where the workflow comes from:
+   - **🎁 Comes with Prompt Maker** shows first when the app has a starter workflow for the model (Krea 2 RAW i2i has one). Click it and it's set up: where the prompt and your picture go, the seed, the sampler. It uses only ComfyUI's own nodes, and step ⑤ offers **⬇ Download** for any of its model files you don't have (see [Missing models](#missing-models)). It shows even while ComfyUI is off.
    - **From ComfyUI** lists every workflow you've saved in ComfyUI. Click one. For some models (Wan Animate 2), **⭐ ComfyUI's own templates** for it come first: one click, and it's set up.
    - **Upload a file** accepts a saved workflow, an *Export (API)* file, or a workflow exported from Prompt Maker.
 4. Check the **setup**. Prompt Maker reads the workflow and suggests where things go:
@@ -376,7 +378,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
    - A **CFG of 1 is locked**, because distilled, turbo and lightning models need it. **🔒 unlock** is there if you really mean it.
    - Leave *New random seed every render* on, or turn it off to use a fixed seed.
 
-**Changed a workflow in ComfyUI?** Prompt Maker renders from its own copy, saved when you added the workflow. When you save the workflow again in ComfyUI, Prompt Maker notices (next time you come back to its tab) and shows **↻ Changed in ComfyUI · Update** in step ⑤, on the take's render bar and in **Models**. One click pulls in the new version and keeps your setup: where the prompt goes, the size and seed slots, and your sampler tweaks. If a part of your setup no longer fits (say the prompt node was replaced), the setup opens so you can check it. **↻ Update from ComfyUI** in a workflow's setup does the same any time. Workflows you uploaded as files offer **↻ Update from a file** instead.
+**Changed a workflow in ComfyUI?** Prompt Maker renders from its own copy, saved when you added the workflow. When you save the workflow again in ComfyUI, Prompt Maker notices (next time you come back to its tab) and shows **↻ Changed in ComfyUI · Update** in step ⑤, on the take's render bar and in **Models**. One click pulls in the new version and keeps your setup: where the prompt goes, the size and seed slots, and your sampler tweaks. If a part of your setup no longer fits (say the prompt node was replaced), the setup opens so you can check it. **↻ Update from ComfyUI** in a workflow's setup does the same any time. Workflows you uploaded as files offer **↻ Update from a file** instead, and a starter workflow offers **↻ Update to this version's**, for when a newer Prompt Maker brings a better one.
 
 ### 2. Render
 
@@ -525,7 +527,7 @@ Five models come with ready-made playbooks, researched from their official promp
 | Model | Type | Prompt style |
 |---|---|---|
 | **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. |
-| **Krea 2 RAW i2i** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. Use it with an image-to-image workflow; step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
+| **Krea 2 RAW i2i** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. It comes with a starter workflow (**＋ Add workflow → 🎁 Comes with Prompt Maker**): 12 steps with Krea's turbo LoRA. Step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
 | **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
 | **Wan Animate 2** | Video (character animation) | Wan-AI's official caption format: `Character appearance description:` (looks only) and `Background description:` (place, light, camera angle), plus a `Motion:` line for the pose prompt. Takes a character image and a motion video ([more](#character-animation-wan-animate-2)). |
@@ -834,6 +836,7 @@ prompt-maker/
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts; sw.js keeps a copy so the page opens while the server is off)
 ├── playbooks/              # the built-in model playbooks (read-only to the app)
 ├── chains/                 # the starter chains (read-only to the app)
+├── workflows/              # the starter workflows, one folder per model id (read-only to the app; no prompts, seeds or pictures in them)
 ├── tests/
 │   ├── mock-lmstudio.mjs   # fake LM Studio for tests
 │   ├── mock-comfyui.mjs    # fake ComfyUI (HTTP + WebSocket progress) for tests
@@ -859,7 +862,7 @@ Screenshots go to `/tmp/prompt-maker-ui/` (or `$SHOTS`). The suite needs Node 22
 
 ## Contributing
 
-Issues and pull requests are welcome. The most valuable contributions are **model playbooks**: if you've dialed in prompting for a model, export its `.json` and share it. Please keep the app dependency-free and offline-only, and run `npm run test:ui` before opening a PR.
+Issues and pull requests are welcome. The most valuable contributions are **model playbooks**: if you've dialed in prompting for a model, export its `.json` and share it. A workflow that ships in `workflows/` must carry nobody's data: empty prompts (positive and negative), seed 0, `example.png` as its picture, only ComfyUI's own nodes where possible, and a Hugging Face link for every model file (the test suite checks this). Please keep the app dependency-free and offline-only, and run `npm run test:ui` before opening a PR.
 
 ## Acknowledgements
 

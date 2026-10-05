@@ -675,6 +675,22 @@ async function checkVision(settings, llm, signal, onStatus) {
 
 // ---------- ComfyUI workflows & renders ----------
 
+// Starter workflows: the ones that come with the app (workflows/<model id>/*.json, read-only), ready to add in one
+// click. They are in Prompt Maker's own export format, carry no prompt text, and name a download link per model file.
+const STARTERS_DIR = path.join(import.meta.dirname, 'workflows');
+const starterFile = key => (/^[\w-]+\/[\w-]+\.json$/.test(key) ? path.join(STARTERS_DIR, key) : null);
+async function starterWorkflows(modelId) {
+  const dir = String(modelId || '').replace(/[^\w-]/g, '');
+  if (!dir) return [];
+  const files = (await fs.readdir(path.join(STARTERS_DIR, dir)).catch(() => [])).filter(f => /^[\w-]+\.json$/.test(f)).sort();
+  const out = [];
+  for (const f of files) {
+    const json = await fs.readFile(path.join(STARTERS_DIR, dir, f), 'utf8').then(JSON.parse).catch(() => null);
+    if (json?.format === wf.EXPORT_FORMAT) out.push({ key: `${dir}/${f}`, title: String(json.name || f.replace(/\.json$/, '')), note: String(json.note || '') });
+  }
+  return out;
+}
+
 // Turns an uploaded or ComfyUI-saved workflow into an API prompt plus a suggested input mapping.
 async function prepareWorkflow(body) {
   const settings = await store.getSettings();
@@ -693,6 +709,11 @@ async function prepareWorkflow(body) {
     json = await comfy.readTemplate(settings.comfyUrl, String(body.template));
     name = String(body.templateTitle || body.template).trim().slice(0, 120);
     source = `comfytemplate:${body.template}`;
+  } else if (body.starter) {
+    const file = starterFile(String(body.starter));
+    json = file && await fs.readFile(file, 'utf8').then(JSON.parse).catch(() => null);
+    if (!json) throw store.httpError(404, 'That starter workflow isn\'t in this version of Prompt Maker.');
+    source = `starter:${body.starter}`;
   }
   if (!json || typeof json !== 'object') throw store.httpError(400, 'That file is not valid JSON.');
   let preset = null;
@@ -741,8 +762,9 @@ async function prepareWorkflow(body) {
 async function refreshWorkflow(existing, body) {
   const fromComfy = existing.source.startsWith('comfyui:');
   const template = existing.source.startsWith('comfytemplate:') ? existing.source.slice('comfytemplate:'.length) : '';
-  if (!body.json && !fromComfy && !template) throw store.httpError(400, 'This workflow was uploaded from a file. Pick the new version of the file to update it.');
-  const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : template ? { template, templateTitle: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
+  const starter = existing.source.startsWith('starter:') ? existing.source.slice('starter:'.length) : '';
+  if (!body.json && !fromComfy && !template && !starter) throw store.httpError(400, 'This workflow was uploaded from a file. Pick the new version of the file to update it.');
+  const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : starter ? { starter } : template ? { template, templateTitle: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
   const { mapping, overrides, loras, lost, changes } = wf.carryOver(existing, fresh.prompt, fresh.mapping);
   if (!mapping.prompt.length) throw store.httpError(400, 'The new version has no text input for the prompt, so it can\'t be used for rendering.');
   const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, loras, models: fresh.models, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
@@ -1458,6 +1480,7 @@ async function route(req, res) {
     return sendJson(res, 200, await comfy.savedWorkflows(settings.comfyUrl));
   }
   if (p === '/api/workflows' && m === 'GET') return sendJson(res, 200, await wf.listWorkflows());
+  if (p === '/api/workflows/starters' && m === 'GET') return sendJson(res, 200, await starterWorkflows(url.searchParams.get('model')));
   if (p === '/api/workflows/prepare' && m === 'POST') return sendJson(res, 200, await prepareWorkflow(await readBody(req)));
   if (p === '/api/workflows' && m === 'POST') {
     const body = await readBody(req);

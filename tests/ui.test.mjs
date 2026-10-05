@@ -3588,6 +3588,47 @@ esac
     await click('#jobsClose');
   });
 
+  await test('workflows: the ones that come with the app are offered first, set themselves up, and carry nobody\'s prompts', async () => {
+    // Every workflow that ships: Prompt Maker's own format, no prompt text, no seed, no picture of anyone's.
+    const dir = path.join(ROOT, 'workflows');
+    let shippedCount = 0;
+    for (const model of await fs.readdir(dir)) {
+      for (const f of await fs.readdir(path.join(dir, model))) {
+        const w = JSON.parse(await fs.readFile(path.join(dir, model, f), 'utf8'));
+        shippedCount++;
+        eq(w.format, wfLib.EXPORT_FORMAT, `${model}/${f} is in the export format`);
+        for (const [id, node] of Object.entries(w.prompt)) {
+          for (const [input, v] of Object.entries(node.inputs)) {
+            if (/^(text|prompt|string|value)$/i.test(input) && typeof v === 'string') eq(v, '', `${model}/${f} node ${id} ${input} is empty`);
+            if (/seed/i.test(input) && typeof v === 'number') eq(v, 0, `${model}/${f} node ${id} seed is 0`);
+          }
+          if (node.class_type === 'LoadImage') eq(node.inputs.image, 'example.png', `${model}/${f} loads no one's picture`);
+        }
+        assert(w.models.every(m => /^https:\/\/huggingface\.co\//.test(m.url)), `${model}/${f}: every model file has a Hugging Face link`);
+      }
+    }
+    assert(shippedCount > 0, 'a workflow ships');
+    const refused = await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: APP }, body: JSON.stringify({ starter: '../../package.json' }) });
+    eq(refused.status, 404, 'only files in workflows/ are read');
+
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea-2-raw-i2i"]');
+    await click('#addWorkflowBtn');
+    await waitFor('!document.querySelector("#wfStarters").hidden && document.querySelectorAll("#wfStList button").length === 1', 'the starter workflow is offered');
+    await click('#wfStList button');
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#wfName'), 'Krea 2 RAW: image to image', 'named');
+    await click('#wfSave');
+    await waitFor('!document.querySelector("#wfDialog").open', 'saved');
+    const flow = (await fetch(`${APP}/api/workflows`).then(r => r.json())).find(f => f.modelId === 'krea-2-raw-i2i');
+    eq(flow?.source, 'starter:krea-2-raw-i2i/image-to-image.json', 'remembers where it came from');
+    await click('#addWorkflowBtn');
+    await waitFor('document.querySelector("#wfStList button")?.textContent.includes("added already")', 'marked as added');
+    await click('#wfClose');
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
+    await goto(APP);
+  });
+
   await test('security: other websites can\'t use the local API', async () => {
     const res = await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{"llmModel":"x"}' });
     eq(res.status, 403, 'cross-site write blocked');
