@@ -278,7 +278,7 @@ The motion video is kept with the take (History puts it back), and deleting the 
 
 ### ✦ The assistant
 
-Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
+Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. The page takes all the room beside the panel and nothing lies under it: on a smaller window the Create page goes to one column while the panel is open. The top bar's menus (Brain, 🎨 Rendering) open over it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
 - **Ask what it thinks.** *"Which of these renders do you like better?"*, *"Should the princess be in the high tower or the dungeon?"*, *"Based on this prompt, what aspect ratio should it be?"* It gives a real opinion with a reason, and offers to act on it.
 - **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, 🎞 Your renders, the Gallery, and pictures and videos in any folder on your computer. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.

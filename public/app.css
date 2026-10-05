@@ -152,7 +152,7 @@ fieldset legend { padding: 0 6px; }
 
 /* ---------- top bar ---------- */
 .topbar {
-  position: sticky; top: 0; z-index: 20;
+  position: sticky; top: 0; z-index: 32; /* above the assistant panel (30), so its menus open over it */
   display: flex; align-items: center; gap: 18px;
   padding: 12px 24px;
   background: rgb(10 9 16 / 72%);
@@ -215,7 +215,9 @@ html:has(#banner:not([hidden])) { scroll-padding-top: 150px; }
 
 .banner-ico { font-size: 18px; }
 
-main { padding: 24px; max-width: 1560px; margin: 0 auto; }
+/* Create, History and the Gallery use the whole window, however wide; pages of text and forms stay readable. */
+main { padding: 24px; max-width: 2560px; margin: 0 auto; }
+#view-models, #view-settings { max-width: 1512px; margin-inline: auto; }
 .view { display: none; animation: rise 0.35s ease both; }
 .view.active { display: block; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
@@ -232,27 +234,30 @@ main { padding: 24px; max-width: 1560px; margin: 0 auto; }
 .director-steps { position: relative; display: flex; flex-direction: column; gap: 26px; padding: 22px 22px calc(26px + var(--bar-fade)); }
 /* Wide screens: the steps and the takes each scroll on their own and the page stays put, so takes being written,
    renders arriving and panels folding never move the controls. A running job's bar sits over the takes. */
+/* body.narrow: the room left for the page is that of a narrow window (the assistant panel is open beside it), so
+   the page lays itself out as on one (see syncNarrow in app.js). */
 @media (min-width: 901px) {
-  .create {
+  body:not(.narrow) .create {
     height: calc(100dvh - var(--topbar-h, 76px) - var(--banner-h, 0px) - 48px); min-height: 420px;
     grid-template-rows: auto minmax(0, 1fr); row-gap: 0;
   }
-  .create > .job-bar { grid-column: 2; grid-row: 1; margin-bottom: 16px; }
-  .director { grid-column: 1; grid-row: 1 / span 2; max-height: 100%; }
-  .director-steps {
+  body:not(.narrow) .create > .job-bar { grid-column: 2; grid-row: 1; margin-bottom: 16px; }
+  body:not(.narrow) .director { grid-column: 1; grid-row: 1 / span 2; max-height: 100%; }
+  body:not(.narrow) .director-steps {
     flex: 1 1 auto; min-height: 0; overflow-y: auto; scroll-padding-bottom: var(--bar-fade);
     border-radius: 26px 26px 0 0; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
   }
-  .create > .stage {
+  body:not(.narrow) .create > .stage {
     grid-column: 2; grid-row: 2; align-self: stretch; position: relative; overflow-y: auto; overscroll-behavior: contain;
     margin-right: -14px; padding-right: 14px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
   }
-  .create > .stage > * { flex-shrink: 0; }
+  body:not(.narrow) .create > .stage > * { flex-shrink: 0; }
 }
 /* Keeps a scroller as long as what's on screen (see holdFloor in app.js). */
 .scroll-floor { position: absolute; top: 0; left: 0; width: 1px; visibility: hidden; pointer-events: none; }
 body:not(:has(#view-create.active)) > .scroll-floor { display: none; }
 @media (max-width: 900px) { .create .scroll-floor { display: none; } }
+body.narrow .create .scroll-floor { display: none; }
 .step { display: flex; flex-direction: column; gap: 12px; }
 .step-head { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
 .step-head h2 { font-size: 18px; font-weight: 750; white-space: nowrap; }
@@ -532,7 +537,11 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 
 .take.interrupted .status { color: var(--warn); background: rgb(255 196 77 / 12%); }
 
-.error-card { display: flex; gap: 14px; padding: 16px 18px; border-radius: var(--radius); background: rgb(255 90 110 / 10%); border: 1px solid rgb(255 90 110 / 45%); animation: rise 0.3s ease both; }
+/* Lies over the top of the takes until it's closed (--eh: its height and the gap after it, set when it shows), so
+   what's under it doesn't move down when it arrives. */
+.error-card { position: sticky; top: var(--stick-top, 0px); z-index: 6; margin-bottom: calc(-1 * var(--eh, 0px)); display: flex; gap: 14px; padding: 16px 18px; border-radius: var(--radius); background: color-mix(in srgb, rgb(255 90 110) 16%, var(--panel-solid)); border: 1px solid rgb(255 90 110 / 45%); box-shadow: var(--shadow); animation: rise 0.3s ease both; }
+@media (max-width: 900px) { .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); } }
+body.narrow .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); }
 .error-card .e-ico { font-size: 24px; line-height: 1.2; }
 .error-card b { display: block; font-size: 16px; margin-bottom: 2px; color: #ffc2ca; }
 .error-card p { margin: 0; color: #ffd9de; white-space: pre-wrap; }
@@ -694,12 +703,24 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 @media (max-width: 1060px) {
   .wordmark { display: none; }
 }
+/* Between a tablet and a small laptop the Brain's name gets the room the wordmark left, and Ask keeps its word. */
+@media (min-width: 861px) and (max-width: 1060px) {
+  .topbar { gap: 8px; padding-inline: 14px; }
+  .tabs { margin: 0; }
+  .tabs button { padding: 8px 9px; }
+  .llm { flex: 1 1 0; margin-left: 0; }
+  .llm-pick { width: auto; min-width: 0; flex: 1 1 auto; }
+}
 @media (max-width: 900px) {
   .create { grid-template-columns: 1fr; }
   .create > .job-bar { margin-bottom: -12px; }
   .models-layout { grid-template-columns: 1fr; }
   .models-side { position: static; }
 }
+body.narrow .create { grid-template-columns: 1fr; }
+body.narrow .create > .job-bar { margin-bottom: -12px; }
+body.narrow .models-layout { grid-template-columns: 1fr; }
+body.narrow .models-side { position: static; }
 @media (max-width: 860px) {
   .topbar { flex-wrap: wrap; gap: 10px; padding: 10px 16px; }
   .tabs { order: 3; width: 100%; margin: 0; justify-content: space-between; }
@@ -1024,7 +1045,7 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .assistant { position: fixed; z-index: 30; top: var(--topbar-h, 72px); right: 0; bottom: 0; width: min(420px, 100vw); display: flex; flex-direction: column; background: var(--panel-solid); border-left: 1px solid var(--line-2); box-shadow: -24px 0 60px -30px #000; animation: as-in 0.2s ease both; }
 @keyframes as-in { from { opacity: 0; translate: 24px 0; } }
 .as-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 18px; border-bottom: 1px solid var(--line); }
-.as-title { font-weight: 800; font-size: 16px; background: var(--grad-cool); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.as-title { flex: none; white-space: nowrap; font-weight: 800; font-size: 16px; background: var(--grad-cool); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .as-brain { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
 .as-log { flex: 1; overflow-y: auto; padding: 16px 16px 8px; display: flex; flex-direction: column; gap: 10px; }
 .as-msg { max-width: 92%; padding: 10px 14px; border-radius: 16px; font-size: 14.5px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -1050,10 +1071,11 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .as-compose textarea { flex: 1; min-height: 44px; max-height: 160px; resize: none; font-size: 14.5px; border-radius: 14px; }
 .as-compose .btn { flex: none; height: 44px; border-radius: 14px; }
 .as-compose #asSend { width: 48px; font-size: 18px; }
-@media (min-width: 1280px) {
-  body.as-open main { padding-right: 444px; }
+/* The page takes the room left of the panel, all of it, so nothing lies under the panel. */
+@media (min-width: 901px) {
+  body.as-open main { margin-right: 420px; }
 }
-@media (max-width: 1060px) {
+@media (max-width: 560px) {
   .ask-btn .ask-label { display: none; }
   .ask-btn { width: 40px; padding: 0; justify-content: center; }
 }

@@ -3764,6 +3764,34 @@ esac
     assert(!Object.keys(bypassed).some(id => id.startsWith('2:')), 'and none of its inner nodes are sent');
   });
 
+  await test('the assistant panel never lies over the page; the top bar\'s menus open over the panel; the Gallery fits the window', async () => {
+    const open = async want => { if ((await js('!document.querySelector("#assistant").hidden')) !== want) await click('#askBtn'); await sleep(350); };
+    const edges = () => js('(() => { const s = document.querySelector(".stage").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return { stageRight: Math.round(s.right), stageWidth: Math.round(s.width), panelLeft: Math.round(a.left) }; })()');
+    await click('.tabs button[data-view="create"]');
+    await viewport(1600, 1000);
+    await open(true);
+    let e = await edges();
+    assert(e.stageRight <= e.panelLeft, `nothing of the results is under the panel: ${JSON.stringify(e)}`);
+    assert(e.stageWidth > 600 && !(await js('document.body.classList.contains("narrow")')), `and they keep the room that is there: ${JSON.stringify(e)}`);
+    await click('#llmPick');
+    assert(await js('(() => { const b = document.querySelector("#llmMenu").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return b.right > a.left && !!document.elementFromPoint(b.right - 20, b.top + 60)?.closest("#llmMenu"); })()'), 'the Brain menu opens over the panel');
+    await press('Escape');
+    await viewport(1100, 800);
+    await sleep(200);
+    e = await edges();
+    assert(await js('document.body.classList.contains("narrow")'), 'beside the panel on a smaller window, the page lays itself out in one column');
+    assert(e.stageRight <= e.panelLeft, `so still nothing is under the panel: ${JSON.stringify(e)}`);
+    eq(await js('document.documentElement.scrollWidth <= innerWidth'), true, 'and nothing scrolls sideways');
+    eq(await js('Math.round(document.querySelector(".as-title").getBoundingClientRect().height) < 30'), true, 'the panel\'s title stays on one line');
+    await open(false);
+    assert(!(await js('document.body.classList.contains("narrow")')), 'closed: two columns again');
+    await viewport(1440, 900);
+    await click('.tabs button[data-view="gallery"]');
+    await sleep(400);
+    eq(await js('document.documentElement.scrollHeight - innerHeight'), 0, 'the Gallery fills the window exactly: only its grid scrolls');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('the app folder is never written to', async () => {
     eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
     for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);

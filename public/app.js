@@ -50,6 +50,13 @@ const state = {
 
 // ---------- utilities ----------
 
+// The room the page has is that of a narrow window: the assistant panel (420px) is open beside it. The page then
+// lays itself out as on a narrow window, instead of the panel lying over its right side.
+function syncNarrow() {
+  document.body.classList.toggle('narrow', innerWidth > 900 && document.body.classList.contains('as-open') && innerWidth - 420 <= 900);
+}
+addEventListener('resize', syncNarrow);
+
 const saved = {
   get(k, fallback) { try { const v = localStorage.getItem(`pm.${k}`); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } },
   set(k, v) { try { localStorage.setItem(`pm.${k}`, JSON.stringify(v)); } catch { /* storage unavailable */ } },
@@ -1943,6 +1950,7 @@ function showError(msg) {
   const canStart = /reach LM Studio|stopped responding/i.test(msg);
   card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b><p>${esc(msg)}</p>${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
   card.hidden = false;
+  card.style.setProperty('--eh', `${card.offsetHeight + (parseFloat(getComputedStyle(card.parentElement).rowGap) || 0)}px`);
   $('.x', card).addEventListener('click', () => showError(''));
   $('.e-start', card)?.addEventListener('click', e => startLmStudio(e.currentTarget));
   announce(`${title}. ${msg}`);
@@ -2276,7 +2284,8 @@ function renderReel() {
   const going = rendersLeft();
   const shown = all.length - hiddenCount;
   $('#reelCount').textContent = [
-    reelFilter.hidden ? `${items.length} hidden` : shown && (reelFiltered() ? `${items.length} of ${shown}` : `${shown} render${shown > 1 ? 's' : ''}`),
+    // (In the Gallery the page's heading already says how many there are.)
+    reelFilter.hidden ? `${items.length} hidden` : shown && (reelFiltered() ? `${items.length} of ${shown}` : inGallery() ? '' : `${shown} render${shown > 1 ? 's' : ''}`),
     going && `${going} rendering`,
   ].filter(Boolean).join(' · ');
   $('#reelZoom').hidden = !open || none;
@@ -2613,7 +2622,12 @@ function sizeReel() {
   const box = $('#reel');
   if (box.hidden) return;
   const h = inGallery() ? innerHeight - box.getBoundingClientRect().top - window.scrollY - 24 : saved.get('reelHeight', 400);
-  box.style.setProperty('--reel-h', `${Math.round(Math.min(reelMaxH(), Math.max(REEL_MIN_H, h)))}px`);
+  const set = px => box.style.setProperty('--reel-h', `${Math.round(Math.min(reelMaxH(), Math.max(REEL_MIN_H, px)))}px`);
+  set(h);
+  // The Gallery fills the window exactly: whatever still sticks out under it (its own edges, the page's padding)
+  // comes off, so the page itself has nothing to scroll and only the grid does.
+  const over = inGallery() && !box.classList.contains('full') ? document.documentElement.scrollHeight - innerHeight - window.scrollY : 0;
+  if (over > 0) set(h - over);
   const body = $('#reelBody');
   if (body.hidden || box.classList.contains('empty')) return;
   const room = Math.max(80, body.clientHeight - $('#reelFilters').offsetHeight - 28);
@@ -8705,6 +8719,7 @@ async function openAssistant(open = $('#assistant').hidden, { focus = true } = {
   panel.hidden = !open;
   saved.set('assistantOpen', open);
   document.body.classList.toggle('as-open', open);
+  syncNarrow();
   $('#askBtn').setAttribute('aria-expanded', open);
   document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`);
   if (!open) { if (focus) $('#askBtn').focus(); return; }
