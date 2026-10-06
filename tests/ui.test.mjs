@@ -2733,6 +2733,25 @@ esac
     assert((await acts()).includes('There\'s no model called “nonexistent”'), 'a failing tool is shown, nothing breaks');
     assert((await bot()).includes('no model by that name'), 'and it tells you');
 
+    await type('#asInput', 'switch to ltx then krea');
+    await press('Enter');
+    await idle();
+    const amb = await acts();
+    assert(amb.includes('could be Krea 2 RAW') && amb.includes('i2i'), `a name that fits two models is an error, not a guess: ${amb}`);
+    assert(amb.includes('Not run: set_model failed'), `the rest of that step is not run: ${amb}`);
+    assert((await value('#theme')) !== 'after a failure', 'the theme was left alone');
+    assert((await bot()).includes('which?'), 'and it asks');
+
+    await type('#asInput', 'make three ltx videos');
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'more than a couple of videos in one turn are asked on screen');
+    assert((await text('#asLog .as-confirm')).includes('3 videos'), 'it says how many');
+    await click('#asLog [data-confirm="no"]');
+    await idle();
+    assert((await acts()).includes('said no to 3'), 'the Brain is told you said no');
+    assert((await bot()).includes('no videos'), 'and it stops there');
+    assert(JSON.parse(await fs.readFile(path.join(dataDir, 'assistant.json'), 'utf8')).messages.some(m => m.role === 'tool' && m.content.includes('said no to 3')), 'the chat was saved as it went');
+
     await type('#asInput', 'tag fallback please');
     await press('Enter');
     await idle();
@@ -2796,7 +2815,7 @@ esac
 
     await goto(`${APP}/#create`);
     await waitFor('!document.querySelector("#assistant").hidden', 'left open, it opens again with the app');
-    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 10', 'the conversation is still there after a reload');
+    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 12', 'the conversation is still there after a reload');
     await viewport(390, 844, true);
     await sleep(200);
     eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');

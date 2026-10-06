@@ -50,12 +50,16 @@ function assistantTurn(body) {
   const said = textOf(msgs[at].content).toLowerCase();
   const round = msgs.slice(at + 1).filter(m => m.role === 'assistant').length;
   const results = msgs.slice(at + 1).filter(m => m.role === 'tool').map(m => m.content).join('\n');
-  const script = /set up/.test(said) ? [{ calls: [['set_model', { model: 'krea' }], ['set_theme', { text: 'a surfer at golden hour' }], ['set_dials', { aspect: '9:16', takes: 2 }]] }, { text: 'All set: **Krea 2 RAW**, 9:16, 2 takes. Say *go* and I\'ll write them.' }]
+  const script = /set up/.test(said) ? [{ calls: [['set_model', { model: 'krea 2 raw' }], ['set_theme', { text: 'a surfer at golden hour' }], ['set_dials', { aspect: '9:16', takes: 2 }]] }, { text: 'All set: **Krea 2 RAW**, 9:16, 2 takes. Say *go* and I\'ll write them.' }]
     : /\bgo\b/.test(said) ? [{ calls: [['generate', {}]] }, { text: 'Your 2 takes are ready on the right.' }]
     : /\bhow\b/.test(said) ? [{ calls: [['read_guide', { topic: said }]] }, { text: results.includes('Add LoRA') ? 'In step ⑤, click **＋ Add LoRA** and pick one from your model\'s folder.' : 'I couldn\'t find that in the guide.' }]
     : /\blora\b/.test(said) ? [{ calls: [['add_lora', { name: 'detail', strength: 0.6 }]] }, { text: 'Added it at 0.6.' }]
+    // A model name that fits two models, then a theme: the theme must not be set once set_model failed.
+    : /ltx then krea/.test(said) ? [{ calls: [['set_model', { model: 'ltx' }], ['set_model', { model: 'krea' }], ['set_theme', { text: 'after a failure' }]] }, { text: results.includes('could be') ? 'Krea is two models: which?' : 'Done.' }]
+    // Three videos in one go: the app asks the user first (on generate when auto-render is on, else on render).
+    : /three ltx videos/.test(said) ? [{ calls: [['set_model', { model: 'ltx' }], ['set_theme', { text: 'a slow pan' }], ['set_dials', { takes: 3 }], ['generate', {}]] }, results.includes('said no') ? { text: 'Okay, no videos.' } : { calls: [['render', {}]] }, { text: results.includes('said no') ? 'Okay, no videos.' : 'Rendered.' }]
     : /bogus/.test(said) ? [{ calls: [['set_model', { model: 'nonexistent' }]] }, { text: results.includes('"error"') ? 'There\'s no model by that name.' : 'Done.' }]
-    : /fix the playbook/.test(said) ? [{ calls: [['edit_playbook', { model: 'krea', description: 'Edited by the assistant', resolutions: ['1024×1024', '1536×1024'] }]] }, { text: results.includes('Saved the') ? 'Saved it. Say undo to put it back.' : 'That failed.' }]
+    : /fix the playbook/.test(said) ? [{ calls: [['edit_playbook', { model: 'krea 2 raw', description: 'Edited by the assistant', resolutions: ['1024×1024', '1536×1024'] }]] }, { text: results.includes('Saved the') ? 'Saved it. Say undo to put it back.' : 'That failed.' }]
     : /\bundo\b/.test(said) ? [{ calls: [['undo_playbook_edit', {}]] }, { text: results.includes('back as it was') ? 'Put it back.' : 'That failed.' }]
     : /like best/.test(said) ? [{ calls: [['look_at', {}]] }, { text: sawPictures ? 'I\'d pick **take 1, render 1**: the light is softer and the subject reads better.' : 'I couldn\'t see them.' }]
     : /my renders of/.test(said) ? [{ calls: [['look_at', { what: 'gallery', find: said.split('my renders of')[1] }]] }, { text: results.includes('"error"') ? `None of your renders show that. (${results.match(/"error":"([^"]*)/)?.[1]})` : sawPictures ? `Found them: ${results.match(/Looked at [^"]*/)?.[0]}.` : 'I couldn\'t see them.' }]
@@ -66,7 +70,7 @@ function assistantTurn(body) {
     : /^job:/.test(said) ? (() => {
       const folder = textOf(msgs[at].content).match(/(\/[^\s,]+)/)[1];
       const runs = [
-        { label: 'low temp', steps: [{ tool: 'clear_chain' }, { tool: 'set_model', args: { model: 'krea' } }, { tool: 'set_theme', args: { text: '' } }, { tool: 'set_dials', args: { takes: 1, temperature: 0.3, batch: 'off' } }, { tool: 'generate' }] },
+        { label: 'low temp', steps: [{ tool: 'clear_chain' }, { tool: 'set_model', args: { model: 'krea 2 raw' } }, { tool: 'set_theme', args: { text: '' } }, { tool: 'set_dials', args: { takes: 1, temperature: 0.3, batch: 'off' } }, { tool: 'generate' }] },
         { label: 'high temp', steps: [{ tool: 'set_dials', args: { takes: 1, temperature: 1.4 } }, { tool: 'generate' }] },
       ];
       return [{ calls: [['list_folder', { folder }]] }, { calls: [['start_job', { title: 'Pics, low and high', folder, runs }]] }, { text: results.includes('Started the job') ? 'Started it: follow it in 🗂 Jobs.' : 'That failed.' }];

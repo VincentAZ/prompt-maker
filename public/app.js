@@ -7433,7 +7433,7 @@ $('#sComfyTest').addEventListener('click', async () => {
 // Chat with the Brain, which can look at and use the app through tools. The tools run here, through the same
 // functions the buttons use, so everything it does shows up on screen. The conversation lives in the data folder.
 
-const as = { messages: [], loaded: false, busy: false, stopped: false, controller: null, running: null, live: null };
+const as = { messages: [], loaded: false, busy: false, stopped: false, controller: null, running: null, live: null, turnVideos: 0 }; // turnVideos: video renders this turn started
 
 const T = (name, description, properties = {}, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
 const S = description => ({ type: 'string', description });
@@ -7537,7 +7537,7 @@ const TOOLS = [
   T('list_folder', 'List the pictures (and videos) in a folder on this computer (for a job, look_at, use_image or use_motion_video). A name alone, or one close to it ("renderings" finds "renders"), is looked for in Prompt Maker\'s and ComfyUI\'s folders, then everywhere in the home folder and on other drives; others lists more folders that fit.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
   T('find', 'Find files or folders on this computer by name, anywhere in the home folder and on every drive (USB, second disk). Names close to it count too.', { name: S('The name or part of it'), kind: E(['folder', 'file', 'any'], 'default: any'), in: S('Optional: only inside this folder') }, ['name']),
   T('use_image', 'Put a picture from a folder into step 3.', { folder: S('The folder, as list_folder took it'), file: S('The file name, from list_folder') }, ['folder', 'file']),
-  T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). A step can judge too: pick_best looks at what the job made so far and can put the winner in step 3 (e.g. stills, then the best one animated, then the same video at other settings with set_sampler and render). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Put the whole task in one job. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}]. Example, "3 stills of a diver, different each time, same seed; animate the best in LTX at 20 steps, then 10": no folder, runs [{label:"still 1", steps:[{tool:"set_model",args:{model:"Krea 2"}},{tool:"set_seed",args:{mode:"fixed",value:7}},{tool:"set_dials",args:{takes:1}},{tool:"set_theme",args:{text:"a diver in a kelp forest, sun rays"}},{tool:"generate"},{tool:"render"}]}, {label:"still 2", steps:[{tool:"set_theme",args:{text:"a diver over a coral reef at dusk"}},{tool:"generate"},{tool:"render"}]}, {label:"still 3", steps:[{tool:"set_theme",args:{text:"a diver in a wreck, torch light"}},{tool:"generate"},{tool:"render"}]}, {label:"best, 20 steps", steps:[{tool:"pick_best",args:{for:"a diver who turns to the camera",then:"animate",model:"LTX 2.3"}},{tool:"set_theme",args:{text:"the diver turns to the camera"}},{tool:"set_sampler",args:{steps:20}},{tool:"generate"},{tool:"render"}]}, {label:"10 steps", steps:[{tool:"set_sampler",args:{steps:10}},{tool:"render"}]}].`, {
+  T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). A step can judge too: pick_best looks at what the job made so far and can put the winner in step 3 (e.g. stills, then the best one animated, then the same video at other settings with set_sampler and render). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Put the whole task in one job. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}]. Example, "3 stills of a diver, different each time, same seed; animate the best in LTX at 20 steps, then 10": no folder, runs [{label:"still 1", steps:[{tool:"set_model",args:{model:"Krea 2 RAW t2i"}},{tool:"set_seed",args:{mode:"fixed",value:7}},{tool:"set_dials",args:{takes:1}},{tool:"set_theme",args:{text:"a diver in a kelp forest, sun rays"}},{tool:"generate"},{tool:"render"}]}, {label:"still 2", steps:[{tool:"set_theme",args:{text:"a diver over a coral reef at dusk"}},{tool:"generate"},{tool:"render"}]}, {label:"still 3", steps:[{tool:"set_theme",args:{text:"a diver in a wreck, torch light"}},{tool:"generate"},{tool:"render"}]}, {label:"best, 20 steps", steps:[{tool:"pick_best",args:{for:"a diver who turns to the camera",then:"animate",model:"LTX 2.3"}},{tool:"set_theme",args:{text:"the diver turns to the camera"}},{tool:"set_sampler",args:{steps:20}},{tool:"generate"},{tool:"render"}]}, {label:"10 steps", steps:[{tool:"set_sampler",args:{steps:10}},{tool:"render"}]}].`, {
     title: S('A short name for the job'),
     folder: S('Optional: the folder of pictures to work through'),
     limit: I('Optional: only the first N pictures'),
@@ -7662,16 +7662,45 @@ function confirmInChat(question, yes, { no = 'Keep it', detail = '' } = {}) {
   });
 }
 
+// The models a name fits: the one it names exactly, else those whose name holds every word of it ("krea t2i" is
+// only Krea 2 RAW t2i), else those it is part of ("krea" is both Krea 2 RAW models).
+function modelsLike(q) {
+  const s = squash(q);
+  const exact = state.models.filter(m => m.id === q || squash(m.name) === s);
+  if (exact.length) return exact.slice(0, 1);
+  const words = (String(q).toLowerCase().match(/[a-z0-9.]+/g) || []).map(squash).filter(Boolean);
+  const byWords = words.length ? state.models.filter(m => words.every(w => squash(m.name).includes(w) || squash(m.id).includes(w))) : [];
+  if (byWords.length) return byWords;
+  return state.models.filter(m => squash(m.name).includes(s) || squash(m.id).includes(s) || s.includes(squash(m.id)));
+}
+// Video renders take minutes each. In a chat turn, a couple go ahead; more than that is asked on screen first
+// (a job is the place for many). Jobs and stills aren't asked.
+const VIDEOS_UNASKED = 2;
+async function okToRenderVideos(n, what) {
+  if (jobs.current || currentModel()?.kind !== 'video' || !n) return;
+  if (as.turnVideos + n > VIDEOS_UNASKED) {
+    const ok = await confirmInChat(`${what}: ${n} video${n > 1 ? 's' : ''}${as.turnVideos ? `, on top of the ${as.turnVideos} already started this turn` : ''}. Each can take many minutes. Go ahead?`, `▶ Go ahead`, { no: 'No' });
+    if (!ok) throw new Error(`The user said no to ${n} more video render${n > 1 ? 's' : ''}. Ask what they'd like instead; many renders belong in a job (start_job).`);
+  }
+  as.turnVideos += n;
+}
+
 function findModel(q) {
   if (!q) return currentModel();
-  const s = squash(q);
-  return state.models.find(m => m.id === q || squash(m.name) === s)
-    || state.models.find(m => squash(m.name).includes(s) || squash(m.id).includes(s) || s.includes(squash(m.id))) || null;
+  const like = modelsLike(q);
+  return like.find(m => m.id === state.modelId) || like[0] || null;
 }
+// A name that fits several models is an error (unless one of them is the model on Create), not a guess: "Krea 2"
+// picked the i2i model over the t2i one once, and a video was made from the wrong picture.
 function needModel(q) {
-  const m = findModel(q);
-  if (!m) throw new Error(`There's no model called “${q}”. The models are: ${state.models.map(x => x.name).join(', ')}.`);
-  return m;
+  const like = q ? modelsLike(q) : [currentModel()].filter(Boolean);
+  if (!like.length) throw new Error(`There's no model called “${q}”. The models are: ${state.models.map(x => x.name).join(', ')}.`);
+  if (like.length > 1) {
+    const current = like.find(m => m.id === state.modelId);
+    if (current) return current;
+    throw new Error(`“${q}” could be ${like.map(m => m.name).join(' or ')}: say which.`);
+  }
+  return like[0];
 }
 function needCard(n) {
   const card = state.cards[Number(n) - 1];
@@ -8276,7 +8305,8 @@ const TOOL_IMPL = {
     const m = needModel(model);
     showView('create');
     selectModel(m.id);
-    return { summary: `Model → ${m.name}` };
+    const held = state.image ? `. Step 3 still holds the picture (${state.image.source ? takeLabel(state.image.source) : 'uploaded'}) as ${USE_LABEL[effectiveRole()] || effectiveRole()}: clear_image if the next prompt shouldn't use it` : '';
+    return { summary: `Model → ${m.name}${held}` };
   },
   set_theme: ({ text }) => {
     showView('create');
@@ -8535,13 +8565,18 @@ const TOOL_IMPL = {
   generate: async () => {
     notBusy();
     showView('create');
+    const m = currentModel();
+    const auto = m && saved.get(autoRenderKey(m.id), false) && workflowsFor(m.id).length > 0 && !state.chain.steps.length;
+    if (auto) await okToRenderVideos(state.variations, `Generate would also render ${state.variations} take${state.variations > 1 ? 's' : ''} right away (auto-render is on for ${m.name})`);
     const before = state.entry;
     await generate();
     if (!state.entry?.id || state.entry === before) throw new Error(stageError() || 'Nothing was generated.');
     const takes = state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, text: $('.prompt-text', c.el).value }));
     if (state.run) return { summary: `Chain ${state.run.status === 'done' ? 'done' : state.run.status === 'waiting' ? 'waiting for picks' : 'ran'}`, run: state.run.status, takes };
     const rendered = state.cards.reduce((n, c) => n + takeRenders(c).length, 0);
-    return { summary: `Wrote ${takes.length} take${takes.length > 1 ? 's' : ''} for ${state.entry.modelName}${state.entry.batch ? ` (batch “${state.entry.batch}”), rendered ${rendered}` : ''}`, takes };
+    const rendering = state.cards.filter(c => c.running.size > 0).length; // auto-render: already started, not waited for
+    const also = state.entry.batch ? ` (batch “${state.entry.batch}”), rendered ${rendered}` : rendered ? `, and rendered ${rendered} (auto-render is on: don't render them again)` : rendering ? `; ${rendering} render${rendering > 1 ? 's are' : ' is'} already running (auto-render is on: don't render them again; look_at shows them once they're done)` : '';
+    return { summary: `Wrote ${takes.length} take${takes.length > 1 ? 's' : ''} for ${state.entry.modelName}${also}`, takes };
   },
   refine_take: async ({ take, instruction }) => {
     notBusy();
@@ -8555,8 +8590,12 @@ const TOOL_IMPL = {
     const cards = take ? [needCard(take)] : state.cards.filter(c => !c.interrupted);
     if (!cards.length) throw new Error('There are no takes to render. Generate first.');
     if (!cards.every(c => c.rb)) throw new Error(`${currentModel()?.name || 'This model'} has no workflow to render with. Add one in step 5.`);
+    const each = clampInt(count ?? 1, 1, BATCH_MAX);
+    const running = cards.filter(c => c.running.size > 0).length;
+    if (running) throw new Error(`${running === cards.length ? 'Those takes are' : `${running} of those takes are`} already rendering (auto-render is on). Wait for them: look_at shows them once they're done.`);
+    await okToRenderVideos(cards.length * each, `Render ${cards.length * each > 1 ? `${cards.length * each} videos` : 'a video'}`);
     const before = cards.reduce((n, c) => n + takeRenders(c).length, 0);
-    await Promise.all(cards.map(c => { c.rb.count = clampInt(count ?? 1, 1, BATCH_MAX); return startRender(c); }));
+    await Promise.all(cards.map(c => { c.rb.count = each; return startRender(c); }));
     const made = cards.reduce((n, c) => n + takeRenders(c).length, 0) - before;
     if (!made) throw new Error(stageError() || 'The render didn\'t come back.');
     return { summary: `Rendered ${made} file${made > 1 ? 's' : ''}` };
@@ -8730,6 +8769,7 @@ async function askAssistant(text) {
   as.messages.push({ role: 'user', content: text.trim() });
   as.busy = true;
   as.stopped = false;
+  as.turnVideos = 0;
   syncAssistantBusy();
   renderAssistantLog();
   try {
@@ -8754,12 +8794,15 @@ async function askAssistant(text) {
       if (!calls.length) break;
       const seen = [];
       as.roundGen = as.screenGen; // screen numbers in these calls are the ones the Brain has seen so far
+      let broke = null; // the rest of a message's calls don't run after one fails: the plan they were part of is off
       for (const c of calls) {
         if (as.stopped) break;
-        const { _images, ...result } = await runTool(c);
+        const { _images, ...result } = broke ? { error: `Not run: ${broke} failed before it in the same step. Look at what the app holds now and go on from there.` } : await runTool(c);
+        if (result.error && !broke) broke = c.name;
         if (_images) seen.push(..._images);
         as.messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(result) });
         renderAssistantLog();
+        saveChat(); // as it goes: a long turn (renders) leaves its log even if the page closes
       }
       // What look_at showed goes to the Brain as pictures (tool results can only be text).
       if (seen.length && !as.stopped) {
@@ -8778,7 +8821,18 @@ async function askAssistant(text) {
   as.busy = false;
   syncAssistantBusy();
   renderAssistantLog();
-  api('/api/assistant/chat', { method: 'PUT', body: { messages: as.messages } }).catch(() => {});
+  saveChat();
+}
+
+// The conversation, saved; the pictures it looked at go as their names only (they're never saved).
+let saving = null;
+function saveChat() {
+  if (saving) return;
+  saving = setTimeout(() => {
+    saving = null;
+    const messages = as.messages.map(m => (Array.isArray(m.content) ? { ...m, content: m.content.map(p => (p.type === 'image_url' ? { type: 'text', text: '(an image shown earlier)' } : p)) } : m));
+    api('/api/assistant/chat', { method: 'PUT', body: { messages } }).catch(() => {});
+  }, 300);
 }
 
 function stopAssistant() {
