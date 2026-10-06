@@ -53,17 +53,28 @@ const state = {
 // The writing's temperature in a word (the number is beside the slider for those who know it).
 const adventureWord = v => (v < 0.35 ? 'locked-in' : v < 0.75 ? 'balanced' : v < 1.15 ? 'creative' : v < 1.5 ? 'spicy' : 'unhinged');
 
-// The room the page has is that of a narrow window: the assistant panel (420px) is open beside it. The page then
-// lays itself out as on a narrow window, instead of the panel lying over its right side.
-function syncNarrow() {
-  document.body.classList.toggle('narrow', innerWidth > 900 && document.body.classList.contains('as-open') && innerWidth - 420 <= 900);
-}
-addEventListener('resize', syncNarrow);
-
 const saved = {
   get(k, fallback) { try { const v = localStorage.getItem(`pm.${k}`); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } },
   set(k, v) { try { localStorage.setItem(`pm.${k}`, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
+
+// The assistant panel is as wide as you dragged it (420px to start with), up to the whole window.
+const AS_W = 420;
+const AS_MIN_W = 320;
+const AS_PAGE_MIN = 480; // with less room than this left for the page, the panel lies over it
+const AS_FULL = 100000; // "fill the window", whatever the window's size
+const assistantWidth = () => Math.min(innerWidth, Math.max(AS_MIN_W, Number(saved.get('assistantWidth', AS_W)) || AS_W));
+
+// The room the page has is that of a narrow window: the assistant panel is open beside it. The page then
+// lays itself out as on a narrow window, instead of the panel lying over its right side.
+function syncNarrow() {
+  const open = document.body.classList.contains('as-open');
+  const room = innerWidth - assistantWidth();
+  document.documentElement.style.setProperty('--as-w', `${assistantWidth()}px`);
+  document.body.classList.toggle('as-over', open && room < AS_PAGE_MIN);
+  document.body.classList.toggle('narrow', innerWidth > 900 && open && room >= AS_PAGE_MIN && room <= 900);
+}
+addEventListener('resize', syncNarrow);
 
 // Tells the server which pictures and videos this page still holds: the form's (the start-up tidy leaves them
 // alone) and those of prompts waiting in line (deleting a History card that shares one leaves them alone too).
@@ -8851,7 +8862,7 @@ async function openAssistant(open = $('#assistant').hidden, { focus = true } = {
   panel.hidden = !open;
   saved.set('assistantOpen', open);
   document.body.classList.toggle('as-open', open);
-  syncNarrow();
+  syncAssistantWidth();
   $('#askBtn').setAttribute('aria-expanded', open);
   document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`);
   if (!open) { if (focus) $('#askBtn').focus(); return; }
@@ -8861,14 +8872,102 @@ async function openAssistant(open = $('#assistant').hidden, { focus = true } = {
     as.messages = (await api('/api/assistant/chat').catch(() => ({ messages: [] }))).messages;
   }
   renderAssistantLog();
+  sizeAssistantInput();
   if (focus) $('#asInput').focus();
 }
+
+// The panel's width: drag its left edge (or focus it and press ← →), or ⤢ to fill the window and back.
+function syncAssistantWidth() {
+  syncNarrow();
+  const full = assistantWidth() >= innerWidth;
+  const b = $('#asWide');
+  b.textContent = full ? '⤡' : '⤢';
+  b.title = full ? 'Back to the side' : 'Fill the window';
+  b.setAttribute('aria-label', b.title);
+  b.setAttribute('aria-pressed', full);
+  const grip = $('#asGrip');
+  grip.setAttribute('aria-valuemin', AS_MIN_W);
+  grip.setAttribute('aria-valuemax', innerWidth);
+  grip.setAttribute('aria-valuenow', assistantWidth());
+}
+function setAssistantWidth(w) {
+  saved.set('assistantWidth', w >= innerWidth ? AS_FULL : Math.round(Math.max(AS_MIN_W, w)));
+  syncAssistantWidth();
+  sizeAssistantInput();
+}
+// The page beside the panel has a new width: what sizes itself to the window does so again.
+const assistantResized = () => window.dispatchEvent(new Event('resize'));
+
+// The message box grows with what you write (up to 160px), and is as tall as you dragged it when that's more.
+function sizeAssistantInput() {
+  const t = $('#asInput');
+  if (!t.offsetParent) return;
+  const max = Math.max(44, $('#assistant').offsetHeight - 220);
+  t.style.height = 'auto';
+  t.style.height = `${Math.min(max, Math.max(saved.get('assistantInputHeight', 0), Math.min(t.scrollHeight + 2, 160)))}px`;
+  const grip = $('#asInputGrip');
+  grip.setAttribute('aria-valuemin', 44);
+  grip.setAttribute('aria-valuemax', max);
+  grip.setAttribute('aria-valuenow', t.offsetHeight);
+}
+function setAssistantInputHeight(h) {
+  saved.set('assistantInputHeight', Math.round(Math.max(0, h)));
+  sizeAssistantInput();
+}
+
+// A grip you drag: start() gives the size it had, move(size it had, how far the pointer went) sets the new one.
+function dragGrip(grip, start, move, end) {
+  grip.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const was = start();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add('dragging');
+    const moved = ev => move(was, ev.clientX - e.clientX, ev.clientY - e.clientY);
+    const done = () => {
+      grip.classList.remove('dragging');
+      grip.removeEventListener('pointermove', moved);
+      grip.removeEventListener('pointerup', done);
+      grip.removeEventListener('pointercancel', done);
+      end?.();
+    };
+    grip.addEventListener('pointermove', moved);
+    grip.addEventListener('pointerup', done);
+    grip.addEventListener('pointercancel', done);
+  });
+}
+dragGrip($('#asGrip'), () => $('#assistant').offsetWidth, (was, dx) => setAssistantWidth(was - dx), assistantResized);
+$('#asGrip').addEventListener('dblclick', () => { setAssistantWidth(AS_W); assistantResized(); });
+$('#asGrip').addEventListener('keydown', e => {
+  const step = { ArrowLeft: 40, ArrowRight: -40, PageUp: 200, PageDown: -200 }[e.key];
+  if (e.key === 'Home') setAssistantWidth(AS_MIN_W);
+  else if (e.key === 'End') setAssistantWidth(innerWidth);
+  else if (step) setAssistantWidth($('#assistant').offsetWidth + step);
+  else return;
+  e.preventDefault();
+  assistantResized();
+});
+$('#asWide').addEventListener('click', () => {
+  if (assistantWidth() >= innerWidth) setAssistantWidth(saved.get('assistantWidthSide', AS_W));
+  else { saved.set('assistantWidthSide', assistantWidth()); setAssistantWidth(innerWidth); }
+  assistantResized();
+});
+dragGrip($('#asInputGrip'), () => $('#asInput').offsetHeight, (was, dx, dy) => setAssistantInputHeight(was - dy));
+$('#asInputGrip').addEventListener('dblclick', () => setAssistantInputHeight(0));
+$('#asInputGrip').addEventListener('keydown', e => {
+  const step = { ArrowUp: 40, ArrowDown: -40, PageUp: 200, PageDown: -200 }[e.key];
+  if (!step) return;
+  e.preventDefault();
+  setAssistantInputHeight($('#asInput').offsetHeight + step);
+});
+$('#asInput').addEventListener('input', sizeAssistantInput);
 
 function sendAssistant() {
   const input = $('#asInput');
   const text = input.value;
   if (!text.trim() || as.busy) return;
   input.value = '';
+  sizeAssistantInput();
   askAssistant(text);
 }
 
@@ -8899,6 +8998,7 @@ $('#asLog').addEventListener('click', e => {
   if (send) return askAssistant(text);
   const input = $('#asInput');
   input.value = text;
+  sizeAssistantInput();
   input.focus();
   const gap = text.indexOf('  ');
   input.setSelectionRange(gap >= 0 ? gap + 1 : text.length, gap >= 0 ? gap + 1 : text.length);
@@ -8911,7 +9011,7 @@ $('#assistant').addEventListener('keydown', e => {
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openAssistant(); }
 });
-window.addEventListener('resize', () => document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`));
+window.addEventListener('resize', () => { document.documentElement.style.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`); if (!$('#assistant').hidden) { syncAssistantWidth(); sizeAssistantInput(); } });
 
 // ---------- jobs (the assistant's long tasks) ----------
 // The assistant plans a job (start_job): runs × pictures, each a list of tool steps. The job runs here, on Create,

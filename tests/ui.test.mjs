@@ -3840,6 +3840,52 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('the assistant panel stretches: drag its edge, ⤢ fills the window and goes back; the message box grows and can be dragged taller', async () => {
+    const drag = async (sel, dx, dy) => {
+      const g = await js(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: g.x, y: g.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g.x + (dx * k) / 6, y: g.y + (dy * k) / 6, button: 'left', buttons: 1 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: g.x + dx, y: g.y + dy, button: 'left', buttons: 0, clickCount: 1 });
+      await sleep(150);
+    };
+    const width = () => js('Math.round(document.querySelector("#assistant").getBoundingClientRect().width)');
+    const edges = () => js('(() => { const s = document.querySelector(".stage").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return { stageRight: Math.round(s.right), panelLeft: Math.round(a.left) }; })()');
+    await click('.tabs button[data-view="create"]');
+    await viewport(1600, 1000);
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await sleep(350);
+    eq(await width(), 420, 'it starts 420 wide');
+    await drag('#asGrip', -280, 0);
+    eq(await width(), 700, 'dragging its left edge makes it wider');
+    const e = await edges();
+    assert(e.stageRight <= e.panelLeft, `and the page makes room: ${JSON.stringify(e)}`);
+    await click('#asWide');
+    eq(await width(), 1600, '⤢ fills the window');
+    eq(await js('document.documentElement.scrollWidth <= innerWidth'), true, 'nothing scrolls sideways');
+    await viewport(1300, 900);
+    await sleep(200);
+    eq(await width(), 1300, 'and keeps filling it when the window changes');
+    await click('#asWide');
+    eq(await width(), 700, 'again: back to the width it had');
+    await js('location.reload()');
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
+    await sleep(350);
+    eq(await width(), 700, 'the width is remembered');
+    await js('document.querySelector("#asGrip").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))');
+    eq(await width(), 420, 'a double click on the edge: back to normal');
+    const height = () => js('Math.round(document.querySelector("#asInput").getBoundingClientRect().height)');
+    const h0 = await height();
+    await js('(() => { const t = document.querySelector("#asInput"); t.value = "line\\n".repeat(5); t.dispatchEvent(new Event("input", { bubbles: true })); })()');
+    assert(await height() > h0 && await height() <= 160, `the message box grows with what is written: ${h0} → ${await height()}`);
+    await drag('#asInputGrip', 0, -300);
+    assert(await height() >= 400, `and dragging the edge above it makes it as tall as you like: ${await height()}`);
+    await js('document.querySelector("#asInputGrip").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))');
+    await js('(() => { const t = document.querySelector("#asInput"); t.value = ""; t.dispatchEvent(new Event("input", { bubbles: true })); })()');
+    eq(await height(), h0, 'a double click on that edge: back to normal');
+    await click('#asClose');
+    await viewport(1440, 900);
+  });
+
   await test('viewer: the stars come first; ⇆ Compare puts two renders side by side, each with its stars', async () => {
     await click('.tabs button[data-view="gallery"]');
     await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length >= 2', 'at least two renders in the Gallery');

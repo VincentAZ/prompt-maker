@@ -797,15 +797,18 @@
   </div>
 
   <aside id="assistant" class="assistant" aria-label="Assistant" hidden>
+    <div id="asGrip" class="as-grip" role="separator" aria-orientation="vertical" aria-label="Drag to make the assistant wider or narrower" tabindex="0" title="Drag to make it wider or narrower (double-click: back to normal)"></div>
     <header class="as-head">
       <span class="as-title">✦ Assistant</span>
       <span id="asBrain" class="as-brain"></span>
       <span class="spacer"></span>
       <button type="button" id="asJobs" class="icon-btn" title="Jobs and their logs" aria-label="Jobs and their logs" hidden>🗂</button>
       <button type="button" id="asClear" class="icon-btn" title="Clear the conversation" aria-label="Clear the conversation">🧹</button>
+      <button type="button" id="asWide" class="icon-btn" title="Fill the window" aria-label="Fill the window" aria-pressed="false">⤢</button>
       <button type="button" id="asClose" class="icon-btn" title="Close (Esc)" aria-label="Close the assistant">✕</button>
     </header>
     <div id="asLog" class="as-log" role="log" aria-live="polite" aria-label="Conversation"></div>
+    <div id="asInputGrip" class="as-input-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to make the message box taller or shorter" tabindex="0" title="Drag to make the message box taller or shorter (double-click: back to normal)"><span></span></div>
     <div class="as-compose">
       <textarea id="asInput" rows="2" placeholder="Ask anything, or tell me what to make…" aria-label="Message the assistant"></textarea>
       <button type="button" id="asSend" class="btn primary small" aria-label="Send (Enter)">➜</button>
