@@ -284,7 +284,7 @@ The motion video is kept with the take (History puts it back), and deleting the 
 
 ### ✦ The assistant
 
-<img src="docs/screenshots/ask.png" alt="The assistant panel beside the Create page: asked which render suits a winter poster, it looked at the renders and picked the fox, with its reason" width="900">
+<img src="docs/screenshots/ask.jpg" alt="The assistant panel, dragged wider, beside the Create page: asked which render suits a travel magazine cover, it looked at the renders and picked the surfing corgi, with its reasons" width="900">
 
 Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. The page takes all the room beside the panel and nothing lies under it: on a smaller window the Create page goes to one column while the panel is open. The top bar's menus (Brain, 🎨 Rendering) open over it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
