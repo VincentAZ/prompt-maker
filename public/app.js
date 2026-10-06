@@ -5576,7 +5576,8 @@ function mediaTag(file, { hover = false, controls = false } = {}) {
     const still = posterCache.get(file.file);
     return `<video src="${src}" muted loop playsinline preload="none" data-hover${still ? ` poster="${still}"` : ''}></video>`;
   }
-  if (file.kind === 'video') return `<video src="${src}" muted loop playsinline preload="metadata"${controls ? ' controls autoplay' : ''}></video>`;
+  // (The lightbox's video gets its sound and starts playing in lbSound.)
+  if (file.kind === 'video') return `<video src="${src}"${controls ? ' controls' : ' muted'} loop playsinline preload="metadata"></video>`;
   if (file.kind === 'audio') return controls ? `<audio src="${src}" controls autoplay></audio>` : '<span aria-hidden="true">🔊</span>';
   return `<img src="${src}" alt="" loading="lazy">`;
 }
@@ -6780,10 +6781,26 @@ function drawLbStage(it) {
     stage.innerHTML = pin
       ? `<figure class="lb-pane" data-side="left">${mediaTag(pin.file, { controls: true })}<div class="lb-pane-slot"></div></figure><figure class="lb-pane" data-side="right">${mediaTag(it.file, { controls: true })}<div class="lb-pane-slot"></div></figure>`
       : mediaTag(it.file, { controls: true });
+    lbSound(stage);
   }
   if (!pin) return;
   $('[data-side="left"] .lb-pane-slot', stage).innerHTML = stars(pin, 'left');
   $('[data-side="right"] .lb-pane-slot', stage).innerHTML = key(pin) === key(it) ? '<div class="lb-pane-bar"><span class="lb-pane-name">The same one: ← → picks another to compare with</span></div>' : stars(it, 'right');
+}
+
+// Lightbox videos play with the sound you left the last one at (on or off, and how loud), remembered across
+// reloads; in ⇆ Compare only the one on the right is heard. If the browser won't start it with sound, it starts muted.
+function lbSound(stage) {
+  const vids = $$('video', stage);
+  vids.forEach((v, i) => {
+    const heard = i === vids.length - 1;
+    const s = heard ? saved.get('lbSound', { muted: false, volume: 1 }) : { muted: true, volume: 1 };
+    v.volume = s.volume;
+    v.muted = s.muted;
+    let forced = false;
+    if (heard) v.addEventListener('volumechange', () => { if (forced) forced = false; else saved.set('lbSound', { muted: v.muted, volume: v.volume }); });
+    v.play().catch(err => { if (err.name !== 'NotAllowedError' || v.muted) return; forced = true; v.muted = true; v.play().catch(() => {}); });
+  });
 }
 
 $('#lbStage').addEventListener('click', async e => {

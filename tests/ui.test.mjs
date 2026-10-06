@@ -1724,10 +1724,10 @@ esac
     await waitFor(`!${boat}`, 'the earlier render leaves with its entry');
   });
 
-  await test('gallery: video tiles show a still of their first frame, and play on hover', async () => {
+  await test('gallery: video tiles show a still of their first frame, and play on hover; the lightbox keeps your sound', async () => {
     const mp4 = path.join(dataDir, 'renders', 'poster-test_0.mp4');
     const made = await new Promise(resolve => {
-      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=12', '-t', '1', '-pix_fmt', 'yuv420p', mp4], { stdio: 'ignore' });
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=12', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '1', '-pix_fmt', 'yuv420p', '-shortest', mp4], { stdio: 'ignore' });
       p.on('error', () => resolve(false));
       p.on('exit', code => resolve(code === 0));
     });
@@ -1739,6 +1739,25 @@ esac
     await click('.tabs button[data-view="gallery"]');
     await waitFor('/^data:image\\/jpeg/.test(document.querySelector(\'#reelGrid video[src*="poster-test_0.mp4"]\')?.getAttribute("poster") || "")', 'the video tile got its still', 15000);
     eq(await js('document.querySelector(\'#reelGrid video[src*="poster-test_0.mp4"]\').preload'), 'none', 'the video itself loads only when played');
+    // The lightbox plays it with sound, and the next one with the sound you left this one at.
+    await js('localStorage.removeItem("pm.lbSound")');
+    const lbVid = '#lbStage video[src*="poster-test_0.mp4"]';
+    const openLb = async () => {
+      await click('#reelGrid .reel-cell:has(video[src*="poster-test_0.mp4"]) .rtile');
+      await waitFor(`document.querySelector('${lbVid}')?.paused === false`, 'the lightbox plays the video', 10000);
+    };
+    await openLb();
+    eq(await js(`document.querySelector('${lbVid}').muted`), false, 'with sound the first time');
+    await js(`(v => { v.volume = 0.4; v.muted = true; })(document.querySelector('${lbVid}'))`);
+    await waitFor('JSON.parse(localStorage.getItem("pm.lbSound") || "{}").muted === true', 'muting is remembered');
+    await press('Escape');
+    await openLb();
+    eq(await js(`(v => v.muted + ' ' + v.volume)(document.querySelector('${lbVid}'))`), 'true 0.4', 'opens muted, at the volume you left');
+    await js(`document.querySelector('${lbVid}').muted = false`);
+    await press('Escape');
+    await openLb();
+    eq(await js(`document.querySelector('${lbVid}').muted`), false, 'sound back on, and it stays on');
+    await press('Escape');
     await fs.writeFile(file, JSON.stringify(all.slice(1)));
     await fs.rm(mp4);
     await click('.tabs button[data-view="create"]');

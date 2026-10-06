@@ -410,6 +410,7 @@ Every take also has a **🎨 Render** bar:
 
 Click any result to open the **lightbox**, where you can:
 - rate it (the stars come first, right under the title) and read its prompt, seed, size and timing,
+- watch a video with sound: it plays at the volume you left the last one at (or muted, if you muted it), so you set it once. In ⇆ Compare only the one on the right is heard,
 - **⇆ Compare** it with another: it stays on the left while **← →** browse the others on the right, each with its own stars. **📌 Keep this one** moves the one on the right to the left, so you can work through a set and end with the best. **✕ Stop comparing** goes back to one at a time,
 - **download** the file,
 - **render again** with a new seed,
