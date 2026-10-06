@@ -1063,7 +1063,17 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .as-msg p + p, .as-msg ul + p, .as-msg p + ul { margin-top: 6px; }
 .as-msg ul { margin: 4px 0 0; padding-left: 18px; }
 .as-msg.me { align-self: flex-end; background: color-mix(in srgb, var(--grape) 24%, var(--panel-3)); border-bottom-right-radius: 6px; }
-.as-msg.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
+.as-msg.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); border-bottom-left-radius: 6px; position: relative; padding-right: 38px; }
+.as-msg .as-copy { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; font-size: 13px; opacity: 0.55; }
+.as-msg .as-copy:hover, .as-msg .as-copy:focus-visible, .as-msg .as-copy.copied { opacity: 1; }
+.as-msg .as-copy.copied { width: auto; padding: 0 8px; font-size: 12px; border-radius: 999px; background: var(--panel-3); }
+.as-msg.me .as-pics { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.as-msg.me .as-pics img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; }
+.as-attach { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+.as-attach .as-att { position: relative; width: 56px; height: 56px; }
+.as-attach .as-att img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line-2); }
+.as-attach .as-att button { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: var(--panel-3); color: var(--text); font-size: 11px; line-height: 1; cursor: pointer; }
+.as-compose.drop textarea { outline: 2px dashed var(--grape); }
 .as-typing { color: var(--muted); animation: blink 1.4s infinite; }
 .as-act { align-self: flex-start; max-width: 92%; padding: 3px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 650; color: #b7f5d4; background: rgb(62 224 143 / 10%); border: 1px solid rgb(62 224 143 / 25%); }
 .as-act.bad { color: #ffd0d6; background: rgb(255 90 110 / 10%); border-color: rgb(255 90 110 / 30%); border-radius: 12px; }

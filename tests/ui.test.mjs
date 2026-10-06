@@ -2722,6 +2722,26 @@ esac
     assert((await acts()).includes('Added LoRA detail_slider at 0.60'), 'found the LoRA by part of its name');
     assert((await text('#wfpLoras')).includes('detail_slider'), 'it\'s in step 5');
 
+    // Paste a picture into the message box: it goes with the message, and the Brain sees it.
+    await js(`(async () => {
+      const c = document.createElement('canvas'); c.width = 64; c.height = 64; const g = c.getContext('2d'); g.fillStyle = '#f0a'; g.fillRect(0, 0, 64, 64);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], 'pasted.png', { type: 'image/png' }));
+      document.querySelector('#asInput').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    })()`);
+    await waitFor('document.querySelectorAll("#asAttach img").length === 1', 'the pasted picture shows above the box');
+    assert(await js('document.querySelector("#dropzone .dz-preview").hidden'), 'and not in step 3');
+    await type('#asInput', 'what do you think of this picture?');
+    await press('Enter');
+    await idle();
+    assert(await js('!!document.querySelector("#asLog .as-msg.me .as-pics img")'), 'the picture is in your message');
+    const sent = lastCall().messages.findLast(m => m.role === 'user' && Array.isArray(m.content));
+    assert(sent && sent.content.some(p => p.type === 'image_url' && p.image_url.url.startsWith('data:image/jpeg')), 'the Brain got it, as a JPEG');
+    assert(!(await visible('#asAttach')), 'the strip is empty again');
+    eq(await count('#asLog .as-msg.bot'), await count('#asLog .as-msg.bot .as-copy'), 'every reply has a copy button');
+    await js('[...document.querySelectorAll("#asLog .as-msg.bot .as-copy")].at(-1).click()');
+    await waitFor('[...document.querySelectorAll("#asLog .as-msg.bot .as-copy")].at(-1).textContent.includes("Copied")', 'copied feedback');
+
     await type('#asInput', 'how do I add a LoRA?');
     await press('Enter');
     await idle();
@@ -2815,7 +2835,7 @@ esac
 
     await goto(`${APP}/#create`);
     await waitFor('!document.querySelector("#assistant").hidden', 'left open, it opens again with the app');
-    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 12', 'the conversation is still there after a reload');
+    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 13', 'the conversation is still there after a reload');
     await viewport(390, 844, true);
     await sleep(200);
     eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');

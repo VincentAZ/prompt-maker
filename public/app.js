@@ -1401,7 +1401,7 @@ document.addEventListener('drop', e => {
   if (file) loadImageFile(file); else if (!video) toast('🤔 That file isn\'t an image.', true);
 });
 document.addEventListener('paste', e => {
-  if (!isView('create')) return;
+  if (!isView('create') || e.target.closest?.('#assistant')) return; // (the assistant takes its own)
   const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'));
   if (file) { e.preventDefault(); loadImageFile(file); }
 });
@@ -8765,9 +8765,10 @@ function wireMessages() {
   return out;
 }
 
-async function askAssistant(text) {
-  if (as.busy || !text.trim()) return;
-  as.messages.push({ role: 'user', content: text.trim() });
+async function askAssistant(text, pictures = []) {
+  if (as.busy || (!text.trim() && !pictures.length)) return;
+  const words = text.trim() || (pictures.length > 1 ? 'Here are some pictures.' : 'Here is a picture.');
+  as.messages.push({ role: 'user', content: pictures.length ? [{ type: 'text', text: words }, ...pictures.map(url => ({ type: 'image_url', image_url: { url } }))] : words });
   as.busy = true;
   as.stopped = false;
   as.turnVideos = 0;
@@ -8875,10 +8876,13 @@ function renderAssistantLog() {
     if (m.role === 'user' && m.auto) {
       const pics = Array.isArray(m.content) ? m.content.filter(p => p.type === 'image_url') : [];
       items.push(`<div class="as-act as-seen">👁 ${pics.length ? pics.map(p => `<img src="${esc(p.image_url.url)}" alt="">`).join('') : 'Looked at the pictures'}</div>`);
-    } else if (m.role === 'user') items.push(`<div class="as-msg me">${mdLite(m.content)}</div>`);
-    else if (m.role === 'assistant') {
+    } else if (m.role === 'user') {
+      const parts = Array.isArray(m.content) ? m.content : [{ type: 'text', text: m.content }];
+      const pics = parts.filter(p => p.type === 'image_url');
+      items.push(`<div class="as-msg me">${pics.length ? `<div class="as-pics">${pics.map(p => `<img src="${esc(p.image_url.url)}" alt="A picture you sent">`).join('')}</div>` : ''}${mdLite(parts.filter(p => p.type === 'text').map(p => p.text).join('\n'))}</div>`);
+    } else if (m.role === 'assistant') {
       if (m.note) items.push(`<div class="as-act bad">${esc(m.note)}</div>`);
-      else if (m.content) items.push(`<div class="as-msg bot">${mdLite(m.content)}</div>`);
+      else if (m.content) items.push(`<div class="as-msg bot">${mdLite(m.content)}<button type="button" class="icon-btn as-copy" data-copy="${as.messages.indexOf(m)}" title="Copy this reply" aria-label="Copy this reply">📋</button></div>`);
     } else if (m.role === 'tool') {
       let r = {};
       try { r = JSON.parse(m.content); } catch { /* shown as done */ }
@@ -9020,11 +9024,58 @@ $('#asInput').addEventListener('input', sizeAssistantInput);
 function sendAssistant() {
   const input = $('#asInput');
   const text = input.value;
-  if (!text.trim() || as.busy) return;
+  if ((!text.trim() && !as.attach.length) || as.busy) return;
   input.value = '';
+  const pictures = as.attach.map(a => a.url);
+  as.attach = [];
+  renderAttachments();
   sizeAssistantInput();
-  askAssistant(text);
+  askAssistant(text, pictures);
 }
+
+// ---- pictures pasted or dropped into the message box: small thumbnails until they go with the message ----
+as.attach = [];
+function renderAttachments() {
+  const box = $('#asAttach');
+  box.hidden = !as.attach.length;
+  box.innerHTML = as.attach.map((a, i) => `<span class="as-att"><img src="${esc(a.url)}" alt="${esc(a.name)}"><button type="button" data-drop="${i}" title="Don't send ${esc(a.name)}" aria-label="Don't send ${esc(a.name)}">✕</button></span>`).join('');
+}
+async function attachPictures(files) {
+  const pics = [...files].filter(f => f.type.startsWith('image/'));
+  if (!pics.length) return false;
+  const llm = selectedLlm();
+  if (llm && llm.vision === false) { toast(`🙈 ${llm.name} can't see images. Switch the Brain (top bar) to a 👁 vision model.`, true); return true; }
+  for (const f of pics.slice(0, Math.max(0, 8 - as.attach.length))) {
+    const src = URL.createObjectURL(f);
+    try {
+      const [url] = await picturesOf(src, 'image'); // JPEG, at most 768 px: what the Brain is shown
+      as.attach.push({ url, name: f.name || 'pasted picture' });
+    } catch { toast(`Couldn't read ${f.name || 'that picture'}.`, true); } finally { URL.revokeObjectURL(src); }
+  }
+  renderAttachments();
+  $('#asInput').focus();
+  return true;
+}
+$('#asInput').addEventListener('paste', e => {
+  if ([...(e.clipboardData?.files || [])].some(f => f.type.startsWith('image/'))) { e.preventDefault(); attachPictures(e.clipboardData.files); }
+});
+$('#asAttach').addEventListener('click', e => {
+  const b = e.target.closest('[data-drop]');
+  if (!b) return;
+  as.attach.splice(Number(b.dataset.drop), 1);
+  renderAttachments();
+});
+for (const ev of ['dragenter', 'dragover']) $('.as-compose').addEventListener(ev, e => { if (hasFiles(e)) { e.preventDefault(); e.stopPropagation(); $('.as-compose').classList.add('drop'); } });
+$('.as-compose').addEventListener('dragleave', () => $('.as-compose').classList.remove('drop'));
+$('.as-compose').addEventListener('drop', e => {
+  $('.as-compose').classList.remove('drop');
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  dragDepth = 0;
+  $('#dropOverlay').hidden = true;
+  attachPictures(e.dataTransfer.files);
+});
 
 $('#askBtn').addEventListener('click', () => openAssistant());
 $('#asClose').addEventListener('click', () => openAssistant(false));
@@ -9040,6 +9091,12 @@ $('#asInput').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAssistant(); }
 });
 $('#asLog').addEventListener('click', e => {
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    const m = as.messages[Number(copy.dataset.copy)];
+    if (m?.content) copyText(String(m.content), copy);
+    return;
+  }
   const c = e.target.closest('[data-confirm]');
   if (c && as.confirm) {
     const { resolve } = as.confirm;
