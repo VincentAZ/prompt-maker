@@ -456,13 +456,14 @@ function resizeTextareas() {
 }
 window.addEventListener('resize', resizeTextareas);
 
-// While a job step runs, its tools don't pull you back to Create from another page.
+// While a job step runs, its tools don't pull you back to Create from another page. Your own click on the Create
+// tab (or the browser's back button) always goes through: the job keeps running on it.
 let quietNav = false;
 
-function showView(name, { push = true } = {}) {
+function showView(name, { push = true, byUser = false } = {}) {
   const [view, sub] = String(name).split('/');
   name = VIEWS.includes(view) ? view : 'create';
-  if (quietNav && name === 'create' && !isView('create')) return;
+  if (quietNav && !byUser && name === 'create' && !isView('create')) return;
   if (name === 'models') showModelsPane(sub || modelsPane, { push: false });
   $$('.tabs button').forEach(b => {
     const on = b.dataset.view === name;
@@ -485,8 +486,8 @@ function showView(name, { push = true } = {}) {
   } else if (name === 'models') renderWorkflowList(); // workflows may have changed elsewhere (e.g. in ComfyUI)
   requestAnimationFrame(resizeTextareas);
 }
-window.addEventListener('popstate', () => showView(location.hash.slice(1), { push: false }));
-$$('.tabs button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+window.addEventListener('popstate', () => showView(location.hash.slice(1), { push: false, byUser: true }));
+$$('.tabs button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view, { byUser: true })));
 
 // ---------- LM Studio ("Brain") ----------
 

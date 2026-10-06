@@ -3567,6 +3567,11 @@ esac
     const acts = await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join(" | ")');
     assert(acts.includes('4 pictures in') && acts.includes('Started the job “Pics, low and high”: 8 items'), `it looked, then started the job: ${acts}`);
     assert(await visible('#jobsBtn'), 'the 🗂 Job pill shows');
+    // Your own click on the Create tab goes through while a job step runs (its tools can't pull you there, you can go).
+    await waitFor('!!document.querySelector(".job-strip, #jobStrip") || document.querySelector("#jobsCount").textContent !== "✓"', 'the job is running');
+    await click('.tabs button[data-view="create"]');
+    assert(await js('document.querySelector(".tabs button[data-view=\'create\']").classList.contains("active")'), 'the Create tab answers your click while a job runs');
+    await click('.tabs button[data-view="gallery"]');
     await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 90000);
     assert(await js('document.querySelector(".tabs button[data-view=\'gallery\']").classList.contains("active")'), 'it ran without pulling you off the page you were on');
     eq((await js('fetch("/api/history").then(r => r.json())')).length, before + 6, 'six prompts written: two for each good picture');
