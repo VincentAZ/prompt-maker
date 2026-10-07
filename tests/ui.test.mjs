@@ -332,7 +332,7 @@ esac
   const mock = startMock(MOCK_PORT);
   await mock.start();
   const comfyRoot = path.join(tmp, 'ComfyUI');
-  for (const d of ['output', 'input', 'custom_nodes', 'models/checkpoints']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
+  for (const d of ['output', 'input', 'custom_nodes', 'models/checkpoints', 'models/loras/krea2']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
   const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot });
   await comfy.start();
   const apiWorkflowFile = path.join(tmp, 'mock-api.json');
@@ -2753,9 +2753,20 @@ esac
         await click('#generateBtn');
         await genDone();
       }
+      const v3file = path.join(comfyRoot, 'models/loras/krea2/baked_in_v3.safetensors');
+      await fs.writeFile(v3file, 'aaa');
       await click('.take .rb-go');
       await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
       eq(comfy.prompts.at(-1).prompt['20'].inputs.lora_name, 'krea2/baked_in_v3.safetensors', 'the render loads the new file');
+
+      // The render remembers the file it used; replaced under the same name, the lightbox says so.
+      const made = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+      eq(made.loras.find(l => l.name === 'krea2/baked_in_v3.safetensors')?.file?.size, 3, 'the file it used is recorded');
+      await fs.writeFile(v3file, 'bbbbbb');
+      await click('.take .rtile');
+      await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+      await waitFor('document.querySelector("#lbInfo").textContent.includes("baked_in_v3 0.80 ⚠️ file changed since")', 'the replaced file is flagged');
+      await press('Escape');
 
       // A file that's gone: the notice offers the version you have.
       await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: { tweaks: { 20: { on: true, strength: 0.8, name: 'krea2/baked_in_v9.safetensors' } }, added: ${JSON.stringify(before.added)} } }) })`);
@@ -2766,6 +2777,20 @@ esac
       await click('#wfpModels [data-act=mm-swap]');
       await waitFor('document.querySelector("#wfpModels").hidden', 'nothing missing any more', 10000);
       eq((await flowOf()).tweaks['20'].name, 'krea2/baked_in_v3.safetensors', 'swapped');
+
+      // The assistant swaps versions too.
+      await click(lora('[data-key="20"] .lr-reset'));
+      await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-newer')}')`, 'back to the workflow\'s file');
+      await click('#askBtn');
+      await type('#asInput', 'use the newest baked_in');
+      await press('Enter');
+      await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+      const said = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+      assert(said.includes('baked_in_v3 in place of baked_in'), `the assistant swaps it: ${said}`);
+      eq((await flowOf()).tweaks['20'].name, 'krea2/baked_in_v3.safetensors', 'saved');
+      await click('#asClear');
+      await click('#asClear');
+      await click('#asClose');
 
       // ↺ goes back to the workflow's own file; ✕ keeps it for good.
       await click(lora('[data-key="20"] .lr-reset'));
@@ -2779,6 +2804,7 @@ esac
       assert(!(await js(`document.querySelector('${lora('[data-key="20"] .lr-newer')}')`)), 'still not offered after a reload');
     } finally {
       loras.splice(loras.indexOf('krea2/baked_in_v2.safetensors'), 3);
+      await fs.rm(path.join(comfyRoot, 'models/loras/krea2/baked_in_v3.safetensors'), { force: true });
       await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: ${JSON.stringify({ tweaks: before.tweaks, added: before.added })} }) })`);
       await goto(`${APP}/#create`);
     }

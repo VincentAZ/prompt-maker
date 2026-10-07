@@ -208,7 +208,7 @@ export function startMockComfy(port, { png, root = null }) {
       if (root) info.CheckpointLoaderSimple.input.required.ckpt_name[0].push(...filesIn(path.join(root, 'models', 'checkpoints')));
       return json(200, info);
     }
-    if (p === '/internal/folder_paths') return json(200, root ? { custom_nodes: [path.join(root, 'custom_nodes')], checkpoints: [path.join(root, 'models', 'checkpoints')] } : {});
+    if (p === '/internal/folder_paths') return json(200, root ? { custom_nodes: [path.join(root, 'custom_nodes')], checkpoints: [path.join(root, 'models', 'checkpoints')], loras: [path.join(root, 'models', 'loras')] } : {});
     if (p.startsWith('/hf/')) {
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': MODEL_BYTES.length });
       return res.end(MODEL_BYTES);

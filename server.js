@@ -1015,6 +1015,7 @@ async function renderTake(req, res) {
   if (body.runId) sendJson(res, 200, { runId: stream.runId, count, workflowName: workflow.name });
   else watchRenderJob(stream.job, res);
   const clientId = comfy.newClientId();
+  let loraFileInfo = null;
   for (let i = 0; i < count; i++) {
     if (stream.signal.aborted) break; // cancelled between two renders (while one was being copied or joined)
     if (i > 0 && !(await store.getHistory(entry.id))) break; // deleted meanwhile: its prompt isn't sent again
@@ -1023,7 +1024,7 @@ async function renderTake(req, res) {
     const onAbort = () => { if (promptId) comfy.cancel(base, promptId); };
     try {
       const seed = seeds[i];
-      const { prompt, applied, parts } = wf.buildPrompt(workflow, {
+      const built = wf.buildPrompt(workflow, {
         text,
         imageName,
         videoName,
@@ -1034,6 +1035,10 @@ async function renderTake(req, res) {
         videoFrames,
         joinInApp,
       }, info);
+      const { prompt, applied, parts } = built;
+      // Which LoRA files it used (size and date), so a file replaced under the same name later shows.
+      loraFileInfo ??= await comfy.loraFiles(base, (applied.loras || []).map(l => l.name)).catch(() => ({}));
+      if (applied.loras?.length) applied.loras = applied.loras.map(l => (loraFileInfo[l.name] ? { ...l, file: loraFileInfo[l.name] } : l));
       models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
       promptId = await comfy.queuePrompt(base, prompt, clientId);
       if (stream.signal.aborted) { // cancelled while ComfyUI was taking it
@@ -1545,6 +1550,12 @@ async function route(req, res) {
   if (p === '/api/comfy/output-dir' && m === 'GET') {
     const settings = await store.getSettings();
     return sendJson(res, 200, { detected: await comfy.detectOutputDir(settings.comfyUrl).catch(() => null), configured: settings.comfyOutputDir });
+  }
+  if (p === '/api/comfy/loras/files' && m === 'POST') {
+    const body = await readBody(req);
+    const settings = await store.getSettings();
+    const names = (Array.isArray(body.names) ? body.names : []).filter(n => typeof n === 'string').slice(0, 50);
+    return sendJson(res, 200, await comfy.loraFiles(settings.comfyUrl, names).catch(() => ({})));
   }
   if (p === '/api/comfy/loras' && m === 'GET') {
     const settings = await store.getSettings();

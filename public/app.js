@@ -3902,18 +3902,20 @@ async function restoreSetup(entry) {
   const first = take.slice(-count).find(x => x.workflowId === flow.id) || r;
   if (first.seed != null && flow.seed?.inputs) await setSeed(flow, { mode: r.seedMode || flow.seed.mode, value: first.seed });
   if (flow.loras) {
-    const used = new Map((r.loras || []).map(l => [l.name, l.strength]));
+    const used = (r.loras || []).map(x => ({ ...x }));
+    const take = fits => { const i = used.findIndex(fits); return i >= 0 ? used.splice(i, 1)[0] : null; };
     const l = flow.loras;
     for (const n of l.nodes) {
-      const on = used.has(n.name);
-      const next = { on, strength: on ? used.get(n.name) : n.strength };
-      if (next.on === n.on && next.strength === n.strength) delete l.tweaks[n.key]; else l.tweaks[n.key] = next;
-      used.delete(n.name);
+      // The workflow's own LoRA by its node (it may have loaded another file in its place), else by its file.
+      const u = take(x => x.key === n.key) || take(x => !x.added && !x.key && x.name === n.name);
+      const next = { on: Boolean(u), strength: u ? u.strength : n.strength, ...(u && u.name !== n.name ? { name: u.name } : {}) };
+      if (next.on === n.on && next.strength === n.strength && !next.name) delete l.tweaks[n.key]; else l.tweaks[n.key] = next;
     }
-    for (const a of l.added) { a.on = used.has(a.name); if (a.on) { a.strength = used.get(a.name); used.delete(a.name); } }
-    for (const [name, strength] of used) l.added.push({ name, strength, on: true });
+    for (const a of l.added) { const u = take(x => x.name === a.name); a.on = Boolean(u); if (u) a.strength = u.strength; }
+    for (const u of used) l.added.push({ name: u.name, strength: u.strength, on: true });
     saveLoras(flow, { now: true });
     renderLoraPanel();
+    loraFilesChanged(r.loras).then(names => { if (names.length) toast(`⚠️ ${loraChangedNote(names)}`, true); });
   }
   if (r.overrides && JSON.stringify(r.overrides) !== JSON.stringify(flow.overrides || {})) {
     const patch = { ...Object.fromEntries(Object.keys(flow.overrides || {}).map(k => [k, null])), ...r.overrides };
@@ -5186,6 +5188,20 @@ function newestLora(name, { anyOther = false } = {}) {
 }
 const versionLabel = n => { const v = loraVersion(n); return v ? (v.step ? `step ${v.version.join('.')}` : `v${v.version.join('.')}`) : loraShort(n); };
 const loraSkipKey = (from, to) => `loraNewerSkip.${from}→${to}`;
+
+// LoRA files as they are now (size and date), asked at most once a minute per name. A render records the files it
+// used; one replaced under the same name since then renders differently, and the lightbox and History say so.
+const loraFilesNow = new Map(); // name → { at, file }
+async function loraFilesChanged(loras) {
+  const recorded = (loras || []).filter(l => l.file);
+  const ask = [...new Set(recorded.map(l => l.name))].filter(n => !(Date.now() - (loraFilesNow.get(n)?.at || 0) < 60_000));
+  if (ask.length) {
+    const now = await api('/api/comfy/loras/files', { method: 'POST', body: { names: ask } }).catch(() => null);
+    if (now) for (const n of ask) loraFilesNow.set(n, { at: Date.now(), file: now[n] || null });
+  }
+  return recorded.filter(l => { const f = loraFilesNow.get(l.name)?.file; return f && (f.size !== l.file.size || f.mtime !== l.file.mtime); }).map(l => l.name);
+}
+const loraChangedNote = names => `${names.map(loraShort).join(', ')} ${names.length > 1 ? 'were' : 'was'} replaced by another file with the same name since this render, so a render now may look different.`;
 
 // The key of the workflow's LoRA row that loads this file (its own, or one you added).
 function loraInFlow(flow, name) {
@@ -7077,12 +7093,20 @@ function lbRender() {
     ['Workflow', render.workflowName],
     render.seed != null ? ['Seed', render.seed] : null,
     render.sampler ? ['Sampler', `${render.sampler}${render.steps ? ` · ${render.steps} steps` : ''}${render.cfg != null ? ` · CFG ${render.cfg}` : ''}`] : null,
-    render.loras?.length ? ['LoRAs', render.loras.map(l => `${loraShort(l.name)} ${Number(l.strength).toFixed(2)}`).join(', ')] : null,
+    render.loras?.length ? ['LoRAs', render.loras.map(l => `${loraShort(l.name)} ${Number(l.strength).toFixed(2)}${lb.changedLoras?.id === render.id && lb.changedLoras.names.includes(l.name) ? ' ⚠️ file changed since' : ''}`).join(', ')] : null,
     render.size || render.aspect ? ['Size', render.size || render.aspect] : null,
     render.frames ? ['Frames', `${render.frames}${render.duration ? ` (${render.duration})` : ''}`] : render.duration ? ['Duration', render.duration] : null,
     render.secs ? ['Took', `${render.secs}s`] : null,
     ['Made', new Date(render.createdAt).toLocaleString()],
   ].filter(Boolean);
+  if (render.loras?.some(l => l.file) && lb.changedLoras?.id !== render.id) {
+    lb.changedLoras = { id: render.id, names: [] };
+    loraFilesChanged(render.loras).then(names => {
+      if (lb.changedLoras?.id !== render.id || !names.length) return;
+      lb.changedLoras.names = names;
+      if (lb.items[lb.index]?.render.id === render.id && !$('#lightbox').hidden) lbRender();
+    });
+  }
   $('#lbInfo').innerHTML = `
     <h3>${esc(entry.theme || 'From an image')}</h3>
     <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
@@ -7718,7 +7742,7 @@ const TOOLS = [
   T('character_from_render', 'Make a still render the character for Wan Animate 2: switches to that model and attaches the still. Then set a motion video (use_motion_video) and a theme for the place and camera, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (step 5).', { name: S('Workflow name') }, ['name']),
   T('add_lora', 'Add a LoRA (from the model\'s LoRA folder) to the picked workflow.', { name: S('LoRA name or part of it'), strength: N('Strength, usually 0.3–1.2; default 1') }, ['name']),
-  T('set_lora', 'Change a LoRA\'s strength or switch it on or off (the workflow\'s own LoRAs or added ones).', { name: S('LoRA name or part of it'), strength: N('New strength'), on: B('On or off') }, ['name']),
+  T('set_lora', 'Change a LoRA\'s strength or switch it on or off (the workflow\'s own LoRAs or added ones), or load another version of it in its place (same switch and strength). The result says when a newer version is in the LoRA folder.', { name: S('LoRA name or part of it'), strength: N('New strength'), on: B('On or off'), version: S('"newest" for the newest version in the LoRA folder, or another file\'s name (or part of it) from the same folder') }, ['name']),
   T('remove_lora', 'Remove a LoRA that was added (the workflow\'s own LoRAs can only be switched off).', { name: S('LoRA name or part of it') }, ['name']),
   T('set_seed', 'Set how the picked workflow seeds each render: random, fixed, increment (+1 each render) or decrement (−1), and/or the seed number.', { mode: E(['random', 'fixed', 'increment', 'decrement'], 'Seed mode'), value: I('The seed (the next one, for increment / decrement)') }),
   T('set_sampler', 'Change the sampler settings of the picked workflow (step 5): steps, CFG, sampler, scheduler, denoise, and Wan Animate 2\'s strengths. Only the ones given change; they stay with the workflow until changed again (like the user\'s own tweaks). A workflow with several samplers gets the value in each.', {
@@ -8788,17 +8812,29 @@ const TOOL_IMPL = {
     renderLoraPanel();
     return { summary: `Added LoRA ${loraShort(hit)} at ${v.toFixed(2)}` };
   },
-  set_lora: ({ name, strength, on }) => {
+  set_lora: async ({ name, strength, on, version }) => {
     const flow = activeFlow();
     const found = flow && findLora(flow, name);
     if (!found) throw new Error(`No LoRA like “${name}” on the picked workflow.`);
+    if (!state.loraList || state.loraError) await loadLoraList();
+    let swapped = '';
+    if (version) {
+      const v = String(version);
+      const pick = /^(newest|latest|new)$/i.test(v.trim())
+        ? newestLora(found.l.name)?.name
+        : (state.loraList || []).filter(n => loraFolderOf(n) === loraFolderOf(found.l.name) && n !== found.l.name && squash(n).includes(squash(v))).sort((a, b) => a.length - b.length)[0];
+      if (!pick) throw new Error(/^(newest|latest|new)$/i.test(v.trim()) ? `${loraShort(found.l.name)} is the newest version in its folder.` : `No other LoRA like “${v}” next to ${loraShort(found.l.name)}.`);
+      swapLora(flow, found.key, pick);
+      swapped = `${loraShort(pick)} in place of ${loraShort(found.l.name)}`;
+    }
     const change = {};
     if (strength != null) change.strength = strengthOf(strength);
     if (on != null) change.on = Boolean(on);
-    saveLoras(setLora(found.key, change), { now: true });
+    if (Object.keys(change).length || !swapped) saveLoras(setLora(found.key, change), { now: true });
     renderLoraPanel();
     const l = found.key.startsWith('+') ? flow.loras.added[Number(found.key.slice(1))] : { ...found.l, ...flow.loras.tweaks[found.key] };
-    return { summary: `${loraShort(found.l.name)} → ${l.on === false ? 'off' : Number(l.strength).toFixed(2)}` };
+    const newer = newestLora(l.name);
+    return { summary: `${swapped || loraShort(found.l.name)} → ${l.on === false ? 'off' : Number(l.strength).toFixed(2)}${newer ? ` (a newer version is in the folder: ${loraShort(newer.name)})` : ''}` };
   },
   remove_lora: ({ name }) => {
     const flow = activeFlow();
