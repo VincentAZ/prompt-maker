@@ -2660,6 +2660,11 @@ esac
     eq(await count(lora('.lp-list button')), 1, 'search narrows it');
     await click(lora('.lp-list button'));
     eq(await count(lora('.lora-row')), 2, 'added');
+    eq(await js(`[document.querySelector('${lora('.lr-range')}').min, document.querySelector('${lora('.lr-range')}').max].join()`), '-5,5', 'the slider spans −5 to 5');
+    await type(lora('[data-key="+0"] .lr-num'), '100');
+    await press('Enter');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(await value('#wfpSelect'))})?.loras.added[0]?.strength === 100)`, 'a typed 100 is kept as 100');
+    eq(`${await value(lora('[data-key="+0"] .lr-num'))}|${await value(lora('[data-key="+0"] .lr-range'))}`, '100.00|5', 'the box shows it, the slider sits at its end');
     await type(lora('[data-key="+0"] .lr-num'), '-0.5');
     await press('Enter');
     await waitFor('document.querySelector("#wfpSettings").textContent.includes("2 LoRAs")', 'the chips count them');
@@ -3435,6 +3440,10 @@ esac
     eq(tuned.applied.loras.length, 1, 'and the render lists it once');
     const off = wfLib.buildPrompt({ ...w, loras: { tweaks: { '10:7': { on: false, strength: 0.8 } }, added: [] } }, { text: 'a robot' }).prompt;
     assert(!off['10:7'] && !off['20:7'], 'switched off, it leaves both pieces');
+    const zero = wfLib.buildPrompt({ ...w, loras: { tweaks: { '10:7': { on: true, strength: 0 } }, added: [{ name: 'detail.safetensors', strength: 0, on: true }] } }, { text: 'a robot' });
+    eq(`${zero.prompt['10:7']?.inputs.strength_model}|${zero.prompt['20:7']?.inputs.strength_model}`, '0|0', 'left on at 0, it still goes in at 0: some LoRAs change the render even there');
+    assert(Object.values(zero.prompt).some(n => n.inputs?.lora_name === 'detail.safetensors' && n.inputs.strength_model === 0), 'so does an added one');
+    eq(zero.applied.loras.length, 2, 'and the render lists both');
     const info = { CheckpointLoaderSimple: { input: { required: { ckpt_name: [['other.safetensors', 'wan-2.1/sam3.1.safetensors']] } } }, CLIPVisionLoader: { input: { required: { clip_name: [[]] } } } };
     built[11] = { class_type: 'CLIPVisionLoader', inputs: { clip_name: 'clip_vision_h.safetensors' }, _meta: { title: 'Load CLIP Vision' } };
     const check = modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://huggingface.co/x/clip_vision_h.safetensors', directory: 'clip_vision' }]);

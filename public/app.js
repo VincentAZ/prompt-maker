@@ -5138,7 +5138,7 @@ function flowLoras(flow) {
   const own = l.nodes.map(n => ({ ...n, ...(l.tweaks[n.key] || {}), own: true, edited: Boolean(l.tweaks[n.key]), original: n }));
   return { own, added: l.added };
 }
-const loraCount = flow => { const { own, added } = flowLoras(flow); const used = x => x.on && Number(x.strength) !== 0; return own.filter(used).length + added.filter(used).length; };
+const loraCount = flow => { const { own, added } = flowLoras(flow); const used = x => x.on; return own.filter(used).length + added.filter(used).length; };
 
 // The model's LoRA folder: the one you chose, else the folder whose name matches the model ("krea2" for
 // Krea 2 RAW, "LTX_2.3" for LTX 2.3), else all of them ("").
@@ -5165,12 +5165,12 @@ function renderLoraPanel() {
   const { own, added } = flowLoras(flow);
   const focus = document.activeElement?.closest?.('#wfpLoras') ? { key: document.activeElement.closest('[data-key]')?.dataset.key, cls: [...document.activeElement.classList].find(c => c.startsWith('lr-')) || document.activeElement.dataset.act } : null;
   const row = (l, key) => `
-    <li class="lora-row${l.on && Number(l.strength) !== 0 ? '' : ' off'}" data-key="${esc(key)}">
+    <li class="lora-row${l.on ? '' : ' off'}" data-key="${esc(key)}">
       <label class="switch mini" title="${l.on ? 'On' : 'Off'}"><input type="checkbox" class="lr-on"${l.on ? ' checked' : ''} aria-label="Use ${esc(loraShort(l.name))}"><span class="track" aria-hidden="true"></span></label>
       <span class="lr-name" title="${esc(l.name)}${l.pieces > 1 ? ` · loaded by each of the workflow's ${l.pieces} pieces: this sets them all` : ''}">${esc(loraShort(l.name))}${l.own ? `<small>in workflow${l.pieces > 1 ? ` · ×${l.pieces} pieces` : ''}</small>` : ''}</span>
       ${l.own ? (l.edited ? `<button type="button" class="icon-btn lr-reset" data-act="lora-reset" title="Back to the workflow's ${l.original.on ? Number(l.original.strength).toFixed(2) : 'off'}" aria-label="Reset ${esc(loraShort(l.name))}">↺</button>` : '<span></span>') : `<button type="button" class="icon-btn" data-act="lora-remove" aria-label="Remove ${esc(loraShort(l.name))}" title="Remove">✕</button>`}
-      <input type="range" class="lr-range" min="-2" max="2" step="0.05" value="${Math.max(-2, Math.min(2, l.strength))}" aria-label="Strength of ${esc(loraShort(l.name))}"${l.on ? '' : ' disabled'}>
-      <input type="number" class="lr-num" min="-5" max="5" step="0.05" value="${Number(l.strength).toFixed(2)}" aria-label="Strength of ${esc(loraShort(l.name))}, exact"${l.on ? '' : ' disabled'}>
+      <input type="range" class="lr-range" min="-5" max="5" step="0.05" value="${Math.max(-5, Math.min(5, l.strength))}" aria-label="Strength of ${esc(loraShort(l.name))}"${l.on ? '' : ' disabled'}>
+      <input type="number" class="lr-num" step="0.05" value="${Number(l.strength).toFixed(2)}" aria-label="Strength of ${esc(loraShort(l.name))}, exact"${l.on ? '' : ' disabled'}>
     </li>`;
   box.innerHTML = `
     <div class="lora-head">
@@ -5248,7 +5248,8 @@ function setLora(key, change) {
   return flow;
 }
 
-const strengthOf = v => Math.round(Math.min(5, Math.max(-5, Number(v) || 0)) * 100) / 100;
+// The slider spans −5 to 5; a typed strength can be anything (some LoRAs are made for 100).
+const strengthOf = v => Math.round((Number(v) || 0) * 100) / 100;
 $('#wfpLoras').addEventListener('input', e => {
   const key = e.target.closest('[data-key]')?.dataset.key;
   if (e.target.classList.contains('lp-search')) { state.loraPicker.q = e.target.value; return renderLoraPicker(); }
