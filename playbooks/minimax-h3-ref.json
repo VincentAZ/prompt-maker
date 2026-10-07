@@ -1,0 +1,67 @@
+{
+  "id": "minimax-h3-ref",
+  "name": "MiniMax H3 Reference",
+  "kind": "video",
+  "description": "MiniMax H3 reference-to-video (ref2va): the person in your picture, kept as they are, in a new clip with sound, 4–15 s.",
+  "color": "#c084fc",
+  "characterSheet": true,
+  "sheetSection": "subject_definitions",
+  "imageRoles": [
+    "character"
+  ],
+  "instructions": "# MiniMax H3 Reference (ref2va)\n\n## What it is\n- MiniMax H3's reference-to-video model: it receives the attached picture as <Picture 1> and keeps the person in it (face, hair, build) in a brand-new clip of 4-15 s at 24 fps, with native stereo sound (dialogue, effects, ambience, music).\n- The picture is NOT the first frame. The setting, clothing, pose, camera and action come from the theme.\n- It was trained on a structured full-reference format. Always write in that format.\n\n## Output format (mandatory)\nWrite exactly these six fields, in this order. Each field name stands on its own line, followed by its text; one blank line separates the fields:\nsubject_definitions:\nsummary:\nretention_analysis:\ndetailed_description:\noverall_soundscape:\nnon_diegetic_music:\n- Write in English. Only spoken words and visible text keep their original language.\n- No other headings, bullets or fields.\n\n## subject_definitions\n- One line: \"<Subject 1> is the [woman/man/person] in <Picture 1>, with …\" followed by EVERY trait of the CHARACTER SHEET in its own words (age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height, marks), then the clothing the theme asks for.\n- If the picture is a character reference sheet or turnaround (the same person in several views), <Subject 1> is that one person; never show the sheet itself.\n- Never add a separate <Picture 1> line: the picture only defines the person.\n\n## summary\n- One short paragraph that starts with \"[reference generation]\" and says what <Subject 1> does, where, and how the shots flow.\n\n## retention_analysis\n- One line: \"<Subject 1> (appears in [Shot 1]…): fully_preserved - …\" naming the traits that are kept (face, eye color, hair color and style, build, marks). Use partially_preserved only when the theme changes a trait on purpose.\n\n## detailed_description\n- Open with one or two sentences on the style before [Shot 1]: \"The target video is live-action and cinematic, with …\".\n- [Shot 1]: shot size and angle, <Subject 1> with the main traits restated briefly (hair, eyes, build, clothing) and their place in the frame, the setting and key props, the light (source, color, time of day), one camera-motion sentence, then the actions in order, with each sound or line at the moment it happens.\n- In later shots write \"<Subject 1>\" again without redefining them.\n- Flowing present-tense prose about only what can be seen or heard. Never keyword lists.\n\n### Shots and cuts\n- [Shot 1] never has a timestamp. Start each later shot like this: \"[Shot 2] At 00:04.500, the camera cuts to a close-up of ...\".\n- Cut times must strictly increase and fall inside the duration, and every shot must last at least about 2 s.\n- Cut only to add a new angle, subject, place or moment. For a small reframe, use camera motion.\n- After a cut, refer back to characters (\"the captain from Shot 1\") and keep their look identical.\n\n### Camera motion\n- Use only these motion types, written as natural English verbs: Zoom In/Out (lens only), Push In/Pull Out (camera travels), Pan Left/Right (rotates in place), Truck Left/Right (slides sideways), Tilt Up/Down, Pedestal Up/Down (camera rises or lowers), Arc Shot (circles the subject), Tracking Shot (follows a moving subject), Static Shot, Shake Slightly/Strongly, POV, Roll Clockwise/Counterclockwise.\n- Optional modifiers: \"with small amplitude\" or \"with large amplitude\", and \"at slow speed\" or \"at fast speed\". Leave them out for medium range and normal pace.\n- Pattern: \"The camera pushes in with small amplitude at slow speed toward the letter in her hands.\" or \"The camera holds a static shot as the runner exits the frame.\"\n- Do NOT write bracketed commands like [Pan left] or [Push in]. That is old Hailuo syntax, and in H3 square brackets are reserved for [Shot N] and language tags.\n- Use one camera motion per shot. At most two may appear, one after the other (\"then\"), and never in opposite directions. Shake may accompany another move.\n\n## Motion and timing\n- Write each action as a path: starting state, then the movement (direction, speed, body part), then the end state. Example: \"She reaches forward, lifts the cup to chest height, and turns it until the label faces the camera.\"\n- Keep subject motion and camera motion in separate sentences: \"He walks toward the camera. The camera tracks backward at the same speed.\"\n- Mark time with phrases like \"at first\", \"midway\", \"toward the end\" and \"as the shot ends\".\n- Fit the beats to the duration:\n  - 4-6 s: 1 shot (2 at most) and 2-3 beats.\n  - 7-10 s: 1-2 shots and 3-5 beats.\n  - 11-15 s: 2-4 shots and 5-7 beats.\n- Describe physics as cause, then effect, with verbs such as tips, falls, settles, splashes, ripples, billows, sways, flutters and recoils. Include weight shifts, momentum, and cloth or hair reacting to movement.\n\n## Audio\n- Add dialogue only when the theme implies speech. At a character's first line, give a voice description and an ID: \"The old fisherman with a deep, gravelly voice (S1) says: <d>[English] Tide's turning.</d>\". Reuse (S1) later, and use (S1,S2) when two speak together. Characters who never speak get no ID.\n- Put only the language tag and the exact words inside <d>. Delivery goes outside it. Allow about 2-3 words per second.\n- Write a voiceover like this: \"The man (S1) says in an off-screen voiceover: <d>[English] ...</d> while his lips remain completely closed.\"\n- Never put spoken words in double quotes, because quotes produce visible text. Use quotes only for requested on-screen text: a sign reading \"OPEN\".\n- overall_soundscape: write 1-4 sentences as one paragraph covering ambience, action sounds, and non-verbal sounds (breathing, footsteps, laughter), in order. Do not repeat dialogue. Write N/A only if the user wants total silence.\n- non_diegetic_music: write 1-3 sentences on instruments, tempo and dynamics, e.g. \"Sparse piano at a slow tempo, joined by low strings that swell, then fade.\" Leave out mood words. Write N/A for realistic, documentary or dialogue-driven scenes. Music the characters can hear (a radio, a busker) belongs in the description.\n\n## Speakers\n- When <Subject 1> speaks, write \"<Subject 1> (S1) says in a … voice, <d>[English] …</d>\".\n\n## What to avoid\n- Treating the picture as a frame: never \"the shot begins from <Picture 1>\", never its background or pose.\n- Changing the person's traits between shots, or from the sheet, unless the theme asks for it.\n- Quality tags (4K, masterpiece) and vague words (\"epic\", \"dynamic\") in place of concrete detail.\n- More actions than the duration allows. Contradictory motion. \"No X\" phrasing.\n\n## Aspect ratio\n- 16:9: standard cinematic framing. 21:9: wide vistas, lateral moves.\n- 1:1 and 4:3: centered, contained medium shots.\n- 3:4 and 9:16: one main subject, full-body or waist-up; favor tilt, pedestal, push-in or tracking toward the camera.\n\n## Length\n- The length target counts detailed_description; the other fields stay short. Stay under about 900 words in all.",
+  "examples": [
+    "subject_definitions:\n<Subject 1> is the woman in <Picture 1>, in her late twenties, with an oval face and high cheekbones, light green almond-shaped eyes, thick straight dark-brown eyebrows, a small straight nose, full rose-colored lips, fair warm-toned skin with light freckles across the nose, copper-red shoulder-length hair in loose waves with a side part, a slim build with narrow shoulders, tall and long-legged, and a small mole above the left corner of her mouth, wearing a yellow raincoat over a grey knit sweater.\n\nsummary:\n[reference generation] In one continuous shot, <Subject 1> runs through a rainy city street at night to catch a tram, jumps on as the doors close and laughs with relief.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - her face, light green eyes, freckles, copper-red wavy hair, slim tall build and the mole above her mouth are retained.\n\ndetailed_description:\nThe target video is live-action and cinematic, with wet reflective streets, neon color and a handheld energy.\n[Shot 1] A medium tracking shot frames <Subject 1>, the tall slim woman with copper-red wavy hair and light green eyes in a yellow raincoat, running along a rain-soaked sidewalk at night, red and blue shop signs mirrored in the puddles, a green tram waiting at a stop ahead. The camera tracks backward in front of her at her running speed. Her hair whips across her freckled face and her raincoat flaps open as she splashes through a puddle, glances up at the tram and pushes harder. Midway, the tram's bell rings twice and its doors begin to slide. She grabs the pole, swings herself up the step just as the doors close behind her, and leans against them, chest heaving. Toward the end, <Subject 1> (S1) says breathlessly in a warm, slightly husky voice, <d>[English] Made it. Barely.</d> and breaks into a laugh as rain streams down the glass behind her.\n\noverall_soundscape:\nHeavy rain on pavement and awnings, quick splashing footsteps, the tram's double bell and the hiss of its doors, then the muffled patter of rain on the tram roof.\n\nnon_diegetic_music:\nN/A"
+  ],
+  "aspectRatios": [
+    "16:9",
+    "9:16",
+    "1:1",
+    "4:3",
+    "3:4",
+    "21:9"
+  ],
+  "resolutions": [
+    "480p",
+    "768p"
+  ],
+  "durations": [
+    "4s",
+    "5s",
+    "6s",
+    "7s",
+    "8s",
+    "9s",
+    "10s",
+    "11s",
+    "12s",
+    "13s",
+    "14s",
+    "15s"
+  ],
+  "defaults": {
+    "aspectRatio": "16:9",
+    "resolution": "768p",
+    "duration": "5s",
+    "temperature": 0.7,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈180–260 words",
+    "medium": "≈300–420 words",
+    "long": "≈450–600 words"
+  },
+  "comfyTemplates": [
+    {
+      "name": "video_minimax_h3_r2v",
+      "title": "MiniMax H3: Reference to Video",
+      "note": "ComfyUI's template: two reference pictures and an optional 4-step turbo LoRA."
+    }
+  ],
+  "sources": [
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md",
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md",
+    "https://huggingface.co/Comfy-Org/MiniMax-H3"
+  ],
+  "updatedAt": "2026-10-06"
+}

@@ -16,7 +16,7 @@ import * as folders from './lib/folders.js';
 import * as computer from './lib/computer.js';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
-import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS } from './lib/prompt.js';
+import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
@@ -274,6 +274,7 @@ function pickParams(body, model) {
     duration: model.kind === 'video' ? String(body.duration || model.defaults.duration || '') : '',
     length: store.LENGTHS.includes(body.length) ? body.length : model.defaults.length,
     ...(Object.hasOwn(LOOKS, body.look) ? { look: body.look } : {}), // the camera-and-light look picked in step 2; none: the Brain picks
+    ...(model.characterSheet && cleanSheet(body.characterSheet) ? { characterSheet: cleanSheet(body.characterSheet) } : {}), // the person's traits (step 3)
   };
 }
 
@@ -372,6 +373,16 @@ async function generate(req, res) {
   const texts = [];
   const letGo = store.holdFiles([imageFile, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
   try {
+    if (model.characterSheet && imageDataUrl && !params.characterSheet) { // first, the person's traits from the image
+      stream.send({ type: 'status', text: 'Writing the character sheet from your picture…' });
+      const raw = await writeText(settings, llm, { model: llmModel, messages: buildSheetMessages(imageDataUrl), ...opts, temperature: 0.2 }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
+      llm.loaded = true;
+      const sheet = cleanSheet(raw);
+      if (sheet) {
+        params.characterSheet = sheet;
+        stream.send({ type: 'sheet', text: sheet });
+      }
+    }
     for (let index = 0; index < count; index++) {
       const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo }, imageDataUrl, { index, count, previous: texts });
       const t0 = Date.now();
@@ -382,9 +393,10 @@ async function generate(req, res) {
         onStatus: text => stream.send({ type: 'status', text }),
       });
       llm.loaded = true;
-      const text = cleanPrompt(raw);
-      if (!text) throw brainFailure('empty', EMPTY_HINT);
-      await recordRun(llm, looksRefused(text) ? 'refused' : 'ok', t0, warm);
+      const written = cleanPrompt(raw);
+      if (!written) throw brainFailure('empty', EMPTY_HINT);
+      await recordRun(llm, looksRefused(written) ? 'refused' : 'ok', t0, warm);
+      const text = imageDataUrl && params.characterSheet ? withSheet(written, params.characterSheet, model) : written; // no trait left out
       texts.push(text);
       stream.send({ type: 'done', index, text });
     }

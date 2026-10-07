@@ -416,7 +416,7 @@ esac
   await test('boot', async () => {
     await goto(`${APP}/`);
     assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'Create view is active');
-    eq(await count('.model-card'), 5, 'model cards');
+    eq(await count('.model-card'), 7, 'model cards');
     await waitFor('document.querySelector("#llmDot").classList.contains("ok")', 'LLM status dot to be green');
     eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
     assert(!(await visible('#banner')), 'offline banner hidden');
@@ -1194,19 +1194,19 @@ esac
     eq(await count('#dDur option'), 2, 'duration defaults follow the list');
     await click('#saveModelBtn');
     await toastText('Saved');
-    eq(await count('#modelList li'), 6, 'six models');
-    eq(await count('.model-card'), 6, 'new model on Create');
+    eq(await count('#modelList li'), 8, 'eight models');
+    eq(await count('.model-card'), 8, 'new model on Create');
     await click('#dupModelBtn');
     eq(await value('#mName'), 'Test Wizard 9 copy', 'duplicate name');
     await click('#saveModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 7', 'seven models');
+    await waitFor('document.querySelectorAll("#modelList li").length === 9', 'nine models');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 6', 'copy deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 8', 'copy deleted');
     await click('#modelList button[data-id="test-wizard-9"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 5', 'test model deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 7', 'test model deleted');
   });
 
   await test('models: import JSON', async () => {
@@ -1214,11 +1214,11 @@ esac
     await fs.writeFile(file, JSON.stringify({ name: 'Imported Model', kind: 'image', instructions: '## Hi', aspectRatios: ['1:1'] }));
     await setFiles('#importInput', [file]);
     await toastText('1 new');
-    await waitFor('document.querySelectorAll("#modelList li").length === 6', 'imported model listed');
+    await waitFor('document.querySelectorAll("#modelList li").length === 8', 'imported model listed');
     await click('#modelList button[data-id="imported-model"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 5', 'imported model deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 7', 'imported model deleted');
   });
 
   await test('models: AI draft from docs', async () => {
@@ -1257,13 +1257,13 @@ esac
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
     await waitFor('!document.querySelector(\'#modelList button[data-id="minimax-h3"]\')', 'gone from the list');
-    eq(await count('.model-card'), 4, 'gone from Create');
+    eq(await count('.model-card'), 6, 'gone from Create');
     await waitFor('!document.querySelector("#restoreBuiltinsBtn").hidden', 'bring-back offered');
     assert((await text('#restoreBuiltinsBtn')).includes('MiniMax'), 'names it');
     await click('#restoreBuiltinsBtn');
     await toastText('Brought back');
-    eq(await count('#modelList li'), 5, 'back in the list');
-    eq(await count('.model-card'), 5, 'back on Create');
+    eq(await count('#modelList li'), 7, 'back in the list');
+    eq(await count('.model-card'), 7, 'back on Create');
     assert(!(await visible('#restoreBuiltinsBtn')), 'nothing left to bring back');
   });
 
@@ -2856,7 +2856,7 @@ esac
     await press('Enter');
     await idle();
     const amb = await acts();
-    assert(amb.includes('could be Krea 2 RAW') && amb.includes('i2i'), `a name that fits two models is an error, not a guess: ${amb}`);
+    assert(amb.includes('could be Krea 2') && amb.includes('Krea 2 RAW i2i'), `a name that fits two models is an error, not a guess: ${amb}`);
     assert(amb.includes('Not run: set_model failed'), `the rest of that step is not run: ${amb}`);
     assert((await value('#theme')) !== 'after a failure', 'the theme was left alone');
     assert((await bot()).includes('which?'), 'and it asks');
@@ -4074,6 +4074,53 @@ esac
     eq(await fileExists(path.join(ROOT, 'data')), hadLegacyData, 'no data folder appears in the app folder');
     eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'chains'))).sort()), JSON.stringify(Object.keys(shippedChains).sort()), 'no files added to or removed from chains/');
     for (const [f, before] of Object.entries(shippedChains)) eq(await fs.readFile(path.join(ROOT, 'chains', f), 'utf8'), before, `chains/${f} unchanged`);
+  });
+
+  await test('character sheet: written from the picture first, every trait in every take, your edits kept', async () => {
+    const send = (p, body) => fetch(`${APP}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const events = async body => (await (await send('/api/generate', body)).text()).split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const img = (await (await send('/api/images', { image: `data:image/png;base64,${makePng(30, 40).toString('base64')}` })).json()).file;
+    const before = mockCalls();
+    let ev = await events({ modelId: 'krea-2-character', variations: 2, theme: 'at a night market', imageFile: img });
+    eq(ev.find(e => e.type === 'sheet')?.text, 'Age: woman in her late twenties\nEyes: light green, almond-shaped\nHair: copper-red, shoulder-length, loose waves\nBuild: slim, narrow shoulders\nMarks: none', 'the sheet, without chatter or unseen traits');
+    eq(mockCalls() - before, 3, 'one call for the sheet, one per take');
+    const sheetCall = mock.log.at(-3);
+    assert(JSON.stringify(sheetCall.messages).includes('image_url'), 'the Brain looks at the picture for the sheet');
+    assert(JSON.stringify(mock.log.at(-1).messages).includes('CHARACTER SHEET'), 'each take is given the sheet');
+    const takes = ev.filter(e => e.type === 'done').map(e => e.text);
+    eq(takes.length, 2, 'two takes');
+    for (const t of takes) assert(['late twenties', 'light green, almond-shaped', 'copper-red', 'narrow shoulders'].every(w => t.includes(w)), `every trait in the take: ${t}`);
+    const entry = ev.find(e => e.type === 'saved').entry;
+    assert(entry.characterSheet.includes('copper-red'), 'saved with the prompt');
+    // The sheet you edited is used as it is: no new one is written.
+    const calls = mockCalls();
+    ev = await events({ modelId: 'krea-2-character', variations: 1, theme: 'on a beach', imageFile: img, characterSheet: 'Eyes: violet, round\nHair: platinum pixie cut' });
+    assert(!ev.some(e => e.type === 'sheet'), 'no new sheet');
+    eq(mockCalls() - calls, 1, 'only the take is written');
+    const t = ev.find(e => e.type === 'done').text;
+    assert(t.includes('violet, round') && t.includes('platinum pixie cut') && !t.includes('copper'), 'your traits, not the old ones');
+    // MiniMax H3 Reference puts the traits in the person's line.
+    ev = await events({ modelId: 'minimax-h3-ref', variations: 1, theme: 'running for a tram', imageFile: img, characterSheet: 'Eyes: violet, round' });
+    assert(ev.find(e => e.type === 'done').text.includes('violet, round'), 'the trait reaches the video prompt');
+    // Without a picture there's no person to keep: no sheet.
+    ev = await events({ modelId: 'krea-2-character', variations: 1, theme: 'a lighthouse' });
+    assert(!ev.some(e => e.type === 'sheet') && !ev.find(e => e.type === 'saved').entry.characterSheet, 'no picture, no sheet');
+    // On the page: the box shows under the picture and fills in at Generate.
+    await click('.model-card[data-id="krea-2-character"]');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
+    assert(await visible('#sheetBlock'), 'the sheet box shows');
+    eq(await value('#sheetText'), '', 'empty until Generate');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'reading in a library');
+    await click('#generateBtn');
+    await genDone();
+    assert((await value('#sheetText')).includes('Eyes: light green'), 'filled in from the picture');
+    await click('#sheetRedo');
+    eq(await value('#sheetText'), '', '↻ clears it for a fresh one');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(!(await visible('#sheetBlock')), 'other models have no sheet');
+    await click('#imageClear');
   });
 
   await test('no console errors', async () => {

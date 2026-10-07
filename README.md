@@ -12,7 +12,7 @@ Runs 100% offline on your own machine, powered by a local AI model (your **Brain
 ![Renders with ComfyUI](https://img.shields.io/badge/renders-ComfyUI-22d3ee)
 ![FSL-1.1-ALv2 license](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)
 
-<img src="docs/screenshots/create.png" alt="The Create page: the five built-in models, the steps on the left with the Look chips under the theme (Dreamy picked), and on the right every render you made above the takes of the prompt" width="900">
+<img src="docs/screenshots/create.png" alt="The Create page on Krea 2 Character: a picture of a woman in step 3 with her character sheet under it and the Turnaround button, on the right her two new renders reading in a café and the take that carries every trait of the sheet" width="900">
 
 </div>
 
@@ -57,6 +57,7 @@ Prompt Maker keeps a **playbook for each model** and has your Brain write the pr
   - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
 - **Image alone.** Leave the theme empty and it suggests a prompt from the image.
 - **✍️ Your own prompt (off by default).** Already have the prompt? Switch on **✍️ Use my own prompt, word for word** under step ②: what you type or paste is sent to the model exactly as it is, with your image and your workflow. No Brain is asked, so LM Studio can even be off.
+- **🧾 Same person, every render (Krea 2 Character, MiniMax H3 Reference).** Drop in a picture of someone and they stay themselves in brand-new pictures and clips: the Brain writes their **character sheet** once (face, eyes, hair, skin, build, marks), you can fix any line, and every take carries all of it. **🪪 Turnaround** renders them from every side and makes that the picture to follow. No denoise: the picture is the person, not a picture to repaint ([more](#same-person-every-render)).
 - **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you. A model file your ComfyUI lacks is one **⬇ Download** away, and a video's black bars one **✂️ Crop** away.
 - **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length. None of the resolutions fit? Pick **✎ Type your own size…**, enter a width and height and click **✓ Use**: Aspect turns to the size's shape (1280×720 → 16:9), so the render and the prompt are never sideways; the size stays in that model's menu as "Your size: …", even after a restart. Pick it again and **✕ Forget** takes it out.
   - Uploading an image **matches the aspect ratio to it** automatically.
@@ -73,7 +74,7 @@ Prompt Maker keeps a **playbook for each model** and has your Brain write the pr
 - **History.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, star favorites, and reopen any entry to keep refining.
 - **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
-  - **🎁 Starter workflows** come with the app for some models (Krea 2 RAW i2i so far): one click in **＋ Add workflow**, and a model file you don't have yet is one **⬇ Download** away.
+  - **🎁 Starter workflows** come with the app for some models (Krea 2 RAW i2i, Krea 2 Character, MiniMax H3 Reference): one click in **＋ Add workflow**, and a model file you don't have yet is one **⬇ Download** away.
   - Watch live progress (and previews) right on the take.
   - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
@@ -192,7 +193,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 
 | Step | What it does |
 |---|---|
-| **① Pick your model** | The generator you're writing for. Its color follows you across the app. The five built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. |
+| **① Pick your model** | The generator you're writing for. Its color follows you across the app. The seven built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. Under it, the **🎥 Look** sets how the camera and light feel (see below). Have the exact prompt already? **✍️ Use my own prompt, word for word** (below) sends it as it is, with no Brain (the Look steps aside). |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
 | **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, and how adventurous the writing is. |
@@ -253,6 +254,19 @@ On a video model the look also picks the camera's move (a slow push in for Intim
 **Keep it tidy:** every step on Create, every card in Settings and Models, and every take folds down to a one-line summary. Click its header or the ▾ button; Prompt Maker remembers what you folded. The technical parts start folded: in Settings the server addresses, how the Brain thinks and the master instructions; on a model's page its instructions, sizes, defaults and lengths. Seed, LoRAs and the sampler settings live under step ⑤ → **Advanced**.
 
 **Nothing jumps.** On a wide window the steps and your takes sit side by side and each scrolls on its own, so new takes and renders never move the steps. While a take is being written, its buttons are already there, greyed out, and so is the tile for its render when auto-render is on; nothing below moves when the take is done. Fold a step or a take and the header you clicked stays where it is: the space it freed sits at the end until you scroll back up. A running job's bar (from the assistant) sits above the takes.
+
+### Same person, every render
+
+Two models keep the person in your picture instead of repainting the picture: **Krea 2 Character** (pictures) and **MiniMax H3 Reference** (video clips with sound, MiniMax's *ref2va*). Your picture only tells them *who*: the place, clothes, pose, camera and light come from your theme. There is no denoise to set.
+
+- **🧾 Character sheet.** Pick one of the two models and add a picture in step ③: a **Character sheet** box appears under it. At **Generate**, your Brain (one that sees images 👁) looks at the picture and writes the person's traits, one per line: age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height and marks (freckles, moles, tattoos). Then every take carries **all** of them, in the sheet's words; a trait the Brain leaves out is added back by the app. It's saved with the prompt in History.
+  - **Fix a line** by typing in the box (the Brain got the eye color wrong, say): the next Generate uses your sheet as it is.
+  - **↻** writes a fresh one from the picture at the next Generate. A new picture starts a new sheet.
+- **🪪 Turnaround** (Krea 2 Character): one click renders the person on a plain background from the front, three-quarter, side and back, with a close-up of the face, and when it's done it becomes your picture in step ③ (the sheet stays). From then on every render reproduces them from all sides, and a full-body turnaround also lets the sheet name their build and height. It needs the starter workflow (or yours) in step ⑤.
+- **Starter workflows** (**＋ Add workflow → 🎁 Comes with Prompt Maker**):
+  - **Krea 2 Character**: Krea 2 Turbo with the [Krea 2 Identity Edit](https://huggingface.co/conradlocke/krea2-identity-edit) LoRA, 10 steps, its likeness dial at 4. It needs the [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) nodes (in ComfyUI: **Manager → Install Missing Custom Nodes**). The LoRA is under the Krea 2 Community License.
+  - **MiniMax H3 Reference**: ComfyUI's own reference-to-video template, with one reference picture and 20 steps (its optional 4-step turbo LoRA left out, so nothing extra to download); only ComfyUI's own nodes.
+- **Good to know:** the likeness holds best for faces whose identity is in their texture (freckles, marks, hair). Very unusual face shapes drift toward typical ones. A change of outfit sometimes lets a bit of the old one through: re-roll, or say the new outfit plainly in your theme.
 
 ### Character animation (Wan Animate 2)
 
@@ -479,7 +493,7 @@ Step ⑤ has a **🎲 Seed** row for the picked workflow, with ComfyUI's four mo
 
 ### Denoise (image-to-image)
 
-When the picked workflow takes an image and has a **denoise** setting, step ③ shows a **🎚️ How much to change your picture** slider right under your image. Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
+When the picked workflow takes an image and has a **denoise** setting, step ③ shows a **🎚️ How much to change your picture** slider right under your image. (Not on Krea 2 Character or MiniMax H3 Reference: there your picture is the person to keep, not a picture to change.) Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
 
 ### LoRAs
 
@@ -560,14 +574,16 @@ Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, giv
 
 ## Target models
 
-Five models come with ready-made playbooks, researched from their official prompting guides (September and October 2026):
+Seven models come with ready-made playbooks, researched from their official prompting guides (September and October 2026):
 
 | Model | Type | Prompt style |
 |---|---|---|
 | **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. Its example prompts each frame and light the shot differently (from high above, from the floor, through a telephoto lens, film noir), so the Brain doesn't copy one camera into every prompt. |
 | **Krea 2 RAW i2i** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. It comes with a starter workflow (**＋ Add workflow → 🎁 Comes with Prompt Maker**): 12 steps with Krea's turbo LoRA. Step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
+| **Krea 2 Character** | Image (same person) | Krea 2 with the Identity Edit LoRA: an instruction (*"Create a photo of this woman…"*), every trait of the [character sheet](#same-person-every-render), the new clothes, pose, camera and light, then "Preserve the exact facial identity and body". Comes with a starter workflow. |
 | **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
+| **MiniMax H3 Reference** | Video + audio (same person) | MiniMax's full-reference format (`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`): your picture is `<Subject 1>`, defined once with every trait of the [character sheet](#same-person-every-render). Comes with a starter workflow. |
 | **Wan Animate 2** | Video (character animation) | Wan-AI's official caption format: `Character appearance description:` (looks only) and `Background description:` (place, light, camera angle), plus a `Motion:` line for the pose prompt. Takes a character image and a motion video ([more](#character-animation-wan-animate-2)). |
 
 > **Good to know**
@@ -578,7 +594,7 @@ Five models come with ready-made playbooks, researched from their official promp
 
 ### Adding or updating a model
 
-<img src="docs/screenshots/models.png" alt="Models editor" width="900">
+<img src="docs/screenshots/models.png" alt="Models editor: the seven built-in models, Krea 2 Character picked with its starter workflow attached" width="900">
 
 New models come out constantly. Open the **Models** tab and:
 

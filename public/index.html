@@ -151,6 +151,16 @@
               <button type="button" class="role" data-value="character" role="radio"><span class="role-ico">🧍</span><b>Character</b><small>It does the moves</small></button>
             </div>
             <p id="roleHint" class="hint" hidden></p>
+            <div id="sheetBlock" class="sheet-block" hidden>
+              <div class="sheet-head">
+                <span class="zone-label">🧾 <b>Character sheet</b> <span class="muted">same in every render</span></span>
+                <span class="sheet-acts">
+                <button type="button" id="turnaroundBtn" class="chip-btn" title="Render a turnaround of this person (front, three-quarter, side, back and a face close-up) and use it as the picture: every render after that reproduces them from it">🪪 Turnaround</button>
+                <button type="button" id="sheetRedo" class="icon-btn" title="Write it again from the picture at the next Generate" aria-label="Write the character sheet again">↻</button>
+                </span>
+              </div>
+              <textarea id="sheetText" class="sheet-text" rows="7" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you press Generate: face, eyes, hair, skin, build… Then every take keeps all of it. Edit any line to fix it."></textarea>
+            </div>
             <div id="wfpDenoise" class="wfp-denoise" hidden></div>
             <div id="motionBlock" hidden>
               <p class="zone-label">🕺 <b>Motion video</b> <span class="muted">the moves your character copies</span></p>

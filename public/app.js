@@ -18,6 +18,7 @@ const state = {
   length: 'medium',
   look: '', // the camera-and-light look under the theme; '' lets the Brain pick
   variations: 1,
+  sheet: '', // 🧾 the character sheet of the image's person (models that keep a person): their traits, one per line
   manual: false, // ✍️ step 2's text is the prompt, word for word: Generate asks no Brain and renders it as it is
   manualRenders: 1, // how many renders that prompt gets (step 4, while manual is on)
   entry: null, // history entry behind the visible takes
@@ -1185,6 +1186,8 @@ const ROLE_HINTS = {
   character: ['Your character performs the motion video\'s moves; your theme sets the place and the camera.', 'Your character performs the motion video\'s moves, somewhere the AI picks to suit them.'],
 };
 
+const SHEET_HINT = ['Keeps this person: their face, eyes, hair and build go into every take; your theme sets the scene.', 'Keeps this person: their face, eyes, hair and build go into every take, somewhere the AI picks.'];
+
 function renderRole() {
   const m = currentModel();
   const hasImage = Boolean(state.image);
@@ -1199,16 +1202,59 @@ function renderRole() {
   const motion = Boolean(m?.motionVideo);
   $('#motionBlock').hidden = !motion && !chainNeedsVideo();
   $('#charLabel').hidden = !motion;
-  $('#dzSub').textContent = motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
+  $('#dzSub').textContent = motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
   $('#imageStepTitle').textContent = motion ? 'Character & motion' : 'Add an image';
   $('#imageStepOpt').textContent = motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
-  $('#roleHint').textContent = ROLE_HINTS[role][hasTheme ? 0 : 1];
+  $('#roleHint').textContent = m?.characterSheet ? SHEET_HINT[hasTheme ? 0 : 1] : ROLE_HINTS[role][hasTheme ? 0 : 1];
+  $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual;
+  $('#turnaroundBtn').hidden = m?.kind !== 'image';
   $('#themeOpt').textContent = state.manual ? 'sent word for word' : hasImage || (motion && state.video) ? 'optional' : '';
   themePlaceholder();
   renderVisionWarning();
   renderWorkflowWarning();
   if (state.llmOk !== null) renderLlmSelect(); // suggestions follow the model and the image
+}
+
+// 🧾 The character sheet (step 3, models that keep the image's person): written by the Brain at Generate, editable.
+function setSheet(text, { persist = true } = {}) {
+  state.sheet = String(text || '');
+  if ($('#sheetText').value !== state.sheet) $('#sheetText').value = state.sheet;
+  if (persist) saved.set('sheet', state.sheet);
+}
+$('#sheetText').addEventListener('input', () => setSheet($('#sheetText').value));
+$('#sheetRedo').addEventListener('click', () => {
+  setSheet('');
+  toast('🧾 A fresh character sheet is written from your picture at the next Generate');
+});
+
+// 🪪 Turnaround: renders a reference sheet of the person (word for word, no Brain) with the picked workflow, then
+// makes it step 3's picture, so every render after it reproduces the person from all sides. The sheet stays.
+const TURNAROUND = 'Create a character reference sheet of this person on a plain light-grey studio background: four full-body views standing side by side in a row (front view, three-quarter view, side profile and back view) and a large close-up of the face on the right. The same clothing, hairstyle and body proportions in every view, arms relaxed at the sides, neutral expression, even soft studio light from the front, sharp focus, true-to-life colors.';
+$('#turnaroundBtn').addEventListener('click', async () => {
+  const m = currentModel();
+  if (!m || !state.image) return toast('🪪 Add a picture of the person in step 3 first.', true);
+  const flow = state.workflows.find(f => f.id === activeWorkflowId(m.id));
+  if (!flow) return toast('🪪 A turnaround is rendered: pick or add a workflow in step 5 first (＋ Add workflow → 🎁 Comes with Prompt Maker).', true);
+  const traits = state.sheet.trim().split('\n').filter(Boolean).map(l => l.replace(/:\s*/, ': ')).join('; ');
+  const prompt = `${TURNAROUND}${traits ? ` The person: ${traits}.` : ''} Preserve the exact facial identity and body.`;
+  const wide = m.kind === 'image' ? m.resolutions.find(r => /^1344\s*[×x]\s*768$/.test(r)) : null;
+  const body = { ...formBody(m, prompt, null), manual: true, variations: 1, aspectRatio: '16:9', ...(wide ? { resolution: wide } : {}) };
+  let finish;
+  const done = new Promise(r => { finish = r; });
+  enqueue({ id: ++line.seq, at: Date.now(), body, model: m, batches: [], render: { workflowId: flow.id, flowName: flow.name, loras: { tweaks: flow.loras?.tweaks || {}, added: flow.loras?.added || [] }, overrides: flow.overrides || {}, count: 1 }, turnaround: { sheet: state.sheet }, done, finish });
+  toast('🪪 Rendering a turnaround of this person. It becomes your picture in step 3 when it\'s done');
+});
+
+// The finished turnaround becomes step 3's picture (the character sheet goes with it: same person).
+async function useTurnaround(entryId, sheet) {
+  const e = (await api('/api/history').catch(() => [])).find(x => x.id === entryId);
+  const render = e?.variations?.[0]?.renders?.at(-1);
+  const file = render?.files?.find(f => f.kind === 'image');
+  if (!file) return;
+  await useRenderAsImage({ entry: e, index: 0, render, file });
+  if (sheet.trim()) setSheet(sheet);
+  toast('🪪 Your turnaround is now the picture in step 3: every render reproduces this person from it');
 }
 
 // The look under the theme (step 2). Not per model: it belongs to the shot you describe.
@@ -1388,6 +1434,7 @@ async function loadImageFile(file, { source = null, quiet = false } = {}) {
 }
 
 function setImage(img) {
+  if (img !== state.image && !(img && state.image && ((img.file && img.file === state.image.file) || (img.dataUrl && img.dataUrl === state.image.dataUrl)))) setSheet(''); // another person
   state.image = img;
   const preview = $('#imagePreview');
   if (img) {
@@ -3252,7 +3299,8 @@ async function runOrder(order) {
       }
       const sel = $('.rb-wf', c.el);
       if (sel) sel.value = c.rb.workflowId;
-      startRender(c, { setup: order.render });
+      const rendering = startRender(c, { setup: order.render });
+      if (order.turnaround) rendering?.then(() => useTurnaround(entry.id, order.turnaround.sheet));
     });
     return true;
   } finally {
@@ -3355,6 +3403,7 @@ function formBody(m, theme, motion) {
     duration: m.kind === 'video' ? $('#duration').value : '',
     length: state.length,
     ...(state.look ? { look: state.look } : {}),
+    ...(m.characterSheet && state.image && state.sheet.trim() ? { characterSheet: state.sheet } : {}),
     temperature: Number($('#temperature').value),
     variations: state.variations,
     ...(state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}),
@@ -3403,6 +3452,8 @@ async function runGeneration(body, m, { rendersNext = false } = {}) {
         renderStageHead(state.entry, { running: true });
       } else if (ev.type === 'status' && state.cards[current]) {
         setStatus(state.cards[current], `⏳ ${ev.text}`);
+      } else if (ev.type === 'sheet') {
+        if (state.image && !state.sheet.trim()) setSheet(ev.text);
       } else if (ev.type === 'delta' && card) {
         showStreaming(card, ev.text, ev.thinking, ev.reasoningChars);
       } else if (ev.type === 'done' && card) {
@@ -3868,6 +3919,7 @@ async function loadForm(entry) {
   const src = entry.source;
   setImage(entry.imageFile ? { file: entry.imageFile, ...(src ? { source: { entryId: src.entryId, index: src.index, renderId: src.renderId, file: src.file, modelName: src.modelName, seed: src.seed } } : {}) } : null);
   if (modelById(entry.modelId)?.motionVideo) restoreVideo(entry.video);
+  if (entry.characterSheet) setSheet(entry.characterSheet);
   setVariations(entry.variations.length, { persist: false });
   if (Boolean(entry.manual) !== state.manual) setManual(entry.manual);
   showError('');
@@ -4167,7 +4219,7 @@ function fillModelForm(m, isNew) {
   $('#mRes').value = m.resolutions.join(', ');
   $('#mDur').value = m.durations.join(', ');
   $('#mMotion').checked = Boolean(m.motionVideo);
-  modelExtras = { imageRoles: m.imageRoles, comfyTemplates: m.comfyTemplates };
+  modelExtras = { imageRoles: m.imageRoles, comfyTemplates: m.comfyTemplates, characterSheet: m.characterSheet, sheetSection: m.sheetSection };
   refreshDefaultSelects(m.defaults);
   $('#dLen').value = m.defaults.length;
   $('#dTemp').value = m.defaults.temperature;
@@ -4189,7 +4241,7 @@ function fillModelForm(m, isNew) {
   refreshPanelSummaries();
 }
 
-// What the form doesn't show but a playbook keeps: its image roles and its ComfyUI templates.
+// What the form doesn't show but a playbook keeps: its image roles, its ComfyUI templates and its character sheet.
 let modelExtras = {};
 
 function readModelForm() {
@@ -4197,7 +4249,8 @@ function readModelForm() {
   // A character-animation model uses its image as the character; others keep whatever roles they had.
   const roles = modelExtras.imageRoles?.length ? modelExtras.imageRoles : null;
   return {
-    ...(motionVideo ? { motionVideo, imageRoles: roles?.includes('character') ? roles : ['character'] } : roles && !roles.includes('character') ? { imageRoles: roles } : {}),
+    ...(motionVideo ? { motionVideo, imageRoles: roles?.includes('character') ? roles : ['character'] } : roles && (!roles.includes('character') || modelExtras.characterSheet) ? { imageRoles: roles } : {}),
+    ...(modelExtras.characterSheet ? { characterSheet: true, ...(modelExtras.sheetSection ? { sheetSection: modelExtras.sheetSection } : {}) } : {}),
     ...(modelExtras.comfyTemplates?.length ? { comfyTemplates: modelExtras.comfyTemplates } : {}),
     id: state.editId || undefined,
     name: $('#mName').value.trim(),
@@ -4981,7 +5034,7 @@ $('#wfpSeed').addEventListener('keydown', e => {
 function renderDenoise() {
   const box = $('#wfpDenoise');
   const flow = activeFlow();
-  const params = flow?.maps.image ? flow.denoise || [] : [];
+  const params = flow?.maps.image && !currentModel()?.characterSheet ? flow.denoise || [] : []; // (a person to keep isn't repainted)
   box.hidden = !params.length;
   if (!params.length) { box.innerHTML = ''; return; }
   const focus = document.activeElement?.closest?.('#wfpDenoise [data-key]')?.dataset.key;
@@ -7831,6 +7884,7 @@ function assistantState() {
     model: m && { name: m.name, kind: m.kind, ...(m.motionVideo ? { characterAnimation: true } : {}) },
     theme: $('#theme').value,
     ...(state.manual ? {} : { look: state.look || 'brain picks' }),
+    ...(m?.characterSheet && state.image && !state.manual ? { character_sheet: state.sheet.trim() || 'not written yet: Generate writes it from the image first (step 3, the user can edit it)' } : {}),
     ...(state.manual ? { own_prompt: 'on: the user\'s ✍️ switch in step 2. Generate sends the theme word for word as the prompt (no Brain) and renders it, and dials.takes is how many renders. Only the user switches it' } : {}),
     image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
     ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, fps: state.video.fps || null, ready: Boolean(state.video.file), ...(state.video.bars ? { black_bars: `picture is ${state.video.bars.width}×${state.video.bars.height}` } : {}), workflow_animates: activeFlow()?.motionFrames === 'all' ? 'the whole video' : typeof activeFlow()?.motionFrames === 'number' ? `${activeFlow().motionFrames} frames` : 'unknown' } : null } : {}),
@@ -9724,7 +9778,11 @@ async function loadModels() {
     $('#theme').value = saved.get('theme', '');
     $('#themeClear').disabled = !$('#theme').value;
     const img = saved.get('image', null);
-    if (img && (await api(`/api/images/${encodeURIComponent(img)}`).catch(() => ({}))).exists) setImage({ file: img, source: saved.get('imageSource', null) });
+    const sheet = saved.get('sheet', '');
+    if (img && (await api(`/api/images/${encodeURIComponent(img)}`).catch(() => ({}))).exists) {
+      setImage({ file: img, source: saved.get('imageSource', null) });
+      setSheet(sheet); // (a new picture clears it: this one is the same)
+    }
     else saved.set('image', null);
     const vid = saved.get('video', null);
     if (vid?.file && (await api(`/api/videos/${encodeURIComponent(vid.file)}`).catch(() => ({}))).exists) restoreVideo(vid);

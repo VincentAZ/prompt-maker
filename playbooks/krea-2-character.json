@@ -1,0 +1,54 @@
+{
+  "id": "krea-2-character",
+  "name": "Krea 2 Character",
+  "kind": "image",
+  "description": "Krea 2 with the Identity Edit LoRA: the person in your picture, same face, hair and build, in a brand-new picture.",
+  "color": "#2dd4bf",
+  "characterSheet": true,
+  "imageRoles": [
+    "character"
+  ],
+  "instructions": "## What this model is\n- Krea 2 with the Krea 2 Identity Edit LoRA. It receives the attached image as a REFERENCE of a person (not as a picture to repaint) and makes a brand-new picture of that same person: new scene, pose, clothing, camera and light.\n- It reads the prompt as an instruction while it looks at the image, so the prompt is a plain-English instruction followed by a literal description of the new picture.\n\n## Prompt format\n- ONE flowing paragraph. No tags, no weights like `(x:1.2)`, no \"masterpiece, best quality\".\n- Start with the instruction: \"Create a photo of this person…\" (or \"this woman\", \"this man\") followed by the new place and what they are doing: \"Create a photo of this woman sitting on the steps of a night market, holding a paper cup of noodles.\"\n- Then the person: every trait of the CHARACTER SHEET in its own words (age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height, marks), then the clothing and the pose the theme asks for.\n- Then the camera and the light: shot size, angle, lens, focus, the key light and its source, a second light, contrast, composition.\n- End with: \"Preserve the exact facial identity and body.\" and, when the face is distinctive, \"distinguishing features: …\" naming what makes it so (a gap in the teeth, a crooked nose, a mole on the left cheek).\n\n## The character sheet\n- The sheet is the person. Every trait goes into every prompt, in the sheet's words. A trait the theme doesn't mention still goes in.\n- Clothing, pose, expression, setting and light come from the theme, never from the reference picture.\n- If the image is a character reference sheet or turnaround (the same person in several views), it is still ONE person: write one picture of them, never another sheet, unless the theme asks for one.\n- Never give the person a different hair color, eye color, skin tone, body type or age than the sheet, unless the theme asks for exactly that change.\n\n## Vocabulary that works\n- Camera: 35mm / 50mm / 85mm, eye level, low angle, high angle, close-up, medium shot, full body, shallow or deep focus.\n- Light: window light, golden hour, overcast, hard flash, neon, practical lamps, rim light, backlight.\n- Texture: real skin texture, pores, fine hair, fabric weave, film grain.\n\n## Avoid\n- Describing the reference picture's background, clothes or pose as if they stayed.\n- Two people from one reference: one person per prompt.\n- Long adjective lists, camera brands, quality boosters, text or logos unless asked.\n\n## Length\n- The character sheet alone takes about 60–80 words, so the scene, clothing, camera and light share the rest.\n- short ≈ 100–140 words · medium ≈ 150–210 words · long ≈ 220–300 words.",
+  "examples": [
+    "Create a photo of this woman sitting on a low stool at a night-market food stall, holding a paper cup of steaming noodles in both hands and laughing at something off to the right. She is in her late twenties with an oval face and high cheekbones, light green almond-shaped eyes, thick straight dark-brown eyebrows, a small straight nose, full lips with a natural rose color, fair skin with a warm undertone and light freckles across the nose, copper-red shoulder-length hair in loose waves with a side part, a slim build with narrow shoulders and long legs, and a small mole above the left corner of her mouth. She wears an oversized olive bomber jacket over a white T-shirt. Eye-level medium shot on a 35mm lens, shallow focus, warm string lights behind her as the key light and a cool blue fill from a shop sign on the left, soft contrast, rule-of-thirds framing. Preserve the exact facial identity and body; distinguishing features: freckles across the nose, the mole above the left corner of her mouth.",
+    "Create a photo of this man standing alone at the end of a concrete pier at dawn, hands in the pockets of a long charcoal wool coat, looking out to sea. He is in his mid-forties with a square face and strong jaw, deep-set dark brown eyes, heavy black eyebrows, a broad nose with a slight bump, thin lips, olive skin with fine lines at the eyes, short black hair greying at the temples, combed back, a short salt-and-pepper beard, a broad, stocky build, tall, and a thin scar through his right eyebrow. A high-angle wide shot from a drone, deep focus, the man small in the lower third of the frame, flat pale-blue dawn light with a faint pink glow on the horizon as the only source, low contrast, lots of empty grey water around him. Preserve the exact facial identity and body; distinguishing features: the scar through his right eyebrow, the grey temples.",
+    "Create a black-and-white photo of this woman leaning in a dark office doorway at night, one shoulder against the frame, a cigarette between two fingers, her face half in shadow. She is in her early thirties with a heart-shaped face, wide-set hazel eyes, thin arched eyebrows, a narrow upturned nose, full lips, pale smooth skin, a sleek black bob cut at the jaw with blunt bangs, a petite hourglass build, short, and a small tattoo of a star behind her right ear. She wears a fitted dark trench coat with the collar up. A low-angle medium close-up on a 50mm lens, Dutch angle, hard side light through venetian blinds throwing stripes across her face and the wall, a dim rim of streetlight behind her, drifting smoke, high contrast with deep blacks. Preserve the exact facial identity and body; distinguishing features: wide-set eyes, the star tattoo behind her right ear."
+  ],
+  "aspectRatios": [
+    "1:1",
+    "3:4",
+    "4:3",
+    "2:3",
+    "3:2",
+    "9:16",
+    "16:9"
+  ],
+  "resolutions": [
+    "1024×1024",
+    "896×1152",
+    "1152×896",
+    "832×1216",
+    "1216×832",
+    "768×1344",
+    "1344×768"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "3:4",
+    "resolution": "896×1152",
+    "duration": "",
+    "temperature": 0.7,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈100–140 words",
+    "medium": "≈150–210 words",
+    "long": "≈220–300 words"
+  },
+  "sources": [
+    "https://huggingface.co/conradlocke/krea2-identity-edit",
+    "https://github.com/lbouaraba/comfyui-krea2edit",
+    "https://github.com/krea-ai/krea-2/blob/main/docs/prompting.md"
+  ],
+  "updatedAt": "2026-10-06"
+}

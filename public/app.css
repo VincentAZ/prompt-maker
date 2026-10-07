@@ -294,6 +294,11 @@ body.narrow .create .scroll-floor { display: none; }
   background: rgb(0 0 0 / 25%) !important;
 }
 /* The look under the theme: one row of chips that wraps; the picked one stays lit. */
+.sheet-block { margin-top: 12px; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.sheet-head .zone-label { margin: 0; }
+.sheet-acts { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.sheet-text { width: 100%; min-height: 9.5em; resize: vertical; font-size: 13px; line-height: 1.5; }
 .looks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .looks-label { font-size: 13px; color: var(--text-2); margin-right: 2px; }
 .looks .chip-btn { padding: 4px 10px; font-size: 12.5px; }
