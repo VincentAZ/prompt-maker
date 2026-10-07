@@ -3,3 +3,7 @@
 /data/
 *.tmp
 node_modules/
+
+# Local only: Claude worktrees and feedback from users (personal data, never shipped)
+.claude/
+user_feedback/
