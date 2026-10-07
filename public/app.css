@@ -283,6 +283,15 @@ body.narrow .create .scroll-floor { display: none; }
 .model-card.active { border-color: var(--m); background: color-mix(in srgb, var(--m) 16%, var(--panel-2)); box-shadow: 0 0 0 1px var(--m), 0 12px 34px -14px var(--m); }
 .model-card.active::after { content: "✓"; position: absolute; top: 10px; right: 11px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 900; background: var(--m); color: #0a0910; }
 .model-desc { margin: 0; color: var(--text-2); font-size: 13.5px; padding-left: 12px; border-left: 3px solid var(--m); }
+.model-guide { margin-top: 10px; border: 1px solid var(--line-2); border-radius: 14px; padding: 4px 14px; color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
+.model-guide summary { cursor: pointer; padding: 6px 0; color: var(--text); font-weight: 600; }
+.model-guide p { margin: 6px 0; }
+.model-guide b { color: var(--text); }
+.mg-steps { margin: 6px 0; padding-left: 20px; }
+.mg-steps li { margin: 3px 0; }
+.mg-try { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.mg-ex { text-align: left; font: inherit; color: var(--text); background: transparent; border: 1px dashed var(--line-2); border-radius: 10px; padding: 7px 10px; cursor: pointer; }
+.mg-ex:hover, .mg-ex:focus-visible { border-color: var(--m); border-style: solid; }
 .model-empty { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; border-radius: 16px; border: 1.5px dashed var(--line-2); color: var(--text-2); }
 .model-empty p { margin: 0; }
 .director.no-models .step:not(:first-child), .director.no-models .generate-bar { display: none; }

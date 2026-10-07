@@ -1144,6 +1144,24 @@ function savePrefs() {
   });
 }
 
+// 📖 The plain-words how-to for the picked model: what it's for, what you need, the steps, and themes to try.
+// Open until you close it once (then it stays the way you leave it).
+function renderModelGuide(m) {
+  const g = m?.guide;
+  const box = $('#modelGuide');
+  box.hidden = !g;
+  if (!g) return;
+  box.open = saved.get('modelGuideOpen', true);
+  $('#modelGuideBody').innerHTML = `
+    ${g.bestFor ? `<p><b>Good for:</b> ${esc(g.bestFor)}</p>` : ''}
+    ${g.youNeed ? `<p><b>You need:</b> ${esc(g.youNeed)}</p>` : ''}
+    ${g.steps.length ? `<ol class="mg-steps">${g.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+    ${g.tryThese.length ? `<p class="mg-try-head"><b>Try one</b> (click to put it in step ②):</p>
+      <div class="mg-try">${g.tryThese.map(x => `<button type="button" class="mg-ex" title="Put this in step ②">“${esc(x)}”</button>`).join('')}</div>` : ''}`;
+  $$('.mg-ex', box).forEach((b, i) => b.addEventListener('click', () => replaceTheme(g.tryThese[i])));
+}
+$('#modelGuide').addEventListener('toggle', e => saved.set('modelGuideOpen', e.target.open));
+
 function selectModel(id, { values } = {}) {
   const m = modelById(id) || state.models[0] || null;
   state.modelId = m?.id || null;
@@ -1152,6 +1170,7 @@ function selectModel(id, { values } = {}) {
   document.documentElement.style.setProperty('--m', m ? modelColor(m) : '#ff4d8d');
   $('#modelDesc').textContent = m?.description || '';
   $('#modelDesc').hidden = !m?.description;
+  renderModelGuide(m);
   renderWorkflowPicker();
   renderChainEditor();
   if (!m) return;

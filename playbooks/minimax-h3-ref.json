@@ -3,6 +3,21 @@
   "name": "MiniMax H3 Reference",
   "kind": "video",
   "description": "MiniMax H3 reference-to-video (ref2va): the person in your picture, kept as they are, in a new clip with sound, 4–15 s.",
+  "guide": {
+    "bestFor": "A video of the same person in a brand-new scene, with sound. Their face and look stay; everything else is new.",
+    "youNeed": "One clear picture of the person. It is NOT the first frame: the scene comes from your words.",
+    "steps": [
+      "Add the picture of the person in step ③.",
+      "In step ②, say where they are, what they do and what we hear. You don't have to describe the person; the app reads that from the picture.",
+      "Pick the length in step ④, then press Generate.",
+      "Check the character sheet in step ③, fix anything wrong, then render."
+    ],
+    "tryThese": [
+      "walking through a busy Tokyo crosswalk at night, looks at the camera and smiles",
+      "standing on a ship's deck in the wind, says \"we're almost home\"",
+      "dancing alone in an empty ballroom, soft piano music"
+    ]
+  },
   "color": "#c084fc",
   "characterSheet": true,
   "sheetSection": "subject_definitions",

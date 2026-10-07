@@ -3,6 +3,21 @@
   "name": "Krea 2 Character",
   "kind": "image",
   "description": "Krea 2 with the Identity Edit LoRA: the person in your picture, same face, hair and build, in a brand-new picture.",
+  "guide": {
+    "bestFor": "Putting the same person into new photos: new place, new outfit, new pose, and it still looks like them. Great for a recurring character, an influencer look, or a series of shots of one face.",
+    "youNeed": "One clear picture of the person (face visible, good light). A photo or a render both work.",
+    "steps": [
+      "Add the picture of the person in step ③. The face should be easy to see.",
+      "In step ②, say where they are and what they do. You don't have to describe the person; the app reads their face, hair and build from the picture for you.",
+      "Press Generate. Check the character sheet that appears in step ③ and fix anything it got wrong.",
+      "Render. For every angle of the person in one go, try 🪪 Turnaround."
+    ],
+    "tryThese": [
+      "sitting on the steps of a night market, holding a paper cup of noodles, neon signs behind",
+      "walking along a windy beach at sunset in a long wool coat",
+      "at a café table by the window on a rainy morning, reading a book"
+    ]
+  },
   "color": "#2dd4bf",
   "characterSheet": true,
   "imageRoles": [

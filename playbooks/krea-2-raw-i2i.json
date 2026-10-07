@@ -3,6 +3,20 @@
   "name": "Krea 2 RAW i2i",
   "kind": "image",
   "description": "Krea 2 RAW image-to-image: edits an attached image from a dense literal caption.",
+  "guide": {
+    "bestFor": "Changing a picture you already have: a new style, new light, a new season, small edits, while the layout stays the same.",
+    "youNeed": "The picture you want to change.",
+    "steps": [
+      "Add your picture in step ③.",
+      "In step ②, say what should change. Short is fine: \"make it a winter night\".",
+      "Press Generate, then render. If too little changes, move 🎚️ How much to change your picture up; if too much, move it down."
+    ],
+    "tryThese": [
+      "same scene, but at night in the snow, warm light from the windows",
+      "turn it into a 1970s film photo, faded colors and grain",
+      "make it a soft watercolor painting"
+    ]
+  },
   "color": "#34d399",
   "instructions": "## What this model is\n- Krea 2 RAW used image-to-image: it edits an attached image, guided by a dense, literal natural-language caption of the result.\n\n## Prompt format\n- Write ONE flowing paragraph of dense, literal natural-language caption.\n- Start with the medium and the shot: \"A 50mm photograph…\", \"A vertical 35mm film photograph…\".\n- Then describe what is in the attached image as it actually is: subject, pose, clothing,\n  setting, light, lens, depth of field. Be specific and physical, not poetic.\n- Then state the change you want, in the same plain language. One clear change per prompt.\n- No tag soup, no \"masterpiece, best quality\", no weights like `(x:1.2)`.\n\n## Using the attached image\n- Treat the image as ground truth. Describe it before you change it.\n- Keep what should stay: identity, face, pose, framing, background, wardrobe.\n- Say explicitly what changes and how much: \"the jacket becomes dark green\",\n  \"the light shifts to low golden hour\", \"the background is replaced by a rain-soaked street\".\n- For a light touch, say so: \"keeping the composition and expression unchanged\".\n- Never invent a different person or a different scene unless asked.\n\n## Vocabulary that works\n- Camera: 35mm / 50mm / 85mm, medium format, low-angle, eye-level, close-up, full-body.\n- Light: overcast, golden hour, hard flash, window light, practical neon, rim light.\n- Texture: skin pores, fine hair, fabric weave, film grain, slight motion blur.\n- Restrained color and real skin texture keep it from looking airbrushed.\n\n## Avoid\n- Contradicting the image (new pose, new face, new location) without saying so.\n- Long lists of adjectives, camera-brand names, and quality-booster phrases.\n- Asking for text or logos unless the user wants them.\n\n## Length\n- short ≈ 40–70 words · medium ≈ 80–130 words · long ≈ 150–220 words.",
   "examples": [

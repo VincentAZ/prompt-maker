@@ -193,7 +193,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 
 | Step | What it does |
 |---|---|
-| **① Pick your model** | The generator you're writing for. Its color follows you across the app. The seven built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. |
+| **① Pick your model** | The generator you're writing for. Its color follows you across the app. The seven built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. **📖 How to use this model** under the cards says, in plain words, what the model is good for, what you need to give it, the steps to follow, and a few themes to try: click one and it goes into ②. It stays open until you close it. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. Under it, the **🎥 Look** sets how the camera and light feel (see below). Have the exact prompt already? **✍️ Use my own prompt, word for word** (below) sends it as it is, with no Brain (the Look steps aside). |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
 | **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, and how adventurous the writing is. |
@@ -622,6 +622,12 @@ Each model is a single `.json` file (built-ins in `playbooks/<id>.json`, yours i
   "name": "LTX 2.3",
   "kind": "video",                       // "image" or "video"
   "description": "One line shown under the model picker",
+  "guide": {                             // optional: 📖 How to use this model, in plain words
+    "bestFor": "What it's good for",
+    "youNeed": "What to give it (a picture? a video? nothing?)",
+    "steps": ["Step one", "Step two"],
+    "tryThese": ["a theme to try, one click puts it in step ②"]
+  },
   "color": "#22d3ee",
   "instructions": "## Prompt format\n- Write ONE flowing paragraph…",
   "examples": ["A complete example prompt…"],
