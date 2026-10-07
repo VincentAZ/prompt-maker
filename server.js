@@ -359,6 +359,7 @@ async function generate(req, res) {
   const source = imageDataUrl ? await resolveSource(body.source) : null;
   const chain = chainRef(body.chain);
   const batch = typeof body.batch === 'string' ? body.batch.trim().slice(0, 60) : ''; // the saved batch this run belongs to
+  if (body.manual === true) return saveManual(res, { model, params, imageFile, video, source, chain, batch });
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null; // a text-only Brain goes by the theme alone
@@ -412,6 +413,35 @@ async function generate(req, res) {
       });
       stream.send({ type: 'saved', entry });
     }
+  } finally {
+    letGo();
+  }
+  stream.end();
+}
+
+// ✍️ Your own prompt: the theme is the take, word for word, and no Brain is asked. It streams like a written take,
+// so the page shows and renders it the same way.
+async function saveManual(res, { model, params, imageFile, video, source, chain, batch }) {
+  if (!params.theme) throw store.httpError(400, 'Type or paste your prompt in step 2.');
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId, count: 1, llmModel: '', llmName: 'you' });
+  const letGo = store.holdFiles([imageFile, video?.file, video?.sheet]);
+  try {
+    stream.send({ type: 'done', index: 0, text: params.theme });
+    const entry = await store.addHistory({
+      modelId: model.id,
+      modelName: model.name,
+      modelKind: model.kind,
+      manual: true,
+      ...params,
+      imageFile,
+      ...(video ? { video } : {}),
+      ...(source ? { source } : {}),
+      ...(chain ? { chain } : {}),
+      ...(batch ? { batch } : {}),
+      variations: [{ versions: [{ text: params.theme, instruction: null, createdAt: new Date().toISOString() }] }],
+    });
+    stream.send({ type: 'saved', entry });
   } finally {
     letGo();
   }

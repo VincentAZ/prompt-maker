@@ -2351,6 +2351,50 @@ esac
     await click('.model-card[data-id="krea2-raw"]');
   });
 
+  await test('create: your own prompt, word for word, with no Brain', async () => {
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(!(await js('document.querySelector("#manualMode").checked')), 'off by default');
+    eq(await text('[data-panel="create-theme"] h2'), 'Describe the shot', 'the Brain writes from your idea');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
+    assert(await visible('#roleBlock'), 'the Brain asks how to use the image');
+    await click('.manual-row .switch');
+    await toastText('Your own prompt');
+    eq(await text('[data-panel="create-theme"] h2'), 'Your prompt', 'step 2 is your prompt now');
+    assert(!(await visible('#roleBlock')) && !(await visible('#roleHint')), 'the image goes in as it is: no role to pick');
+    assert(!(await visible('#surpriseBtn')) && !(await visible('#lengthField')) && !(await visible('#tempField')), 'the Brain\'s dials step aside');
+    assert(!(await visible('#wfpAutoRow')), 'no auto-render switch: your own prompt always renders');
+    assert(!(await visible('#chainStep')), 'no chain: its steps are written by the Brain');
+    eq(await text('#takesLabel'), 'Renders', 'Takes becomes how many renders');
+    await click('#varSeg button[data-value="2"]');
+    eq(await text('#genLabel'), 'Render ×2', 'Generate says what it does');
+    const prompt = 'masterpiece, (red kite:1.3) over dunes, 35mm — keep EXACTLY as typed';
+    await type('#theme', prompt);
+    const calls = mockCalls();
+    const before = comfy.prompts.length;
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered twice with no click', 15000);
+    eq(mockCalls(), calls, 'no Brain was asked');
+    eq(await count('.take'), 1, 'one take');
+    eq(await value('.take .prompt-text'), prompt, 'the take is your text');
+    eq(comfy.prompts.length, before + 2, 'two renders');
+    eq(comfy.prompts.at(-1).prompt['6'].inputs.text, prompt, 'ComfyUI got it word for word');
+    assert((await text('#stageHead')).includes('your own prompt'), 'the stage says who wrote it');
+    assert(!(await text('.take .meter')).includes('target'), 'no Brain length target to meet');
+    eq(await text('.take .rb-count .active'), '×2', 'the take shows the renders it got');
+    const entry = (await js('fetch("/api/history").then(r => r.json())'))[0];
+    assert(entry.manual && entry.imageFile && !entry.llmModel, 'History keeps it as yours, with the image');
+    await shot('33a-own-prompt', { full: true });
+
+    await click('.manual-row .switch');
+    await toastText('Brain writes the prompts again');
+    assert(await visible('#tempField') && await visible('#roleBlock') && await visible('#chainStep'), 'everything is back');
+    eq(await text('#takesLabel'), 'Takes', 'Takes again');
+    await click('#imageClear');
+    await click('#varSeg button[data-value="1"]');
+  });
+
   await test('chain: animate a still (first frame at full quality, linked both ways)', async () => {
     await click('.model-card[data-id="ltx-2-3"]');
     await click('#wfpAddFirst');
