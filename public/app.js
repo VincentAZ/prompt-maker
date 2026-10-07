@@ -7622,7 +7622,7 @@ const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
 // The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
-const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'judge_renders', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
 
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
@@ -7699,11 +7699,19 @@ const TOOLS = [
     files: { type: 'array', items: { type: 'string' }, description: 'files: file names in that folder, or full paths; leave out for the folder\'s first pictures' },
     limit: I('At most this many pictures, up to 8; default 6'),
   }),
-  T('pick_best', 'Look at renders and pick the best one for a purpose, then (if asked) put it in step 3 for the next step. In a job it picks among what the job made so far, so a job can go: stills, then pick the best, then animate it. Only stills can go in step 3.', {
+  T('pick_best', 'Look at renders and pick the best one for a purpose, then (if asked) rate it and put it in step 3 for the next step. In a job it picks among what the job made so far (this_run: only what this run made), so a job can go: stills, then pick the best, then animate it. Only stills can go in step 3. Hidden renders are left out.', {
     for: S('What it\'s for, or what makes one the best, e.g. "a stranger sits down next to her: room beside her, moody light"'),
-    from: E(['job', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, the job\'s (default); else this session\'s (default), the takes on screen, or the newest in the Gallery'),
+    from: E(['job', 'this_run', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, the job\'s (default) or only this run\'s; else this session\'s (default), the takes on screen, or the newest in the Gallery'),
+    kind: E(['any', 'image', 'video'], 'Only stills or only videos (default any; then other than nothing takes stills)'),
     then: E(['nothing', 'animate', 'character', 'reference', 'recreate'], 'What to do with the winner: nothing (default, just say which), or put it in step 3 that way'),
+    rate: I('Also rate the winner: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent (never lowers a rating it has)'),
     model: S('The model for the next step, e.g. the video model to animate with'),
+  }, ['for']),
+  T('judge_renders', 'Look at renders and rate each one for a purpose: ★ pretty good, ★★ very good, ★★★ excellent; a clear failure (warped face or hands, garbled text, broken motion, not what was asked) is hidden from 🎞 Your renders instead (the hidden filter shows it again; nothing is deleted). Renders already rated are left as they are. The reasons go in the job log. It sees videos as a few still frames: it can\'t hear sound or check lip sync. Works in a job (default: what this run made) and in chat (a finished job by its title).', {
+    for: S('What makes one good, e.g. "her face matches the still, the sign is spelled right, natural motion"'),
+    from: E(['this_run', 'job', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, this run\'s (default) or the whole job\'s; else this session\'s (default), the takes on screen, the newest in the Gallery, or job with job set'),
+    kind: E(['any', 'image', 'video'], 'Only stills or only videos (default any)'),
+    job: S('With from job outside a job: the job\'s title'),
   }, ['for']),
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
@@ -7771,7 +7779,7 @@ const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
   run_command: 'Running it…', read_file: 'Reading…', write_file: 'Writing…', look_at: 'Looking…', find: 'Searching this computer…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
-  pick_best: 'Choosing the best…', use_render_as_image: 'Putting it in step 3…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
+  pick_best: 'Choosing the best…', judge_renders: 'Rating the renders…', use_render_as_image: 'Putting it in step 3…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
 };
 
 // ---- what the assistant can see ----
@@ -8102,11 +8110,10 @@ async function useRenderAs(it, use, model) {
     if (m && (m.kind !== 'video' || m.motionVideo)) throw new Error(`${m.name} can't animate a still: pick a video model.`);
     if (m) saved.set('animateModel', m.id);
     await continueFrom(it, { animate: true });
-  } else if (use === 'character') {
-    if (m && !m.motionVideo) throw new Error(`${m.name} isn't a character-animation model (like Wan Animate 2).`);
+  } else if (use === 'character' && (m ? m.motionVideo : currentModel()?.motionVideo || !rolesFor(currentModel()).includes('character'))) {
     if (m && m.id !== state.modelId) selectModel(m.id);
     await continueFrom(it, { animate: false, character: true });
-  } else {
+  } else { // the picture is the person to keep (Krea 2 Character, MiniMax H3 Reference), or a reference or recreate
     if (m && m.id !== state.modelId) selectModel(m.id);
     await continueFrom(it, { animate: false });
     TOOL_IMPL.set_image_role({ role: use });
@@ -8158,6 +8165,74 @@ async function brainPicks(items, purpose) {
     pool = next;
   }
   return { it: pool[0].it, why };
+}
+
+// The Brain scores up to 8 pictures at once: 3 excellent … 0 a failure, with a reason each. [{ item, score, why }]
+async function brainJudgesOne(group, purpose) {
+  const content = [{ type: 'text', text: `(Prompt Maker) Judge each of these ${group.length} renders for: ${purpose}\nScore every one as an art director would: 3 excellent, 2 very good, 1 pretty good, 0 a failure to throw away (warped face or hands, garbled text, broken motion, not what was asked). A video shows as a few frames. One line each, in order, the number, the score, then a few words why, like “1: 2 – right light, the sign is misspelled”.` }];
+  group.forEach((g, i) => content.push({ type: 'text', text: `${i + 1}:` }, ...g.pics.map(url => ({ type: 'image_url', image_url: { url } }))));
+  let done = null;
+  let failed = null;
+  await streamApi('/api/assistant', { messages: [{ role: 'user', content }], state: {}, tools: [] }, ev => {
+    if (ev.type === 'done') done = ev;
+    else if (ev.type === 'error') failed = ev.message;
+  });
+  if (failed) throw new Error(failed);
+  const out = new Map();
+  for (const line of String(done?.text || '').split('\n')) {
+    const m = /^\W*(\d+)\s*[:.)\-–—]\s*\**\s*([0-3])(?:\s*\/\s*3)?\b\**\s*[-–—:,.)]?\s*(.*)$/.exec(line.trim());
+    const n = Number(m?.[1]);
+    if (m && n >= 1 && n <= group.length && !out.has(n)) out.set(n, { item: group[n - 1], score: Number(m[2]), why: clean(m[3]).slice(0, 200) });
+  }
+  return [...out.values()];
+}
+
+async function brainJudges(items, purpose) {
+  const pool = [];
+  for (const it of items) {
+    const pics = await picturesOf(`/renders/${encodeURIComponent(it.file.file)}`, it.file.kind).catch(() => []);
+    if (pics.length) pool.push({ it, pics });
+  }
+  if (!pool.length) throw new Error('Couldn\'t load any of those renders.');
+  const out = [];
+  let group = [];
+  const flush = async () => {
+    if (group.length) out.push(...(await brainJudgesOne(group, purpose)).map(v => ({ it: v.item.it, score: v.score, why: v.why })));
+    group = [];
+  };
+  for (const p of pool) {
+    if (group.reduce((n, g) => n + g.pics.length, 0) + p.pics.length > 8) await flush();
+    group.push(p);
+  }
+  await flush();
+  return out;
+}
+
+function needVision() {
+  const llm = selectedLlm();
+  if (llm && llm.vision === false) throw new Error(`${llm.name} can't see images. Switch the Brain (top bar) to a 👁 vision model.`);
+}
+
+const whereWords = (where, title) => ({ job: title ? `from the job “${title}”` : 'from this job', this_run: 'from this run', on_screen: 'on screen', gallery: 'in the Gallery' })[where] || 'this session';
+
+// Renders to pick from or judge, newest first: a job's (or only what this run of it made), this session's, the takes
+// on screen or the Gallery's.
+async function rendersFrom(where, title) {
+  if (where === 'job' || where === 'this_run') {
+    const job = title ? needJob(title) : jobs.current;
+    if (!job) throw new Error('There\'s no job running: say which job (its title), or use this_session, on_screen or gallery.');
+    const unit = where === 'this_run' ? (job === jobs.current ? jobs.unit : null) : null;
+    if (where === 'this_run' && !unit) throw new Error('this_run is for a step in a running job: use job (with its title) instead.');
+    const ids = new Set(unit ? unit.entries : job.units.flatMap(u => u.entries));
+    state.history = await api('/api/history');
+    return galleryItems().filter(it => ids.has(it.entry.id) && (!unit || (it.render.createdAt || '') >= unit.startedAt));
+  }
+  if (where === 'on_screen') return state.cards.filter(c => !c.interrupted).flatMap(takeItems);
+  if (where === 'gallery') {
+    state.history = await api('/api/history');
+    return galleryItems();
+  }
+  return reelGroups().flatMap(g => g.items);
 }
 
 // Renders whose prompt fits the words, best first (then newest): most of the words found in the theme or the take.
@@ -8718,30 +8793,52 @@ const TOOL_IMPL = {
     const it = await findRender(which);
     return { summary: `Step 3 → the render as ${await useRenderAs(it, use, model)}` };
   },
-  pick_best: async ({ for: purpose, from, then = 'nothing', model }) => {
-    const llm = selectedLlm();
-    if (llm && llm.vision === false) throw new Error(`${llm.name} can't see images. Switch the Brain (top bar) to a 👁 vision model.`);
+  pick_best: async ({ for: purpose, from, kind, then = 'nothing', rate, model }) => {
+    needVision();
     const where = from || (jobs.current ? 'job' : 'this_session');
-    let items;
-    if (where === 'job') {
-      if (!jobs.current) throw new Error('There\'s no job running: pick from this_session, on_screen or gallery.');
-      const ids = new Set(jobs.current.units.flatMap(u => u.entries));
-      state.history = await api('/api/history');
-      items = galleryItems().filter(it => ids.has(it.entry.id));
-      if (!from && !items.some(it => it.file.kind === 'image' || then === 'nothing')) items = reelGroups().flatMap(g => g.items); // e.g. an earlier job made them
-    } else if (where === 'on_screen') items = state.cards.filter(c => !c.interrupted).flatMap(takeItems);
-    else if (where === 'gallery') {
-      state.history = await api('/api/history');
-      items = galleryItems();
-    } else items = reelGroups().flatMap(g => g.items);
     const stills = then !== 'nothing';
-    items = items.filter(it => (stills ? it.file.kind === 'image' : it.file.kind !== 'audio')).slice(0, 48);
-    if (!items.length) throw new Error(`There are no ${stills ? 'still ' : ''}renders ${where === 'job' ? 'from this job' : where === 'on_screen' ? 'on screen' : where === 'gallery' ? 'in the Gallery' : 'this session'} to pick from yet.`);
+    const fits = it => !it.render.hidden && (stills || kind === 'image' ? it.file.kind === 'image' : kind === 'video' ? it.file.kind === 'video' : it.file.kind !== 'audio');
+    let items = await rendersFrom(where);
+    if (!from && where === 'job' && !items.some(fits)) items = reelGroups().flatMap(g => g.items); // e.g. an earlier job made them
+    items = items.filter(fits).slice(0, 48);
+    if (!items.length) throw new Error(`There are no ${stills || kind === 'image' ? 'still ' : kind === 'video' ? 'video ' : ''}renders ${whereWords(where)} to pick from yet.`);
     const { it, why } = await brainPicks(items, clean(purpose) || 'the best picture');
     const name = `“${(it.entry.theme || 'from an image').slice(0, 60)}” (${it.entry.modelName}), take ${it.index + 1}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}`;
-    const out = { summary: `Picked ${name} out of ${items.length}: ${why}`, render_id: renderRef(it), why };
+    const out = { summary: `Picked ${name} out of ${items.length}: ${why.replace(/[.!]+$/, '')}`, render_id: renderRef(it), why };
+    if (rate) {
+      const want = Math.max(clampInt(rate, 1, 3), ratingOf(it.render));
+      it.render = await rateRender(it.entry, it.render, want);
+      out.summary += `. Rated ${starsOf(want)}`;
+    }
     if (then !== 'nothing') out.summary += `. Step 3 → it as ${await useRenderAs(it, then, model)}`;
     return out;
+  },
+  judge_renders: async ({ for: purpose, from, kind, job: title }) => {
+    needVision();
+    const where = from || (jobs.current ? 'this_run' : 'this_session');
+    const seen = new Set();
+    const items = (await rendersFrom(where, title)).filter(it => {
+      if (it.render.hidden || ratingOf(it.render) || seen.has(it.render.id)) return false;
+      if (kind === 'image' ? it.file.kind !== 'image' : kind === 'video' ? it.file.kind !== 'video' : it.file.kind === 'audio') return false;
+      seen.add(it.render.id); // one look per render, not per file
+      return true;
+    }).slice(0, 48);
+    if (!items.length) return { summary: `Nothing to rate ${whereWords(where, title)}: no renders that aren't rated or hidden yet` };
+    const verdicts = await brainJudges(items, clean(purpose) || 'a good render');
+    const count = [0, 0, 0, 0];
+    const failed = [];
+    for (const { it, score, why } of verdicts) {
+      const label = `take ${it.index + 1}${it.render.seed != null ? ` (seed ${it.render.seed})` : ''}`;
+      if (score > 0) await rateRender(it.entry, it.render, score);
+      else { await hideRender(it.entry, it.render, true); failed.push(`${label}: ${why || 'a failure'}`); }
+      count[score]++;
+    }
+    const left = items.length - verdicts.length;
+    const parts = [3, 2, 1].filter(n => count[n]).map(n => `${count[n]} ${starsOf(n)}`);
+    const summary = `Rated ${verdicts.length - count[0]} of ${items.length}${parts.length ? ` (${parts.join(', ')})` : ''}`
+      + (count[0] ? `; hid ${count[0]} that failed (🎞 Your renders' hidden filter shows them): ${failed.join('; ')}` : '')
+      + (left ? `; ${left} the Brain didn't score, left as they were` : '');
+    return { summary, ratings: verdicts.map(v => ({ render_id: renderRef(v.it), take: v.it.index + 1, rating: v.score, why: v.why })) };
   },
   set_auto_render: ({ on }) => {
     const m = currentModel();
@@ -9324,7 +9421,7 @@ window.addEventListener('resize', () => { document.documentElement.style.setProp
 // one item after another, through the same tools. Whatever fails is skipped and logged, and the job goes on. The plan
 // and log are saved after every step, so a reload loses nothing (the item it was on is marked to check).
 
-const jobs = { list: [], current: null, pause: false, cancel: false, open: new Set(), onlySkipped: new Set() };
+const jobs = { list: [], current: null, unit: null, pause: false, cancel: false, open: new Set(), onlySkipped: new Set() };
 const JOB_STATUS = { queued: 'waiting to start', running: 'running', paused: 'paused', done: 'done' };
 const JOB_ICON = { pending: '·', running: '⏳', done: '✓', skipped: '⏭' };
 
@@ -9383,7 +9480,7 @@ async function runJobs() {
       await runJob(job);
     } finally {
       clearInterval(beat);
-      jobs.current = null;
+      jobs.current = jobs.unit = null;
       jobs.pause = jobs.cancel = false;
       await saveJob(job);
       drawJobs();
@@ -9407,6 +9504,7 @@ async function runJob(job) {
     const u = job.units.find(x => x.status === 'pending');
     if (!u) { job.status = 'done'; job.endedAt = new Date().toISOString(); return; }
     Object.assign(u, { status: 'running', error: '', log: [], startedAt: new Date().toISOString() });
+    jobs.unit = u;
     saveJob(job);
     drawJobs();
     try {
@@ -9428,6 +9526,7 @@ async function runJob(job) {
         return;
       }
     }
+    jobs.unit = null;
     u.endedAt = new Date().toISOString();
     saveJob(job);
     drawJobs();

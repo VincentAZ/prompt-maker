@@ -1932,6 +1932,21 @@ esac
     assert(picked.includes('Picked') && picked.includes('the light is softer'), `it looks, picks one and says why: ${picked}`);
     assert(await js('!document.querySelector("#dropzone .dz-preview").hidden && !!document.querySelector("#roleBlock .role.active[data-value=reference]")'), 'and puts it in step 3 as the reference');
     await js('document.querySelector("#imageClear").click()');
+    assert(/reads better\. Rated ★★(★)?\. Step 3/.test(picked), `and rates it (never lower than it was): ${picked}`);
+
+    // Judging: every unrated render gets a rating for the purpose; a clear failure is hidden, with the reason.
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length >= 3 && !document.querySelector(".take .rtile.running")', 'two more renders', 15000);
+    await type('#asInput', 'judge the renders for a poster');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Rated 1 of 2 (1 ★★★)') && (await bot()).includes('hid 1 that failed') && (await bot()).includes('warped hands'), `rates them, hides the failure and says why: ${await bot()}`);
+    const judged = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => (v.renders || []).map(r => ({ ...r, entry: e.id }))));
+    const gone = judged.filter(r => r.hidden);
+    eq(gone.length, 1, 'one hidden, none deleted');
+    eq(judged.filter(r => r.rating === 3).length, 2, 'the one rated before kept its rating, the good one got ★★★');
+    await fetch(`${APP}/api/history/${gone[0].entry}/renders/${gone[0].id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hidden: false }) });
 
     const before = (await (await fetch(`${APP}/api/history`)).json()).length;
     await type('#asInput', 'delete this prompt');

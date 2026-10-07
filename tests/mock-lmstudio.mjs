@@ -77,7 +77,8 @@ function assistantTurn(body) {
       ];
       return [{ calls: [['list_folder', { folder }]] }, { calls: [['start_job', { title: 'Pics, low and high', folder, runs }]] }, { text: results.includes('Started the job') ? 'Started it: follow it in 🗂 Jobs.' : 'That failed.' }];
     })()
-    : /pick the best/.test(said) ? [{ calls: [['pick_best', { for: 'a moody poster', then: 'reference' }]] }, { text: results.includes('Picked') ? 'Picked one and put it in step 3.' : 'That failed.' }]
+    : /pick the best/.test(said) ? [{ calls: [['pick_best', { for: 'a moody poster', then: 'reference', rate: 2 }]] }, { text: results.includes('Picked') ? 'Picked one and put it in step 3.' : 'That failed.' }]
+    : /judge the renders/.test(said) ? [{ calls: [['judge_renders', { for: 'a moody poster', from: 'on_screen' }]] }, { text: results.match(/"summary":"([^"]*)/)?.[1] || 'That failed.' }]
     : /fewer steps/.test(said) ? [{ calls: [['set_sampler', { steps: 12 }]] }, { text: results.includes('steps 12') ? 'Steps set to 12.' : 'That failed.' }]
     // It tries to answer the "send your prompts to the cloud?" question itself: it waits for it, looks, and presses OK if it can.
     : /answer the cloud question/.test(said) ? (() => {
@@ -154,6 +155,15 @@ export function startMock(port) {
     // The assistant's pick_best: the Brain looks at the renders and names one.
     if (!body.tools && textOf(body.messages.at(-1).content).startsWith('(Prompt Maker) Pick the best')) {
       for (const w of '2: the light is softer and the balloon reads better.'.split(/(?<=\s)/)) send({ choices: [{ delta: { content: w } }] });
+      send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
+      res.end('data: [DONE]\n\n');
+      return;
+    }
+    // The assistant's judge_renders: a score and a reason for each, the second one a failure.
+    if (!body.tools && textOf(body.messages.at(-1).content).startsWith('(Prompt Maker) Judge each')) {
+      const n = Number(textOf(body.messages.at(-1).content).match(/these (\d+) renders/)[1]);
+      const reply = Array.from({ length: n }, (_, i) => (i === 1 ? `2: 0 – warped hands` : `${i + 1}: **${i ? 2 : 3}** – the light is right`)).join('\n');
+      for (const w of reply.split(/(?<=\s)/)) send({ choices: [{ delta: { content: w } }] });
       send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
       res.end('data: [DONE]\n\n');
       return;
