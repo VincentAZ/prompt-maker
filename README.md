@@ -10,7 +10,7 @@ Runs 100% offline on your own machine, powered by a local AI model (your **Brain
 ![100% offline](https://img.shields.io/badge/runs-100%25%20offline-8b5cf6)
 ![Powered by LM Studio](https://img.shields.io/badge/Brain-LM%20Studio-ff4d8d)
 ![Renders with ComfyUI](https://img.shields.io/badge/renders-ComfyUI-22d3ee)
-![MIT license](https://img.shields.io/badge/license-MIT-blue)
+![FSL-1.1-ALv2 license](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)
 
 <img src="docs/screenshots/create.png" alt="The Create page: the five built-in models, the steps on the left, and on the right every render you made above the takes of the prompt" width="900">
 
@@ -881,7 +881,7 @@ Screenshots go to `/tmp/prompt-maker-ui/` (or `$SHOTS`). The suite needs Node 22
 
 ## Contributing
 
-Issues and pull requests are welcome. The most valuable contributions are **model playbooks**: if you've dialed in prompting for a model, export its `.json` and share it. A workflow that ships in `workflows/` must carry nobody's data: empty prompts (positive and negative), seed 0, `example.png` as its picture, only ComfyUI's own nodes where possible, and a Hugging Face link for every model file (the test suite checks this). Please keep the app dependency-free and offline-only, and run `npm run test:ui` before opening a PR.
+Issues and pull requests are welcome. The most valuable contributions are **model playbooks**: if you've dialed in prompting for a model, export its `.json` and share it. A workflow that ships in `workflows/` must carry nobody's data: empty prompts (positive and negative), seed 0, `example.png` as its picture, only ComfyUI's own nodes where possible, and a Hugging Face link for every model file (the test suite checks this). Please keep the app dependency-free and offline-only, and run `npm run test:ui` before opening a PR. Contributions are accepted under the project's [license](#license).
 
 ## Acknowledgements
 
@@ -892,4 +892,8 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 
 ## License
 
-[MIT](LICENSE) © 2026 VincentAZ. Bundled fonts are under the SIL Open Font License (`public/fonts/OFL.txt`).
+[Functional Source License 1.1, Apache 2.0 future license](LICENSE) (FSL-1.1-ALv2) © 2026 VincentAZ. Bundled fonts are under the SIL Open Font License (`public/fonts/OFL.txt`).
+
+In plain words: use it, change it and share it for anything, including paid work made with it (your images and videos are yours). What you can't do is sell Prompt Maker, or a copy of it under another name, as a competing product or service. Two years after each version comes out, that version also becomes Apache 2.0, with no limits.
+
+Versions up to and including 1.21.0 were released under the MIT license and stay MIT.
