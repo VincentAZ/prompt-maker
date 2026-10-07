@@ -16,6 +16,7 @@ const state = {
   video: null, // the motion video (character-animation models): { file, sheet, seconds, frames, width, height, ratio }
   imageRole: 'reference', // the user's choice; "animate" falls back to reference on image models
   length: 'medium',
+  look: '', // the camera-and-light look under the theme; '' lets the Brain pick
   variations: 1,
   entry: null, // history entry behind the visible takes
   cards: [],
@@ -1203,6 +1204,14 @@ function renderRole() {
   if (state.llmOk !== null) renderLlmSelect(); // suggestions follow the model and the image
 }
 
+// The look under the theme (step 2). Not per model: it belongs to the shot you describe.
+const LOOK_NAMES = Object.fromEntries($$('#lookRow button').map(b => [b.dataset.value, b.textContent.trim()]));
+function setLook(v, { persist = true } = {}) {
+  state.look = Object.hasOwn(LOOK_NAMES, v) ? v : '';
+  setActive($('#lookRow'), state.look);
+  if (persist) saved.set('look', state.look);
+}
+
 function setVariations(n, { persist = true } = {}) {
   state.variations = n;
   setActive($('#varSeg'), n);
@@ -1220,6 +1229,10 @@ $('#lengthSeg').addEventListener('click', e => {
   state.length = b.dataset.value;
   setActive($('#lengthSeg'), state.length);
   savePrefs();
+});
+$('#lookRow').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) setLook(b.dataset.value);
 });
 $('#varSeg').addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -3273,6 +3286,7 @@ async function formRequest() {
     resolution: $('#resolution').value,
     duration: m.kind === 'video' ? $('#duration').value : '',
     length: state.length,
+    ...(state.look ? { look: state.look } : {}),
     temperature: Number($('#temperature').value),
     variations: state.variations,
     ...(state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}),
@@ -3624,6 +3638,7 @@ function renderHistory() {
         <div class="hthumb hopen${cover || e.imageFile ? '' : ' textonly'}" data-act="open" aria-hidden="true">
           ${cover ? mediaTag(cover, { hover: true }) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="" loading="lazy">` : kindIcon(e.modelKind)}
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${{ reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
+          ${LOOK_NAMES[e.look] && e.look ? `<span class="tag kind" title="The look picked under the theme">${esc(LOOK_NAMES[e.look])}</span>` : ''}
         </div>
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite this prompt: ${esc(title)}" title="${e.favorite ? 'Take this prompt out of your favorites' : 'Favorite this prompt, to find it again (its renders have their own ★ ratings)'}">${e.favorite ? '★' : '☆'}</button>
         <div class="hbody">
@@ -3781,6 +3796,7 @@ async function loadForm(entry) {
   }
   if (($('#theme').value || '') !== (entry.theme || '')) replaceTheme(entry.theme || '', { focus: false });
   if (entry.imageRole) state.imageRole = entry.imageRole;
+  setLook(entry.look || '', { persist: false });
   const src = entry.source;
   setImage(entry.imageFile ? { file: entry.imageFile, ...(src ? { source: { entryId: src.entryId, index: src.index, renderId: src.renderId, file: src.file, modelName: src.modelName, seed: src.seed } } : {}) } : null);
   if (modelById(entry.modelId)?.motionVideo) restoreVideo(entry.video);
@@ -7473,7 +7489,7 @@ const TOOLS = [
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
-  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
+  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), look: E(['brain picks', ...Object.keys(LOOK_NAMES).filter(Boolean)], 'How the camera and light feel (step 2, under the theme); "brain picks" suits them to the theme'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
   T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate', 'character'], 'animate = first frame of a video (video models only); character = the character a motion video animates (character-animation models like Wan Animate 2 only)') }, ['role']),
   T('clear_image', 'Remove the image from step 3.'),
   T('use_motion_video', 'Set the motion video in step 3 for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
@@ -7742,6 +7758,7 @@ function assistantState() {
     brain: selectedLlm()?.name || null,
     model: m && { name: m.name, kind: m.kind, ...(m.motionVideo ? { characterAnimation: true } : {}) },
     theme: $('#theme').value,
+    look: state.look || 'brain picks',
     image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
     ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, fps: state.video.fps || null, ready: Boolean(state.video.file), ...(state.video.bars ? { black_bars: `picture is ${state.video.bars.width}×${state.video.bars.height}` } : {}), workflow_animates: activeFlow()?.motionFrames === 'all' ? 'the whole video' : typeof activeFlow()?.motionFrames === 'number' ? `${activeFlow().motionFrames} frames` : 'unknown' } : null } : {}),
     dials: m && {
@@ -8364,6 +8381,12 @@ const TOOL_IMPL = {
       }
       const l = pickedBatches();
       done.push(!l.length ? 'no batch' : l.length > 1 ? `all ${l.length} batches` : `batch “${l[0].name}”`);
+    }
+    if (args.look != null) {
+      const look = args.look === 'brain picks' ? '' : String(args.look).toLowerCase();
+      if (!Object.hasOwn(LOOK_NAMES, look)) throw new Error(`There's no look “${args.look}”. The looks are: brain picks, ${Object.keys(LOOK_NAMES).filter(Boolean).join(', ')}.`);
+      setLook(look);
+      done.push(look ? `${LOOK_NAMES[look]} look` : 'the Brain picks the look');
     }
     if (['short', 'medium', 'long'].includes(args.length)) { state.length = args.length; setActive($('#lengthSeg'), state.length); done.push(`${args.length} length`); }
     if (args.takes != null) { setVariations(clampInt(args.takes, 1, 4)); done.push(`${state.variations} take${state.variations > 1 ? 's' : ''}`); }
@@ -9478,7 +9501,7 @@ const panelState = saved.get('panels', {});
 const shorten = (s, n = 90) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const PANEL_SUMMARY = {
   'create-model': () => { const m = currentModel(); return m ? `${m.kind === 'video' ? '🎬' : '📷'} ${m.name}` : ''; },
-  'create-theme': () => shorten($('#theme').value.trim()) || 'Nothing yet',
+  'create-theme': () => [shorten($('#theme').value.trim()) || 'Nothing yet', state.look && `${LOOK_NAMES[state.look]} look`].filter(Boolean).join(' · '),
   'create-image': () => {
     const img = state.image ? `🖼️ Image attached · ${effectiveRole()}` : 'No image';
     if (!currentModel()?.motionVideo && !chainNeedsVideo()) return img;
@@ -9614,6 +9637,7 @@ async function loadModels() {
     selectModel(saved.get('modelId', null));
     renderModelList();
     setVariations(saved.get('variations', 1));
+    setLook(saved.get('look', ''), { persist: false });
     $('#theme').value = saved.get('theme', '');
     $('#themeClear').disabled = !$('#theme').value;
     const img = saved.get('image', null);

@@ -12,7 +12,7 @@ Runs 100% offline on your own machine, powered by a local AI model (your **Brain
 ![Renders with ComfyUI](https://img.shields.io/badge/renders-ComfyUI-22d3ee)
 ![MIT license](https://img.shields.io/badge/license-MIT-blue)
 
-<img src="docs/screenshots/create.png" alt="The Create page: the five built-in models, the steps on the left, and on the right every render you made above the takes of the prompt" width="900">
+<img src="docs/screenshots/create.png" alt="The Create page: the five built-in models, the steps on the left with the Look chips under the theme (Dreamy picked), and on the right every render you made above the takes of the prompt" width="900">
 
 </div>
 
@@ -60,6 +60,7 @@ Prompt Maker keeps a **playbook for each model** and has your Brain write the pr
 - **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length. None of the resolutions fit? Pick **✎ Type your own size…**, enter a width and height and click **✓ Use**: Aspect turns to the size's shape (1280×720 → 16:9), so the render and the prompt are never sideways; the size stays in that model's menu as "Your size: …", even after a restart. Pick it again and **✕ Forget** takes it out.
   - Uploading an image **matches the aspect ratio to it** automatically.
   - Each model remembers your last choices.
+- **🎥 Directed like a film shot.** Every prompt gets camera and light chosen for your theme's mood, not the same default every time: a shot size, a camera angle, a lens, the focus, a main light and a second one with where they come from, a contrast word ("low-key", "high contrast") and a composition ("leading lines", "frame within a frame"). Want a particular feel? One click on a **Look** under your theme: 🪟 Natural, 🕯️ Intimate, ⚡ Powerful, 🌫️ Lonely, 🫣 Suspense, 👻 Horror, 🕵️ Noir, ☁️ Dreamy, 📷 Gritty, 🏔️ Epic or 💎 Luxury (video models get a camera move to match). Name a camera or light in your theme and it's kept. With a picture to 🎬 animate, its framing and light stay, and only the camera's movement is chosen.
 - **Takes.** Generate 1–4 variations at once. Each take deliberately goes a different way (angle, lighting, setting, moment).
 - **⏳ Queue.** No waiting for one to finish: while a prompt is cooking, **＋ Queue** (or `Ctrl+Enter`) lines up the next one, as many as you like. Each keeps the setup it was queued with, and its renders go on in ComfyUI while the next prompt is written.
 - **Refine.** Tell a take what to change ("golden hour", "add a dog", "shorter") or tap a quick chip. Every version is kept and you can page through them, and hand edits are saved as versions too.
@@ -98,7 +99,7 @@ Prompt Maker keeps a **playbook for each model** and has your Brain write the pr
                                                      • renders the image/video on your GPU
 ```
 
-Prompt Maker builds a request out of three parts and sends it to LM Studio: its shared master rules, the target model's playbook and example prompts, and your theme, image and settings. The Brain's reply streams back into the page as your prompt. When you render, Prompt Maker makes a copy of the workflow you picked, puts the prompt (plus image, size, duration and a fresh seed) into it, and queues it on your ComfyUI. The result is saved alongside the take.
+Prompt Maker builds a request out of three parts and sends it to LM Studio: its shared master rules (with a camera-and-light guide to how a cinematographer picks the shot and the light), the target model's playbook and example prompts, and your theme, image and settings. The Brain's reply streams back into the page as your prompt. When you render, Prompt Maker makes a copy of the workflow you picked, puts the prompt (plus image, size, duration and a fresh seed) into it, and queues it on your ComfyUI. The result is saved alongside the take.
 
 ## Requirements
 
@@ -191,7 +192,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 | Step | What it does |
 |---|---|
 | **① Pick your model** | The generator you're writing for. Its color follows you across the app. The five built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. |
-| **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
+| **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. Under it, the **🎥 Look** sets how the camera and light feel (see below). |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
 | **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, and how adventurous the writing is. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
@@ -215,6 +216,24 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 | 🪞 **Recreate** | You want *that* image | Describes it faithfully so the target model can reproduce it. Your theme becomes changes. |
 | 🎬 **Animate** | Image-to-video (video models only) | Treats the image as the first frame and describes the motion, camera and sound from there. |
 | 🧍 **Character** | Character animation (Wan Animate 2) | The generator gets the image as the character to animate. The prompt describes how it looks exactly as it is, and where it is. It's the only way those models use an image, so there's nothing to pick. |
+
+**🎥 Look** (under the theme) is how the camera and the light feel: how close, from which angle, what kind of light. **✨ Brain picks** (the default) lets the Brain choose them for your theme's mood. Or pick one, and every take is built on it:
+
+| Look | What you get |
+|---|---|
+| 🪟 **Natural** | Like a real photo: eye level, soft window light, the background softly blurred. |
+| 🕯️ **Intimate** | Close and quiet: a tight shot, the background melting away, soft light from the side. |
+| ⚡ **Powerful** | Larger than life: the camera looks up, strong light from behind outlines the subject. |
+| 🌫️ **Lonely** | Small in a big world: a wide shot, lots of empty space, cool dim light. |
+| 🫣 **Suspense** | Something's wrong: a tilted frame, half hidden, deep shadows. |
+| 👻 **Horror** | Dread: dark, centered, flickering light, light from below. |
+| 🕵️ **Noir** | An old detective film: black and white, hard light, blind-stripe shadows, smoke. |
+| ☁️ **Dreamy** | Soft and glowing: hazy focus, warm light from behind, pastel colors. |
+| 📷 **Gritty** | Raw and real: handheld, only the light that's there, every detail and flaw. |
+| 🏔️ **Epic** | Huge and grand: very wide, everything sharp, hazy light from behind. |
+| 💎 **Luxury** | A polished ad: studio light, gleaming highlights, perfect composition. |
+
+On a video model the look also picks the camera's move (a slow push in for Intimate, handheld for Gritty, a drone reveal for Epic). Anything your theme says about the camera or light still wins. The look is remembered, saved with each prompt (History shows it on the card), and the ✦ assistant can set it too.
 
 **How adventurous** (the Brain's *temperature*; the number is beside the slider) runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
 
@@ -533,7 +552,7 @@ Five models come with ready-made playbooks, researched from their official promp
 
 | Model | Type | Prompt style |
 |---|---|---|
-| **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. |
+| **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. Its example prompts each frame and light the shot differently (from high above, from the floor, through a telephoto lens, film noir), so the Brain doesn't copy one camera into every prompt. |
 | **Krea 2 RAW i2i** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. It comes with a starter workflow (**＋ Add workflow → 🎁 Comes with Prompt Maker**): 12 steps with Krea's turbo LoRA. Step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
 | **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |

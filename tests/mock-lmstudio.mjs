@@ -54,6 +54,7 @@ function assistantTurn(body) {
     : /\bgo\b/.test(said) ? [{ calls: [['generate', {}]] }, { text: 'Your 2 takes are ready on the right.' }]
     : /\bhow\b/.test(said) ? [{ calls: [['read_guide', { topic: said }]] }, { text: results.includes('Add LoRA') ? 'In step ⑤, click **＋ Add LoRA** and pick one from your model\'s folder.' : 'I couldn\'t find that in the guide.' }]
     : /\blora\b/.test(said) ? [{ calls: [['add_lora', { name: 'detail', strength: 0.6 }]] }, { text: 'Added it at 0.6.' }]
+    : /noir look/.test(said) ? [{ calls: [['set_dials', { look: 'noir' }]] }, { text: results.includes('Noir look') ? 'Noir it is.' : `It didn't take: ${results}` }]
     // A model name that fits two models, then a theme: the theme must not be set once set_model failed.
     : /ltx then krea/.test(said) ? [{ calls: [['set_model', { model: 'ltx' }], ['set_model', { model: 'krea' }], ['set_theme', { text: 'after a failure' }]] }, { text: results.includes('could be') ? 'Krea is two models: which?' : 'Done.' }]
     // Three videos in one go: the app asks the user first (on generate when auto-render is on, else on render).

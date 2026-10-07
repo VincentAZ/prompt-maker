@@ -16,7 +16,7 @@ import * as folders from './lib/folders.js';
 import * as computer from './lib/computer.js';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
-import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT } from './lib/prompt.js';
+import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
@@ -273,6 +273,7 @@ function pickParams(body, model) {
     resolution,
     duration: model.kind === 'video' ? String(body.duration || model.defaults.duration || '') : '',
     length: store.LENGTHS.includes(body.length) ? body.length : model.defaults.length,
+    ...(Object.hasOwn(LOOKS, body.look) ? { look: body.look } : {}), // the camera-and-light look picked in step 2; none: the Brain picks
   };
 }
 

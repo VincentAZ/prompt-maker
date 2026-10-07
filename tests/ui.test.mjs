@@ -996,6 +996,8 @@ esac
     await click('#generateBtn');
     await genDone();
     assert(!sent().includes('ADULT CONTENT'), 'off by default');
+    assert(sent().indexOf('# CAMERA AND LIGHT') > 0 && sent().indexOf('# CAMERA AND LIGHT') < sent().indexOf('# TARGET MODEL'), 'camera and light go with every prompt, before the playbook');
+    assert(lastCall().messages[1].content.includes('CAMERA AND LIGHT: Name this theme'), 'and the request asks for them');
     await click('.tabs button[data-view="settings"]');
     assert(!(await js('document.querySelector("#sAdult").checked')), 'switch off');
     await js('document.querySelector("#sAdultText").open = true');
@@ -1017,6 +1019,40 @@ esac
     await click('#settingsForm button[type="submit"]');
     await toastText('Settings saved');
     await click('.tabs button[data-view="create"]');
+  });
+
+  await test('look: one click under the theme sets the camera and light; saved with the take and remembered', async () => {
+    const request = () => lastCall().messages[1].content;
+    const before = new Set((await (await fetch(`${APP}/api/history`)).json()).map(e => e.id));
+    await click('.model-card[data-id="krea2-raw"]');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), '', 'the Brain picks by default');
+    await type('#theme', 'a detective in a rainy alley');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes("Name this theme's feeling") && !request().includes('The user picked the look'), 'no look: the Brain picks one for the mood');
+    await click('#lookRow button[data-value="noir"]');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'noir', 'Noir lit');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes('The user picked the look "Noir"') && request().includes('venetian-blind shadows'), 'the Brain is told the look and what it means');
+    assert(!request().includes('camera movement:'), 'a still gets no camera movement');
+    const entry = (await (await fetch(`${APP}/api/history`)).json())[0];
+    eq(entry.look, 'noir', 'saved with the take');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('!!document.querySelector(".hcard")', 'history cards');
+    assert((await text('.hcard')).includes('Noir'), 'and shown on its history card');
+    await click('.tabs button[data-view="create"]');
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'noir', 'remembered after a reload');
+    await (await fetch(`${APP}/api/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: 'krea2-raw', theme: 'an odd look', look: 'nonsense', variations: 1 }) })).text();
+    assert(!request().includes('nonsense') && request().includes("Name this theme's feeling"), 'an unknown look is ignored: the Brain picks');
+    eq((await (await fetch(`${APP}/api/history`)).json())[0].look, undefined, 'and none is saved');
+    await click('#lookRow button[data-value=""]');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), '', 'back to the Brain picking');
+    // (Leave History as the tests after this one expect it.)
+    for (const e of (await (await fetch(`${APP}/api/history`)).json()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
   });
 
   await test('panels fold to a one-line summary, and stay folded after a reload', async () => {
@@ -2866,6 +2902,9 @@ esac
 
     // 💻 Using this computer: off until you switch it on; deleting asks first.
     const ask = async words => { await type('#asInput', words); await press('Enter'); await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000); };
+    await ask('make it a noir look');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'noir', `the assistant sets the look: ${await bot()}`);
+    await click('#lookRow button[data-value=""]');
     eq(await js('fetch("/api/computer/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{\\"command\\":\\"echo hi\\"}" }).then(r => r.status)'), 403, 'commands are refused while it\'s off');
     await ask('run: echo hello-there');
     assert((await bot()).includes('Settings'), `it says where to allow it: ${await bot()}`);
