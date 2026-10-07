@@ -354,6 +354,9 @@ esac
   const bigModel = structuredClone(SAVED_WORKFLOW);
   Object.assign(bigModel.nodes.find(n => n.type === 'CheckpointLoaderSimple'), { widgets_values: ['big_model.safetensors'], properties: { models: [{ name: 'big_model.safetensors', url: `http://127.0.0.1:${COMFY_PORT}/hf/big_model.safetensors`, directory: 'checkpoints' }] } });
   await fs.writeFile(bigModelWorkflowFile, JSON.stringify(bigModel));
+  // The tests set up their own workflows: the starters count as added already (one test takes this back).
+  const starterModels = await fs.readdir(path.join(ROOT, 'workflows'));
+  await fs.writeFile(path.join(dataDir, 'starters.json'), JSON.stringify(Object.fromEntries(starterModels.map(id => [id, 'test']))));
 
   // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
   const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -3781,6 +3784,26 @@ esac
     await waitFor('document.querySelector("#wfStList button")?.textContent.includes("added already")', 'marked as added');
     await click('#wfClose');
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
+
+    // Every built-in model comes with a workflow, added by itself; one you have already is left alone.
+    for (const id of ['krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'minimax-h3', 'minimax-h3-ref', 'wan-animate-2', 'krea-2-character']) {
+      assert((await fs.readdir(path.join(dir, id)).catch(() => [])).length, `${id} ships with a workflow`);
+    }
+    const startersFile = path.join(dataDir, 'starters.json');
+    const before = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    const mine = new Set(before.map(f => f.modelId));
+    await fs.writeFile(startersFile, '{}');
+    const after = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    for (const id of await fs.readdir(dir)) {
+      const flows = after.filter(f => f.modelId === id);
+      if (mine.has(id)) assert(!flows.some(f => f.source.startsWith('starter:')), `${id} keeps your own workflow, no starter added`);
+      else eq(flows.map(f => f.source.split("/")[0]).join(), `starter:${id}`, `${id} got its starter workflow`);
+    }
+    const added = after.filter(f => !before.some(b => b.id === f.id));
+    assert(added.length > 0, 'some starters were added');
+    for (const f of added) await fetch(`${APP}/api/workflows/${f.id}`, { method: 'DELETE', headers: { Origin: APP } });
+    const gone = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    eq(gone.length, before.length, 'a starter you deleted stays deleted');
     await goto(APP);
   });
 

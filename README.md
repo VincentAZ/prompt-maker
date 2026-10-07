@@ -74,7 +74,7 @@ Prompt Maker keeps a **playbook for each model** and has your Brain write the pr
 - **History.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, star favorites, and reopen any entry to keep refining.
 - **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
-  - **🎁 Starter workflows** come with the app for some models (Krea 2 RAW i2i, Krea 2 Character, MiniMax H3 Reference): one click in **＋ Add workflow**, and a model file you don't have yet is one **⬇ Download** away.
+  - **🎁 Every model comes with a workflow**, already attached: pick a model and **▶ Render** is there. A model file you don't have yet is one **⬇ Download** away. Prefer your own? Add it and it's the one used; the one that came with the app stays in the list until you delete it.
   - Watch live progress (and previews) right on the take.
   - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
@@ -262,8 +262,8 @@ Two models keep the person in your picture instead of repainting the picture: **
 - **🧾 Character sheet.** Pick one of the two models and add a picture in step ③: a **Character sheet** box appears under it. At **Generate**, your Brain (one that sees images 👁) looks at the picture and writes the person's traits, one per line: age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height and marks (freckles, moles, tattoos). Then every take carries **all** of them, in the sheet's words; a trait the Brain leaves out is added back by the app. It's saved with the prompt in History.
   - **Fix a line** by typing in the box (the Brain got the eye color wrong, say): the next Generate uses your sheet as it is.
   - **↻** writes a fresh one from the picture at the next Generate. A new picture starts a new sheet.
-- **🪪 Turnaround** (Krea 2 Character): one click renders the person on a plain background from the front, three-quarter, side and back, with a close-up of the face, and when it's done it becomes your picture in step ③ (the sheet stays). From then on every render reproduces them from all sides, and a full-body turnaround also lets the sheet name their build and height. It needs the starter workflow (or yours) in step ⑤.
-- **Starter workflows** (**＋ Add workflow → 🎁 Comes with Prompt Maker**):
+- **🪪 Turnaround** (Krea 2 Character): one click renders the person on a plain background from the front, three-quarter, side and back, with a close-up of the face, and when it's done it becomes your picture in step ③ (the sheet stays). From then on every render reproduces them from all sides, and a full-body turnaround also lets the sheet name their build and height. It uses the workflow that comes with the model (or yours) in step ⑤.
+- **The workflows that come with these two models**:
   - **Krea 2 Character**: Krea 2 Turbo with the [Krea 2 Identity Edit](https://huggingface.co/conradlocke/krea2-identity-edit) LoRA, 10 steps, its likeness dial at 4. It needs the [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) nodes (in ComfyUI: **Manager → Install Missing Custom Nodes**). The LoRA is under the Krea 2 Community License.
   - **MiniMax H3 Reference**: ComfyUI's own reference-to-video template, with one reference picture and 20 steps (its optional 4-step turbo LoRA left out, so nothing extra to download); only ComfyUI's own nodes.
 - **Good to know:** the likeness holds best for faces whose identity is in their texture (freckles, marks, hair). Very unusual face shapes drift toward typical ones. A change of outfit sometimes lets a bit of the old one through: re-roll, or say the new outfit plainly in your theme.
@@ -405,10 +405,26 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 
 ### 1. Attach a workflow to a model
 
+**Every built-in model already has one.** The first time you open Prompt Maker, each of the seven models gets the workflow that comes with it (listed below), so you can **▶ Render** right away; step ⑤ offers **⬇ Download** for any model file ComfyUI doesn't have yet. It's added once: delete it and it stays gone (**＋ Add workflow → 🎁 Comes with Prompt Maker** brings it back). A model that already has a workflow of yours doesn't get one.
+
+**To use your own instead**, add it as below: a workflow you add is the one the model uses from then on, and the picker in step ⑤ (or on the take) switches between them.
+
+| Model | The workflow that comes with it |
+|---|---|
+| **Krea 2 RAW** | Text to image: Krea 2 RAW with Krea's turbo LoRA, 12 steps, about 1.5 megapixels. |
+| **Krea 2 RAW i2i** | Image to image: the same, starting from your picture. |
+| **Krea 2 Character** | Krea 2 Turbo with the Krea 2 Identity Edit LoRA, 10 steps ([more](#same-person-every-render)). Needs the comfyui-krea2edit nodes. |
+| **LTX 2.3** | ComfyUI's LTX 2.3 image-to-video template: two passes with the distilled LoRA and a 2× upscale, with sound. Its own prompt writer is taken out, so your prompt is used as written. |
+| **MiniMax H3** | ComfyUI's MiniMax H3 image-to-video template, 20 steps, with sound (its optional turbo LoRA left out). |
+| **MiniMax H3 Reference** | ComfyUI's MiniMax H3 reference-to-video template, 20 steps, with sound. |
+| **Wan Animate 2** | ComfyUI's Wan Animate 2 Distilled template: your person, moving like the motion video, 10 steps. |
+
+All but Krea 2 Character use only ComfyUI's own nodes.
+
 1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**.
 2. On **Create**, pick a model (say *Krea 2 RAW*) and click **＋ Add workflow** in step ⑤. (Or do it in **Models**, which lists every model's workflows.)
 3. Choose where the workflow comes from:
-   - **🎁 Comes with Prompt Maker** shows first when the app has a starter workflow for the model (Krea 2 RAW i2i has one). Click it and it's set up: where the prompt and your picture go, the seed, the sampler. It uses only ComfyUI's own nodes, and step ⑤ offers **⬇ Download** for any of its model files you don't have (see [Missing models](#missing-models)). It shows even while ComfyUI is off.
+   - **🎁 Comes with Prompt Maker** shows first: the workflow the app has for the model. Click it and it's set up: where the prompt and your picture go, the seed, the sampler. Step ⑤ offers **⬇ Download** for any of its model files you don't have (see [Missing models](#missing-models)). It shows even while ComfyUI is off.
    - **From ComfyUI** lists every workflow you've saved in ComfyUI. Click one. For some models (Wan Animate 2), **⭐ ComfyUI's own templates** for it come first: one click, and it's set up.
    - **Upload a file** accepts a saved workflow, an *Export (API)* file, or a workflow exported from Prompt Maker.
 4. Check the **setup**. Prompt Maker reads the workflow and suggests where things go:
@@ -429,7 +445,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
    - A **CFG of 1 is locked**, because distilled, turbo and lightning models need it. **🔒 unlock** is there if you really mean it.
    - Leave *New random seed every render* on, or turn it off to use a fixed seed.
 
-**Changed a workflow in ComfyUI?** Prompt Maker renders from its own copy, saved when you added the workflow. When you save the workflow again in ComfyUI, Prompt Maker notices (next time you come back to its tab) and shows **↻ Changed in ComfyUI · Update** in step ⑤, on the take's render bar and in **Models**. One click pulls in the new version and keeps your setup: where the prompt goes, the size and seed slots, and your sampler tweaks. If a part of your setup no longer fits (say the prompt node was replaced), the setup opens so you can check it. **↻ Update from ComfyUI** in a workflow's setup does the same any time. Workflows you uploaded as files offer **↻ Update from a file** instead, and a starter workflow offers **↻ Update to this version's**, for when a newer Prompt Maker brings a better one.
+**Changed a workflow in ComfyUI?** Prompt Maker renders from its own copy, saved when you added the workflow. When you save the workflow again in ComfyUI, Prompt Maker notices (next time you come back to its tab) and shows **↻ Changed in ComfyUI · Update** in step ⑤, on the take's render bar and in **Models**. One click pulls in the new version and keeps your setup: where the prompt goes, the size and seed slots, and your sampler tweaks. If a part of your setup no longer fits (say the prompt node was replaced), the setup opens so you can check it. **↻ Update from ComfyUI** in a workflow's setup does the same any time. Workflows you uploaded as files offer **↻ Update from a file** instead, and a workflow that came with the app offers **↻ Update to this version's**, for when a newer Prompt Maker brings a better one.
 
 ### 2. Render
 
@@ -579,11 +595,11 @@ Seven models come with ready-made playbooks, researched from their official prom
 | Model | Type | Prompt style |
 |---|---|---|
 | **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. Its example prompts each frame and light the shot differently (from high above, from the floor, through a telephoto lens, film noir), so the Brain doesn't copy one camera into every prompt. |
-| **Krea 2 RAW i2i** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. It comes with a starter workflow (**＋ Add workflow → 🎁 Comes with Prompt Maker**): 12 steps with Krea's turbo LoRA. Step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
-| **Krea 2 Character** | Image (same person) | Krea 2 with the Identity Edit LoRA: an instruction (*"Create a photo of this woman…"*), every trait of the [character sheet](#same-person-every-render), the new clothes, pose, camera and light, then "Preserve the exact facial identity and body". Comes with a starter workflow. |
+| **Krea 2 RAW i2i** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. Its workflow (12 steps with Krea's turbo LoRA) comes with the app. Step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
+| **Krea 2 Character** | Image (same person) | Krea 2 with the Identity Edit LoRA: an instruction (*"Create a photo of this woman…"*), every trait of the [character sheet](#same-person-every-render), the new clothes, pose, camera and light, then "Preserve the exact facial identity and body". Its workflow comes with the app. |
 | **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
-| **MiniMax H3 Reference** | Video + audio (same person) | MiniMax's full-reference format (`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`): your picture is `<Subject 1>`, defined once with every trait of the [character sheet](#same-person-every-render). Comes with a starter workflow. |
+| **MiniMax H3 Reference** | Video + audio (same person) | MiniMax's full-reference format (`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`): your picture is `<Subject 1>`, defined once with every trait of the [character sheet](#same-person-every-render). Its workflow comes with the app. |
 | **Wan Animate 2** | Video (character animation) | Wan-AI's official caption format: `Character appearance description:` (looks only) and `Background description:` (place, light, camera angle), plus a `Motion:` line for the pose prompt. Takes a character image and a motion video ([more](#character-animation-wan-animate-2)). |
 
 > **Good to know**
@@ -896,7 +912,7 @@ prompt-maker/
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts; sw.js keeps a copy so the page opens while the server is off)
 ├── playbooks/              # the built-in model playbooks (read-only to the app)
 ├── chains/                 # the starter chains (read-only to the app)
-├── workflows/              # the starter workflows, one folder per model id (read-only to the app; no prompts, seeds or pictures in them)
+├── workflows/              # the workflows that come with the app, one folder per model id, added to each model by itself (read-only to the app; no prompts, seeds or pictures in them)
 ├── tests/
 │   ├── mock-lmstudio.mjs   # fake LM Studio for tests
 │   ├── mock-comfyui.mjs    # fake ComfyUI (HTTP + WebSocket progress) for tests

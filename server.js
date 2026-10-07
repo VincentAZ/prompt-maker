@@ -734,6 +734,41 @@ async function starterWorkflows(modelId) {
   return out;
 }
 
+// Every model with a starter workflow gets it by itself while it has no workflow, so a new person can render
+// right away. Added once: delete it and it stays gone (＋ Add workflow brings it back); add your own and yours is used.
+const STARTERS_ADDED = path.join(store.DATA_DIR, 'starters.json');
+const startersAdded = () => fs.readFile(STARTERS_ADDED, 'utf8').then(JSON.parse).catch(() => ({}));
+let addingStarters = null;
+function addStarters() {
+  addingStarters ??= (async () => {
+    const added = await startersAdded();
+    const flows = await wf.listWorkflows();
+    let changed = false;
+    for (const modelId of await fs.readdir(STARTERS_DIR).catch(() => [])) {
+      if (added[modelId] || flows.some(f => f.modelId === modelId) || !(await store.getModel(modelId))) continue;
+      const [starter] = await starterWorkflows(modelId);
+      if (!starter) continue;
+      try {
+        const p = await prepareWorkflow({ starter: starter.key });
+        await wf.saveWorkflow({ modelId, name: p.name, source: p.source, prompt: p.prompt, mapping: p.mapping, options: p.options, models: p.models });
+        added[modelId] = starter.key;
+        changed = true;
+      } catch (err) {
+        console.warn(`Couldn't add the starter workflow for ${modelId}: ${err.message}`);
+      }
+    }
+    if (changed) await fs.writeFile(STARTERS_ADDED, JSON.stringify(added, null, 2) + '\n');
+  })().finally(() => { addingStarters = null; });
+  return addingStarters;
+}
+// A model deleted (or reset to the shipped one) takes its workflows with it, so its starter comes back.
+async function forgetStarter(modelId) {
+  const added = await startersAdded();
+  if (!(modelId in added)) return;
+  delete added[modelId];
+  await fs.writeFile(STARTERS_ADDED, JSON.stringify(added, null, 2) + '\n');
+}
+
 // Turns an uploaded or ComfyUI-saved workflow into an API prompt plus a suggested input mapping.
 async function prepareWorkflow(body) {
   const settings = await store.getSettings();
@@ -1250,6 +1285,7 @@ async function route(req, res) {
     if (m === 'DELETE') {
       await store.deleteModel(id);
       await wf.deleteWorkflowsForModel(id);
+      await forgetStarter(id);
       return sendJson(res, 200, { ok: true });
     }
   }
@@ -1522,7 +1558,10 @@ async function route(req, res) {
     const settings = await store.getSettings();
     return sendJson(res, 200, await comfy.savedWorkflows(settings.comfyUrl));
   }
-  if (p === '/api/workflows' && m === 'GET') return sendJson(res, 200, await wf.listWorkflows());
+  if (p === '/api/workflows' && m === 'GET') {
+    await addStarters();
+    return sendJson(res, 200, await wf.listWorkflows());
+  }
   if (p === '/api/workflows/starters' && m === 'GET') return sendJson(res, 200, await starterWorkflows(url.searchParams.get('model')));
   if (p === '/api/workflows/prepare' && m === 'POST') return sendJson(res, 200, await prepareWorkflow(await readBody(req)));
   if (p === '/api/workflows' && m === 'POST') {
