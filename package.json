@@ -1,8 +1,9 @@
 {
   "name": "prompt-maker",
-  "version": "1.21.1",
+  "version": "1.21.2",
   "description": "Offline prompt writer for image and video models, powered by a local LLM in LM Studio.",
   "license": "FSL-1.1-ALv2",
+  "author": "Serpico Enterprises LLC",
   "type": "module",
   "private": true,
   "engines": {
