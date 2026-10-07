@@ -5199,7 +5199,8 @@ async function loraFilesChanged(loras) {
     const now = await api('/api/comfy/loras/files', { method: 'POST', body: { names: ask } }).catch(() => null);
     if (now) for (const n of ask) loraFilesNow.set(n, { at: Date.now(), file: now[n] || null });
   }
-  return recorded.filter(l => { const f = loraFilesNow.get(l.name)?.file; return f && (f.size !== l.file.size || f.mtime !== l.file.mtime); }).map(l => l.name);
+  // Dates within a second count as the same: a ComfyUI elsewhere reports them less finely than this computer's files.
+  return recorded.filter(l => { const f = loraFilesNow.get(l.name)?.file; return f && (f.size !== l.file.size || Math.abs(f.mtime - l.file.mtime) > 1000); }).map(l => l.name);
 }
 const loraChangedNote = names => `${names.map(loraShort).join(', ')} ${names.length > 1 ? 'were' : 'was'} replaced by another file with the same name since this render, so a render now may look different.`;
 

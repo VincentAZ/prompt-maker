@@ -213,6 +213,12 @@ export function startMockComfy(port, { png, root = null }) {
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': MODEL_BYTES.length });
       return res.end(MODEL_BYTES);
     }
+    if (p === '/experiment/models/loras') {
+      return json(200, OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0].map(name => {
+        const st = root && fs.existsSync(path.join(root, 'models', 'loras', name)) ? fs.statSync(path.join(root, 'models', 'loras', name)) : null;
+        return { name, pathIndex: 0, modified: st ? st.mtimeMs / 1000 : 1700000000, created: 1700000000, size: st ? st.size : 1 };
+      }));
+    }
     if (p === '/models/loras') return json(200, OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0]);
     if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: saved.modified }, { path: '.index.json', size: 10, modified: 0 }]);
     if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, saved.json);

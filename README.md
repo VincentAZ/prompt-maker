@@ -529,7 +529,7 @@ Step ⑤ shows the **🧬 LoRAs** of the picked workflow:
 
 - **The assistant swaps versions too:** *"use the newest film grain"*. When it changes a LoRA, it says if a newer version is in the folder.
 
-Your LoRA choices are saved with the workflow in your data folder. Every render records the LoRAs it used, shown in its lightbox, and (with ComfyUI on this computer) each file's size and date. **A LoRA file replaced under the same name** since a render (you downloaded v2 over v1) is marked *⚠️ file changed since* in that render's lightbox, and opening it from History says so: a render now may look different.
+Your LoRA choices are saved with the workflow in your data folder. Every render records the LoRAs it used, shown in its lightbox, and each file's size and date (read from the file with ComfyUI on this computer, else from ComfyUI's model list). **A LoRA file replaced under the same name** since a render (you downloaded v2 over v1) is marked *⚠️ file changed since* in that render's lightbox, and opening it from History says so: a render now may look different.
 
 ### 3. Turn a still into a video
 

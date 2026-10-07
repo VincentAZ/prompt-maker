@@ -13,6 +13,7 @@ import { convertUiWorkflow, pruneToOutputs } from '../lib/comfy-convert.js';
 import * as wfLib from '../lib/workflows.js';
 import * as modelsLib from '../lib/models.js';
 import * as videotools from '../lib/videotools.js';
+import * as comfyLib from '../lib/comfy.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const APP_PORT = Number(process.env.APP_PORT) || 5399;
@@ -2762,6 +2763,10 @@ esac
       // The render remembers the file it used; replaced under the same name, the lightbox says so.
       const made = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
       eq(made.loras.find(l => l.name === 'krea2/baked_in_v3.safetensors')?.file?.size, 3, 'the file it used is recorded');
+      // A ComfyUI on another computer: its model list says the same (also for a file named without its subfolder).
+      const remote = await comfyLib.loraFilesOverApi(`http://127.0.0.1:${COMFY_PORT}`, ['krea2/baked_in_v3.safetensors', 'baked_in_v3.safetensors', 'krea2/nope.safetensors']);
+      eq(`${remote['krea2/baked_in_v3.safetensors']?.size}|${remote['baked_in_v3.safetensors']?.size}|${remote['krea2/nope.safetensors']}`, '3|3|undefined', 'ComfyUI\'s model list gives sizes too');
+      assert(Math.abs(remote['krea2/baked_in_v3.safetensors'].mtime - made.loras.find(l => l.name === 'krea2/baked_in_v3.safetensors').file.mtime) <= 1000, 'and the same date');
       await fs.writeFile(v3file, 'bbbbbb');
       await click('.take .rtile');
       await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
