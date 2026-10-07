@@ -219,6 +219,32 @@ html:has(#banner:not([hidden])) { scroll-padding-top: 150px; }
 main { padding: 24px; max-width: 2560px; margin: 0 auto; }
 #view-models, #view-settings { max-width: 1512px; margin-inline: auto; }
 .view { display: none; animation: rise 0.35s ease both; }
+
+/* 🎙 Voices */
+.voices { display: grid; gap: 16px; max-width: 860px; }
+.voice-card { padding: 18px 20px; display: grid; gap: 12px; }
+.voice-card h2 { margin: 0; font-size: 17px; }
+.voice-row { align-items: end; flex-wrap: wrap; }
+.voice-lang { width: 150px; }
+.voice-name { width: 220px; }
+.voice-heard { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.voice-heard audio, .voice-list audio { width: 100%; height: 36px; }
+.voice-progress { display: inline-flex; align-items: center; gap: 10px; }
+.voice-progress .mm-prog { width: 220px; height: 8px; border-radius: 4px; background: rgb(255 255 255 / 12%); overflow: hidden; }
+.voice-progress .mm-bar { display: block; height: 100%; background: var(--hot, #ffb347); transition: width .4s; }
+.voice-progress .mm-pct { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+.voice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.voice-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name acts" "desc desc" "audio audio"; gap: 6px 12px; padding: 12px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.voice-list .vl-name { grid-area: name; font-weight: 700; font-size: 15px; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.voice-list .vl-name input { font: inherit; padding: 4px 8px; width: 220px; }
+.voice-list .vl-desc { grid-area: desc; color: var(--muted); font-size: 13px; }
+.voice-list .vl-acts { grid-area: acts; display: flex; gap: 6px; flex-wrap: wrap; justify-content: end; }
+.voice-list .vl-audio { grid-area: audio; min-height: 36px; }
+.voice-list .vl-audio:empty { display: none; }
+.voice-list .vl-said { font-size: 12.5px; color: var(--muted); margin: 4px 0 0; }
+.line-block { display: grid; gap: 8px; }
+.line-form { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.line-form select, .line-form input { min-width: 0; }
 .view.active { display: block; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
@@ -718,13 +744,19 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 .drop-overlay div { padding: 60px 90px; border-radius: 30px; border: 3px dashed var(--hot); font-size: 30px; font-weight: 800; letter-spacing: -0.03em; background: rgb(255 77 141 / 10%); }
 
 /* ---------- responsive ---------- */
-@media (max-width: 1180px) {
+@media (max-width: 1380px) { /* six tabs: the top bar tightens a little earlier */
   .llm-label { display: none; }
   .llm { min-width: 0; flex: 0 1 auto; }
   .llm-pick { width: 170px; min-width: 110px; flex: 1 1 auto; }
   .tabs button { padding: 8px 11px; }
   .topbar { gap: 12px; padding: 12px 18px; }
   .wordmark { font-size: 20px; }
+}
+/* Six tabs: below 1180px (a small laptop, or a bigger window with the assistant beside the page) only the tab you're on
+   keeps its word; the others show their icon (hover for the name). Under 860px the tabs get a row of their own again. */
+@media (min-width: 861px) and (max-width: 1180px) {
+  .tabs button:not(.active) span { display: none; }
+  .tabs button { padding: 8px 12px; }
 }
 @media (max-width: 1060px) {
   .wordmark { display: none; }

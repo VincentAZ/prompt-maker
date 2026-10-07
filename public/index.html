@@ -19,23 +19,27 @@
       <span class="wordmark">prompt<b>maker</b></span>
     </a>
     <nav class="tabs" aria-label="Sections">
-      <button type="button" data-view="create" aria-label="Create">
+      <button type="button" data-view="create" aria-label="Create" title="Create">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
         <span>Create</span>
       </button>
-      <button type="button" data-view="history" aria-label="History">
+      <button type="button" data-view="history" aria-label="History" title="History">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
         <span>History</span><em id="historyBadge" class="badge" hidden></em>
       </button>
-      <button type="button" data-view="gallery" aria-label="Gallery">
+      <button type="button" data-view="gallery" aria-label="Gallery" title="Gallery">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
         <span>Gallery</span>
       </button>
-      <button type="button" data-view="models" aria-label="Models">
+      <button type="button" data-view="models" aria-label="Models" title="Models">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
         <span>Models</span>
       </button>
-      <button type="button" data-view="settings" aria-label="Settings">
+      <button type="button" data-view="voices" aria-label="Voices" title="Voices">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg>
+        <span>Voices</span>
+      </button>
+      <button type="button" data-view="settings" aria-label="Settings" title="Settings">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
         <span>Settings</span>
       </button>
@@ -166,6 +170,16 @@
               <textarea id="sheetText" class="sheet-text" rows="7" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you press Generate: face, eyes, hair, skin, build… Then every take keeps all of it. Edit any line to fix it."></textarea>
             </div>
             <div id="wfpDenoise" class="wfp-denoise" hidden></div>
+            <div id="lineBlock" class="line-block" hidden>
+              <p class="zone-label">🎙 <b>Says a line</b> <span class="muted">in a voice you made</span></p>
+              <p id="lineSetup" class="hint" hidden>This workflow can make the person say a line in a voice of yours. <a href="#voices">Set up 🎙 Voices</a> first (one click).</p>
+              <div id="lineForm" class="line-form" hidden>
+                <select id="lineVoice" aria-label="Voice"></select>
+                <input id="lineText" placeholder="What they say, word for word" maxlength="600" aria-label="The line">
+                <button type="button" id="lineClear" class="icon-btn" title="No line" aria-label="Clear the line">✕</button>
+              </div>
+              <p id="lineHint" class="hint" hidden>At Generate the line is said in that voice, and the video follows it (it's made at least as long as the line).</p>
+            </div>
             <div id="motionBlock" hidden>
               <p class="zone-label">🕺 <b>Motion video</b> <span class="muted">the moves your character copies</span></p>
               <div id="motionZone" class="dropzone" tabindex="0" role="button" aria-label="Add a motion video: drop or browse">
@@ -308,6 +322,7 @@
               <span id="reelCount" class="reel-count"></span>
               <span class="spacer"></span>
               <label id="reelZoom" class="reel-zoom" title="Picture size">🔍<input type="range" id="reelSize" min="80" max="1000" step="10" value="160" aria-label="Picture size"></label>
+              <button type="button" id="reelJoin" class="btn small" title="Join the videos shown here, in this order, into one video" hidden>🎬 Join</button>
               <button type="button" id="reelFull" class="btn small" aria-label="Full screen" title="Fill the window (Esc to go back)"><span class="ico" aria-hidden="true">⛶</span> <span class="lbl">Full screen</span></button>
             </div>
             <div id="reelBody" class="reel-body">
@@ -538,6 +553,56 @@
     </section>
 
     <!-- ================= SETTINGS ================= -->
+    <!-- ================= VOICES ================= -->
+    <section id="view-voices" class="view" aria-label="Voices">
+      <div class="page-head">
+        <h1>🎙 Voices</h1>
+        <p>Describe a voice once and keep it by name. Any line you write is then said in that voice, and a video model like MiniMax H3 makes the person say it. All on this computer.</p>
+      </div>
+      <div class="voices">
+        <section class="card voice-card" id="voiceSetup" hidden>
+          <h2>One-time setup</h2>
+          <p class="hint">Voices need two speech models, about <span id="voiceGb">9</span> GB, downloaded once from Hugging Face into Prompt Maker's data folder. After that they work offline. ComfyUI isn't changed.</p>
+          <p class="hint" id="voicePython"></p>
+          <div class="row">
+            <button type="button" id="voiceInstall" class="btn primary">⬇ Install voices</button>
+            <span id="voiceProgress" class="voice-progress" hidden><span class="mm-prog"><span class="mm-bar"></span></span><span class="mm-pct"></span></span>
+          </div>
+          <p id="voiceInstallErr" class="test-result bad" hidden></p>
+        </section>
+
+        <section class="card voice-card" id="voiceNew" hidden>
+          <h2>New voice</h2>
+          <label class="field"><span>What does it sound like?</span>
+            <textarea id="vDesc" rows="3" placeholder="e.g. A woman in her late twenties from the Midwest: warm, light alto, friendly, smiling as she talks, relaxed pace, close to the microphone"></textarea>
+          </label>
+          <label class="field"><span>A sentence to hear it say</span>
+            <input id="vText" value="Hi there. I grew up out near the lake, and honestly, mornings like this are still my favorite part of the day.">
+          </label>
+          <div class="row voice-row">
+            <label class="field voice-lang"><span>Language</span><select id="vLang"></select></label>
+            <button type="button" id="vHear" class="btn primary">▶ Hear it</button>
+            <span id="vStatus" class="muted small" aria-live="polite"></span>
+          </div>
+          <div class="voice-heard" id="vHeard" hidden>
+            <audio id="vPlay" controls preload="auto"></audio>
+            <div class="row">
+              <label class="field voice-name"><span>Name</span><input id="vName" placeholder="e.g. Jess" maxlength="60"></label>
+              <button type="button" id="vKeep" class="btn primary">💾 Keep this voice</button>
+              <span class="muted small">Not it? Change the description and hear it again.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card voice-card" id="voiceListCard" hidden>
+          <h2>Your voices <span id="voiceCount" class="count-pill"></span></h2>
+          <label class="field"><span>Try a line</span><input id="vTry" placeholder="Type something, then ▶ Say it on a voice" maxlength="600"></label>
+          <ul id="voiceList" class="voice-list"></ul>
+          <p class="hint" id="voiceEmpty">No voices yet. Make one above.</p>
+        </section>
+      </div>
+    </section>
+
     <section id="view-settings" class="view" aria-label="Settings">
       <div class="page-head">
         <h1>Settings</h1>

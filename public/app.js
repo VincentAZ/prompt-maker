@@ -44,6 +44,7 @@ const state = {
   workflows: [],
   loraList: null, // every LoRA ComfyUI has, e.g. "krea2/film_grain.safetensors" (loaded when needed)
   loraPicker: { open: false, q: '' },
+  line: { voice: '', text: '' }, // 🎙 what the person says, in which voice (step 3, video models)
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   wfMissing: new Map(), // workflow id → model files it needs that ComfyUI doesn't have
   trim: null, // { a, b }: the frames kept (a first, b after the last) while picking part of the motion video (✂️ Trim)
@@ -451,7 +452,7 @@ const effectiveRole = () => {
 
 // ---------- navigation ----------
 
-const VIEWS = ['create', 'history', 'gallery', 'models', 'settings'];
+const VIEWS = ['create', 'history', 'gallery', 'models', 'voices', 'settings'];
 const isView = name => $(`#view-${name}`).classList.contains('active');
 
 // Textareas measured while hidden (or at another width) need re-measuring.
@@ -481,6 +482,7 @@ function showView(name, { push = true, byUser = false } = {}) {
   if (push && location.hash !== hash) history.pushState(null, '', hash);
   if (name === 'history') loadHistory();
   if (name === 'gallery') loadGallery();
+  if (name === 'voices') loadVoices();
   if (name === 'settings' && !state.settingsDirty) renderSettings();
   if (name === 'settings') showOutputDir();
   if (name === 'settings') loadServices();
@@ -491,6 +493,259 @@ function showView(name, { push = true, byUser = false } = {}) {
   requestAnimationFrame(resizeTextareas);
 }
 window.addEventListener('popstate', () => showView(location.hash.slice(1), { push: false, byUser: true }));
+
+// 🎬 Join videos: whole renders, in order, as one new video that lands in 🎞 Your renders like any render.
+async function joinVideos(items, title) {
+  const r = await api('/api/renders/join', { method: 'POST', body: { ids: items.map(it => it.render.id), title: title || '' } });
+  state.history = await api('/api/history').catch(() => state.history);
+  noteSession(r.entry);
+  if (isView('gallery')) loadGallery(); else renderReel();
+  return r;
+}
+$('#reelJoin').addEventListener('click', async () => {
+  const items = reelItems.filter(it => it.file.kind === 'video');
+  if (items.length < 2) return;
+  const b = $('#reelJoin');
+  b.disabled = true;
+  b.textContent = `🎬 Joining ${items.length} videos…`;
+  try {
+    const r = await joinVideos(items);
+    toast(`🎬 Joined ${items.length} videos into one${r.seconds ? ` (${Math.round(r.seconds)}s)` : ''}`, false, { label: 'Show', run: () => { const it = galleryItems().find(x => x.render.id === r.render.id); if (it) openLightbox([it], 0); } });
+  } catch (err) {
+    toast(`Couldn't join them: ${friendly(err)}`, true);
+  } finally {
+    b.disabled = false;
+    renderReel();
+  }
+});
+
+// ---------- 🎙 Voices: describe a voice once, keep it by name, hear any line in it ----------
+// Speech is made on this computer (Qwen3-TTS) by a worker the server runs with ComfyUI's Python plus a few packages of
+// its own in the data folder: ComfyUI is never changed. One-time setup fetches the models (about 9 GB), then offline.
+
+const voices = { status: null, list: [], heard: null, busy: false, poll: null };
+const voiceById = id => voices.list.find(v => v.id === id);
+const voicesReady = () => Boolean(voices.status?.installed);
+
+async function loadVoices() {
+  try {
+    const r = await api('/api/voice');
+    voices.status = r;
+    voices.list = r.voices || [];
+    voices.status.installing = r.installing;
+  } catch (err) {
+    voices.status = { installed: false, error: friendly(err) };
+  }
+  renderVoices();
+  if (voices.status.installing) pollVoiceInstall();
+}
+
+const gb = b => `${(b / 1e9).toFixed(1)} GB`;
+function renderVoices() {
+  const s = voices.status || {};
+  const ready = Boolean(s.installed);
+  $('#voiceSetup').hidden = ready;
+  $('#voiceNew').hidden = !ready;
+  $('#voiceListCard').hidden = !ready;
+  if (s.gigabytes) $('#voiceGb').textContent = s.gigabytes;
+  $('#voicePython').textContent = s.python ? `Runs with ${s.python.includes('/') || s.python.includes('\\') ? 'ComfyUI\'s Python' : s.python} on this computer. A graphics card makes it quick (a few seconds a line); without one it still works, slower.` : '';
+  const job = s.installing;
+  $('#voiceInstall').hidden = Boolean(job);
+  $('#voiceProgress').hidden = !job;
+  if (job) {
+    const pct = job.phase === 'models' && job.total ? Math.round((job.received / job.total) * 100) : 0;
+    $('#voiceProgress .mm-bar').style.width = `${pct}%`;
+    $('#voiceProgress .mm-pct').textContent = job.phase === 'packages' ? 'Setting up the speech packages…' : `Fetching the voice models: ${gb(job.received)} of ${gb(job.total)}`;
+  }
+  $('#voiceInstallErr').hidden = !s.error;
+  $('#voiceInstallErr').textContent = s.error || '';
+  if (!$('#vLang').options.length) $('#vLang').innerHTML = (s.languages || ['Auto']).map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+  $('#voiceCount').textContent = voices.list.length || '';
+  $('#voiceEmpty').hidden = voices.list.length > 0;
+  const focus = document.activeElement?.closest?.('#voiceList li')?.dataset.id;
+  $('#voiceList').innerHTML = voices.list.map(v => `
+    <li data-id="${esc(v.id)}">
+      <span class="vl-name">${v.renaming ? `<input value="${esc(v.name)}" maxlength="60" aria-label="New name"><button type="button" class="btn small primary" data-act="rename-ok">Save</button><button type="button" class="btn small" data-act="rename-no">Cancel</button>` : `🎙 ${esc(v.name)}`}</span>
+      <span class="vl-acts">
+        <button type="button" class="btn small" data-act="sample" title="Hear its sample">▶ Sample</button>
+        <button type="button" class="btn small primary" data-act="say" title="Say the line in the box above">🗣 Say it</button>
+        <button type="button" class="btn small" data-act="rename" title="Rename">✏</button>
+        <button type="button" class="btn small ${v.sure ? 'danger' : ''}" data-act="delete" title="Delete this voice">${v.sure ? 'Sure? 🗑' : '🗑'}</button>
+      </span>
+      <span class="vl-desc">${esc(v.description || '')}</span>
+      <div class="vl-audio">${v.playing ? `<audio controls autoplay src="${esc(v.playing.url)}"></audio><p class="vl-said">${esc(v.playing.label)}</p>` : ''}</div>
+    </li>`).join('');
+  if (focus) $(`#voiceList li[data-id="${CSS.escape(focus)}"] button`)?.focus();
+}
+
+async function voiceInstall() {
+  $('#voiceInstallErr').hidden = true;
+  try {
+    voices.status.installing = await api('/api/voice/install', { method: 'POST' });
+    voices.status.error = '';
+  } catch (err) {
+    voices.status.error = friendly(err);
+  }
+  renderVoices();
+  pollVoiceInstall();
+}
+function pollVoiceInstall() {
+  clearTimeout(voices.poll);
+  voices.poll = setTimeout(async () => {
+    const job = await api('/api/voice/install').catch(() => null);
+    if (!job || job.state === 'none') return;
+    if (job.state === 'running') { voices.status.installing = job; renderVoices(); return pollVoiceInstall(); }
+    voices.status.installing = null;
+    if (job.state === 'error') { voices.status.error = job.error; renderVoices(); toast(`Voices didn't install: ${job.error}`, true); return; }
+    await loadVoices();
+    toast('🎙 Voices are ready');
+    announce('Voices are installed.');
+  }, 1000);
+}
+
+async function hearVoice() {
+  if (voices.busy) return;
+  const description = $('#vDesc').value.trim();
+  const text = $('#vText').value.trim();
+  if (!description) { $('#vDesc').focus(); return toast('Describe the voice first', true); }
+  if (!text) { $('#vText').focus(); return toast('Give it a sentence to say', true); }
+  voices.busy = true;
+  $('#vHear').disabled = true;
+  $('#vStatus').textContent = 'Making the voice… (the first time loads the model: about a minute)';
+  try {
+    const r = await api('/api/voice/design', { method: 'POST', body: { description, text, language: $('#vLang').value } });
+    voices.heard = { ...r, description, text, language: $('#vLang').value };
+    $('#vPlay').src = `/voice/${encodeURIComponent(r.file)}`;
+    $('#vHeard').hidden = false;
+    $('#vStatus').textContent = `Took ${r.took}s`;
+    $('#vPlay').play().catch(() => {});
+    if (!$('#vName').value) $('#vName').focus();
+  } catch (err) {
+    $('#vStatus').textContent = '';
+    toast(friendly(err), true);
+  } finally {
+    voices.busy = false;
+    $('#vHear').disabled = false;
+  }
+}
+
+async function keepVoice() {
+  if (!voices.heard) return toast('Hear the voice first', true);
+  const name = $('#vName').value.trim();
+  if (!name) { $('#vName').focus(); return toast('Give the voice a name', true); }
+  try {
+    const v = await api('/api/voice/voices', { method: 'POST', body: { name, description: voices.heard.description, text: voices.heard.text, file: voices.heard.file, language: voices.heard.language } });
+    voices.list.push(v);
+    voices.heard = null;
+    $('#vHeard').hidden = true;
+    $('#vName').value = '';
+    $('#vStatus').textContent = '';
+    renderVoices();
+    toast(`🎙 Kept the voice “${v.name}”`);
+    announce(`Kept the voice ${v.name}.`);
+  } catch (err) {
+    toast(friendly(err), true);
+  }
+}
+
+$('#voiceInstall').addEventListener('click', voiceInstall);
+$('#vHear').addEventListener('click', hearVoice);
+$('#vKeep').addEventListener('click', keepVoice);
+$('#vName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); keepVoice(); } });
+$('#voiceList').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-act]');
+  const li = e.target.closest('li[data-id]');
+  if (!b || !li) return;
+  const v = voiceById(li.dataset.id);
+  if (!v) return;
+  const act = b.dataset.act;
+  if (act === 'sample') {
+    v.playing = { url: `/voice/${encodeURIComponent(v.file)}`, label: `“${v.text}”` };
+    renderVoices();
+  } else if (act === 'say') {
+    const text = $('#vTry').value.trim();
+    if (!text) { $('#vTry').focus(); return toast('Type a line to say first', true); }
+    b.disabled = true;
+    b.textContent = '🗣 Saying it…';
+    try {
+      const r = await api('/api/voice/say', { method: 'POST', body: { voice: v.id, text } });
+      v.playing = { url: `/voice/${encodeURIComponent(r.file)}`, label: `“${text}” · ${r.seconds}s` };
+    } catch (err) {
+      toast(friendly(err), true);
+    }
+    renderVoices();
+  } else if (act === 'rename') {
+    v.renaming = true;
+    renderVoices();
+    $(`#voiceList li[data-id="${CSS.escape(v.id)}"] input`)?.select();
+  } else if (act === 'rename-no') {
+    delete v.renaming;
+    renderVoices();
+  } else if (act === 'rename-ok') {
+    const name = $('input', li).value.trim();
+    try {
+      Object.assign(v, await api(`/api/voice/voices/${v.id}`, { method: 'PATCH', body: { name } }));
+      delete v.renaming;
+    } catch (err) {
+      toast(friendly(err), true);
+    }
+    renderVoices();
+  } else if (act === 'delete') {
+    if (!v.sure) {
+      v.sure = true;
+      renderVoices();
+      setTimeout(() => { if (v.sure) { delete v.sure; renderVoices(); } }, 4000);
+      return;
+    }
+    try {
+      await api(`/api/voice/voices/${v.id}`, { method: 'DELETE' });
+      voices.list = voices.list.filter(x => x !== v);
+      renderVoices();
+      toast(`Deleted the voice “${v.name}”`);
+    } catch (err) {
+      toast(friendly(err), true);
+    }
+  }
+});
+$('#voiceList').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); $('[data-act="rename-ok"]', e.target.closest('li'))?.click(); }
+  if (e.key === 'Escape' && e.target.matches('input')) { e.preventDefault(); $('[data-act="rename-no"]', e.target.closest('li'))?.click(); }
+});
+
+// 🎙 Says a line (step 3): on a video model whose picked workflow takes a sound file, pick a voice and write the line.
+// At Generate the server says it in that voice; at Render the clip is the soundtrack the video follows.
+const lineOn = () => currentModel()?.kind === 'video' && Boolean(activeFlow()?.maps?.audio);
+function setLine(line, { persist = true } = {}) {
+  state.line = { voice: String(line?.voice || ''), text: String(line?.text || '') };
+  if (persist) saved.set('line', state.line);
+  renderLine();
+}
+let voicesAsked = false;
+function renderLine() {
+  state.line ||= { voice: '', text: '' };
+  const on = lineOn();
+  $('#lineBlock').hidden = !on;
+  if (!on) return;
+  if (!voices.status && !voicesAsked) { voicesAsked = true; loadVoices().then(() => { voicesAsked = false; renderLine(); }); }
+  const ready = voicesReady();
+  $('#lineSetup').hidden = ready || !voices.status;
+  $('#lineForm').hidden = !ready;
+  $('#lineHint').hidden = !ready;
+  if (!ready) return;
+  const sel = $('#lineVoice');
+  const options = `<option value="">No line</option>${voices.list.map(v => `<option value="${esc(v.id)}">🎙 ${esc(v.name)}</option>`).join('')}`;
+  if (sel.innerHTML !== options) sel.innerHTML = options;
+  if (state.line.voice && !voices.list.some(v => v.id === state.line.voice)) state.line.voice = voices.list[0]?.id || '';
+  sel.value = state.line.voice;
+  if (document.activeElement !== $('#lineText')) $('#lineText').value = state.line.text;
+  $('#lineText').disabled = !voices.list.length;
+  $('#lineText').placeholder = voices.list.length ? 'What they say, word for word' : 'Make a voice on the 🎙 Voices page first';
+  $('#lineClear').hidden = !state.line.text && !state.line.voice;
+}
+$('#lineVoice').addEventListener('change', () => { setLine({ ...state.line, voice: $('#lineVoice').value }); if ($('#lineVoice').value && !state.line.text) $('#lineText').focus(); });
+$('#lineText').addEventListener('input', () => { state.line.text = $('#lineText').value; saved.set('line', state.line); $('#lineClear').hidden = !state.line.text && !state.line.voice; });
+$('#lineText').addEventListener('change', () => setLine({ voice: state.line.voice || voices.list[0]?.id || '', text: $('#lineText').value }));
+$('#lineClear').addEventListener('click', () => { setLine({ voice: '', text: '' }); $('#lineText').focus(); });
 $$('.tabs button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view, { byUser: true })));
 
 // ---------- LM Studio ("Brain") ----------
@@ -1227,6 +1482,7 @@ function renderRole() {
   const hasTheme = Boolean($('#theme').value.trim());
   $('#roleHint').textContent = m?.characterSheet ? SHEET_HINT[hasTheme ? 0 : 1] : ROLE_HINTS[role][hasTheme ? 0 : 1];
   $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual;
+  try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of step 3
   $('#turnaroundBtn').hidden = m?.kind !== 'image';
   $('#themeOpt').textContent = state.manual ? 'sent word for word' : hasImage || (motion && state.video) ? 'optional' : '';
   themePlaceholder();
@@ -2461,6 +2717,9 @@ function renderReel() {
     going && `${going} rendering`,
   ].filter(Boolean).join(' · ');
   $('#reelZoom').hidden = !open || none;
+  const videosShown = items.filter(it => it.file.kind === 'video').length;
+  $('#reelJoin').hidden = !open || videosShown < 2 || reelFilter.hidden;
+  $('#reelJoin').textContent = `🎬 Join ${videosShown} videos`;
   $('#reelFull').hidden = !open || (none && !full);
   $('#reelToggle').setAttribute('aria-expanded', open);
   $('#reelToggle').setAttribute('aria-label', open ? 'Hide your renders' : 'Show your renders');
@@ -3428,6 +3687,7 @@ function formBody(m, theme, motion) {
     ...(state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}),
     ...(state.image?.source ? { source: state.image.source } : {}),
     ...(motion ? { video: motion } : {}),
+    ...(m.kind === 'video' && state.line.voice && state.line.text.trim() && activeFlow()?.maps?.audio ? { line: { voice: state.line.voice, text: state.line.text.trim() } } : {}), // 🎙 what they say
   };
   if (state.image?.source && m.kind === 'video' && !m.motionVideo) saved.set('animateModel', m.id);
   return body;
@@ -3941,6 +4201,7 @@ async function loadForm(entry) {
   setImage(entry.imageFile ? { file: entry.imageFile, ...(src ? { source: { entryId: src.entryId, index: src.index, renderId: src.renderId, file: src.file, modelName: src.modelName, seed: src.seed } } : {}) } : null);
   if (modelById(entry.modelId)?.motionVideo) restoreVideo(entry.video);
   if (entry.characterSheet) setSheet(entry.characterSheet);
+  if (entry.line || state.line.text) setLine(entry.line ? { voice: entry.line.voice?.id || '', text: entry.line.text || '' } : { voice: '', text: '' }, { persist: false });
   setVariations(entry.variations.length, { persist: false });
   if (Boolean(entry.manual) !== state.manual) setManual(entry.manual);
   showError('');
@@ -3950,6 +4211,11 @@ async function openEntry(entry) {
   // (A batch renders the takes on the stage: opening another entry would hand it the wrong ones.)
   if (state.busy || state.chainActive || state.batchRun) return toast('Hold on, something is still cooking. Stop it or wait.', true);
   if (entry.chain) return openRun(entry);
+  if (entry.joined) { // a joined video has no form to put back: it opens full screen
+    const items = galleryItems().filter(it => it.entry.id === entry.id);
+    if (items.length) openLightbox(items, 0, { fromGallery: true });
+    return;
+  }
   await loadForm(entry);
   closeRun();
   state.timings = {};
@@ -5439,6 +5705,7 @@ function renderWorkflowPicker() {
     renderSeedRow();
     renderDenoise();
     renderLoraPanel();
+    renderLine();
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
   renderBackground(); // in step 3, so it follows the picked workflow even when there is none
@@ -7092,6 +7359,7 @@ function lbRender() {
     ['Model', entry.modelName],
     entry.source ? ['From', takeLabel(entry.source)] : null,
     ['Workflow', render.workflowName],
+    entry.line?.text ? ['Says', `“${entry.line.text}”${entry.line.voice?.name ? ` · 🎙 ${entry.line.voice.name}` : ''}`] : null,
     render.seed != null ? ['Seed', render.seed] : null,
     render.sampler ? ['Sampler', `${render.sampler}${render.steps ? ` · ${render.steps} steps` : ''}${render.cfg != null ? ` · CFG ${render.cfg}` : ''}`] : null,
     render.loras?.length ? ['LoRAs', render.loras.map(l => `${loraShort(l.name)} ${Number(l.strength).toFixed(2)}${lb.changedLoras?.id === render.id && lb.changedLoras.names.includes(l.name) ? ' ⚠️ file changed since' : ''}`).join(', ')] : null,
@@ -7120,7 +7388,7 @@ function lbRender() {
       ${file.kind === 'video' && characterTarget() ? `<button type="button" class="btn small" data-lb="motion" title="Use this video's moves for a character, with ${esc(characterTarget().name)}">🕺 Use as motion video</button>` : ''}
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
-      ${onStage ? '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>' : '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>'}
+      ${onStage ? '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>' : entry.joined ? '' : '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>'}
       ${lb.items.length > 1 ? `<button type="button" class="btn small" data-lb="compare" aria-pressed="${Boolean(lb.pin)}" title="${lb.pin ? 'Back to one at a time' : 'Keep this one on the left and browse the others beside it'}">${lb.pin ? '✕ Stop comparing' : '⇆ Compare'}</button>` : ''}
       ${going.has(render.id) ? '<button type="button" class="btn small primary" data-lb="undo">↶ Undo delete</button>' : '<button type="button" class="btn small danger" data-lb="delete" title="Deletes this render for good, here and in ComfyUI. You get a few seconds to undo">🗑 Delete</button>'}
     </div>
@@ -7722,7 +7990,7 @@ const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
 // The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
-const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'judge_renders', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'judge_renders', 'set_line', 'join_videos', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
 
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
@@ -7813,6 +8081,9 @@ const TOOLS = [
     kind: E(['any', 'image', 'video'], 'Only stills or only videos (default any)'),
     job: S('With from job outside a job: the job\'s title'),
   }, ['for']),
+  T('set_line', '🎙 Give the person a line to say, in a kept voice (video models whose picked workflow takes a sound file, like MiniMax H3): at Generate the line is said in that voice and the video follows it, lips in time. Empty text takes the line off. Needs Voices installed (🎙 Voices page) and a kept voice: the state says which there are.', { text: S('What they say, word for word; "" for no line'), voice: S('A kept voice, by name; default the one picked (else the first)') }, ['text']),
+  T('make_voice', '🎙 Make and keep a new voice from a description, for set_line. Takes a few seconds (longer the first time). Say what it sounds like: age, warmth, accent, pace, mood.', { name: S('A short name, e.g. "Jess"'), description: S('What it sounds like, e.g. "a woman in her late twenties, warm light alto, soft Midwestern lilt, relaxed pace"'), text: S('A sentence it says as its sample; default a friendly greeting'), language: S('English, German, … ; default auto') }, ['name', 'description']),
+  T('join_videos', '🎬 Join videos into one, in order (a new "Joined video" render in 🎞 Your renders and the Gallery). In a job (from job, the default there): the best video of each run so far, in the runs\' order (the highest rated, else the newest), so a job can end with one film of its cuts. Else: the videos shown in 🎞 Your renders in their order, or render ids.', { from: E(['job', 'shown', 'ids'], 'Which videos: the job\'s best per run; the ones shown in Your renders (their order); or render_ids'), render_ids: { type: 'array', items: { type: 'string' }, description: 'With from ids: render ids (look_at shows them), in order' }, title: S('A name for the joined video') }),
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
   T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (🎞 Your renders and the Gallery show it, and filter by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
@@ -8012,6 +8283,7 @@ function assistantState() {
     model: m && { name: m.name, kind: m.kind, ...(m.motionVideo ? { characterAnimation: true } : {}) },
     theme: $('#theme').value,
     ...(state.manual ? {} : { look: state.look || 'brain picks' }),
+    ...(lineOn() ? { line: state.line.text && state.line.voice ? { voice: voiceById(state.line.voice)?.name || state.line.voice, text: state.line.text } : voicesReady() ? 'none (set_line gives the person a line to say in a kept voice)' : 'voices not installed (🎙 Voices page)' } : {}),
     ...(m?.characterSheet && state.image && !state.manual ? { character_sheet: state.sheet.trim() || 'not written yet: Generate writes it from the image first (step 3, the user can edit it)' } : {}),
     ...(state.manual ? { own_prompt: 'on: the user\'s ✍️ switch in step 2. Generate sends the theme word for word as the prompt (no Brain) and renders it, and dials.takes is how many renders. Only the user switches it' } : {}),
     image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
@@ -8951,6 +9223,53 @@ const TOOL_IMPL = {
       + (count[0] ? `; hid ${count[0]} that failed (🎞 Your renders' hidden filter shows them): ${failed.join('; ')}` : '')
       + (left ? `; ${left} the Brain didn't score, left as they were` : '');
     return { summary, ratings: verdicts.map(v => ({ render_id: renderRef(v.it), take: v.it.index + 1, rating: v.score, why: v.why })) };
+  },
+  join_videos: async ({ from, render_ids, title }) => {
+    const where = from || (jobs.current ? 'job' : render_ids?.length ? 'ids' : 'shown');
+    let items;
+    if (where === 'job') {
+      if (!jobs.current) throw new Error('There\'s no job running: join the videos shown (from shown) or by their ids.');
+      state.history = await api('/api/history');
+      const all = galleryItems().filter(it => it.file.kind === 'video' && !it.render.hidden);
+      items = [];
+      for (const u of jobs.current.units) {
+        if (!u.entries.length) continue;
+        const mine = all.filter(it => u.entries.includes(it.entry.id) && (it.render.createdAt || '') >= (u.startedAt || ''));
+        const best = mine.sort((a, b) => ratingOf(b.render) - ratingOf(a.render) || (a.render.createdAt < b.render.createdAt ? 1 : -1))[0];
+        if (best) items.push(best);
+      }
+    } else if (where === 'ids') {
+      items = [];
+      for (const id of render_ids || []) items.push(await findRender({ render_id: id }));
+    } else items = reelItems.filter(it => it.file.kind === 'video');
+    if (items.length < 2) throw new Error(`Joining needs at least two videos; there ${items.length === 1 ? 'is one' : 'are none'} ${where === 'job' ? 'from this job (one per run)' : where === 'shown' ? 'shown in Your renders' : 'with those ids'}.`);
+    const r = await joinVideos(items, title);
+    return { summary: `🎬 Joined ${items.length} videos into “${r.entry.theme}”${r.seconds ? ` (${Math.round(r.seconds)}s)` : ''}`, render_id: r.render.id.slice(0, 8) };
+  },
+  set_line: async ({ text, voice: which }) => {
+    const m = currentModel();
+    if (m?.kind !== 'video') throw new Error(`${m?.name || 'This model'} makes images: a spoken line needs a video model like MiniMax H3.`);
+    if (!activeFlow()?.maps?.audio) throw new Error(`The picked workflow (${activeFlow()?.name || 'none'}) takes no sound file. Pick MiniMax H3's own workflow (＋ Add workflow → 🎁 Comes with Prompt Maker).`);
+    if (!voices.status) await loadVoices();
+    if (!voicesReady()) throw new Error('Voices aren\'t installed: the user installs them with one click on the 🎙 Voices page.');
+    const line = clean(text);
+    if (!line) { setLine({ voice: '', text: '' }); return { summary: 'No line: the video has no spoken line' }; }
+    const s = squash(which);
+    const v = s ? voices.list.find(x => squash(x.name) === s) || voices.list.find(x => squash(x.name).includes(s)) : voices.list.find(x => x.id === state.line.voice) || voices.list[0];
+    if (!v) throw new Error(which ? `No voice like “${which}”. The voices are: ${voices.list.map(x => x.name).join(', ') || 'none yet (make_voice)'}.` : 'There are no voices yet: make one with make_voice, or on the 🎙 Voices page.');
+    setLine({ voice: v.id, text: line });
+    return { summary: `🎙 ${v.name} says “${line}” (said at Generate; the video follows it)` };
+  },
+  make_voice: async ({ name, description, text, language }) => {
+    if (!voices.status) await loadVoices();
+    if (!voicesReady()) throw new Error('Voices aren\'t installed: the user installs them with one click on the 🎙 Voices page.');
+    const sample = clean(text) || 'Hi there. Glad you could make it; let me show you around.';
+    const d = await api('/api/voice/design', { method: 'POST', body: { description: clean(description), text: sample, language: language || 'Auto' } });
+    const v = await api('/api/voice/voices', { method: 'POST', body: { name: clean(name), description: clean(description), text: sample, file: d.file, language: language || 'Auto' } });
+    voices.list.push(v);
+    if (isView('voices')) renderVoices();
+    renderLine();
+    return { summary: `🎙 Made and kept the voice “${v.name}” (${d.seconds}s sample; the user can hear it on the Voices page)`, voice: v.name };
   },
   set_auto_render: ({ on }) => {
     const m = currentModel();
@@ -9997,6 +10316,8 @@ async function loadModels() {
   try {
     [state.settings, state.models] = await Promise.all([api('/api/settings'), api('/api/models')]);
     state.imageRole = saved.get('imageRole', 'reference');
+    const line = saved.get('line', null);
+    if (line && typeof line === 'object') state.line = { voice: String(line.voice || ''), text: String(line.text || '') };
     const chain = saved.get('chain', null);
     state.batchPick = String(saved.get('batchPick', '') || '');
     if (chain && Array.isArray(chain.steps)) state.chain = { steps: chain.steps.filter(x => x && typeof x === 'object'), renders: clampInt(chain.renders ?? 1, 1, 4), recipeId: chain.recipeId || null };

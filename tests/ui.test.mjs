@@ -334,7 +334,14 @@ esac
   await mock.start();
   const comfyRoot = path.join(tmp, 'ComfyUI');
   for (const d of ['output', 'input', 'custom_nodes', 'models/checkpoints', 'models/loras/krea2']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
-  const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot });
+  // A one-second video for the mock to "render" when a prompt says MP4TEST (needs ffmpeg; without it, no video tests).
+  const clipFile = path.join(tmp, 'mock-clip.mp4');
+  const clip = await new Promise(resolve => {
+    const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x90:rate=24', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '1', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', clipFile], { stdio: 'ignore' });
+    p.on('error', () => resolve(null));
+    p.on('close', code => resolve(code === 0 ? fs.readFile(clipFile).catch(() => null) : null));
+  });
+  const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot, mp4: await clip });
   await comfy.start();
   const apiWorkflowFile = path.join(tmp, 'mock-api.json');
   const turbo = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
@@ -360,7 +367,7 @@ esac
   await fs.writeFile(path.join(dataDir, 'starters.json'), JSON.stringify(Object.fromEntries(starterModels.map(id => [id, 'test']))));
 
   // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs') }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
   app.stdout.on('data', d => { appLog += d; });
   app.stderr.on('data', d => { appLog += d; });
@@ -2449,7 +2456,7 @@ esac
     await type('#theme', 'the keeper raises a lantern');
     await click('#generateBtn');
     await genDone();
-    const asked = JSON.stringify(lastCall().messages);
+    const asked = JSON.stringify(mock.log.at(-1).messages);
     assert(asked.includes('PREVIOUS STEP') && asked.includes(stillText.slice(0, 60)), 'the LLM gets the still\'s prompt as context');
     assert((await text('#srcLink')).includes('from Krea 2 RAW · take 1'), 'results link back to the still');
     const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'the keeper raises a lantern');
@@ -2565,7 +2572,7 @@ esac
     await toastText('Chain done');
     eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'the form still shows step 1');
     assert((await text('#stageHead')).includes('LTX 2.3') && (await text('#srcLink')).includes('from Krea 2 RAW'), 'the stage shows the video step, linked to its still');
-    const asked = JSON.stringify(lastCall().messages);
+    const asked = JSON.stringify(mock.log.at(-1).messages);
     assert(asked.includes('THEME: the waves crash against the rocks') && asked.includes('PREVIOUS STEP'), 'step 2 got the direction as changed while picking, and the still\'s prompt');
     const all = await (await fetch(`${APP}/api/history`)).json();
     const root = all.find(e => e.chain?.step === 0 && e.theme === 'a lighthouse in a storm');
@@ -3908,6 +3915,220 @@ esac
     const gone = await fetch(`${APP}/api/workflows`).then(r => r.json());
     eq(gone.length, before.length, 'a starter you deleted stays deleted');
     await goto(APP);
+  });
+
+  await test('voices: one-click setup, describe a voice and hear it, keep it by name, say a line, rename, delete', async () => {
+    await click('.tabs button[data-view="voices"]');
+    await waitFor('document.querySelector("#view-voices").classList.contains("active") && !document.querySelector("#voiceSetup").hidden', 'the Voices page, not set up yet');
+    assert((await text('#voiceSetup')).includes('GB'), 'says how much it downloads');
+    assert(await js('document.querySelector("#voiceNew").hidden && document.querySelector("#voiceListCard").hidden'), 'nothing to make voices with yet');
+    await shot('voices-setup');
+    await click('#voiceInstall');
+    await waitFor('!document.querySelector("#voiceProgress").hidden || document.querySelector("#voiceSetup").hidden', 'a progress bar (or already done)');
+    await toastText('Voices are ready', 15000);
+    await waitFor('document.querySelector("#voiceSetup").hidden && !document.querySelector("#voiceNew").hidden', 'ready: the setup card goes, the voice form shows');
+    assert(await fileExists(path.join(dataDir, 'voice', 'site', 'qwen_tts', '__init__.py')), 'the packages went into the data folder');
+    const r = await (await fetch(`${APP}/api/voice`)).json();
+    assert(r.installed && r.packages && r.models, `the server agrees: ${JSON.stringify(r).slice(0, 200)}`);
+    await goto(`${APP}/#voices`);
+    await waitFor('document.querySelector("#voiceSetup").hidden && !document.querySelector("#voiceNew").hidden', 'still installed after a reload');
+
+    // Describe → hear → keep.
+    await click('#vHear');
+    await toastText('Describe the voice first');
+    await type('#vDesc', 'A woman in her late twenties, warm light alto, soft Midwestern lilt');
+    await click('#vHear');
+    await waitFor('!document.querySelector("#vHeard").hidden && document.querySelector("#vPlay").src.includes("/voice/")', 'a clip to hear', 10000);
+    assert(/\/voice\/[a-f0-9]{16}\.wav$/.test(await js('document.querySelector("#vPlay").src')), 'served from the voice folder');
+    eq((await fetch(await js('document.querySelector("#vPlay").src'))).status, 200, 'the clip plays');
+    eq(await js('document.activeElement.id'), 'vName', 'ready to be named');
+    await click('#vKeep');
+    await toastText('Give the voice a name');
+    await type('#vName', 'Jess');
+    await press('Enter');
+    await toastText('Kept the voice “Jess”');
+    eq(await count('#voiceList li'), 1, 'listed');
+    assert((await text('#voiceList li')).includes('Jess') && (await text('#voiceList li')).includes('Midwestern'), 'with its name and description');
+    assert(await js('document.querySelector("#vHeard").hidden'), 'the form is ready for the next one');
+    await type('#vDesc', 'please fail');
+    await click('#vHear');
+    await toastText('mock refuses');
+    await type('#vDesc', 'A deep calm narrator');
+    await click('#vHear');
+    await waitFor('!document.querySelector("#vHeard").hidden', 'heard', 10000);
+    await type('#vName', 'jess');
+    await click('#vKeep');
+    await toastText('already a voice called');
+    await type('#vName', 'Narrator');
+    await click('#vKeep');
+    await toastText('Kept the voice “Narrator”');
+    eq(await count('#voiceList li'), 2, 'two voices');
+
+    // Say a line in it.
+    await click('#voiceList li [data-act="say"]');
+    await toastText('Type a line to say first');
+    await type('#vTry', 'Every frame, generated. Nothing ever left my computer.');
+    await click('#voiceList li [data-act="say"]');
+    await waitFor('!!document.querySelector("#voiceList li audio")', 'the line plays in the list', 10000);
+    assert((await text('#voiceList li .vl-said')).includes('Every frame') && /\d+(\.\d+)?s/.test(await text('#voiceList li .vl-said')), 'with the words and how long it is');
+    await click('#voiceList li [data-act="sample"]');
+    assert((await text('#voiceList li .vl-said')).includes('out near the lake'), 'the sample again');
+    await shot('voices');
+
+    // Rename, delete (asks once).
+    await click('#voiceList li [data-act="rename"]');
+    await type('#voiceList li .vl-name input', 'Jess from Ohio');
+    await press('Enter');
+    await waitFor('document.querySelector("#voiceList li .vl-name").textContent.includes("Jess from Ohio")', 'renamed');
+    eq((await (await fetch(`${APP}/api/voice`)).json()).voices[0].name, 'Jess from Ohio', 'saved');
+    await click('#voiceList li [data-act="delete"]');
+    eq(await count('#voiceList li'), 2, 'one click asks');
+    assert((await text('#voiceList li [data-act="delete"]')).includes('Sure?'), 'and says so');
+    await click('#voiceList li [data-act="delete"]');
+    await toastText('Deleted the voice');
+    eq(await count('#voiceList li'), 1, 'gone; the Narrator stays');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('🎙 a line in step 3: said in a kept voice at Generate, the video\'s soundtrack at Render, saved and put back', async () => {
+    const narrator = (await (await fetch(`${APP}/api/voice`)).json()).voices.find(v => v.name === 'Narrator');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(await js('document.querySelector("#lineBlock").hidden'), 'no line on an image model');
+    // MiniMax H3's own workflow takes a sound file (the line). An earlier test may have given it another: add the starter.
+    if (!(await (await fetch(`${APP}/api/workflows`)).json()).some(f => f.modelId === 'minimax-h3' && f.maps.audio)) {
+      const prep = await (await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starter: 'minimax-h3/image-to-video.json' }) })).json();
+      await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'minimax-h3', name: prep.name, source: prep.source, prompt: prep.prompt, mapping: prep.mapping, options: prep.options, models: prep.models }) });
+      await goto(`${APP}/#create`);
+    }
+    await click('.model-card[data-id="minimax-h3"]');
+    const h3 = (await (await fetch(`${APP}/api/workflows`)).json()).find(f => f.modelId === 'minimax-h3' && f.maps.audio);
+    await choose('#wfpSelect', h3.id);
+    await waitFor('!document.querySelector("#lineBlock").hidden && !document.querySelector("#lineForm").hidden', 'the line form on MiniMax H3 (its workflow takes a sound file)');
+    eq(await js('[...document.querySelectorAll("#lineVoice option")].map(o => o.textContent).join("|")'), 'No line|🎙 Narrator', 'your voices to pick from');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector("#dropzone .dz-preview").hidden', 'image in');
+    await choose('#lineVoice', narrator.id);
+    await type('#lineText', 'Every frame, generated. Nothing ever left my computer.');
+    await press('Tab');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'she looks up from her coffee and speaks');
+    await click('#generateBtn');
+    await genDone();
+    const entry = (await (await fetch(`${APP}/api/history`)).json())[0];
+    assert(/^[a-f0-9]{16}\.wav$/.test(entry.line?.file || '') && entry.line.seconds > 0 && entry.line.voice?.name === 'Narrator' && entry.line.text.startsWith('Every frame'), `the line was said and saved with the prompt: ${JSON.stringify(entry.line)}`);
+    assert(await fileExists(path.join(dataDir, 'voice', 'clips', entry.line.file)), 'its clip is in the data folder');
+    const asked = JSON.stringify(mock.log.at(-1).messages);
+    assert(asked.includes('SPOKEN LINE') && asked.includes('Every frame, generated. Nothing ever left my computer.'), 'the Brain is told the exact words');
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img, .take .rtile video") && !document.querySelector(".take .rtile.running")', 'rendered', 15000);
+    let p = comfy.prompts.at(-1).prompt;
+    eq(p['200']?.inputs.audio, `prompt-maker_${entry.line.file}`, 'the clip went to ComfyUI as the soundtrack');
+    eq(JSON.stringify(p['105:16'].inputs.conditioning), '["201",0]', 'through the Add Guide node');
+    assert(Number(p['105:111'].inputs.value) >= entry.line.seconds + 1, `the clip is at least as long as the line: ${p['105:111'].inputs.value}s for ${entry.line.seconds}s`);
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert((await text('#lbInfo')).includes('Says') && (await text('#lbInfo')).includes('Every frame') && (await text('#lbInfo')).includes('Narrator'), 'the full-screen view shows what is said, and by which voice');
+    await press('Escape');
+
+    // No line: the sound nodes are left out.
+    await click('#lineClear');
+    await waitFor('document.querySelector("#lineText").value === ""', 'cleared');
+    await type('#theme', 'she sips her coffee');
+    await click('#generateBtn');
+    await genDone();
+    assert(!(await (await fetch(`${APP}/api/history`)).json())[0].line, 'no line this time');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img, .take .rtile video") && !document.querySelector(".take .rtile.running")', 'rendered', 15000);
+    p = comfy.prompts.at(-1).prompt;
+    assert(!p['200'] && !p['201'] && JSON.stringify(p['105:16'].inputs.conditioning) === '["105:104",0]', 'Load Audio and Add Guide are gone, the rest wired as before');
+
+    // The assistant sets a line and makes voices too.
+    if (!(await visible('#assistant'))) await click('#askBtn');
+    await type('#asInput', 'make her say "Hello there, and welcome."');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    const said = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    assert(said.includes('Narrator says “Hello there, and welcome.”'), `the assistant set the line: ${said}`);
+    eq(await value('#lineText'), 'Hello there, and welcome.', 'in step 3');
+    await type('#asInput', 'make a new voice called Sam');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('kept the voice “Sam”'), 'and made a voice');
+    eq(await js('[...document.querySelectorAll("#lineVoice option")].map(o => o.textContent).join("|")'), 'No line|🎙 Narrator|🎙 Sam', 'which step 3 offers right away');
+    await click('#asClear');
+    await click('#asClear');
+    await click('#asClose');
+
+    // History puts the line back.
+    await click('.tabs button[data-view="history"]');
+    await waitFor('[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("looks up from her coffee"))', 'the card');
+    const n = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("looks up from her coffee")) + 1');
+    await click(`.hcard:nth-of-type(${n}) [data-act="open"]`);
+    await waitFor('document.querySelector("#lineText").value.startsWith("Every frame")', 'the line is back');
+    eq(await value('#lineVoice'), narrator.id, 'in its voice');
+    await click('#lineClear');
+    await js('document.querySelector("#imageClear").click()');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('🎬 join videos: the ones shown in Your renders, in their order, become one video; the assistant joins too', async () => {
+    if (!(await clip)) return console.log('    (skipped: no ffmpeg)');
+    if (!(await (await fetch(`${APP}/api/workflows`)).json()).some(f => f.modelId === 'minimax-h3')) {
+      const prep = await (await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starter: 'minimax-h3/image-to-video.json' }) })).json();
+      await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'minimax-h3', name: prep.name, source: prep.source, prompt: prep.prompt, mapping: prep.mapping, options: prep.options, models: prep.models }) });
+      await goto(`${APP}/#create`);
+    }
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="minimax-h3"]');
+    await js('document.querySelector("#lineClear")?.click()');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector("#dropzone .dz-preview").hidden', 'image in');
+    await click('#varSeg button[data-value="1"]');
+    const before = (await (await fetch(`${APP}/api/history`)).json()).length;
+    for (const theme of ['MP4TEST clip one, a sunrise', 'MP4TEST clip two, a sunset']) {
+      await type('#theme', theme);
+      await click('#generateBtn');
+      await genDone();
+      await click('.take .rb-count button[data-value="1"]');
+      await click('.take .rb-go');
+      await waitFor('!!document.querySelector(".take .rtile video, .take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 15000).catch(async e => { throw new Error(`${e.message} | stage: ${await text('#stageError')} | tile: ${await js('document.querySelector(".take .rtile")?.outerHTML.slice(0, 400)')}`); });
+    }
+    const made = (await (await fetch(`${APP}/api/history`)).json()).slice(0, 2);
+    assert(made.every(e => e.variations[0].renders?.[0]?.files[0].kind === 'video'), `two little videos: ${JSON.stringify(made.map(e => e.variations[0].renders?.[0]?.files))}`);
+    await js('if (document.querySelector("#reelToggle").getAttribute("aria-expanded") !== "true") document.querySelector("#reelToggle").click()');
+    await click('#reelKinds [data-kind="video"]');
+    await waitFor('!document.querySelector("#reelJoin").hidden', 'the Join button shows with two or more videos');
+    const n = Number((await text('#reelJoin')).match(/\d+/)[0]);
+    assert(n >= 2, `counts them: ${await text('#reelJoin')}`);
+    await click('#reelJoin');
+    await toastText('Joined', 60000);
+    const joined = (await (await fetch(`${APP}/api/history`)).json())[0];
+    eq(joined.modelName, 'Joined video', 'a new render of its own');
+    const r = joined.variations[0].renders[0];
+    eq(r.joined.length, n, 'from those videos, in order');
+    assert(/\.mp4$/.test(r.files[0].file) && await fileExists(path.join(dataDir, 'renders', r.files[0].file)), 'one file in the data folder');
+    const probe = await videotools.probe(path.join(dataDir, 'renders', r.files[0].file));
+    assert(probe && probe.seconds >= n * 0.9 && probe.seconds <= n * 1.3, `as long as all of them together: ${probe?.seconds}s for ${n}`);
+    eq(await count('#reelGrid .reel-card, #reelGrid .rcard, #reelGrid > *') > 0, true, 'it lands in the grid');
+    await click('#reelKinds [data-kind=""]');
+    await waitFor('document.querySelector("#toast").hidden', 'the toast goes', 12000);
+
+    if (!(await visible('#assistant'))) await click('#askBtn');
+    await type('#asInput', 'join the videos shown');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 60000);
+    const said = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    assert(said.includes('Joined') && said.includes('videos into'), `the assistant joins the shown videos: ${said}`);
+    await click('#asClear');
+    await click('#asClear');
+    await click('#asClose');
+    const now = await (await fetch(`${APP}/api/history`)).json();
+    eq(now.length, before + 4, 'two clips, two joins');
+    for (const e of now.slice(0, 4)) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE', headers: { Origin: APP } }); // tidy: the tests after this open the newest card
+    await goto(`${APP}/#create`);
+    await click('.model-card[data-id="krea2-raw"]');
   });
 
   await test('security: other websites can\'t use the local API', async () => {

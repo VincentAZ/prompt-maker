@@ -80,6 +80,9 @@ function assistantTurn(body) {
     : /pick the best/.test(said) ? [{ calls: [['pick_best', { for: 'a moody poster', then: 'reference', rate: 2 }]] }, { text: results.includes('Picked') ? 'Picked one and put it in step 3.' : 'That failed.' }]
     : /judge the renders/.test(said) ? [{ calls: [['judge_renders', { for: 'a moody poster', from: 'on_screen' }]] }, { text: results.match(/"summary":"([^"]*)/)?.[1] || 'That failed.' }]
     : /use the newest baked_in/.test(said) ? [{ calls: [['set_lora', { name: 'baked_in', version: 'newest' }]] }, { text: results.match(/"summary":"([^"]*)/)?.[1] || 'That failed.' }]
+    : /make her say/.test(said) ? [{ calls: [['set_line', { text: textOf(msgs[at].content).match(/"([^"]+)"/)[1], voice: 'narrator' }]] }, { text: results.match(/"summary":"([^"]*)/)?.[1] || 'That failed.' }]
+    : /new voice called/.test(said) ? [{ calls: [['make_voice', { name: textOf(msgs[at].content).match(/called (\w+)/)[1], description: 'a deep calm narrator' }]] }, { text: results.match(/"summary":"([^"]*)/)?.[1] || 'That failed.' }]
+    : /join the videos/.test(said) ? [{ calls: [['join_videos', { from: 'shown', title: 'My film' }]] }, { text: results.match(/"summary":"([^"]*)/)?.[1] || 'That failed.' }]
     : /fewer steps/.test(said) ? [{ calls: [['set_sampler', { steps: 12 }]] }, { text: results.includes('steps 12') ? 'Steps set to 12.' : 'That failed.' }]
     // It tries to answer the "send your prompts to the cloud?" question itself: it waits for it, looks, and presses OK if it can.
     : /answer the cloud question/.test(said) ? (() => {

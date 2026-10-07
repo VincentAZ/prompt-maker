@@ -11,6 +11,7 @@ import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } 
 import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
+import * as voice from './lib/voice.js';
 import * as cloud from './lib/cloud.js';
 import * as folders from './lib/folders.js';
 import * as computer from './lib/computer.js';
@@ -275,7 +276,14 @@ function pickParams(body, model) {
     length: store.LENGTHS.includes(body.length) ? body.length : model.defaults.length,
     ...(Object.hasOwn(LOOKS, body.look) ? { look: body.look } : {}), // the camera-and-light look picked in step 2; none: the Brain picks
     ...(model.characterSheet && cleanSheet(body.characterSheet) ? { characterSheet: cleanSheet(body.characterSheet) } : {}), // the person's traits (step 3)
+    ...(model.kind === 'video' && body.line?.voice && String(body.line.text || '').trim() ? { line: { voice: String(body.line.voice).slice(0, 80), text: String(body.line.text).replace(/\s+/g, ' ').trim().slice(0, 600) } } : {}), // what they say, in which voice (step 3)
   };
+}
+
+// 🎙 The line said in the voice, as a clip the video model follows: { voice: { id, name }, text, file, seconds }.
+async function spokenLine(settings, line) {
+  const r = await voice.say(settings, { voice: line.voice, text: line.text });
+  return { voice: r.voice, text: line.text, file: r.file, seconds: r.seconds };
 }
 
 // ---------- generation ----------
@@ -344,6 +352,7 @@ async function generate(req, res) {
   const model = await store.getModel(body.modelId || '');
   if (!model) throw store.httpError(400, 'Pick a target model first.');
   const params = pickParams(body, model);
+  if (params.line) params.line = await spokenLine(settings, params.line);
 
   let imageFile = null;
   let imageDataUrl = null;
@@ -997,6 +1006,14 @@ async function renderTake(req, res) {
     const buf = await fs.readFile(file).catch(() => { throw store.httpError(404, 'This take\'s motion video is missing from the data folder.'); });
     videoName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.video.file}`, VIDEO_MIME[entry.video.file.split('.').pop()] || 'video/mp4');
   }
+  // 🎙 The spoken line goes in as the soundtrack; without one, the workflow's sound nodes are left out.
+  let audioName = null;
+  if (workflow.mapping.audio && entry.line?.file) {
+    const file = voice.clipPath(entry.line.file);
+    const buf = file && (await fs.readFile(file).catch(() => null));
+    if (!buf) throw store.httpError(404, 'This take\'s spoken line is missing from the data folder. Generate again to make it.');
+    audioName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.line.file}`, 'audio/wav');
+  }
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
   // How many frames the motion video has: a workflow made of pieces gets as many as it needs, and one that loops over
   // the whole video says how many pieces it's on.
@@ -1028,6 +1045,8 @@ async function renderTake(req, res) {
         text,
         imageName,
         videoName,
+        audioName,
+        minSeconds: audioName && entry.line?.seconds ? Math.ceil((entry.line.seconds + 1) * 10) / 10 : 0,
         aspectRatio: entry.aspectRatio,
         resolution: entry.resolution,
         duration: entry.duration,
@@ -1116,7 +1135,7 @@ async function renderTake(req, res) {
         if (err.status !== 404) throw err;
         // The take was deleted while this rendered: none of it is kept, here or in ComfyUI.
         await store.removeRenderFiles([render]);
-        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs: [imageName, videoName].filter(Boolean), rest: await store.listHistory() });
+        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs: [imageName, videoName, audioName].filter(Boolean), rest: await store.listHistory() });
         throw store.httpError(404, 'That take was deleted, so its render was thrown away.');
       }
       stream.send({ type: 'render', i, render });
@@ -1551,6 +1570,61 @@ async function route(req, res) {
     const settings = await store.getSettings();
     return sendJson(res, 200, { detected: await comfy.detectOutputDir(settings.comfyUrl).catch(() => null), configured: settings.comfyOutputDir });
   }
+  // 🎬 Join videos: whole renders, in the order given, as one new video (its own History entry).
+  if (p === '/api/renders/join' && m === 'POST') {
+    const body = await readBody(req);
+    const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 60);
+    if (ids.length < 2) throw store.httpError(400, 'Pick at least two videos to join.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Joining videos needs ffmpeg on this computer (see Settings → Services).');
+    const all = await store.listHistory();
+    const parts = ids.map(id => {
+      for (const e of all) for (const v of e.variations) for (const r of v.renders || []) if (r.id === id || r.id.startsWith(id)) return { e, r, file: r.files.find(f => f.kind === 'video') };
+      return null;
+    });
+    const lost = parts.findIndex(x => !x);
+    if (lost >= 0) throw store.httpError(404, `There's no render with the id ${ids[lost]}.`);
+    const still = parts.find(x => !x.file);
+    if (still) throw store.httpError(400, `“${(still.e.theme || 'from an image').slice(0, 40)}” (take ${still.e.variations.findIndex(v => (v.renders || []).includes(still.r)) + 1}) is a picture, not a video.`);
+    const id = crypto.randomUUID();
+    const file = `${id}_1.mp4`;
+    const t0 = Date.now();
+    await videotools.concat(parts.map(x => path.join(store.RENDERS_DIR, x.file.file)), path.join(store.RENDERS_DIR, file));
+    const info = await videotools.probe(path.join(store.RENDERS_DIR, file));
+    const now = new Date().toISOString();
+    const title = String(body.title || '').trim().slice(0, 120) || `Joined: ${parts.length} videos`;
+    const render = {
+      id, text: title, workflowName: 'Joined in Prompt Maker', seed: null, count: 1,
+      size: info?.width ? `${info.width}×${info.height}` : null, duration: info?.seconds ? `${Math.round(info.seconds * 10) / 10}s` : null,
+      joined: parts.map(x => ({ entryId: x.e.id, renderId: x.r.id })),
+      files: [{ file, kind: 'video', name: `${store.slugify(title).slice(0, 40) || 'joined'}_${id.slice(0, 6)}.mp4` }],
+      createdAt: now, secs: Math.round((Date.now() - t0) / 100) / 10,
+    };
+    const entry = await store.addHistory({ modelId: 'joined', modelName: 'Joined video', modelKind: 'video', theme: title, joined: true, variations: [{ versions: [{ text: title, instruction: null, createdAt: now }], renders: [render] }] });
+    return sendJson(res, 200, { entry, render, seconds: info?.seconds || null });
+  }
+
+  // 🎙 Voices
+  if (p === '/api/voice' && m === 'GET') {
+    const settings = await store.getSettings();
+    return sendJson(res, 200, { ...(await voice.status(settings)), voices: await voice.listVoices() });
+  }
+  if (p === '/api/voice/install' && m === 'POST') return sendJson(res, 200, await voice.install(await store.getSettings()));
+  if (p === '/api/voice/install' && m === 'GET') return sendJson(res, 200, voice.install.job || { state: 'none' });
+  if (p === '/api/voice/design' && m === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await voice.design(await store.getSettings(), body));
+  }
+  if (p === '/api/voice/voices' && m === 'POST') return sendJson(res, 200, await voice.keepVoice(await readBody(req)));
+  if ((match = p.match(/^\/api\/voice\/voices\/([a-f0-9]+)$/)) && m === 'PATCH') return sendJson(res, 200, await voice.renameVoice(match[1], (await readBody(req)).name));
+  if ((match = p.match(/^\/api\/voice\/voices\/([a-f0-9]+)$/)) && m === 'DELETE') return sendJson(res, 200, await voice.deleteVoice(match[1]));
+  if (p === '/api/voice/say' && m === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await voice.say(await store.getSettings(), body));
+  }
+  if (p.startsWith('/voice/') && m === 'GET') {
+    const file = voice.clipPath(decodeURIComponent(p.slice('/voice/'.length)));
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
+  }
   if (p === '/api/comfy/loras/files' && m === 'POST') {
     const body = await readBody(req);
     const settings = await store.getSettings();
@@ -1690,6 +1764,7 @@ async function route(req, res) {
 const moved = await store.init();
 if (moved.length) console.log(`Moved your data out of the app folder into ${store.DATA_DIR}: ${moved.join(', ')}`);
 const swept = await store.sweepOrphans().catch(err => (console.warn(`Couldn't tidy the data folder: ${err.message}`), 0));
+voice.sweepClips((await store.listHistory().catch(() => [])).map(e => e.line?.file).filter(Boolean)).catch(() => {});
 if (swept) console.log(`Removed ${swept} file${swept === 1 ? '' : 's'} no History entry uses anymore.`);
 await wf.initWorkflows();
 
