@@ -56,6 +56,7 @@ Prompt Maker keeps a **playbook for each model** and has your Brain write the pr
   - 🪞 **Recreate**: describe it so the model can reproduce it.
   - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
 - **Image alone.** Leave the theme empty and it suggests a prompt from the image.
+- **✍️ Your own prompt (off by default).** Already have the prompt? Switch on **✍️ Use my own prompt, word for word** under step ②: what you type or paste is sent to the model exactly as it is, with your image and your workflow. No Brain is asked, so LM Studio can even be off.
 - **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you. A model file your ComfyUI lacks is one **⬇ Download** away, and a video's black bars one **✂️ Crop** away.
 - **Model-aware settings.** Aspect ratio, resolution, duration (video) and prompt length. None of the resolutions fit? Pick **✎ Type your own size…**, enter a width and height and click **✓ Use**: Aspect turns to the size's shape (1280×720 → 16:9), so the render and the prompt are never sideways; the size stays in that model's menu as "Your size: …", even after a restart. Pick it again and **✕ Forget** takes it out.
   - Uploading an image **matches the aspect ratio to it** automatically.
@@ -191,7 +192,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 | Step | What it does |
 |---|---|
 | **① Pick your model** | The generator you're writing for. Its color follows you across the app. The five built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. |
-| **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. |
+| **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. Have the exact prompt already? **✍️ Use my own prompt, word for word** (below) sends it as it is, with no Brain. |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
 | **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, and how adventurous the writing is. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
@@ -206,6 +207,16 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 - **Up next**, at the top of the results, lists them (the ＋ Queue button counts them): **✕** takes one out (with **↶ Undo**), **Clear** empties the line. Clicking twice on the same form within a second queues it once.
 - **■ Stop** (or `Esc`) stops only the one running; the rest carry on. If one fails (LM Studio or ComfyUI went away, say), the line goes **⏸ on hold** so the rest don't fail the same way: fix it, then **▶ Carry on**.
 - A chain (step ⑥) can't wait in line, since it may stop to ask you to pick. The line lives in the page: reloading it lets go of what's waiting (the page asks first).
+
+**✍️ Your own prompt, word for word.** Off by default. When you already know exactly what to send, switch on **✍️ Use my own prompt, word for word**, under the box in step ②. Then no Brain is involved at all:
+
+- **② Your prompt** is the prompt. What you type or paste goes to the model letter for letter: weights like `(red kite:1.3)`, odd spellings, all of it. It must not be empty.
+- **③ Your image** goes into the workflow as it is: there's no Reference / Recreate / Animate to pick, since those tell the Brain what to write.
+- **① Your model** and **⑤ your workflow** are the ones that render it. Aspect, resolution and duration in step ④ still set the size; prompt length and how adventurous step aside, and **Takes** becomes **Renders**: how many times your prompt is rendered (×1–4), each with its own seed.
+- **Generate** becomes **▶ Render** and renders right away (auto-render isn't needed). No workflow for that model yet? It becomes **Keep my prompt**: the take is saved, ready to copy or render later.
+- The take says *✍️ your own prompt, word for word*, and History marks it the same way. Reopening one from History switches the mode back on; reopening a Brain's prompt switches it off. You can still click **Refine** on the take if you do want the Brain's help with it.
+- A batch renders your one prompt as many times as it says. A chain (step ⑥) is written by the Brain, so it's hidden while the switch is on, and waits for you, untouched, until you switch it off.
+- LM Studio doesn't need to be running.
 
 **Image modes**
 
@@ -293,6 +304,7 @@ Your creative partner, on from the start: its panel opens with the app (on a wid
 - **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, 🎞 Your renders, the Gallery, and pictures and videos in any folder on your computer. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
 - **Show it a picture.** Paste a picture into the message box (or drop one on it): it shows above the box until you send, with ✕ to take it out, and goes with your message (*"what do you think of this?"*, *"set up a shot like this one"*). Up to 8 at a time; shrunk to 768 px for the Brain.
 - **📋 Copy any reply.** Every reply has a copy button in its corner.
+- **It follows ✍️ your own prompt.** While that switch (step ②) is on, what the assistant puts in step ② is sent word for word and rendered, the same as when you click; it knows this, and only you can switch it.
 - **It finds your work.** *"Check out the renders of the woman walking around her apartment"*: it searches every render you ever made by the words of its prompt (typos are fine) instead of only the newest. *"They're in my renderings folder"*: it finds a folder by its name or one close to it ("renderings" finds "renders"), first Prompt Maker's own renders folder and ComfyUI's output, then anywhere in your home folder and on your other drives (USB sticks, a second disk). It can look for any file or folder by name too, and looks before it asks you where something is.
 - **💻 Let it use your computer (opt-in).** Switch on **Settings → ✦ Assistant → 💻 Let the assistant use my computer** and click **Save settings**, and it can also work outside Prompt Maker: run programs and commands (*"open these in GIMP"*, *"make a folder Best of October and copy my excellent renders into it"*), and read and write any file. It doesn't ask each time, except before anything that may delete, move, copy over or replace a file, however the command is written (`/bin/rm`, inside `bash -c "…"`, `> file`, code handed to Python or PowerShell), and before a command that talks to Prompt Maker itself: it shows you the command and waits for **▶ Run it**. Off by default; only you can switch it (the assistant can't press that switch), and only the app on this computer can use it.
 - **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, this session's runs and their ratings, renders in progress.

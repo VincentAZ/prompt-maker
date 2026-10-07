@@ -101,6 +101,10 @@
               </span>
             </header>
             <textarea id="theme" class="theme" rows="3" aria-label="Theme"></textarea>
+            <div class="manual-row">
+              <label class="switch mini" title="Off: your Brain writes the prompt from your idea. On: what you type here is the prompt, sent as it is"><input type="checkbox" id="manualMode"><span class="track" aria-hidden="true"></span><span>✍️ Use my own prompt, word for word</span></label>
+              <span id="manualHint" class="hint" hidden>No Brain: your text, image and model go straight to the render.</span>
+            </div>
           </section>
 
           <section class="step" data-panel="create-image">
@@ -173,7 +177,7 @@
               <label class="dial" id="durationField"><span>Duration</span><select id="duration"></select></label>
             </div>
             <div class="dials two">
-              <div class="dial">
+              <div class="dial" id="lengthField">
                 <span>Prompt length</span>
                 <div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length">
                   <button type="button" role="radio" data-value="short">Short</button>
@@ -181,8 +185,8 @@
                   <button type="button" role="radio" data-value="long">Long</button>
                 </div>
               </div>
-              <div class="dial">
-                <span>Takes</span>
+              <div class="dial" id="takesField">
+                <span id="takesLabel">Takes</span>
                 <div class="seg" id="varSeg" role="radiogroup" aria-label="Number of variations">
                   <button type="button" role="radio" data-value="1">1</button>
                   <button type="button" role="radio" data-value="2">2</button>
@@ -191,7 +195,7 @@
                 </div>
               </div>
             </div>
-            <div class="dial temp">
+            <div class="dial temp" id="tempField">
               <span title="How freely the Brain strays from the obvious (its “temperature”)">How adventurous <small id="tempWord" class="temp-word"></small> <output id="tempOut" class="temp-val" title="Temperature"></output></span>
               <input type="range" id="temperature" min="0" max="2" step="0.05" aria-label="How adventurous the writing is (temperature)">
               <div class="range-labels"><span>🎯 precise</span><span>🌶️ wild</span></div>
