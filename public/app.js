@@ -5157,6 +5157,62 @@ function flowLoras(flow) {
   const own = l.nodes.map(n => ({ ...n, ...(l.tweaks[n.key] || {}), own: true, edited: Boolean(l.tweaks[n.key]), original: n }));
   return { own, added: l.added };
 }
+// A LoRA's version from its file name: a release ("_v2", "V1.1") or a training step ("-000012", "_e10", "_step800").
+// Files whose names differ only there are one LoRA's versions: { family, version: [numbers], step }.
+function loraVersion(name) {
+  const stem = loraShort(name);
+  const release = [...stem.matchAll(/(?<=^|[_\-. ])v(\d+(?:\.\d+)*)(?=$|[_\-. ])/gi)].at(-1);
+  const step = !release && /(?<=[_\-])(?:(?:e|ep|epoch|step)(\d+)|(0\d{3,7}))$/i.exec(stem);
+  const m = release || step;
+  if (!m) return null;
+  const family = `${loraFolderOf(name)}/${(stem.slice(0, m.index) + '#' + stem.slice(m.index + m[0].length)).toLowerCase()}`;
+  return { family, version: (m[1] || m[2]).split('.').map(Number), step: !release };
+}
+const newerVersion = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); return false; };
+// The newest version of a LoRA in ComfyUI's LoRA folder (newer than it, unless any other will do: its file is gone).
+// A name with no version ("film_grain") counts as v1 of the release that adds one ("film_grain_v2").
+function newestLora(name, { anyOther = false } = {}) {
+  if (!state.loraList) return null;
+  const v = loraVersion(name);
+  const plain = !v && `${loraFolderOf(name)}/${loraShort(name).toLowerCase()}`;
+  const same = o => (v ? o.family === v.family : !o.step && o.family.replace(/[_\-. ]?#/, '') === plain);
+  const mine = v ? v.version : [1];
+  let best = null;
+  for (const n of state.loraList) {
+    const o = n !== name && loraVersion(n);
+    if (o && same(o) && (anyOther || newerVersion(o.version, mine)) && (!best || newerVersion(o.version, best.v.version))) best = { name: n, v: o };
+  }
+  return best && { name: best.name, step: best.v.step };
+}
+const versionLabel = n => { const v = loraVersion(n); return v ? (v.step ? `step ${v.version.join('.')}` : `v${v.version.join('.')}`) : loraShort(n); };
+const loraSkipKey = (from, to) => `loraNewerSkip.${from}→${to}`;
+
+// The key of the workflow's LoRA row that loads this file (its own, or one you added).
+function loraInFlow(flow, name) {
+  const { own, added } = flowLoras(flow);
+  const o = own.find(l => l.name === name);
+  if (o) return o.key;
+  const i = added.findIndex(a => a.name === name);
+  return i >= 0 ? `+${i}` : null;
+}
+
+// Puts another file in a LoRA's place (a newer version), keeping its switch and strength.
+function swapLora(flow, key, name) {
+  const before = key.startsWith('+') ? flow.loras.added[Number(key.slice(1))]?.name : flow.loras.nodes.find(n => n.key === key)?.name;
+  if (key.startsWith('+')) flow.loras.added[Number(key.slice(1))].name = name;
+  else {
+    const node = flow.loras.nodes.find(n => n.key === key);
+    const t = { on: node.on, strength: node.strength, ...flow.loras.tweaks[key], name };
+    if (name === node.name) delete t.name;
+    if (!t.name && t.on === node.on && t.strength === node.strength) delete flow.loras.tweaks[key]; else flow.loras.tweaks[key] = t;
+  }
+  saveLoras(flow, { now: true });
+  renderLoraPanel();
+  checkedModels.delete(flow.id);
+  loraSaving.then(() => checkWorkflowModels(flow.id));
+  return before;
+}
+
 const loraCount = flow => { const { own, added } = flowLoras(flow); const used = x => x.on; return own.filter(used).length + added.filter(used).length; };
 
 // The model's LoRA folder: the one you chose, else the folder whose name matches the model ("krea2" for
@@ -5182,11 +5238,13 @@ function renderLoraPanel() {
   const flow = activeFlow();
   if (!flow) { box.innerHTML = ''; return; }
   const { own, added } = flowLoras(flow);
+  if (!state.loraList && (own.length || added.length) && !loadLoraList.busy) { loadLoraList.busy = true; loadLoraList().finally(() => { loadLoraList.busy = false; if (state.loraList?.length) renderLoraPanel(); }); }
+  const newer = l => { const n = newestLora(l.name); return n && !saved.get(loraSkipKey(l.name, n.name), false) ? n : null; };
   const focus = document.activeElement?.closest?.('#wfpLoras') ? { key: document.activeElement.closest('[data-key]')?.dataset.key, cls: [...document.activeElement.classList].find(c => c.startsWith('lr-')) || document.activeElement.dataset.act } : null;
   const row = (l, key) => `
     <li class="lora-row${l.on ? '' : ' off'}" data-key="${esc(key)}">
       <label class="switch mini" title="${l.on ? 'On' : 'Off'}"><input type="checkbox" class="lr-on"${l.on ? ' checked' : ''} aria-label="Use ${esc(loraShort(l.name))}"><span class="track" aria-hidden="true"></span></label>
-      <span class="lr-name" title="${esc(l.name)}${l.pieces > 1 ? ` · loaded by each of the workflow's ${l.pieces} pieces: this sets them all` : ''}">${esc(loraShort(l.name))}${l.own ? `<small>in workflow${l.pieces > 1 ? ` · ×${l.pieces} pieces` : ''}</small>` : ''}</span>
+      <span class="lr-name" title="${esc(l.name)}${l.pieces > 1 ? ` · loaded by each of the workflow's ${l.pieces} pieces: this sets them all` : ''}"><span class="lr-text">${esc(loraShort(l.name))}</span>${l.own ? `<small>${l.name !== l.original.name ? `in place of ${esc(versionLabel(l.original.name))}` : 'in workflow'}${l.pieces > 1 ? ` · ×${l.pieces} pieces` : ''}</small>` : ''}${(n => (n ? `<button type="button" class="lr-newer" data-act="lora-newer" data-name="${esc(n.name)}" title="${n.step ? `A later training step of this LoRA is in your folder: ${esc(loraShort(n.name))}. Later isn't always better: try it and compare.` : `A newer version of this LoRA is in your folder: ${esc(loraShort(n.name))}.`} Click to use it, same switch and strength.">🆕 ${esc(versionLabel(n.name))}</button><button type="button" class="lr-newer-skip" data-act="lora-newer-skip" data-name="${esc(n.name)}" aria-label="Keep ${esc(loraShort(l.name))}: don't suggest ${esc(loraShort(n.name))} again" title="Keep this one">✕</button>` : ''))(newer(l))}</span>
       ${l.own ? (l.edited ? `<button type="button" class="icon-btn lr-reset" data-act="lora-reset" title="Back to the workflow's ${l.original.on ? Number(l.original.strength).toFixed(2) : 'off'}" aria-label="Reset ${esc(loraShort(l.name))}">↺</button>` : '<span></span>') : `<button type="button" class="icon-btn" data-act="lora-remove" aria-label="Remove ${esc(loraShort(l.name))}" title="Remove">✕</button>`}
       <input type="range" class="lr-range" min="-5" max="5" step="0.05" value="${Math.max(-5, Math.min(5, l.strength))}" aria-label="Strength of ${esc(loraShort(l.name))}"${l.on ? '' : ' disabled'}>
       <input type="number" class="lr-num" step="0.05" value="${Number(l.strength).toFixed(2)}" aria-label="Strength of ${esc(loraShort(l.name))}, exact"${l.on ? '' : ' disabled'}>
@@ -5262,7 +5320,7 @@ function setLora(key, change) {
   else {
     const node = l.nodes.find(n => n.key === key);
     const next = { on: node.on, strength: node.strength, ...l.tweaks[key], ...change };
-    if (next.on === node.on && next.strength === node.strength) delete l.tweaks[key]; else l.tweaks[key] = next;
+    if (next.on === node.on && next.strength === node.strength && !next.name) delete l.tweaks[key]; else l.tweaks[key] = next;
   }
   return flow;
 }
@@ -5320,6 +5378,15 @@ $('#wfpLoras').addEventListener('click', e => {
     flow.loras.added.splice(Number(key.slice(1)), 1);
     saveLoras(flow, { now: true });
     renderLoraPanel();
+  } else if (b.dataset.act === 'lora-newer' && key) {
+    const before = swapLora(flow, key, b.dataset.name);
+    $(`#wfpLoras [data-key="${CSS.escape(key)}"] .lr-range`)?.focus();
+    toast(`🆕 Now using ${loraShort(b.dataset.name)}, same strength`, false, { label: 'Undo', run: () => { const f = state.workflows.find(x => x.id === flow.id); if (f) swapLora(f, key, before); } });
+  } else if (b.dataset.act === 'lora-newer-skip' && key) {
+    const l = [...flowLoras(flow).own, ...flowLoras(flow).added.map((a, i) => ({ ...a, key: `+${i}` }))].find(x => x.key === key);
+    if (l) saved.set(loraSkipKey(l.name, b.dataset.name), true);
+    renderLoraPanel();
+    $(`#wfpLoras [data-key="${CSS.escape(key)}"] .lr-range`)?.focus();
   } else if (b.dataset.act === 'lora-reset' && key) {
     delete flow.loras.tweaks[key];
     saveLoras(flow, { now: true });
@@ -5413,6 +5480,7 @@ function checkWorkflowModels(id, { fresh = false } = {}) {
 function noteMissingModels(id, missing) {
   state.wfMissing.set(id, missing || []);
   renderModelNotice();
+  if (missing?.some(m => m.folder === 'loras') && !state.loraList) loadLoraList().then(renderModelNotice); // another version may be there
 }
 
 const sizeLabel = b => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`);
@@ -5430,7 +5498,10 @@ function renderModelNotice() {
     let act;
     if (d?.state === 'running') act = `<span class="mm-prog"><span class="mm-bar" style="width:${d.total ? Math.round((d.received / d.total) * 100) : 0}%"></span></span><span class="mm-pct">${d.total ? `${Math.round((d.received / d.total) * 100)}% of ${sizeLabel(d.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="mm-cancel" data-id="${esc(d.id)}" aria-label="Stop downloading ${esc(m.file)}">✕</button>`;
     else if (d?.state === 'done') act = '<span class="mm-ok">✓ Downloaded</span>';
-    else if (m.download) act = `${d?.state === 'error' ? `<span class="mm-err">${esc(d.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mm-get" data-file="${esc(m.file)}">${d?.state === 'error' ? '↻ Try again' : '⬇ Download'}</button>`;
+    else if (m.folder === 'loras' && loraInFlow(flow, m.name) && newestLora(m.name, { anyOther: true })) {
+      const n = newestLora(m.name, { anyOther: true }).name;
+      act = `<span class="mm-none">Another version is in your folder: ${esc(loraShort(n))}.</span><button type="button" class="btn small primary" data-act="mm-swap" data-file="${esc(m.name)}" data-name="${esc(n)}">Use ${esc(versionLabel(n))}</button>`;
+    } else if (m.download) act = `${d?.state === 'error' ? `<span class="mm-err">${esc(d.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mm-get" data-file="${esc(m.file)}">${d?.state === 'error' ? '↻ Try again' : '⬇ Download'}</button>`;
     else if (/^https?:\/\//.test(m.url || '')) act = `<span class="mm-none">Get it from <a href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(m.url).hostname)}</a> (the workflow's link) and put it in that folder.</span>`;
     else act = '<span class="mm-none">No download link in the workflow: get it where the workflow came from.</span>';
     return `<li><code title="${esc(m.name)}">${esc(m.file)}</code>${where}<span class="mm-act">${act}</span></li>`;
@@ -5460,7 +5531,11 @@ $('#wfpModels').addEventListener('click', e => {
   const missing = state.wfMissing.get($('#wfpSelect').value) || [];
   if (b.dataset.act === 'mm-get') downloadModels(missing.filter(m => m.file === b.dataset.file));
   else if (b.dataset.act === 'mm-all') downloadModels(missing.filter(m => m.download && !['running', 'done'].includes(downloadFor(m)?.state)));
-  else if (b.dataset.act === 'mm-cancel') api(`/api/comfy/downloads/${b.dataset.id}/cancel`, { method: 'POST' }).then(pollDownloads, () => {});
+  else if (b.dataset.act === 'mm-swap') {
+    const flow = activeFlow();
+    const key = flow && loraInFlow(flow, b.dataset.file);
+    if (key) { swapLora(flow, key, b.dataset.name); toast(`🆕 Now using ${loraShort(b.dataset.name)} in place of the missing file, same strength`); }
+  } else if (b.dataset.act === 'mm-cancel') api(`/api/comfy/downloads/${b.dataset.id}/cancel`, { method: 'POST' }).then(pollDownloads, () => {});
 });
 
 // Follows the downloads (they run in Prompt Maker's server, so they go on through a reload) until they're done.

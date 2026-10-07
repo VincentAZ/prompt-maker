@@ -524,6 +524,9 @@ Step ⑤ shows the **🧬 LoRAs** of the picked workflow:
 - **Added LoRAs go in right after the workflow's model loader,** so there's nothing to wire up in ComfyUI.
 - **A workflow that renders in pieces** (like SCAIL 2, where each piece loads its own copy of the same LoRAs) shows each LoRA once, marked *×2 pieces*: its switch and strength set every piece.
 
+- **🆕 A newer version is offered.** When your LoRA folder has a newer release of a LoRA in use (`film_grain` → `film_grain_v2`, `v1.1` → `v2`), its row shows **🆕 v2**: one click uses it, with the same switch and strength (**Undo** in the message; on the workflow's own LoRAs, **↺** goes back to its file). A later training step (`-000800` after `-000600`) is offered the same way, though later isn't always better: compare. **✕** keeps the one you have and stops suggesting that file.
+- **A LoRA file that's gone** (you deleted v1 when v2 came out): step ⑤'s missing-files notice offers **Use v2**, the newest version you have, instead of a dead end.
+
 Your LoRA choices are saved with the workflow in your data folder. Every render records the LoRAs it used, shown in its lightbox.
 
 ### 3. Turn a still into a video

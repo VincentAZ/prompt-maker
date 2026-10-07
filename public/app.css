@@ -1051,6 +1051,11 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .lora-row .lr-name { grid-area: name; min-width: 0; display: flex; align-items: baseline; gap: 8px; font-size: 13.5px; font-weight: 650; }
 .lora-row .lr-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lora-row .lr-name small { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); }
+.lora-row .lr-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lora-row .lr-newer { flex: none; align-self: center; padding: 1px 8px; border-radius: 999px; border: 1px solid rgb(34 211 238 / 45%); background: rgb(34 211 238 / 12%); color: #67e8f9; font-size: 11px; font-weight: 700; cursor: pointer; }
+.lora-row .lr-newer:hover, .lora-row .lr-newer:focus-visible { background: rgb(34 211 238 / 24%); }
+.lora-row .lr-newer-skip { flex: none; align-self: center; margin-left: -6px; padding: 0 4px; border: 0; background: none; color: var(--muted); font-size: 11px; cursor: pointer; }
+.lora-row .lr-newer-skip:hover, .lora-row .lr-newer-skip:focus-visible { color: var(--text, #fff); }
 .lora-row > .icon-btn, .lora-row > span:empty { grid-area: act; justify-self: end; width: 30px; height: 30px; font-size: 13px; }
 .lora-row .lr-range { grid-area: range; height: 6px; background: linear-gradient(90deg, #22d3ee, var(--panel-3) 50%, var(--m)); }
 #wfpLoras .lr-num { grid-area: num; width: 70px; padding: 5px 8px; font: 600 12.5px var(--mono); text-align: right; justify-self: end; appearance: textfield; -moz-appearance: textfield; }

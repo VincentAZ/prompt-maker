@@ -2727,6 +2727,63 @@ esac
     await click('.model-card[data-id="krea2-raw"]');
   });
 
+  await test('LoRAs: a newer version in the folder is offered, one click swaps it; a missing one offers the version you have', async () => {
+    const lora = sel => `#wfpLoras ${sel}`;
+    const loras = OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0];
+    const id = await value('#wfpSelect');
+    const flowOf = () => js(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)}).loras)`);
+    const before = await flowOf();
+    loras.push('krea2/baked_in_v2.safetensors', 'krea2/baked_in_v3.safetensors', 'krea2/film_grain-000800.safetensors');
+    try {
+      await goto(`${APP}/#create`);
+      await openPanel('create-render-adv');
+      await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-newer')}')`, 'the newest version is offered');
+      eq(await text(lora('[data-key="20"] .lr-newer')), '🆕 v3', 'the newest, not just any newer one');
+      assert(!(await js(`document.querySelector('${lora('[data-key="+0"] .lr-newer')}')`)), 'a training step is no version of a LoRA without one');
+      const h = await js(`document.querySelector('${lora('[data-key="20"]')}').offsetHeight`);
+      await click(lora('[data-key="20"] .lr-newer'));
+      await toastText('Now using baked_in_v3');
+      assert((await text(lora('[data-key="20"] .lr-name'))).includes('baked_in_v3') && (await text(lora('[data-key="20"] .lr-name'))).includes('in place of baked_in'), 'it says what it replaced');
+      eq(await js(`document.querySelector('${lora('[data-key="20"]')}').offsetHeight`), h, 'the row keeps its height');
+      await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)}).loras.tweaks['20']?.name === 'krea2/baked_in_v3.safetensors')`, 'saved on the workflow');
+      eq((await flowOf()).tweaks['20'].strength, before.tweaks['20'].strength, 'same strength');
+      if (await js(`document.querySelector('${lora('[data-key="20"]')}').classList.contains('off')`)) await click(lora('[data-key="20"] .switch'));
+      if (!(await js('!!document.querySelector(".take .rb-go")'))) {
+        await type('#theme', 'a portrait in window light');
+        await click('#generateBtn');
+        await genDone();
+      }
+      await click('.take .rb-go');
+      await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
+      eq(comfy.prompts.at(-1).prompt['20'].inputs.lora_name, 'krea2/baked_in_v3.safetensors', 'the render loads the new file');
+
+      // A file that's gone: the notice offers the version you have.
+      await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: { tweaks: { 20: { on: true, strength: 0.8, name: 'krea2/baked_in_v9.safetensors' } }, added: ${JSON.stringify(before.added)} } }) })`);
+      await goto(`${APP}/#create`);
+      await openPanel('create-render-adv');
+      await waitFor('!!document.querySelector("#wfpModels [data-act=mm-swap]")', 'the missing LoRA offers another version', 10000);
+      eq(await text('#wfpModels [data-act=mm-swap]'), 'Use v3', 'the newest one you have');
+      await click('#wfpModels [data-act=mm-swap]');
+      await waitFor('document.querySelector("#wfpModels").hidden', 'nothing missing any more', 10000);
+      eq((await flowOf()).tweaks['20'].name, 'krea2/baked_in_v3.safetensors', 'swapped');
+
+      // ↺ goes back to the workflow's own file; ✕ keeps it for good.
+      await click(lora('[data-key="20"] .lr-reset'));
+      await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-newer')}')`, 'offered again');
+      await click(lora('[data-key="20"] .lr-newer-skip'));
+      assert(!(await js(`document.querySelector('${lora('[data-key="20"] .lr-newer')}')`)), 'not offered after ✕');
+      await goto(`${APP}/#create`);
+      await openPanel('create-render-adv');
+      await waitFor(`document.querySelectorAll('${lora('.lora-row')}').length === 2`, 'reloaded');
+      await sleep(500);
+      assert(!(await js(`document.querySelector('${lora('[data-key="20"] .lr-newer')}')`)), 'still not offered after a reload');
+    } finally {
+      loras.splice(loras.indexOf('krea2/baked_in_v2.safetensors'), 3);
+      await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: ${JSON.stringify({ tweaks: before.tweaks, added: before.added })} }) })`);
+      await goto(`${APP}/#create`);
+    }
+  });
+
   await test('queue: line up Generates while one cooks; each keeps its setup; Stop, ✕, hold and carry on', async () => {
     const lora = sel => `#wfpLoras ${sel}`;
     const setGrain = async v => { await type(lora('[data-key="+0"] .lr-num'), v); await press('Enter'); };
