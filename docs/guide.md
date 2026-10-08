@@ -172,6 +172,8 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 
 ### Create
 
+<img src="screenshots/create.png" alt="The Create page: pick a model, then your shot, picture and settings on the left; your renders in one grid on the right" width="900">
+
 | Step | What it does |
 |---|---|
 | **① Pick your model** | The generator you're writing for. Its color follows you across the app. The seven built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. **📖 How to use this model** under the cards says, in plain words, what the model is good for, what you need to give it, the steps to follow, and a few themes to try: click one and it goes into ②. It stays open until you close it. |
@@ -238,7 +240,7 @@ On a video model the look also picks the camera's move (a slow push in for Intim
 
 ### Voices
 
-<img src="screenshots/voices.png" alt="The Voices page: a voice described in words and heard, with Keep this voice, and under it the kept voice Jess with Sample, Say it, rename and delete, saying a typed line" width="900">
+<img src="screenshots/voices.png" alt="The Voices page before the one-time setup: what it needs, about 9 GB downloaded once, and the Install voices button" width="900">
 
 The **🎙 Voices** page makes speech on this computer, so the same person can say every line of a video in the same voice.
 
@@ -322,7 +324,7 @@ The motion video is kept with the take (History puts it back), and deleting the 
 
 ### ✦ The assistant
 
-<img src="screenshots/ask.jpg" alt="The assistant panel, dragged wider, beside the Create page: asked which render suits a travel magazine cover, it looked at the renders and picked the surfing corgi, with its reasons" width="900">
+<img src="screenshots/ask.jpg" alt="The assistant panel beside the Gallery, answering a how-to question in plain steps" width="900">
 
 Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. The page takes all the room beside the panel and nothing lies under it: on a smaller window the Create page goes to one column while the panel is open. The top bar's menus (Brain, 🎨 Rendering) open over it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
@@ -370,8 +372,6 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 
 ### History
 
-<img src="screenshots/history.jpg" alt="The History page: a card for every prompt, with its newest render, model, shape and theme" width="900">
-
 Everything you generate is saved automatically:
 
 - **Find things:** search themes and prompts, filter by model, or show only ★ favorites.
@@ -395,8 +395,6 @@ Everything you generate is saved automatically:
 | `Shift` + `←` `→` on a render card | Move the card in 🎞 Your renders or the Gallery |
 
 ## Rendering with ComfyUI (optional)
-
-<img src="screenshots/render.jpg" alt="A render in the full-screen view: the picture, its stars, its prompt, what you can do with it, and how it was made" width="900">
 
 Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfyanonymous/ComfyUI), it can also **render** your prompts, using your own workflows on your own GPU.
 
@@ -474,9 +472,6 @@ Click any result to open the **lightbox**, where you can:
 - **render again** with a new seed,
 - **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
 - or delete it.
-
-<img src="screenshots/compare.jpg" alt="Compare: two renders of the same idea side by side, each with its own stars, and Keep this one under the one on the right" width="900">
-
 
 ### Setting up ComfyUI (one click)
 
@@ -577,7 +572,7 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 
 ### 5. Your renders and the Gallery
 
-<img src="screenshots/gallery.jpg" alt="The Gallery: every render in one grid, with stars, filters and a size slider" width="900">
+<img src="screenshots/gallery.jpg" alt="The Gallery: every rated render in one grid, with stars, filters and a size slider" width="900">
 
 **🎞 Your renders** sits above the takes on Create. It holds a card for every render you've ever made, from every run and batch, all in one grid, newest first. It keeps them when you reload the page or restart Prompt Maker.
 
@@ -629,7 +624,7 @@ Seven models come with ready-made playbooks, researched from their official prom
 
 ### Adding or updating a model
 
-<img src="screenshots/models.png" alt="Models editor: the seven built-in models, Krea 2 Character picked with its starter workflow attached" width="900">
+<img src="screenshots/models.png" alt="The Models page: the seven built-in models, with a model's ComfyUI workflow and its playbook" width="900">
 
 New models come out constantly. Open the **Models** tab and:
 

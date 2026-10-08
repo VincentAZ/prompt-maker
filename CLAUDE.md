@@ -3,11 +3,15 @@
 - Every commit updates the version number in `package.json`: bump the patch number (1.0.1 → 1.0.2) by default,
   the minor number (1.0.x → 1.1.0) for a notable new feature, and only bump the major number when the user says so.
   Settings shows this version, so people can say which one they run when they report a problem.
-- Any new, changed or removed feature is reflected in `README.md` in the same commit.
+- Any new, changed or removed feature is reflected in `docs/guide.md` (the full manual, which the in-app assistant also reads)
+  and, when it changes what the front page says, in `README.md`, in the same commit.
 - Nothing that ships carries the user's data. A file taken from the data folder into the repo (`workflows/`, `playbooks/`, `chains/`,
   screenshots) is scrubbed first: no prompts (positive or negative), no adult examples, seed 0, no personal file or LoRA names.
   The test suite checks `workflows/`.
-- When the UI changes, the README's screenshots (`docs/screenshots/`) are retaken in the same commit, from a clean data folder.
+- When the UI changes, the screenshots (`docs/screenshots/`, shown in `docs/guide.md` and the README) are retaken in the same
+  commit, from a clean data folder, with **no prompt text on screen** (fold or crop it; a screen that is mostly prompt
+  text, like History or the render viewer, gets no screenshot) and no personal file, LoRA or folder names.
+  `tests/screenshots.mjs` takes them (see its header).
 
 ## Who this app is for
 
