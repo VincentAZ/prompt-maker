@@ -715,6 +715,37 @@ $('#voiceList').addEventListener('keydown', e => {
 // 🎙 Says a line (step 3): on a video model whose picked workflow takes a sound file, pick a voice and write the line.
 // At Generate the server says it in that voice; at Render the clip is the soundtrack the video follows.
 const lineOn = () => currentModel()?.kind === 'video' && Boolean(activeFlow()?.maps?.audio);
+// A workflow of this model that takes a spoken line: one you have, else one that comes with the app (added for you).
+// Returns it, picked, or null. lineOptions remembers per model whether there is one to offer.
+const lineOptions = new Map();
+async function ensureLineWorkflow(m) {
+  if (!m || m.kind !== 'video') return null;
+  const have = workflowsFor(m.id).find(f => f.maps?.audio);
+  if (have) { pickWorkflow(m.id, have.id); renderWorkflowPicker(); return have; }
+  const starters = await api(`/api/workflows/starters?model=${encodeURIComponent(m.id)}`).catch(() => []);
+  for (const t of starters) {
+    const p = await api('/api/workflows/prepare', { method: 'POST', body: { starter: t.key } }).catch(() => null);
+    if (!p?.mapping?.audio) continue;
+    await api('/api/workflows', { method: 'POST', body: { modelId: m.id, name: p.name, source: p.source, prompt: p.prompt, mapping: p.mapping, options: p.options, models: p.models } });
+    await loadWorkflows();
+    const flow = workflowsFor(m.id).find(f => f.maps?.audio);
+    if (flow) { pickWorkflow(m.id, flow.id); renderWorkflowPicker(); toast(`🎙 Added “${flow.name}”: it takes the spoken line`); return flow; }
+  }
+  return null;
+}
+async function lineAvailable(m) {
+  if (!m || m.kind !== 'video') return false;
+  if (workflowsFor(m.id).some(f => f.maps?.audio)) return true;
+  if (!lineOptions.has(m.id)) {
+    lineOptions.set(m.id, null); // asked
+    const starters = await api(`/api/workflows/starters?model=${encodeURIComponent(m.id)}`).catch(() => []);
+    let found = false;
+    for (const t of starters) { const p = await api('/api/workflows/prepare', { method: 'POST', body: { starter: t.key } }).catch(() => null); if (p?.mapping?.audio) { found = true; break; } }
+    lineOptions.set(m.id, found);
+    renderLine();
+  }
+  return Boolean(lineOptions.get(m.id));
+}
 function setLine(line, { persist = true } = {}) {
   state.line = { voice: String(line?.voice || ''), text: String(line?.text || '') };
   if (persist) saved.set('line', state.line);
@@ -723,9 +754,14 @@ function setLine(line, { persist = true } = {}) {
 let voicesAsked = false;
 function renderLine() {
   state.line ||= { voice: '', text: '' };
+  const m = currentModel();
   const on = lineOn();
-  $('#lineBlock').hidden = !on;
-  if (!on) return;
+  // No line on the picked workflow, but one of this model's (or one that comes with the app) takes one: offer the switch.
+  const canSwitch = !on && m?.kind === 'video' && !state.manual && (workflowsFor(m.id).some(f => f.maps?.audio) || lineOptions.get(m.id) === true);
+  if (!on && m?.kind === 'video' && !lineOptions.has(m.id) && !workflowsFor(m.id).some(f => f.maps?.audio)) lineAvailable(m);
+  $('#lineBlock').hidden = !on && !canSwitch;
+  $('#lineSwitch').hidden = !canSwitch;
+  if (!on) { $('#lineSetup').hidden = true; $('#lineForm').hidden = true; $('#lineHint').hidden = true; return; }
   if (!voices.status && !voicesAsked) { voicesAsked = true; loadVoices().then(() => { voicesAsked = false; renderLine(); }); }
   const ready = voicesReady();
   $('#lineSetup').hidden = ready || !voices.status;
@@ -746,6 +782,13 @@ $('#lineVoice').addEventListener('change', () => { setLine({ ...state.line, voic
 $('#lineText').addEventListener('input', () => { state.line.text = $('#lineText').value; saved.set('line', state.line); $('#lineClear').hidden = !state.line.text && !state.line.voice; });
 $('#lineText').addEventListener('change', () => setLine({ voice: state.line.voice || voices.list[0]?.id || '', text: $('#lineText').value }));
 $('#lineClear').addEventListener('click', () => { setLine({ voice: '', text: '' }); $('#lineText').focus(); });
+$('#lineSwitchBtn').addEventListener('click', async () => {
+  const b = $('#lineSwitchBtn');
+  b.disabled = true;
+  try { if (!(await ensureLineWorkflow(currentModel()))) toast('No workflow of this model takes a spoken line yet.', true); } finally { b.disabled = false; }
+  renderLine();
+  $('#lineText')?.focus();
+});
 $$('.tabs button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view, { byUser: true })));
 
 // ---------- LM Studio ("Brain") ----------
@@ -7990,7 +8033,7 @@ const B = description => ({ type: 'boolean', description });
 const E = (values, description) => ({ type: 'string', enum: values, description });
 
 // The tools a job's steps can use: the ones that set up Create and make things (nothing that deletes or asks).
-const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'judge_renders', 'set_line', 'join_videos', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
+const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'judge_renders', 'set_line', 'make_voice', 'join_videos', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
 
 const TOOLS = [
   T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
@@ -9249,7 +9292,7 @@ const TOOL_IMPL = {
   set_line: async ({ text, voice: which }) => {
     const m = currentModel();
     if (m?.kind !== 'video') throw new Error(`${m?.name || 'This model'} makes images: a spoken line needs a video model like MiniMax H3.`);
-    if (!activeFlow()?.maps?.audio) throw new Error(`The picked workflow (${activeFlow()?.name || 'none'}) takes no sound file. Pick MiniMax H3's own workflow (＋ Add workflow → 🎁 Comes with Prompt Maker).`);
+    if (!activeFlow()?.maps?.audio && !(await ensureLineWorkflow(m))) throw new Error(`No workflow of ${m.name} takes a spoken line (a Load Audio node). MiniMax H3's own one does: pick that model.`);
     if (!voices.status) await loadVoices();
     if (!voicesReady()) throw new Error('Voices aren\'t installed: the user installs them with one click on the 🎙 Voices page.');
     const line = clean(text);
