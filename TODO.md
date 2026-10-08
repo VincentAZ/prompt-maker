@@ -6,8 +6,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 ## Next
 
 1. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
-   then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). The v1.30.0
-   release still carries the 1.30.0 package; main is ahead (1.31.1 built in dist/, not released).
+   then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). Latest:
+   v1.31.1 (2026-10-08).
 2. **README brainstorm (own session, `readme` worktree).** The opener is fixed; the rest of the README still reads
    like a manual. Results first: real renders in the first screen, fewer settings screenshots. Bring real renders.
 3. **"Ask again" for the delete warning.** "Don't show this again" is per browser with no way back except clearing
