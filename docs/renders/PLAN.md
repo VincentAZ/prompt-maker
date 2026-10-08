@@ -57,7 +57,7 @@ The earlier long-prompt stills (fisherman, ramen, convertible, ballet) get no ca
 | `street-musician.webp` | street musician at night |
 | `mountain-lake.webp` | mountain lake at dawn |
 | `surfer-sunset.webp` | surfer at sunset |
-| `wan-woman-dance.webp` / `.mp4` | Wan Animate 2, 720p, 3.15 s, no sound: the standing `woman-studio-red-dress` picture ("woman in a red dress, full body, plain studio") + the first 6 s (24 fps) of a Pixabay silhouette dance as motion; "she dances in a photo studio". The first try (seated pier woman, 3.4 s at 480p) came out bad and was replaced: a character needs a full-length standing picture for a dance. |
+
 
 The Wan clip's motion source is a Pixabay silhouette video (not shipped; Pixabay's license allows it, confirmed by the owner).
 
@@ -67,6 +67,9 @@ The Wan clip's motion source is a Pixabay silhouette video (not shipped; Pixabay
   dock (net, dawn) → harbor bar (cards) → storm (the wheel) → walk home (night). Stills made with Krea 2 Character
   from one picture; each scene animated with a short idea ("he laughs and lays down a winning card", "he grips the
   wheel as a wave crashes over the bow", "he walks on along the quiet harbor, the lantern glowing").
-- `film-dance.mp4` / `.webp`: 12.9 s, four Wan Animate 2 clips (720p, consecutive 3.4 s slices of the same dance) of
-  the same woman. Weak: each clip starts from her standing pose, so the dance resets at every join, and the hair blurs
-  on the whips. Needs the owner's verdict before it ships.
+- `wan-fisherman-moves.mp4` / `.webp`: ONE Wan Animate 2 clip, 10 s (240 frames), 720p, no sound: the standing fisherman
+  picture (Krea 2 Character, "he stands facing the camera, arms relaxed, full body, on the dock at dawn") performs the
+  first 10 s of a Pixabay silhouette video (a man walking, turning, gesturing; 24 fps) as motion; "he dances on the
+  dock at dawn". Made with ComfyUI's "Wan Animate 2: Motion Transfer" template, which follows the WHOLE motion video
+  (the starter that ships with the app animates 81 frames = 3.4 s). Do not stitch Wan clips: each restarts from the
+  reference pose. The first woman-dance attempts were bad (flying hair in the source looked fake) and were dropped.
