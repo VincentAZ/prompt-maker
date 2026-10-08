@@ -1,6 +1,6 @@
 // End-to-end UI test: the real app server + a mock LM Studio + headless Chrome driven over the
 // DevTools protocol. Clicks are real mouse events, so a button hidden under something else fails.
-// Usage: node tests/ui.test.mjs [name-filter]   Screenshots go to $SHOTS (default: /tmp/prompt-maker-ui).
+// Usage: node tests/ui.test.mjs [name-filter]   (several filters: "a|b")   Screenshots go to $SHOTS (default: /tmp/prompt-maker-ui).
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import fs from 'node:fs/promises';
@@ -275,7 +275,7 @@ function eq(actual, expected, msg) { if (actual !== expected) throw new Error(`$
 
 const results = [];
 async function test(name, fn) {
-  if (FILTER && !name.includes(FILTER) && !['boot'].includes(name)) return;
+  if (FILTER && !FILTER.split('|').some(f => name.includes(f)) && !['boot'].includes(name)) return;
   const t = Date.now();
   try {
     await fn();
@@ -317,6 +317,7 @@ case "$*" in
   *is-active*prompt-maker-comfyui*) if [ -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ]; then echo active; else echo inactive; exit 3; fi ;;
   *"stop prompt-maker-comfyui"*) rm -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ;;
   *--version*) echo "systemd 255" ;;
+  *"UnitFileState hibernate.target"*) if [ -f ${JSON.stringify(path.join(tmp, 'privacy', 'masked'))} ]; then echo UnitFileState=masked; else echo UnitFileState=static; fi ;;
   *is-enabled*) if [ -f ${JSON.stringify(path.join(tmp, 'enabled'))} ]; then echo enabled; else echo disabled; exit 1; fi ;;
   *" enable "*) touch ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
   *disable*) rm -f ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
@@ -366,8 +367,32 @@ esac
   const starterModels = await fs.readdir(path.join(ROOT, 'workflows'));
   await fs.writeFile(path.join(dataDir, 'starters.json'), JSON.stringify(Object.fromEntries(starterModels.map(id => [id, 'test']))));
 
+  // A fake computer for the Privacy check: lsblk's tree, /proc/swaps, the power file, gsettings and pkexec (which
+  // logs what it was asked to run as root and acts out the swap fix).
+  const privacyDir = path.join(tmp, 'privacy');
+  await fs.mkdir(privacyDir, { recursive: true });
+  const fakeSwaps = path.join(privacyDir, 'swaps');
+  await fs.writeFile(fakeSwaps, 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/swapfile                               file\t\t8388604\t\t0\t\t-2\n');
+  const fakePowerDisk = path.join(privacyDir, 'power-disk');
+  await fs.writeFile(fakePowerDisk, '[platform] shutdown reboot suspend test_resume\n');
+  const fakeLsblk = path.join(privacyDir, 'lsblk');
+  await fs.writeFile(fakeLsblk, `#!/bin/sh\necho '{"blockdevices":[{"name":"nvme0n1","type":"disk","fstype":null,"mountpoint":null,"children":[{"name":"nvme0n1p2","type":"part","fstype":"ext4","mountpoint":"/"}]}]}'\n`, { mode: 0o755 });
+  const gsettingsStore = path.join(privacyDir, 'gsettings.json');
+  await fs.writeFile(gsettingsStore, JSON.stringify({ 'org.gnome.desktop.screensaver lock-enabled': 'true', 'org.gnome.desktop.session idle-delay': 'uint32 0' }));
+  const fakeGsettings = path.join(privacyDir, 'gsettings');
+  await fs.writeFile(fakeGsettings, `#!/usr/bin/env node\nconst fs = require('fs'); const f = ${JSON.stringify(gsettingsStore)}; const d = JSON.parse(fs.readFileSync(f, 'utf8')); const [op, schema, key, ...val] = process.argv.slice(2);\nif (op === 'get') console.log(d[schema + ' ' + key]); else { d[schema + ' ' + key] = val.join(' '); fs.writeFileSync(f, JSON.stringify(d)); }\n`, { mode: 0o755 });
+  const pkexecLog = path.join(privacyDir, 'pkexec.log');
+  const fakePkexec = path.join(privacyDir, 'pkexec');
+  await fs.writeFile(fakePkexec, `#!/bin/sh\necho "$@" >> ${JSON.stringify(pkexecLog)}\ncase "$*" in *swapoff*) printf 'Filename\\tType\\tSize\\tUsed\\tPriority\\n' > ${JSON.stringify(fakeSwaps)};; *mask*) touch ${JSON.stringify(path.join(privacyDir, 'masked'))};; esac\n`, { mode: 0o755 });
+  // systemctl: the fake one answers "masked" for hibernate.target once the fix ran.
+  const ramDir = path.join(tmp, 'ram');
+  await fs.mkdir(ramDir, { recursive: true });
+
+  // A fake LM Studio home: its server logs quote every request, and deleting from History must clean them.
+  const lmsHome = path.join(tmp, 'lmstudio-home');
+  await fs.mkdir(path.join(lmsHome, 'server-logs', '2026-10'), { recursive: true });
   // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_LSBLK_BIN: fakeLsblk, PM_PROC_SWAPS: fakeSwaps, PM_SYS_POWER_DISK: fakePowerDisk, PM_GSETTINGS_BIN: fakeGsettings, PM_PKEXEC_BIN: fakePkexec, PM_RAM_DIR: ramDir }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
   app.stdout.on('data', d => { appLog += d; });
   app.stderr.on('data', d => { appLog += d; });
@@ -866,6 +891,41 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('🔒 privacy check: disk, swap, hibernation, screen lock; one click fixes what it can', async () => {
+    await click('.tabs button[data-view="settings"]');
+    const state = name => text(`.svc[data-check="${name}"] .svc-state`);
+    await waitFor('document.querySelector(\'.svc[data-check="swap"] .svc-state\').textContent.startsWith("On")', 'the checks are in');
+    assert((await state('disk')).startsWith('Off') && (await state('disk')).includes('installed'), `disk: not encrypted, and says it's an install-time choice: ${await state('disk')}`);
+    eq(await count('.svc[data-check="disk"] [data-fix]'), 0, 'nothing to click for the disk');
+    assert((await state('swap')).includes('in the open'), `swap on, in the open: ${await state('swap')}`);
+    assert((await state('hibernation')).startsWith('Possible'), `hibernation possible: ${await state('hibernation')}`);
+    assert((await state('lock')).startsWith('Off'), `the screen never locks (lock on, but never blanks): ${await state('lock')}`);
+    // Swap off: through the system's password prompt (pkexec), swapoff and fstab.
+    await click('[data-fix="swap"]');
+    await toastText('Swap is off');
+    const asked = await fs.readFile(pkexecLog, 'utf8');
+    assert(asked.includes('swapoff -a') && asked.includes('/etc/fstab'), `turned off now and for good: ${asked}`);
+    eq(await state('swap'), 'Off: memory is never written to disk.', 'swap shown off');
+    eq(await state('hibernation'), 'Off: there is no swap to write memory to.', 'and so hibernation cannot happen');
+    assert(await js('document.querySelector(\'[data-fix="hibernation"]\').hidden'), 'nothing left to fix there');
+    // Screen lock: no password needed (your own desktop settings), locks after 5 minutes.
+    await click('[data-fix="lock"]');
+    await toastText('locks on its own');
+    eq(await state('lock'), 'On: locks after 5 min away.', 'lock on');
+    const g = JSON.parse(await fs.readFile(gsettingsStore, 'utf8'));
+    eq(g['org.gnome.desktop.session idle-delay'], 'uint32 300', 'the desktop was told');
+    // Hibernation on its own (swap back on): masked.
+    await fs.writeFile(fakeSwaps, 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/swapfile file 8388604 0 -2\n');
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelector(\'.svc[data-check="hibernation"] .svc-state\').textContent.startsWith("Possible")', 'possible again');
+    await click('[data-fix="hibernation"]');
+    await toastText('Hibernation is off');
+    assert((await fs.readFile(pkexecLog, 'utf8')).includes('mask hibernate.target'), 'masked as root');
+    eq(await state('hibernation'), 'Off.', 'shown off');
+    await fs.writeFile(fakeSwaps, 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n');
+  });
+
   await test('services: see what runs; start and stop ComfyUI and LM Studio from Settings', async () => {
     await click('.tabs button[data-view="settings"]');
     await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'ComfyUI shown running');
@@ -893,6 +953,7 @@ esac
     await toastText('Starting ComfyUI');
     const started = await fs.readFile(systemdRunLog, 'utf8');
     assert(started.includes('--unit=prompt-maker-comfyui.service') && started.includes(`--working-directory=${comfyDir}`) && started.includes('main.py') && started.includes(`--port ${COMFY_PORT}`), `runs main.py in its folder on the right port: ${started}`);
+    assert(!started.includes('--output-directory'), 'its own folders, as usual');
     await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Starting")', 'shown starting');
     await comfy.start(); // ComfyUI answers
     await toastText('ComfyUI is running');
@@ -917,6 +978,37 @@ esac
     await click('#settingsForm button[type="submit"]');
     await toastText('Settings saved');
     await click('.tabs button[data-view="create"]');
+  });
+
+  await test('🧠 ComfyUI working files in memory: started from here with its folders in RAM; a delete finds them there', async () => {
+    await click('.tabs button[data-view="settings"]');
+    assert(!(await js('document.querySelector("#sComfyRamRow").hidden')), 'offered on Linux');
+    await click('#sComfyRam');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await comfy.stop();
+    await fs.rm(path.join(tmp, 'comfy-active'), { force: true });
+    await fs.writeFile(systemdRunLog, '');
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector(\'[data-act="comfy-start"]\').hidden', 'Start button when off');
+    assert((await text('#svcComfyHow')).includes('working files in memory'), `says so: ${await text('#svcComfyHow')}`);
+    await click('[data-act="comfy-start"]');
+    await toastText('Starting ComfyUI');
+    const started = await fs.readFile(systemdRunLog, 'utf8');
+    for (const kind of ['output', 'input', 'temp']) {
+      assert(started.includes(`--${kind}-directory ${path.join(ramDir, 'prompt-maker-comfyui', kind)}`), `${kind} folder in memory: ${started}`);
+      assert(await fileExists(path.join(ramDir, 'prompt-maker-comfyui', kind)), `${kind} folder made`);
+    }
+    // The app finds ComfyUI's folders from the options it runs with, so deleting reaches the ones in memory.
+    const { folders } = await import('../lib/comfy.js');
+    const dirs = await folders('http://127.0.0.1:1', { args: ['--output-directory', path.join(ramDir, 'prompt-maker-comfyui', 'output'), '--temp-directory', '/nonexistent'] });
+    eq(dirs.output, path.join(ramDir, 'prompt-maker-comfyui', 'output'), 'the output folder is the one in memory');
+    eq(dirs.temp, undefined, 'a folder that is not there is not reported');
+    await comfy.start();
+    await click('#sComfyRam');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
   });
 
   await test('cloud Brains: none until you add one; asks before sending prompts; key never shown again', async () => {
@@ -1151,7 +1243,22 @@ esac
     assert((await text('.hcard.current .htheme')).includes('a gust of wind'), 'it is the one opened last');
     const before = await count('.hcard');
     const badge = Number(await text('#historyBadge'));
+    // The first delete says what goes, until "Don't show this again".
     await click('.hcard:last-of-type [data-act="delete"]');
+    await waitFor('document.querySelector("#deleteDlg").open', 'the "Delete it for good?" dialog');
+    assert((await text('#deleteDlg')).includes('shredded') && (await text('#deleteDlg')).includes("LM Studio's and ComfyUI's logs"), 'it says what goes and how');
+    await click('#deleteDlg button[value="no"]');
+    eq(await count('.hcard.going'), 0, 'Keep it: nothing happens');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await waitFor('document.querySelector("#deleteDlg").open', 'asks again');
+    await click('#ddQuiet');
+    await click('#deleteDlg button[value="ok"]');
+    await toastText('Deleting');
+    eq(await count('.hcard.going'), 1, 'Delete it: on its way out, with Undo');
+    await click('.hcard.going [data-act="undo"]');
+    await toastText('Kept');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    assert(!(await js('document.querySelector("#deleteDlg").open')), 'with "Don\'t show this again" ticked, no dialog');
     eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'asks to confirm');
     // A double click only asks: its second click isn't the answer.
     await js('document.querySelector(".hcard:last-of-type [data-act=delete]").dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }))');
@@ -1172,10 +1279,41 @@ esac
     await click('#toast .toast-act');
     await toastText('Kept');
     eq(await count('.hcard.going'), 0, 'the toast\'s Undo does the same');
-    await click('.hcard:last-of-type [data-act="delete"]');
-    await click('.hcard:last-of-type [data-act="delete"]');
-    await waitFor(`document.querySelectorAll(".hcard").length === ${before - 1}`, 'card removed', UNDO_WAIT);
-    eq(Number(await text('#historyBadge')), badge - 1, 'badge decremented');
+    // Nothing of it stays anywhere: not in the copy of History from before the delete, not in a job's log, not in
+    // LM Studio's own server logs (which quote every request, the middle of long texts cut).
+    const allCards = await (await fetch(`${APP}/api/history`)).json();
+    const doomed = allCards.at(-1);
+    const words = [doomed.theme, ...doomed.variations.flatMap(v => v.versions.map(x => x.text))].filter(t => t.length >= 12);
+    assert(words.length >= 2, `the card has a theme and prompts to look for: ${words.length}`);
+    // The mock Brain writes the same prompt for every card: what another card also says, word for word, stays.
+    const others = JSON.stringify(allCards.filter(e => e.id !== doomed.id));
+    const unique = words.filter(w => !others.includes(JSON.stringify(w).slice(1, -1)));
+    assert(unique.length >= 1, 'its theme is its own');
+    const lmsLog = path.join(lmsHome, 'server-logs', '2026-10', '2026-10-07.1.log');
+    // LM Studio keeps the first and last 50 characters of a long text, as JSON writes it.
+    const cut = t => { const e = JSON.stringify(t).slice(1, -1); return `"${e.slice(0, 50)}... <Truncated in logs> ...${e.slice(-50)}"`; };
+    await fs.writeFile(lmsLog, `[2026-10-07 09:59:23][DEBUG] Received request: POST to /v1/chat/completions with body {\n  "content": ${JSON.stringify(words[0])}\n}\n[INFO] Generated prediction: ${cut(words[1])}\n`);
+    const jobsFile = path.join(dataDir, 'jobs.json');
+    const jobsBefore = await fs.readFile(jobsFile, 'utf8').catch(() => null);
+    await fs.writeFile(jobsFile, JSON.stringify({ jobs: [{ id: 'j1', title: 'test', request: `Make ${words[0]} again`, log: [{ text: words[1] }] }] }));
+    try {
+      await click('.hcard:last-of-type [data-act="delete"]');
+      await click('.hcard:last-of-type [data-act="delete"]');
+      await waitFor(`document.querySelectorAll(".hcard").length === ${before - 1}`, 'card removed', UNDO_WAIT);
+      eq(Number(await text('#historyBadge')), badge - 1, 'badge decremented');
+      const quotes = (body, w, parts) => body.includes(w) || body.includes(JSON.stringify(w).slice(1, -1)) || (parts && (body.includes(w.slice(0, 20)) || body.includes(w.slice(-20))));
+      // History: only what no other card says. The log and the job were written with this card's words alone.
+      for (const [name, file, which, parts] of [['history.json', path.join(dataDir, 'history.json'), unique, false], ['its copy from before', path.join(dataDir, 'history.json.bak'), unique, false], ['jobs.json', jobsFile, words, true], ['the jobs copy from before', `${jobsFile}.bak`, words, true], ["LM Studio's log", lmsLog, words, true]]) {
+        const body = await fs.readFile(file, 'utf8');
+        for (const w of which) assert(!quotes(body, w, parts), `${name} no longer quotes "${w.slice(0, 30)}…"`);
+      }
+      assert((await fs.readFile(lmsLog, 'utf8')).includes('[deleted]'), "LM Studio's log keeps its shape, the words replaced");
+      assert((await fs.readFile(jobsFile, 'utf8')).includes('[deleted]'), 'the job keeps its log, the words replaced');
+    } finally {
+      // Both copies: a missing jobs.json is put back from its .bak (made for power cuts), and the fake job would return.
+      if (jobsBefore === null) for (const f of [jobsFile, `${jobsFile}.bak`]) await fs.rm(f, { force: true });
+      else await fs.writeFile(jobsFile, jobsBefore);
+    }
   });
 
   await test('models: edit, dirty guard, switch', async () => {
@@ -3231,6 +3369,7 @@ esac
     await click('.tabs button[data-view="history"]');
     await waitFor(`!!document.querySelector('.hcard[data-id=${q(owner.id)}]')`, 'the card');
     const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.dataset.id === ${q(owner.id)}) + 1`);
+    await js('localStorage.setItem("pm.deleteWarned", "true")'); // the dialog is covered by the delete test
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await toastText('Deleted for good', UNDO_WAIT);
@@ -3285,6 +3424,7 @@ esac
       await click('.tabs button[data-view="history"]');
       await waitFor(`[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'the card');
       const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes(${q(theme)})) + 1`);
+      await js('localStorage.setItem("pm.deleteWarned", "true")'); // the dialog is covered by the delete test
       await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
       await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
       await waitFor(`![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'card gone', UNDO_WAIT);
@@ -3470,6 +3610,7 @@ esac
 
     // Deleting the card takes the video with it, here and in ComfyUI.
     await click('.tabs button[data-view="history"]');
+    await js('localStorage.setItem("pm.deleteWarned", "true")'); // the dialog is covered by the delete test
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
     await waitFor('![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("on a rooftop at dusk"))', 'card gone', UNDO_WAIT);
@@ -4087,6 +4228,13 @@ esac
     await click('#lineClear');
     await js('document.querySelector("#imageClear").click()');
     await click('.model-card[data-id="krea2-raw"]');
+
+    // Deleting the entry takes the clip too, in the data folder and in ComfyUI's input folder, and the words of the line.
+    assert(await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.line.file}`)), "ComfyUI's input folder has the clip before");
+    await fetch(`${APP}/api/history/${entry.id}`, { method: 'DELETE' });
+    assert(!(await fileExists(path.join(dataDir, 'voice', 'clips', entry.line.file))), 'its clip is gone from the data folder');
+    assert(!(await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.line.file}`))), "and ComfyUI's copy of it");
+    assert(!(await fs.readFile(path.join(dataDir, 'history.json.bak'), 'utf8')).includes('Nothing ever left my computer'), 'the copy of History from before no longer has the line');
   });
 
   await test('🎬 join videos: the ones shown in Your renders, in their order, become one video; the assistant joins too', async () => {

@@ -7,7 +7,7 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import * as store from './lib/store.js';
-import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer } from './lib/lmstudio.js';
+import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, scrubLogs } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
@@ -15,6 +15,7 @@ import * as voice from './lib/voice.js';
 import * as cloud from './lib/cloud.js';
 import * as folders from './lib/folders.js';
 import * as computer from './lib/computer.js';
+import * as privacy from './lib/privacy.js';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
@@ -634,7 +635,8 @@ async function servicesStatus() {
       gpu: comfyStatus?.gpu || '',
       local: services.isLocalUrl(settings.comfyUrl),
       autostart: settings.comfyAutostart,
-      launch: launch.dir ? { dir: launch.dir, command: [launch.python, ...launch.pre, 'main.py', ...launch.args].join(' '), from: launch.from } : null,
+      launch: launch.dir ? { dir: launch.dir, command: [launch.python, ...launch.pre, 'main.py', ...launch.args].join(' '), from: launch.from, ram: Boolean(launch.ram) } : null,
+      ramDir: services.ramDir(),
     },
   };
 }
@@ -861,7 +863,7 @@ async function refreshWorkflow(existing, body) {
 const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
 // The names an entry's input image gets in ComfyUI's input folder (its render original, or the copy the LLM saw).
-const uploadNames = e => [e.source?.file, e.imageFile, e.video?.file].filter(Boolean).map(name => `prompt-maker_${name}`);
+const uploadNames = e => [e.source?.file, e.imageFile, e.video?.file, e.line?.file].filter(Boolean).map(name => `prompt-maker_${name}`);
 const VIDEO_MIME = Object.fromEntries(Object.entries(store.VIDEO_TYPES).map(([mime, ext]) => [ext, mime]));
 // And the names its renders got when a take was made from one of them (animating a still uploads the still).
 const renderUploads = renders => renders.flatMap(r => (r.files || []).map(f => `prompt-maker_${f.file}`));
@@ -901,12 +903,15 @@ async function forgetInComfy(settings, { promptIds = [], texts = [], copies = []
     refs.push(...await comfy.forgetJobs(base, { promptIds, texts }).catch(err => (console.warn(`ComfyUI: ${err.message}`), [])));
   }
   const keep = new Set(rest.flatMap(uploadNames));
-  const dirs = await comfy.folders(base, { output: settings.comfyOutputDir, roots: [settings.comfyDir, settings.comfyLaunch?.dir] });
+  const dirs = await comfy.folders(base, { output: settings.comfyOutputDir, roots: [settings.comfyDir, settings.comfyLaunch?.dir], args: await comfyArgs(settings) });
   await comfy.removeFiles(dirs, refs.filter(r => !(r.type === 'input' && keep.has(r.filename))), copies.length ? await notShared(copies, rest) : [])
     .catch(err => console.warn(`Couldn't remove ComfyUI's copies: ${err.message}`));
   if (copies.length && !dirs.output && !settings.comfyCleanup) return "ComfyUI's output folder wasn't found, so its own copies of the renders may still be there. Set the folder in Settings → ComfyUI, or delete them there.";
   return null;
 }
+
+// The options the ComfyUI on this computer runs with now (they may name its folders), else the ones last seen.
+const comfyArgs = async settings => (await services.comfyProcess(settings.comfyUrl).catch(() => null))?.args || settings.comfyLaunch?.args || [];
 
 async function deleteTake(id) {
   const settings = await store.getSettings();
@@ -916,12 +921,32 @@ async function deleteTake(id) {
   const copies = await fingerprints(renders);
   const { entry, rest } = await store.deleteHistory(id);
   if (!entry) return { ok: true };
+  await voice.forgetLine(entry.line?.file, [...store.filesInUse(rest).lines]).catch(err => console.warn(`Couldn't remove the line's clip: ${err.message}`));
   // A prompt another entry also has (word for word) may be that one's job, so it isn't used to find jobs.
   const others = new Set(rest.flatMap(e => e.variations.flatMap(v => v.versions.map(x => x.text))));
   const texts = [...new Set(entry.variations.flatMap(v => v.versions.map(x => x.text)))].filter(t => !others.has(t));
-  const left = await forgetInComfy(settings, { promptIds: renders.map(r => r.promptId), texts, copies, inputs: [...uploadNames(entry), ...renderUploads(renders)], rest });
+  const notes = [await forgetInComfy(settings, { promptIds: renders.map(r => r.promptId), texts, copies, inputs: [...uploadNames(entry), ...renderUploads(renders)], rest })];
+  // The other apps' own logs (Settings: on unless switched off). LM Studio's quote every request and answer: those
+  // on this computer are scrubbed, elsewhere they can't be. ComfyUI's may name the files a custom node saved.
+  if (settings.logScrub !== false) {
+    const tails = store.phrasesOf([entry.theme, entry.line?.text, ...entry.variations.flatMap(v => v.versions.map(x => x.text))], { tails: true });
+    await scrubLogs(tails, { since: (Date.parse(entry.createdAt) || 0) - 864e5 }).catch(err => (console.warn(`Couldn't scrub LM Studio's logs: ${err.message}`), notes.push("LM Studio's logs couldn't be cleaned, so its server-logs folder may still quote the prompt.")));
+    if (!onThisComputer(settings.lmStudioUrl)) notes.push('LM Studio runs on another computer: its server logs there may still quote the prompt.');
+    const names = [...uploadNames(entry), ...renderUploads(renders), ...renders.flatMap(r => (r.files || []).map(f => f.file)), entry.imageFile, entry.video?.file, entry.line?.file].filter(Boolean);
+    const dirs = await comfy.folders(settings.comfyUrl, { roots: [settings.comfyDir, settings.comfyLaunch?.dir], args: await comfyArgs(settings) }).catch(() => ({}));
+    await comfy.scrubLogs(dirs, [...tails, ...names]).catch(err => console.warn(`Couldn't scrub ComfyUI's logs: ${err.message}`));
+  }
+  const left = notes.filter(Boolean).join(' ');
   return { ok: true, ...(left ? { left } : {}) };
 }
+
+const onThisComputer = raw => {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(new URL(raw).hostname);
+  } catch {
+    return true;
+  }
+};
 
 async function deleteOneRender(entryId, renderId) {
   const settings = await store.getSettings();
@@ -1347,6 +1372,8 @@ async function route(req, res) {
 
   // Settings → Services: what's running, and start / stop buttons for each.
   if (p === '/api/services' && m === 'GET') return sendJson(res, 200, await servicesStatus());
+  if (p === '/api/privacy' && m === 'GET') return sendJson(res, 200, await privacy.check());
+  if (p === '/api/privacy/fix' && m === 'POST') return sendJson(res, 200, await privacy.fix(String((await readBody(req)).what || '')));
   if ((match = p.match(/^\/api\/services\/(comfy|lms|app|all)\/(start|stop)$/)) && m === 'POST') {
     const [, what, action] = match;
     const settings = await store.getSettings();

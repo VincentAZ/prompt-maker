@@ -485,7 +485,7 @@ function showView(name, { push = true, byUser = false } = {}) {
   if (name === 'voices') loadVoices();
   if (name === 'settings' && !state.settingsDirty) renderSettings();
   if (name === 'settings') showOutputDir();
-  if (name === 'settings') loadServices();
+  if (name === 'settings') { loadServices(); loadPrivacy(); }
   if (name === 'settings') loadProviders();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
     if (state.models.length) editModel(state.modelId || state.models[0].id); else newModel();
@@ -3939,15 +3939,30 @@ const going = new Map(); // entry or render id → { timer, url, run }
 
 function deleteSoon(id, url, what, run, redraw) {
   if (going.has(id)) return;
-  const item = { url, run, timer: setTimeout(() => { going.delete(id); run().catch(err => { toast(err.message, true); redraw(); }); }, UNDO_MS) };
+  const item = { url, run, what, until: Date.now() + UNDO_MS, timer: setTimeout(() => { stopWaiting(id); run().catch(err => { toast(err.message, true); redraw(); }); }, UNDO_MS) };
+  item.tick = setInterval(() => countDown(id), 250);
   going.set(id, item);
   redraw();
-  toast(`🗑 Deleting ${what}…`, false, { label: '↶ Undo', run: () => undoDelete(id, redraw) });
+  toast(goingText(item), false, { label: '↶ Undo', run: () => undoDelete(id, redraw) });
+  $('#toast').dataset.going = id;
+}
+
+// "Deleting in 8 s": the seconds left to undo, on the card and in the toast, counted down as they pass.
+const secondsLeft = item => Math.max(1, Math.ceil((item.until - Date.now()) / 1000));
+const goingText = item => `🗑 Deleting ${item.what} in ${secondsLeft(item)} s`;
+function countDown(id) {
+  const item = going.get(id);
+  if (!item) return;
+  for (const el of document.querySelectorAll(`.hcard[data-id="${CSS.escape(id)}"] .hgoing`)) el.textContent = goingText(item);
+  const t = $('#toast');
+  if (!t.hidden && t.dataset.going === id && t.firstChild?.nodeType === Node.TEXT_NODE) t.firstChild.nodeValue = goingText(item);
 }
 
 // It's being deleted now (its time is up, or the assistant does it): no second delete later.
 function stopWaiting(id) {
-  clearTimeout(going.get(id)?.timer);
+  const item = going.get(id);
+  clearTimeout(item?.timer);
+  clearInterval(item?.tick);
   going.delete(id);
 }
 
@@ -3955,9 +3970,23 @@ function undoDelete(id, redraw) {
   const item = going.get(id);
   if (!item) return toast('Too late: it is already deleted.', true);
   clearTimeout(item.timer);
+  clearInterval(item.tick);
   going.delete(id);
   redraw();
   toast('↶ Kept. Nothing was deleted');
+}
+
+// "Delete it for good?": what a delete takes with it, before the first delete, until you tick "Don't show this
+// again" (then Delete → Sure? does it, as before). Resolves to whether to go ahead.
+async function deleteWarning() {
+  const dlg = $('#deleteDlg');
+  $('#ddQuiet').checked = false;
+  dlg.returnValue = '';
+  dlg.showModal();
+  await new Promise(resolve => dlg.addEventListener('close', resolve, { once: true }));
+  if (dlg.returnValue !== 'ok') return false;
+  if ($('#ddQuiet').checked) saved.set('deleteWarned', true);
+  return true;
 }
 
 // The page is closing: what was waiting to be deleted goes now.
@@ -4088,7 +4117,7 @@ function renderHistory() {
           ${e.manual && first === e.theme ? '' : `<p class="hprompt">${esc(first)}</p>`}
           <div class="hactions">
             <button type="button" class="btn small" data-act="copy" aria-label="Copy ${takes > 1 ? `all ${takes} takes` : 'prompt'}: ${esc(title)}">${takes > 1 ? `Copy all ${takes}` : 'Copy'}</button>
-            ${going.has(e.id) ? `<span class="hgoing" role="status">🗑 Deleting…</span><button type="button" class="btn small primary open" data-act="undo" aria-label="Undo deleting: ${esc(title)}">↶ Undo</button>` : `<button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image, motion video and renders, here and in ComfyUI. You get a few seconds to undo">Delete</button>
+            ${going.has(e.id) ? `<span class="hgoing" role="status">${goingText(going.get(e.id))}</span><button type="button" class="btn small primary open" data-act="undo" aria-label="Undo deleting: ${esc(title)}">↶ Undo</button>` : `<button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image, motion video, spoken line and renders, here and in ComfyUI, shredded. You get a few seconds to undo">Delete</button>
             <button type="button" class="btn small primary open" data-act="open" aria-label="Open: ${esc(title)}">Open ➜</button>`}
           </div>
         </div>
@@ -4132,7 +4161,12 @@ $('#historyList').addEventListener('click', async e => {
       renderHistory();
     } else if (btn.dataset.act === 'delete') {
       const rated = ratedIn(entry);
-      confirmClick(btn, rated ? `Sure? ${rated} rated render${rated > 1 ? 's' : ''} go too` : 'Sure?', () => deleteSoon(entry.id, `/api/history/${entry.id}`, 'it', () => deleteEntryNow(entry), renderHistory));
+      const go = () => deleteSoon(entry.id, `/api/history/${entry.id}`, 'it', () => deleteEntryNow(entry), renderHistory);
+      if (!saved.get('deleteWarned', false)) {
+        if (await deleteWarning()) go();
+      } else {
+        confirmClick(btn, rated ? `Sure? ${rated} rated render${rated > 1 ? 's' : ''} go too` : 'Sure?', go);
+      }
     } else if (btn.dataset.act === 'undo') {
       undoDelete(id, renderHistory);
     } else if (going.has(id)) {
@@ -4982,6 +5016,54 @@ $('#sComfyAutostart').addEventListener('change', async e => {
   }
 });
 
+// ---------- settings: privacy check ----------
+// Disk encryption, swap, hibernation, screen lock: what the computer does with your files below the app.
+async function loadPrivacy() {
+  const st = await api('/api/privacy').catch(() => null);
+  if (st) renderPrivacy(st);
+}
+
+function renderPrivacy(st) {
+  const card = $('#privacyCard');
+  $('#privacyList').hidden = !st.supported;
+  const note = $('#privacyNote');
+  if (!st.supported) {
+    note.hidden = false;
+    note.textContent = 'The checks are for Linux for now. On this system, turn on disk encryption, turn off swap and hibernation, and set the screen to lock, from its own settings.';
+    return;
+  }
+  const row = (name, dot, text, fix) => {
+    const el = $(`.svc[data-check="${name}"]`, card);
+    $('.dot', el).className = `dot ${dot}`;
+    $('.svc-state', el).textContent = text;
+    const b = $('[data-fix]', el);
+    if (b) b.hidden = !fix;
+  };
+  row('disk', st.disk.encrypted ? 'ok' : st.disk.encrypted === null ? 'warn' : 'bad', st.disk.encrypted ? 'On: the system disk is encrypted. Off, the computer gives nothing away.'
+    : st.disk.encrypted === null ? "Couldn't tell." : 'Off: anyone with the disk can read it. Encryption is chosen when the system is installed (a checkbox in the installer); it can\'t be switched on from here.', false);
+  row('swap', !st.swap.active || st.swap.encrypted ? 'ok' : 'bad', !st.swap.active ? 'Off: memory is never written to disk.' : st.swap.encrypted ? 'On, encrypted: what gets written to disk is unreadable.' : 'On, in the open: memory can be written to disk as it is, pictures included.', st.swap.active && !st.swap.encrypted);
+  row('hibernation', st.hibernation.possible ? 'bad' : 'ok', st.hibernation.possible ? 'Possible: all of memory goes to disk when the computer hibernates.' : st.hibernation.masked ? 'Off.' : 'Off: there is no swap to write memory to.', st.hibernation.possible);
+  row('lock', !st.lock.known ? 'warn' : st.lock.on ? 'ok' : 'bad', !st.lock.known ? "Couldn't tell (this check knows GNOME)." : st.lock.on ? `On: locks after ${Math.round(st.lock.delay / 60)} min away.` : 'Off: the screen never locks on its own.', st.lock.known && !st.lock.on);
+  note.hidden = true;
+}
+
+$('#privacyList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-fix]');
+  if (!b) return;
+  b.disabled = true;
+  const was = b.textContent;
+  b.textContent = 'Working…';
+  try {
+    renderPrivacy(await api('/api/privacy/fix', { method: 'POST', body: { what: b.dataset.fix } }));
+    toast({ swap: '🔒 Swap is off', hibernation: '🔒 Hibernation is off', lock: '🔒 The screen locks on its own now' }[b.dataset.fix]);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    b.disabled = false;
+    b.textContent = was;
+  }
+});
+
 let servicesPoll = null;
 async function loadServices() {
   const st = await api('/api/services').catch(() => null);
@@ -5014,8 +5096,9 @@ function renderServices(st) {
   $('#svcComfyHow').hidden = !how;
   if (how) {
     const from = { learned: 'the way you last ran it', found: 'with live previews on', set: 'with your settings below' }[comfy.launch.from] || '';
-    $('#svcComfyHow').innerHTML = `ComfyUI starts from <code>${esc(comfy.launch.dir)}</code>${from ? `, ${from}` : ''}. <span class="muted" title="${esc(comfy.launch.command)}">ⓘ command</span>`;
+    $('#svcComfyHow').innerHTML = `ComfyUI starts from <code>${esc(comfy.launch.dir)}</code>${from ? `, ${from}` : ''}${comfy.launch.ram ? ', its working files in memory' : ''}. <span class="muted" title="${esc(comfy.launch.command)}">ⓘ command</span>`;
   }
+  $('#sComfyRamRow').hidden = $('#sComfyRamHint').hidden = !st.comfy.ramDir;
   $('#sComfyAutostart').checked = comfy.autostart;
   $('#sComfyAutostart').closest('label').hidden = !comfy.local || !comfy.launch;
   $('#sComfyFolder').placeholder = comfy.launch?.from && comfy.launch.from !== 'set' ? `found: ${comfy.launch.dir}` : 'found automatically';
@@ -5113,6 +5196,8 @@ function renderSettings() {
   $('#sComfyUrl').value = s.comfyUrl || '';
   $('#sComfyResult').hidden = true;
   $('#sComfyCleanup').checked = Boolean(s.comfyCleanup);
+  $('#sLogScrub').checked = s.logScrub !== false;
+  $('#sComfyRam').checked = Boolean(s.comfyRam);
   $('#sComfyDir').value = s.comfyOutputDir || '';
   $('#sComfyFolder').value = s.comfyDir || '';
   $('#sComfyArgs').value = s.comfyArgs || '';
@@ -5162,7 +5247,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultPrompt: $('#sAdultPrompt').value, adultContent: $('#sAdult').checked, assistantComputer: $('#sComputer').checked },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, logScrub: $('#sLogScrub').checked, comfyRam: $('#sComfyRam').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultPrompt: $('#sAdultPrompt').value, adultContent: $('#sAdult').checked, assistantComputer: $('#sComputer').checked },
     });
     renderSettings();
     toast('💾 Settings saved');
@@ -8154,7 +8239,7 @@ const TOOLS = [
   T('run_command', `Run a command or program on this computer, as the user, and get its output. ${navigator.platform.startsWith('Win') ? 'PowerShell' : 'bash'}; it starts in the home folder. A program that keeps running (an app with a window) goes in the background: \`gimp file.png &\`. Anything that deletes asks the user first.`, { command: S('The command'), folder: S('Optional: the folder to run it in'), seconds: I('How long it may take, 1–600; default 60') }, ['command']),
   T('read_file', 'Read a text file anywhere on this computer (or what is in a folder). Long files come in parts: give from to read on.', { path: S('Full path or ~/…'), from: I('Where to go on reading (more_from of the last part)') }, ['path']),
   T('write_file', 'Write a text file anywhere on this computer (makes its folder if needed). Replacing a file that is already there asks the user first.', { path: S('Full path or ~/…'), text: S('What to write'), append: B('Add to the end instead of replacing') }, ['path', 'text']),
-  T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
+  T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup', 'log_scrub'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render; log_scrub: on/off, deleting from History also cleans LM Studio\'s and ComfyUI\'s logs'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
 ];
 
 // Tools for this computer beyond Prompt Maker: only sent, and only run, while Settings allows it.
@@ -8798,6 +8883,7 @@ const TOOL_IMPL = {
     const num = (lo, hi) => { const n = Number(v); if (!Number.isFinite(n) || n < lo || n > hi) throw new Error(`${setting} goes from ${lo} to ${hi}.`); return n; };
     const body = setting === 'adult_content' ? { adultContent: onOff() }
       : setting === 'comfy_cleanup' ? { comfyCleanup: onOff() }
+      : setting === 'log_scrub' ? { logScrub: onOff() }
       : setting === 'top_p' ? { topP: num(0, 1) }
       : setting === 'max_tokens' ? { maxTokens: Math.round(num(256, 32768)) }
       : setting === 'thinking' ? (THINKING.includes(v) ? { thinking: v } : (() => { throw new Error(`Thinking is one of: ${THINKING.join(', ')}.`); })())

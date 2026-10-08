@@ -638,6 +638,18 @@
           <div class="row"><button type="button" class="btn small danger" id="stopAllBtn" title="Stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker">■ Stop everything (frees the GPU)</button></div>
         </section>
 
+        <section class="card" data-panel="set-privacy" id="privacyCard">
+          <h2>🔒 Privacy check</h2>
+          <p class="hint">What this computer does with your files below the app. Fixes that need an administrator's password ask for it with the system's own prompt.</p>
+          <ul class="svc-list" id="privacyList">
+            <li class="svc" data-check="disk"><span class="dot"></span><span class="svc-text"><b>Disk encryption</b><span class="svc-state">…</span></span><span class="svc-acts"></span></li>
+            <li class="svc" data-check="swap"><span class="dot"></span><span class="svc-text"><b>Swap</b><span class="svc-state">…</span></span><span class="svc-acts"><button type="button" class="btn small primary" data-fix="swap" hidden>Turn off</button></span></li>
+            <li class="svc" data-check="hibernation"><span class="dot"></span><span class="svc-text"><b>Hibernation</b><span class="svc-state">…</span></span><span class="svc-acts"><button type="button" class="btn small primary" data-fix="hibernation" hidden>Turn off</button></span></li>
+            <li class="svc" data-check="lock"><span class="dot"></span><span class="svc-text"><b>Screen lock</b><span class="svc-state">…</span></span><span class="svc-acts"><button type="button" class="btn small primary" data-fix="lock" hidden>Turn on</button></span></li>
+          </ul>
+          <p class="hint" id="privacyNote" hidden></p>
+        </section>
+
         <section class="card" data-panel="set-lmstudio" data-default="collapsed">
           <h2>🔌 LM Studio</h2>
           <label class="field"><span>Local server URL</span>
@@ -670,6 +682,10 @@
           <label class="check-row"><input type="checkbox" id="sComfyCleanup"> <span>After copying a render, delete it from ComfyUI's output folder</span></label>
           <label class="field" id="sComfyDirField"><span>ComfyUI output folder <small>only if ComfyUI was started with <code>--output-directory</code></small></span><input id="sComfyDir" placeholder="found automatically"></label>
           <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer. Deleting from History always removes ComfyUI's copies of those renders too, so the folder matters even with this off.</p>
+          <label class="check-row" id="sComfyRamRow"><input type="checkbox" id="sComfyRam"> <span>Keep ComfyUI's working files in memory (RAM), never on disk</span></label>
+          <p class="hint" id="sComfyRamHint">When Prompt Maker starts ComfyUI (▶ Start in Services, or along with it), ComfyUI's output, input and temp folders are put in memory, so nothing it writes while it works touches the disk, and it's all gone when the computer turns off. Your renders are still copied into your data folder as usual. Takes effect the next time ComfyUI starts from here; a ComfyUI you start yourself keeps its own folders. Linux only.</p>
+          <label class="check-row"><input type="checkbox" id="sLogScrub"> <span>When I delete from History, also clean LM Studio's and ComfyUI's logs of it</span></label>
+          <p class="hint">On from the start: deleting is meant to leave nothing behind, and that includes the other apps' logs. LM Studio writes every request and answer to its own logs, so a deleted prompt would live on there. With this on, deleting a card replaces its words with "[deleted]" in LM Studio's server logs and in ComfyUI's log (which may name the files a node saved), on this computer. Switch it off to leave the other apps' logs alone.</p>
           <div class="grid-3">
             <label class="field"><span>ComfyUI folder <small>to start it from Services</small></span><input id="sComfyFolder" placeholder="found automatically"></label>
             <label class="field"><span>Start options</span><input id="sComfyArgs" class="mono" placeholder="as you last ran it"></label>
@@ -816,6 +832,18 @@
     </form>
   </dialog>
 
+  <dialog id="deleteDlg" class="modal cloud-dialog" aria-labelledby="deleteDlgTitle" data-not-assistant>
+    <form method="dialog" class="modal-body">
+      <h2 id="deleteDlgTitle">🗑 Delete it for good?</h2>
+      <p>Everything about this card goes: its prompts, its picture, motion video and spoken line, and every render, here and in ComfyUI. The files are shredded (written over three times before they're removed), and its words are wiped from the assistant chat, from jobs and (unless you switched that off in Settings) from LM Studio's and ComfyUI's logs. There is no getting it back.</p>
+      <p class="muted small">You still get a few seconds to change your mind, with ↶ Undo on the card.</p>
+      <label class="check-row"><input type="checkbox" id="ddQuiet"> <span>Don't show this again</span></label>
+      <div class="row cloud-dialog-acts">
+        <button value="no" class="btn">Keep it</button>
+        <button value="ok" class="btn danger">Delete it</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="imgPick" class="modal img-pick" aria-labelledby="imgPickTitle">
     <div class="modal-body">
       <header class="modal-head">

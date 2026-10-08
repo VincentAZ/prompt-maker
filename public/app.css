@@ -895,7 +895,7 @@ body.narrow .models-side { position: static; }
 /* The render you looked at last or the entry open on Create (History): a quiet ring in its model's colour. */
 /* On its way out (Delete was clicked; ↶ Undo still works): in place, dimmed. */
 .hcard.going > :not(.hbody), .hcard.going .hbody > :not(.hactions), .reel-cell.going .rtile { opacity: 0.35; filter: grayscale(1); }
-.hgoing { margin-right: auto; align-self: center; font-size: 13px; color: var(--muted); }
+.hgoing { margin-right: auto; align-self: center; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .hcard.current { border-color: var(--m); box-shadow: 0 0 0 2px color-mix(in srgb, var(--m) 45%, transparent); }
 .chip-btn.rated { --m: var(--star); }
 
