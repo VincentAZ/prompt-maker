@@ -18,6 +18,27 @@ LMS="$(command -v lms || echo "$HOME/.lmstudio/bin/lms")"
 SETUP=(env PORT="$PORT" LMS_BIN="$LMS" "$NODE" lib/autostart.js)
 
 running() { curl -fs -o /dev/null "$URL/api/settings"; }
+
+# Opens the page as its own window, with its own browser profile, so Prompt Maker leaves nothing in your everyday
+# browser's history or session. The profile sits in the data folder; at the "Nothing stays" privacy level, in memory
+# with the rest of the session. A Chromium-family browser does app windows (Brave, Chromium, Chrome, Edge); without
+# one, the page opens in whatever browser is the default. PM_BROWSER=/path forces a browser (or "default").
+DATA="${PROMPT_MAKER_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/prompt-maker}"
+open_app() {
+  local bin="${PM_BROWSER:-}" profile="$DATA/browser"
+  if grep -qs '"dataRam": true' "$DATA/settings.json"; then profile="${PM_RAM_DIR:-/dev/shm}/prompt-maker-session/browser"; fi
+  if [ -z "$bin" ]; then
+    for c in brave-browser brave chromium chromium-browser google-chrome google-chrome-stable microsoft-edge; do
+      command -v "$c" >/dev/null 2>&1 && { bin="$(command -v "$c")"; break; }
+    done
+  fi
+  if [ -n "$bin" ] && [ "$bin" != default ]; then
+    mkdir -p "$profile"
+    "$bin" --app="$URL" --user-data-dir="$profile" --no-first-run --no-default-browser-check --class=prompt-maker >/dev/null 2>&1 &
+  else
+    xdg-open "$URL" >/dev/null 2>&1 || true
+  fi
+}
 wait_up() { for _ in $(seq 1 60); do running && return 0; sleep 1; done; return 1; }
 field() { sed -n "s/.*\"$1\":\([a-z]*\).*/\1/p"; } # reads one true/false from the status JSON
 
@@ -53,7 +74,7 @@ fi
 
 if running; then
   echo "Prompt Maker is running at $URL"
-  $FROM_LINK || xdg-open "$URL" >/dev/null 2>&1 || true
+  $FROM_LINK || open_app
   exit 0
 fi
 
@@ -62,5 +83,5 @@ if [ -x "$LMS" ] && "$LMS" server status 2>&1 | grep -qi "not running"; then
   "$LMS" server start
 fi
 
-$FROM_LINK || (sleep 1 && xdg-open "$URL" >/dev/null 2>&1 || true) &
+$FROM_LINK || (sleep 1 && open_app) &
 exec "$NODE" server.js

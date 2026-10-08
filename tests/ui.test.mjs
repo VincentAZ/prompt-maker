@@ -1028,6 +1028,7 @@ esac
     const started = await fs.readFile(systemdRunLog, 'utf8');
     assert(started.includes('--unit=prompt-maker-comfyui.service') && started.includes(`--working-directory=${comfyDir}`) && started.includes('main.py') && started.includes(`--port ${COMFY_PORT}`), `runs main.py in its folder on the right port: ${started}`);
     assert(!started.includes('--output-directory'), 'its own folders, as usual');
+    assert(started.includes(`StandardOutput=append:${path.join(dataDir, 'comfyui.log')}`) && started.includes('StandardError=append:'), `its output goes to comfyui.log in the data folder, not the system journal: ${started}`);
     await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Starting")', 'shown starting');
     await comfy.start(); // ComfyUI answers
     await toastText('ComfyUI is running');
@@ -4121,7 +4122,7 @@ esac
     const after = await fetch(`${APP}/api/workflows`).then(r => r.json());
     for (const id of await fs.readdir(dir)) {
       const flows = after.filter(f => f.modelId === id);
-      if (mine.has(id)) assert(!flows.some(f => f.source.startsWith('starter:')), `${id} keeps your own workflow, no starter added`);
+      if (mine.has(id)) eq(flows.map(f => f.id).sort().join(), before.filter(f => f.modelId === id).map(f => f.id).sort().join(), `${id} keeps the workflows it had (a starter you added yourself included), nothing new`);
       else eq(flows.map(f => f.source.split("/")[0]).join(), `starter:${id}`, `${id} got its starter workflow`);
     }
     const added = after.filter(f => !before.some(b => b.id === f.id));

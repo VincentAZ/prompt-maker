@@ -965,6 +965,7 @@ async function deleteTake(id) {
     const names = [...uploadNames(entry), ...renderUploads(renders), ...renders.flatMap(r => (r.files || []).map(f => f.file)), entry.imageFile, entry.video?.file, entry.line?.file].filter(Boolean);
     const dirs = await comfy.folders(settings.comfyUrl, { roots: [settings.comfyDir, settings.comfyLaunch?.dir], args: await comfyArgs(settings) }).catch(() => ({}));
     await comfy.scrubLogs(dirs, [...tails, ...names]).catch(err => console.warn(`Couldn't scrub ComfyUI's logs: ${err.message}`));
+    await store.scrubTextFile(services.comfyLog(), [...tails, ...names]).catch(() => {});
   }
   const left = notes.filter(Boolean).join(' ');
   return { ok: true, ...(left ? { left } : {}) };
