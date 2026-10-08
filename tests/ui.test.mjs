@@ -4044,7 +4044,17 @@ esac
     p = comfy.prompts.at(-1).prompt;
     assert(!p['200'] && !p['201'] && JSON.stringify(p['105:16'].inputs.conditioning) === '["105:104",0]', 'Load Audio and Add Guide are gone, the rest wired as before');
 
-    // The assistant sets a line and makes voices too.
+    // A workflow that takes no line: step 3 offers the one that does, and the assistant switches by itself.
+    const plain = await (await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'minimax-h3', name: 'H3 without sound', source: 'upload', prompt: JSON.parse(await fs.readFile(apiWorkflowFile, 'utf8')), mapping: { prompt: [{ node: '6', input: 'text' }], image: null, video: null, seed: [] } }) })).json();
+    await goto(`${APP}/#create`);
+    await choose('#wfpSelect', plain.id);
+    await waitFor('!document.querySelector("#lineBlock").hidden && !document.querySelector("#lineSwitch").hidden && document.querySelector("#lineForm").hidden', 'the line block offers the workflow that takes a line');
+    await click('#lineSwitchBtn');
+    await waitFor(`document.querySelector("#wfpSelect").selectedOptions[0]?.textContent === ${q(h3.name)} && !document.querySelector("#lineForm").hidden`, 'one click picks it').catch(async e => { throw new Error(`${e.message} | picked: ${await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent')} | form hidden: ${await js('document.querySelector("#lineForm").hidden')} | switch hidden: ${await js('document.querySelector("#lineSwitch").hidden')} | toast: ${await text('#toast')}`); });
+    await choose('#wfpSelect', plain.id);
+    await waitFor('document.querySelector("#lineForm").hidden', 'back on the plain one');
+
+    // The assistant sets a line and makes voices too (switching the workflow by itself).
     if (!(await visible('#assistant'))) await click('#askBtn');
     await type('#asInput', 'make her say "Hello there, and welcome."');
     await press('Enter');
@@ -4052,10 +4062,16 @@ esac
     const said = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
     assert(said.includes('Narrator says “Hello there, and welcome.”'), `the assistant set the line: ${said}`);
     eq(await value('#lineText'), 'Hello there, and welcome.', 'in step 3');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), h3.name, 'on the workflow that takes the line');
+    await fetch(`${APP}/api/workflows/${plain.id}`, { method: 'DELETE', headers: { Origin: APP } });
     await type('#asInput', 'make a new voice called Sam');
     await press('Enter');
     await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
     assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('kept the voice “Sam”'), 'and made a voice');
+    await type('#asInput', 'make a new voice called Sam');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('“Sam” is already there'), 'the same name again just uses it (a job run twice keeps going)');
     eq(await js('[...document.querySelectorAll("#lineVoice option")].map(o => o.textContent).join("|")'), 'No line|🎙 Narrator|🎙 Sam', 'which step 3 offers right away');
     await click('#asClear');
     await click('#asClear');

@@ -8125,7 +8125,7 @@ const TOOLS = [
     job: S('With from job outside a job: the job\'s title'),
   }, ['for']),
   T('set_line', '🎙 Give the person a line to say, in a kept voice (video models whose picked workflow takes a sound file, like MiniMax H3): at Generate the line is said in that voice and the video follows it, lips in time. Empty text takes the line off. Needs Voices installed (🎙 Voices page) and a kept voice: the state says which there are.', { text: S('What they say, word for word; "" for no line'), voice: S('A kept voice, by name; default the one picked (else the first)') }, ['text']),
-  T('make_voice', '🎙 Make and keep a new voice from a description, for set_line. Takes a few seconds (longer the first time). Say what it sounds like: age, warmth, accent, pace, mood.', { name: S('A short name, e.g. "Jess"'), description: S('What it sounds like, e.g. "a woman in her late twenties, warm light alto, soft Midwestern lilt, relaxed pace"'), text: S('A sentence it says as its sample; default a friendly greeting'), language: S('English, German, … ; default auto') }, ['name', 'description']),
+  T('make_voice', '🎙 Make and keep a new voice from a description, for set_line (a name already kept is simply used again). Takes a few seconds (longer the first time). Say what it sounds like: age, warmth, accent, pace, mood.', { name: S('A short name, e.g. "Jess"'), description: S('What it sounds like, e.g. "a woman in her late twenties, warm light alto, soft Midwestern lilt, relaxed pace"'), text: S('A sentence it says as its sample; default a friendly greeting'), language: S('English, German, … ; default auto') }, ['name', 'description']),
   T('join_videos', '🎬 Join videos into one, in order (a new "Joined video" render in 🎞 Your renders and the Gallery). In a job (from job, the default there): the best video of each run so far, in the runs\' order (the highest rated, else the newest), so a job can end with one film of its cuts. Else: the videos shown in 🎞 Your renders in their order, or render ids.', { from: E(['job', 'shown', 'ids'], 'Which videos: the job\'s best per run; the ones shown in Your renders (their order); or render_ids'), render_ids: { type: 'array', items: { type: 'string' }, description: 'With from ids: render ids (look_at shows them), in order' }, title: S('A name for the joined video') }),
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
@@ -9306,6 +9306,8 @@ const TOOL_IMPL = {
   make_voice: async ({ name, description, text, language }) => {
     if (!voices.status) await loadVoices();
     if (!voicesReady()) throw new Error('Voices aren\'t installed: the user installs them with one click on the 🎙 Voices page.');
+    const had = voices.list.find(v => v.name.toLowerCase() === clean(name).toLowerCase()); // a job run twice keeps its voice
+    if (had) return { summary: `🎙 The voice “${had.name}” is already there (${had.description.slice(0, 80)}); using it`, voice: had.name };
     const sample = clean(text) || 'Hi there. Glad you could make it; let me show you around.';
     const d = await api('/api/voice/design', { method: 'POST', body: { description: clean(description), text: sample, language: language || 'Auto' } });
     const v = await api('/api/voice/voices', { method: 'POST', body: { name: clean(name), description: clean(description), text: sample, file: d.file, language: language || 'Auto' } });
