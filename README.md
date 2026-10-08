@@ -2,8 +2,8 @@
 
 # ✦ Prompt Maker
 
-**Write the perfect prompt for any image or video model, from a theme, an image, or both. Then render it with your own ComfyUI workflows.**
-Runs 100% offline on your own machine, powered by a local AI model (your **Brain**) in [LM Studio](https://lmstudio.ai) and, optionally, [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+**Say what you want to see, in plain words, and get pictures and videos made on your own computer.**
+Start from an idea, a photo, or both. Keep the ones you love, compare them side by side, find them again later. Nothing leaves your machine, and it's free.
 
 ![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
@@ -18,14 +18,16 @@ Runs 100% offline on your own machine, powered by a local AI model (your **Brain
 
 ---
 
-Every image and video model wants its prompts written differently:
+**What you need:** a computer with a good graphics card, [LM Studio](https://lmstudio.ai) (free, it runs the AI that turns your words into instructions, your **Brain**), and, to make the pictures and videos themselves, [ComfyUI](https://github.com/comfyanonymous/ComfyUI) (free). Prompt Maker sets up what it can for you; see [Installation](#installation).
+
+Behind the scenes, every image and video model wants its instructions (its *prompt*) written differently:
 
 - **Krea 2 RAW** likes dense, literal captions with skin-texture cues.
 - **LTX 2.3** wants one flowing paragraph, with camera moves and sound written in.
 - **MiniMax H3** expects a structured "shooting script" with timed shots and dialogue tags.
 - **Wan Animate 2** wants a plain caption of the character and the setting, plus one line naming the moves of its motion video.
 
-Prompt Maker keeps a **playbook for each model** and has your Brain write the prompt in exactly that style. You describe the idea, and it handles the dialect. Hook up your ComfyUI workflows and each prompt is one click away from the finished image or video.
+Prompt Maker keeps a **playbook for each model** and has your Brain write the prompt in exactly that style. You describe the idea, and it handles the dialect. With ComfyUI hooked up, each prompt is one click away from the finished image or video.
 
 ## Contents
 
