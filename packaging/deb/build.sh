@@ -38,6 +38,7 @@ mkdir -p "$APP" "$PKG/opt/prompt-maker/node" "$PKG/usr/bin" "$PKG/usr/share/appl
 
 # The app: what the repo ships, nothing else (no data folder, no tests, no screenshots).
 for f in server.js package.json start.sh LICENSE README.md lib public playbooks chains workflows; do cp -r "$ROOT/$f" "$APP/"; done
+mkdir -p "$APP/docs" && cp "$ROOT/docs/guide.md" "$APP/docs/" # the in-app assistant reads it (no screenshots or renders in the package)
 find "$APP" -name '*.tmp' -delete
 chmod 755 "$APP/start.sh"
 

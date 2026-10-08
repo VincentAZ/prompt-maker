@@ -8,8 +8,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 1. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
    then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). Latest:
    v1.31.1 (2026-10-08).
-2. **README brainstorm (own session, `readme` worktree).** The opener is fixed; the rest of the README still reads
-   like a manual. Results first: real renders in the first screen, fewer settings screenshots. Bring real renders. Then update the Civitai article to match.
+2. **Civitai article to match the new README** (via Brave, show the owner the changes before saving): the fisherman's
+   film and the stills first, no prompts shown anywhere, same install steps. The renders and the plan are in
+   `docs/renders/`. Then release 1.31.3 (build the .deb, `gh release create`), since the README is part of the package.
 3. **Windows installer** (on hold: other work first). After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
    start sets up the rest). Consider a WebView/Electron wrapper then, so Windows gets an app window too.
 4. **App-name change** (on hold) (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
@@ -25,6 +26,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.31.3 — README rewritten, results first: a 22 s film of one man in four scenes, a grid of real renders, the
+  same person in every shot, still → video, three-step install; the manual moved to `docs/guide.md` (with its
+  screenshots); the in-app assistant reads both; the .deb carries the guide. No prompts shown anywhere.
 - 1.31.2 — "Show it again" in Settings → Privacy check brings back the delete warning after "Don't show this again".
 - 1.31.1 — clean uninstall: the start-up service and the menu entry do nothing once their copy is gone (no failing at
   every login); a start from another copy moves them there, and Settings → Services says so with Use this copy; the
