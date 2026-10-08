@@ -30,7 +30,6 @@ clip says its line clearly (it has sound; nobody has listened yet).
 3. Install in three steps: the .deb, LM Studio, ⬇ Set up ComfyUI.
 4. The manual (Using, Rendering, Settings, Troubleshooting, Development) moves to `docs/guide.md`, linked from the
    README (about 200 lines left). Settings screenshots go with it; the README keeps Create and the Gallery.
-5. Then the Civitai article gets the same renders and opener.
 
 ## Added later the same day (short, vague ideas, as the app promises)
 
@@ -76,7 +75,7 @@ The Wan clip's motion source is a Pixabay silhouette video (not shipped; Pixabay
 
 ## Decision (2026-10-08, the owner): show NO prompts at all
 
-No prompt or "the words I typed" captions anywhere in the README or the Civitai article, for any render. The renders
+No prompt or "the words I typed" captions anywhere in the README, for any render. The renders
 speak for themselves; the tables above are working notes for us, not for shipping. No remake of the convertible.
 Plain titles at most ("Dawn on the dock", "The same man, four scenes"). The line the cook speaks in the MiniMax clip is
 part of the clip, not a prompt, and may be mentioned.
