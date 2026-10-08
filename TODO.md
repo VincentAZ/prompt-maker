@@ -7,12 +7,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 1. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
    then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). Latest:
-   v1.31.1 (2026-10-08).
-2. **Release 1.31.3** (the README rewrite is part of the package): build the .deb, `packaging/deb/check.sh`, then
-   `gh release create v1.31.3 dist/prompt-maker_1.31.3_amd64.deb`.
-3. **Windows installer** (on hold: other work first). After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
+   v1.31.3 (2026-10-08).
+2. **Windows installer** (on hold: other work first). After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
    start sets up the rest). Consider a WebView/Electron wrapper then, so Windows gets an app window too.
-4. **App-name change** (on hold) (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
+3. **App-name change** (on hold) (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
    more users: repo, package name, data folder, service unit names, the `promptmaker://` link, the README.
 
 ## Ideas, not scheduled
