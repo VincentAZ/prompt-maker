@@ -9,7 +9,9 @@ and what "done" looks like; done items move to the bottom with the version that 
    then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). Latest:
    v1.31.1 (2026-10-08).
 2. **README brainstorm (own session, `readme` worktree).** The opener is fixed; the rest of the README still reads
-   like a manual. Results first: real renders in the first screen, fewer settings screenshots. Bring real renders. Then update the Civitai article to match.
+   like a manual. Results first: real renders in the first screen, fewer settings screenshots. Renders are made: branch `worktree-readme`
+   (worktree `.claude/worktrees/readme`), `docs/renders/PLAN.md` has them, their words and the plan; next is writing it.
+   Listen to the MiniMax clip first (does it say its line?). Then update the Civitai article to match.
 3. **Windows installer** (on hold: other work first). After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
    start sets up the rest). Consider a WebView/Electron wrapper then, so Windows gets an app window too.
 4. **App-name change** (on hold) (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
