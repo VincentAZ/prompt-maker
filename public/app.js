@@ -8239,7 +8239,8 @@ async function picturesOf(src, kind) {
   }
   const v = await loadInto(document.createElement('video'), src);
   const out = [];
-  for (const t of [Math.min(0.1, v.duration / 2), v.duration / 2]) {
+  // Start, middle and end: a shot that drifts or breaks late shows in the last frame.
+  for (const t of [Math.min(0.1, v.duration / 2), v.duration / 2, Math.max(v.duration / 2, v.duration - 0.3)]) {
     await new Promise(r => { v.onseeked = r; v.currentTime = t; });
     out.push(snapshot(v, v.videoWidth, v.videoHeight));
   }
@@ -8555,7 +8556,7 @@ async function brainPicksOne(group, purpose) {
   return { item: group[n - 1], why: why.slice(0, 300) };
 }
 
-// Rounds of up to 8 pictures (a video shows 2), the winners meeting until one is left.
+// Rounds of up to 8 pictures (a video shows 3), the winners meeting until one is left.
 async function brainPicks(items, purpose) {
   let pool = [];
   for (const it of items) {
