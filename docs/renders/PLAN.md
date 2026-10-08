@@ -31,3 +31,19 @@ clip says its line clearly (it has sound; nobody has listened yet).
 4. The manual (Using, Rendering, Settings, Troubleshooting, Development) moves to `docs/guide.md`, linked from the
    README (about 200 lines left). Settings screenshots go with it; the README keeps Create and the Gallery.
 5. Then the Civitai article gets the same renders and opener.
+
+## Added later the same day (short, vague ideas, as the app promises)
+
+Captions here are the exact words typed (Krea 2 RAW unless noted); the Brain wrote the full prompt.
+
+| File | The words |
+|---|---|
+| `woman-cafe.webp` | woman reading in a café |
+| `woman-bicycle-rain.webp` | woman on a bicycle in the rain |
+| `hands-dough.webp` | chef in her kitchen |
+| `woman-pier.webp` | woman at the beach with a soda |
+| `ltx-woman-pier.webp` / `.mp4` | LTX 2.3 from `woman-pier`: she takes a sip and looks out at the sea |
+
+Pixabay silhouette videos (`*_medium.mp4` in this folder) are motion sources for the Wan Animate 2 clip. They are
+git-excluded locally and must not ship: only the finished Wan clip does. Check Pixabay's license before shipping it.
+The earlier long-prompt stills (fisherman, ramen, convertible, ballet) get no captions.
