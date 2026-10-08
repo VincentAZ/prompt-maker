@@ -1445,6 +1445,22 @@ esac
     await click('.hcard:last-of-type [data-act="delete"]');
     assert(!(await js('document.querySelector("#deleteDlg").open')), 'with "Don\'t show this again" ticked, no dialog');
     eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'asks to confirm');
+    // Settings → Privacy check brings the warning back.
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector("#deleteWarnOff").hidden', 'says the warning is off');
+    await click('#deleteWarnBack');
+    await toastText('shows again');
+    assert(!(await visible('#deleteWarnOff')), 'line gone');
+    await click('.tabs button[data-view="history"]');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await waitFor('document.querySelector("#deleteDlg").open', 'the warning is back');
+    await click('#ddQuiet');
+    await click('#deleteDlg button[value="ok"]');
+    await toastText('Deleting');
+    await click('.hcard.going [data-act="undo"]');
+    await toastText('Kept');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'asks to confirm');
     // A double click only asks: its second click isn't the answer.
     await js('document.querySelector(".hcard:last-of-type [data-act=delete]").dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }))');
     eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'a double click does not confirm');

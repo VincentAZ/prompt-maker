@@ -5040,9 +5040,17 @@ $('#sComfyAutostart').addEventListener('change', async e => {
 // Disk encryption, swap, hibernation, screen lock: what the computer does with your files below the app.
 async function loadPrivacy() {
   renderPrivacyLevel();
+  $('#deleteWarnOff').hidden = !saved.get('deleteWarned', false);
   const st = await api('/api/privacy').catch(() => null);
   if (st) renderPrivacy(st);
 }
+
+// "Don't show this again" on the delete warning, undone.
+$('#deleteWarnBack').addEventListener('click', () => {
+  saved.set('deleteWarned', false);
+  $('#deleteWarnOff').hidden = true;
+  toast('The warning shows again before your next delete');
+});
 
 function renderPrivacy(st) {
   const card = $('#privacyCard');
