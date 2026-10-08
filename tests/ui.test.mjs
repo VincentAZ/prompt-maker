@@ -452,6 +452,17 @@ esac
   await test('boot', async () => {
     await goto(`${APP}/`);
     assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'Create view is active');
+    // The first start asks how private; Normal is the default, and the answer is kept.
+    await waitFor('document.querySelector("#privacyDlg").open', 'the "How private?" question');
+    await waitFor('document.querySelector("#privacyDisk").textContent.includes("not encrypted")', 'the disk verdict');
+    assert((await text('#privacyDlg')).includes('Nothing on this machine'), 'the levels');
+    assert(await js('document.querySelector(\'#privacyDlg input[value="normal"]\').checked'), 'Normal is picked');
+    await click('#privacyDlg button[value="ok"]');
+    await toastText('Normal');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).privacyLevel, 'normal', 'kept');
+    await goto(`${APP}/`);
+    await sleep(500);
+    assert(!(await js('document.querySelector("#privacyDlg").open')), 'not asked again');
     eq(await count('.model-card'), 7, 'model cards');
     await waitFor('document.querySelector("#llmDot").classList.contains("ok")', 'LLM status dot to be green');
     eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
@@ -924,6 +935,69 @@ esac
     assert((await fs.readFile(pkexecLog, 'utf8')).includes('mask hibernate.target'), 'masked as root');
     eq(await state('hibernation'), 'Off.', 'shown off');
     await fs.writeFile(fakeSwaps, 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n');
+
+    // The level, changed from here: Private switches ComfyUI to memory and runs the fixes that are still needed.
+    await fs.writeFile(fakeSwaps, 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/swapfile file 8388604 0 -2\n');
+    await fs.writeFile(pkexecLog, '');
+    assert((await text('#privacyLevelLine')).includes('Normal'), `the level shows: ${await text('#privacyLevelLine')}`);
+    await click('#privacyLevelBtn');
+    await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog');
+    await click('#privacyDlg input[value="private"]');
+    await click('#privacyDlg button[value="ok"]');
+    await toastText('Private');
+    const sPrivate = await (await fetch(`${APP}/api/settings`)).json();
+    assert(sPrivate.privacyLevel === 'private' && sPrivate.comfyRam && sPrivate.logScrub && !sPrivate.dataRam, 'the Private switches');
+    assert((await fs.readFile(pkexecLog, 'utf8')).includes('swapoff -a'), 'swap turned off again as part of it');
+    assert((await text('#privacyLevelLine')).includes('Private'), 'the card says so');
+    assert(await js('document.querySelector("#sComfyRam").checked'), 'the ComfyUI switch in the form follows');
+    // Nothing on this machine: your work in memory, after a restart.
+    await click('#privacyLevelBtn');
+    await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog again');
+    await click('#privacyDlg input[value="ram"]');
+    await click('#privacyDlg button[value="ok"]');
+    await toastText('Restart Prompt Maker');
+    const sRam = await (await fetch(`${APP}/api/settings`)).json();
+    assert(sRam.privacyLevel === 'ram' && sRam.dataRam && !sRam.inMemory, 'set, not yet in effect');
+    assert((await text('#privacyLevelLine')).includes('after a restart'), 'the card says it takes a restart');
+    // Back to Normal.
+    await click('#privacyLevelBtn');
+    await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog once more');
+    await click('#privacyDlg input[value="normal"]');
+    await click('#privacyDlg button[value="ok"]');
+    await toastText('Normal');
+    const sNormal = await (await fetch(`${APP}/api/settings`)).json();
+    assert(sNormal.privacyLevel === 'normal' && !sNormal.comfyRam && !sNormal.dataRam, 'the Normal switches');
+  });
+
+  await test('🔒 a session in memory: History, renders and the chat live in RAM and go when Prompt Maker stops', async () => {
+    const dataDir2 = path.join(tmp, 'data-ram');
+    const ram2 = path.join(tmp, 'ram2');
+    await fs.mkdir(dataDir2, { recursive: true });
+    await fs.mkdir(ram2, { recursive: true });
+    await fs.writeFile(path.join(dataDir2, 'settings.json'), JSON.stringify({ dataRam: true, privacyLevel: 'ram', comfyUrl: `http://127.0.0.1:${COMFY_PORT}` }));
+    const env = { ...process.env, PORT: String(APP_PORT + 2), PROMPT_MAKER_DATA: dataDir2, PM_RAM_DIR: ram2, SYSTEMCTL_BIN: fakeSystemctl, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData };
+    const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let log = '';
+    srv.stdout.on('data', d => { log += d; });
+    srv.stderr.on('data', d => { log += d; });
+    try {
+      for (let i = 0; i < 50 && !log.includes('running at'); i++) await sleep(100);
+      assert(log.includes('kept in memory for this session'), `says so as it starts:\n${log}`);
+      const base = `http://127.0.0.1:${APP_PORT + 2}`;
+      const settings = await (await fetch(`${base}/api/settings`)).json();
+      const session = path.join(ram2, 'prompt-maker-session');
+      assert(settings.inMemory && settings.sessionDir === session && settings.dataDir === dataDir2, `the session folder is in memory: ${settings.sessionDir}`);
+      for (const d of ['images', 'renders', 'videos']) assert(await fileExists(path.join(session, d)), `${d} in memory`);
+      for (const d of ['images', 'renders', 'videos']) assert(!(await fileExists(path.join(dataDir2, d))), `no ${d} folder on disk`);
+      await fetch(`${base}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ topP: 0.5 }) });
+      assert(JSON.parse(await fs.readFile(path.join(dataDir2, 'settings.json'), 'utf8')).topP === 0.5, 'settings still go to the data folder on disk');
+      srv.kill('SIGTERM');
+      for (let i = 0; i < 50 && srv.exitCode === null; i++) await sleep(100);
+      assert(srv.exitCode !== null, 'it stopped');
+      assert(!(await fileExists(session)), 'the session folder is gone with it');
+    } finally {
+      if (srv.exitCode === null) srv.kill('SIGKILL');
+    }
   });
 
   await test('services: see what runs; start and stop ComfyUI and LM Studio from Settings', async () => {

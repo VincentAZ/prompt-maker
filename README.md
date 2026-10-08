@@ -3,7 +3,7 @@
 # ✦ Prompt Maker
 
 **Say what you want to see, in plain words, and get pictures and videos made on your own computer.**
-Start from an idea, a photo, or both. Keep the ones you love, compare them side by side, find them again later. Nothing leaves your machine, and it's free.
+Start from an idea, a photo, or both. It writes for each model the way that model likes, keeps the same person from shot to shot and gives them a voice. Keep the ones you love, compare them side by side, find them again later. Seven models are ready to go, more are on the way, and you can add your own. Nothing leaves your machine, and it's free.
 
 ![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
@@ -615,7 +615,7 @@ Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, giv
 
 ## Target models
 
-Seven models come with ready-made playbooks, researched from their official prompting guides (September and October 2026):
+Seven models come with ready-made playbooks, researched from their official prompting guides (September and October 2026). More are on the way, and you can [add your own](#adding-or-updating-a-model) any time:
 
 | Model | Type | Prompt style |
 |---|---|---|
@@ -724,6 +724,7 @@ Settings is a page of cards: **🖥️ Services**, **🔌 LM Studio**, **☁️ 
 | **Start ComfyUI along with it** (Services) | Off | ComfyUI comes up with Prompt Maker. |
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
 | **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
+| **Privacy level** (🔒 Privacy check card; asked once on first start) | Normal | Three levels, each a set of the switches below. **Normal**: deletes shred and clean the logs. **Private**: and ComfyUI works in memory, swap and hibernation are turned off and the screen locks on its own (it may ask for your password once). **Nothing on this machine**: and your work (History, pictures, videos, renders, the assistant chat, jobs) lives in memory for the session only, gone when Prompt Maker stops; settings, playbooks, workflows, chains, voices and what the app learned stay in the data folder. That last one takes a restart, and the card says so. The question also tells you whether the disk is encrypted. |
 | **Privacy check** (its own card) | — | What this computer does with your files below the app: whether the system disk is encrypted (chosen when the system is installed; the card says so, it can't switch it on), whether swap is on and in the open (one click turns it off, now and for good), whether hibernation can write all of memory to disk (one click turns it off), and whether the screen locks on its own (one click turns it on, after 5 minutes away). The root steps ask for your password with the system's own prompt. Linux, GNOME for the screen lock; elsewhere the card says what to set by hand. |
 | **Keep ComfyUI's working files in memory (RAM), never on disk** | Off | When Prompt Maker starts ComfyUI, its output, input and temp folders are put in memory (`/dev/shm`), so nothing it writes while it works touches the disk, and it's all gone when the computer turns off. Renders are still copied into your data folder. Takes effect the next time ComfyUI starts from here; a ComfyUI you start yourself keeps its own folders. Prompt Maker finds ComfyUI's folders from the options it runs with, so cleanup and deletes reach the ones in memory. Linux only. |
 | **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. Deleting from History removes ComfyUI's copies whether this is on or not, so set the folder in that case even with this off. |
@@ -756,6 +757,7 @@ Settings is a page of cards: **🖥️ Services**, **🔌 LM Studio**, **☁️ 
 - **Nothing else is sent anywhere.** No accounts, no telemetry, no analytics.
 - **Model downloads only when you click.** **⬇ Download** (for a model file a workflow needs, see [Missing models](#missing-models)) fetches that one file from Hugging Face into ComfyUI's models folder. Nothing is downloaded otherwise, and no other site.
 - **Your renders are private to this app.** Another website open in your browser can't fetch your renders, pictures or videos from Prompt Maker, just as it can't use the rest of the app.
+- **How private is yours to choose.** The first start asks: **Normal**, **Private**, or **Nothing on this machine** (your work in memory only, gone when the app stops). See [Settings](#settings).
 - **The computer underneath, checked.** **Settings → 🔒 Privacy check** says whether the disk is encrypted, and turns off swap and hibernation and turns on the screen lock with one click each (see [Settings](#settings)). Disk encryption is the one thing it can't do: it's a checkbox in the system installer, and it's what makes a drive that leaves your hands unreadable, old deleted blocks included.
 - **ComfyUI can work in memory.** With *Keep ComfyUI's working files in memory* on, ComfyUI's output, input and temp folders live in RAM while it runs, and vanish at shutdown.
 - **Deleted means shredded.** Deleting from History leaves nothing behind on this computer that Prompt Maker can reach: in its own data folder (the copy of History from before the delete included), in ComfyUI, in the assistant chat and jobs, or in LM Studio's server logs (see [History](#history)); the files are written over before they go, and renders aren't kept in the browser's cache.
@@ -777,7 +779,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ```
 <data folder>/
 ├── settings.json   # your settings, including your master instructions
-├── history.json    # every generation, its versions and its renders (each .json keeps a .bak copy from before its last save; a delete shreds that copy)
+├── history.json    # every generation, its versions and its renders (each .json keeps a .bak copy from before its last save; a delete shreds that copy). At the "Nothing on this machine" level, this and images/, videos/, renders/, assistant.json, jobs.json live in memory (/dev/shm/prompt-maker-session) instead
 ├── images/         # images you've used (deduplicated), and the frames the Brain saw of each motion video
 ├── videos/         # motion videos for character animation (deduplicated), and browser previews of H.265 ones
 ├── renders/        # images and videos rendered with ComfyUI (move one out and it leaves the app; put it back and it returns)

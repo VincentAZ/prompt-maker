@@ -5019,6 +5019,7 @@ $('#sComfyAutostart').addEventListener('change', async e => {
 // ---------- settings: privacy check ----------
 // Disk encryption, swap, hibernation, screen lock: what the computer does with your files below the app.
 async function loadPrivacy() {
+  renderPrivacyLevel();
   const st = await api('/api/privacy').catch(() => null);
   if (st) renderPrivacy(st);
 }
@@ -5045,6 +5046,49 @@ function renderPrivacy(st) {
   row('hibernation', st.hibernation.possible ? 'bad' : 'ok', st.hibernation.possible ? 'Possible: all of memory goes to disk when the computer hibernates.' : st.hibernation.masked ? 'Off.' : 'Off: there is no swap to write memory to.', st.hibernation.possible);
   row('lock', !st.lock.known ? 'warn' : st.lock.on ? 'ok' : 'bad', !st.lock.known ? "Couldn't tell (this check knows GNOME)." : st.lock.on ? `On: locks after ${Math.round(st.lock.delay / 60)} min away.` : 'Off: the screen never locks on its own.', st.lock.known && !st.lock.on);
   note.hidden = true;
+}
+
+const LEVEL_NAMES = { normal: 'Normal', private: 'Private', ram: 'Nothing on this machine' };
+
+// "How private?": the Privacy level, asked once on first start, and from the Privacy check card. Each level is a set
+// of switches; the server applies them (and asks for the password when a fix needs it).
+async function privacyLevelDialog() {
+  const dlg = $('#privacyDlg');
+  const level = state.settings.privacyLevel || 'normal';
+  for (const r of $$('input[name="privacyLevel"]', dlg)) r.checked = r.value === level;
+  $('#levelRam').hidden = !state.settings.ramDir;
+  const disk = $('#privacyDisk');
+  disk.hidden = true;
+  api('/api/privacy').then(st => {
+    if (!st.supported) return;
+    disk.hidden = false;
+    disk.textContent = st.disk.encrypted ? '✓ Your system disk is encrypted: off, the computer gives nothing away.'
+      : st.disk.encrypted === false ? 'Your system disk is not encrypted: anyone with the disk can read it, deleted blocks included. That is chosen when the system is installed (a checkbox in the installer) and can\'t be switched on from here.' : '';
+  }).catch(() => {});
+  dlg.returnValue = '';
+  dlg.showModal();
+  await new Promise(resolve => dlg.addEventListener('close', resolve, { once: true }));
+  if (dlg.returnValue !== 'ok') return;
+  const picked = $('input[name="privacyLevel"]:checked', dlg)?.value || 'normal';
+  try {
+    const r = await api('/api/privacy/level', { method: 'PUT', body: { level: picked } });
+    state.settings = r.settings;
+    renderSettings();
+    if (isView('settings')) { renderPrivacy(r.check); renderPrivacyLevel(); loadServices(); }
+    const notes = [...r.left, ...(r.restart ? ['Restart Prompt Maker for it to take effect.'] : [])];
+    toast(`🔒 ${LEVEL_NAMES[picked]}${notes.length ? `. ${notes.join(' ')}` : ''}`, r.left.length > 0);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+$('#privacyLevelBtn').addEventListener('click', privacyLevelDialog);
+
+function renderPrivacyLevel() {
+  const s = state.settings;
+  const name = LEVEL_NAMES[s.privacyLevel] || 'Not chosen yet';
+  const memory = s.inMemory ? ' Your work is in memory for this session.' : s.dataRam ? ' Your work goes to memory after a restart.' : '';
+  $('#privacyLevelLine').textContent = `Level: ${name}.${memory}`;
 }
 
 $('#privacyList').addEventListener('click', async e => {
@@ -10478,6 +10522,7 @@ async function loadModels() {
     history.replaceState(null, '', `#${VIEWS.find(v => isView(v))}`);
     requestAnimationFrame(sizeTheme);
     state.booted = true;
+    if (!state.settings.privacyLevel) privacyLevelDialog(); // the first start asks how private
   } catch (err) {
     showError(`Could not start: ${friendly(err)}`);
   }

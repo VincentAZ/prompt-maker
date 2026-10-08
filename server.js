@@ -910,6 +910,36 @@ async function forgetInComfy(settings, { promptIds = [], texts = [], copies = []
   return null;
 }
 
+// The Privacy level (the first-start question, and Settings → 🔒 Privacy check): each is a set of the switches.
+//   normal   deletes shred and clean the logs (the defaults)
+//   private  and ComfyUI works in memory, swap and hibernation off, the screen locks on its own
+//   ram      and your work lives in memory for the session only ("Nothing on this machine"; takes a restart)
+const PRIVACY_LEVELS = {
+  normal: { logScrub: true, comfyRam: false, dataRam: false },
+  private: { logScrub: true, comfyRam: true, dataRam: false },
+  ram: { logScrub: true, comfyRam: true, dataRam: true },
+};
+async function setPrivacyLevel(level, view) {
+  const patch = PRIVACY_LEVELS[level];
+  if (!patch) throw store.httpError(400, 'Pick a level: normal, private or ram.');
+  const before = await store.getSettings();
+  const settings = await store.updateSettings({ ...patch, privacyLevel: level });
+  const left = [];
+  let check = await privacy.check().catch(() => ({ supported: false }));
+  if (level !== 'normal' && check.supported) {
+    const todo = [['lock', check.lock.known && !check.lock.on], ['swap', check.swap.active && !check.swap.encrypted], ['hibernation', check.hibernation.possible]];
+    for (const [what, needed] of todo) {
+      if (!needed) continue;
+      try {
+        check = await privacy.fix(what);
+      } catch (err) {
+        left.push(err.message);
+      }
+    }
+  }
+  return { settings: view(settings), check, left, restart: Boolean(before.dataRam) !== Boolean(settings.dataRam) };
+}
+
 // The options the ComfyUI on this computer runs with now (they may name its folders), else the ones last seen.
 const comfyArgs = async settings => (await services.comfyProcess(settings.comfyUrl).catch(() => null))?.args || settings.comfyLaunch?.args || [];
 
@@ -1340,7 +1370,7 @@ async function route(req, res) {
   }
 
   // Both responses carry the defaults the Settings page needs (e.g. for "Reset to default").
-  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR, version: VERSION, startedAt: STARTED_AT });
+  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR, sessionDir: store.SESSION_DIR, inMemory: store.IN_MEMORY, ramDir: services.ramDir(), version: VERSION, startedAt: STARTED_AT });
   if (p === '/api/settings' && m === 'GET') return sendJson(res, 200, settingsView(await store.getSettings()));
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
@@ -1373,6 +1403,7 @@ async function route(req, res) {
   // Settings → Services: what's running, and start / stop buttons for each.
   if (p === '/api/services' && m === 'GET') return sendJson(res, 200, await servicesStatus());
   if (p === '/api/privacy' && m === 'GET') return sendJson(res, 200, await privacy.check());
+  if (p === '/api/privacy/level' && m === 'PUT') return sendJson(res, 200, await setPrivacyLevel(String((await readBody(req)).level || ''), settingsView));
   if (p === '/api/privacy/fix' && m === 'POST') return sendJson(res, 200, await privacy.fix(String((await readBody(req)).what || '')));
   if ((match = p.match(/^\/api\/services\/(comfy|lms|app|all)\/(start|stop)$/)) && m === 'POST') {
     const [, what, action] = match;
@@ -1806,8 +1837,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// Stopping: a session kept in memory goes with it.
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { store.endSession().finally(() => process.exit(0)); });
+
 server.listen(PORT, HOST, async () => {
-  console.log(`Prompt Maker running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`Prompt Maker running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${store.IN_MEMORY ? ' · your work is kept in memory for this session' : ''}`);
   // "Start ComfyUI too" (Settings → Services): bring it up along with Prompt Maker, unless it's already running.
   const settings = await store.getSettings().catch(() => null);
   if (settings?.comfyAutostart && !(await comfyUp(settings))) {

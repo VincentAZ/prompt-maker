@@ -1488,3 +1488,11 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 8px 14px; border-radius: 999px; background: var(--text); color: var(--ink); font-weight: 800; translate: 0 -200%; }
 .skip-link:focus { translate: 0 0; }
 .stage:focus { outline: none; }
+
+/* The Privacy level: three choices, as cards. */
+.level-list { display: flex; flex-direction: column; gap: 8px; }
+.level { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-2); cursor: pointer; }
+.level:has(input:checked) { border-color: var(--text); }
+.level input { margin-top: 4px; flex: none; }
+.level small { display: block; color: var(--muted); line-height: 1.4; margin-top: 2px; }
+#privacyLevelRow { align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

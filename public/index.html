@@ -641,6 +641,7 @@
         <section class="card" data-panel="set-privacy" id="privacyCard">
           <h2>🔒 Privacy check</h2>
           <p class="hint">What this computer does with your files below the app. Fixes that need an administrator's password ask for it with the system's own prompt.</p>
+          <div class="row" id="privacyLevelRow"><span id="privacyLevelLine" class="muted"></span><button type="button" class="btn small" id="privacyLevelBtn">Change the level</button></div>
           <ul class="svc-list" id="privacyList">
             <li class="svc" data-check="disk"><span class="dot"></span><span class="svc-text"><b>Disk encryption</b><span class="svc-state">…</span></span><span class="svc-acts"></span></li>
             <li class="svc" data-check="swap"><span class="dot"></span><span class="svc-text"><b>Swap</b><span class="svc-state">…</span></span><span class="svc-acts"><button type="button" class="btn small primary" data-fix="swap" hidden>Turn off</button></span></li>
@@ -832,6 +833,22 @@
     </form>
   </dialog>
 
+  <dialog id="privacyDlg" class="modal cloud-dialog privacy-dlg" aria-labelledby="privacyDlgTitle" data-not-assistant>
+    <form method="dialog" class="modal-body">
+      <h2 id="privacyDlgTitle">🔒 How private?</h2>
+      <p>Everything is made on this computer and nothing leaves it. This is about what stays on it. You can change it any time in Settings → 🔒 Privacy check.</p>
+      <div class="level-list" role="radiogroup" aria-label="Privacy level">
+        <label class="level"><input type="radio" name="privacyLevel" value="normal"><span><b>Normal</b><small>Your work is kept in the data folder. Deleting a card shreds everything about it, here, in ComfyUI and in LM Studio's logs.</small></span></label>
+        <label class="level"><input type="radio" name="privacyLevel" value="private"><span><b>Private</b><small>As Normal, and ComfyUI works in memory, the computer never writes memory to disk (swap and hibernation off), and the screen locks on its own after 5 minutes. May ask for your password once.</small></span></label>
+        <label class="level" id="levelRam"><input type="radio" name="privacyLevel" value="ram"><span><b>Nothing on this machine</b><small>As Private, and your work (History, pictures, videos, renders, the chat) lives in memory only: it's gone when Prompt Maker stops. Settings, playbooks, workflows and voices are kept. Takes a restart.</small></span></label>
+      </div>
+      <p class="hint" id="privacyDisk" hidden></p>
+      <div class="row cloud-dialog-acts">
+        <button value="no" class="btn">Later</button>
+        <button value="ok" class="btn primary">Use this</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="deleteDlg" class="modal cloud-dialog" aria-labelledby="deleteDlgTitle" data-not-assistant>
     <form method="dialog" class="modal-body">
       <h2 id="deleteDlgTitle">🗑 Delete it for good?</h2>
