@@ -1,7 +1,7 @@
 {
   "name": "prompt-maker",
   "version": "1.28.0",
-  "description": "Offline prompt writer for image and video models, powered by a local LLM in LM Studio.",
+  "description": "Say what you want to see and get pictures and videos made on your own computer. Nothing leaves your machine. Runs on LM Studio and ComfyUI.",
   "license": "FSL-1.1-ALv2",
   "author": "Serpico Enterprises LLC",
   "type": "module",
