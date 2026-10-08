@@ -60,3 +60,13 @@ The earlier long-prompt stills (fisherman, ramen, convertible, ballet) get no ca
 | `wan-woman-dance.webp` / `.mp4` | Wan Animate 2, 720p, 3.15 s, no sound: the standing `woman-studio-red-dress` picture ("woman in a red dress, full body, plain studio") + the first 6 s (24 fps) of a Pixabay silhouette dance as motion; "she dances in a photo studio". The first try (seated pier woman, 3.4 s at 480p) came out bad and was replaced: a character needs a full-length standing picture for a dance. |
 
 The Wan clip's motion source is a Pixabay silhouette video (not shipped; Pixabay's license allows it, confirmed by the owner).
+
+## Linked clips (one clip shows nothing; the power is a sequence)
+
+- `film-fisherman.mp4` / `.webp`: 22 s, four LTX 2.3 scenes of the same man joined with short crossfades, with sound:
+  dock (net, dawn) → harbor bar (cards) → storm (the wheel) → walk home (night). Stills made with Krea 2 Character
+  from one picture; each scene animated with a short idea ("he laughs and lays down a winning card", "he grips the
+  wheel as a wave crashes over the bow", "he walks on along the quiet harbor, the lantern glowing").
+- `film-dance.mp4` / `.webp`: 12.9 s, four Wan Animate 2 clips (720p, consecutive 3.4 s slices of the same dance) of
+  the same woman. Weak: each clip starts from her standing pose, so the dance resets at every join, and the hair blurs
+  on the whips. Needs the owner's verdict before it ships.
