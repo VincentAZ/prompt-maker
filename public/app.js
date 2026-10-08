@@ -485,7 +485,7 @@ function showView(name, { push = true, byUser = false } = {}) {
   if (name === 'voices') loadVoices();
   if (name === 'settings' && !state.settingsDirty) renderSettings();
   if (name === 'settings') showOutputDir();
-  if (name === 'settings') { loadServices(); loadPrivacy(); }
+  if (name === 'settings') { loadServices(); loadPrivacy(); loadAutostart(); }
   if (name === 'settings') loadProviders();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
     if (state.models.length) editModel(state.modelId || state.models[0].id); else newModel();
@@ -4988,7 +4988,27 @@ function renderAutostart(st) {
   $('#sAutostartHint').textContent = st.autostart
     ? 'It starts when you log in, turns on LM Studio\'s server, and comes back on its own if it ever stops. It\'s also in your app menu.'
     : 'Off: start it from your app menu when you need it. If the page ever says the server isn\'t running, its Start button brings it back.';
+  // Set up for another copy of Prompt Maker (one you installed or unpacked elsewhere), or for one that's been removed.
+  const off = st.elsewhere || st.missing;
+  $('#sSetupElsewhere').hidden = !off;
+  if (off) $('#sSetupElsewhere span').textContent = st.missing
+    ? `⚠ Starting with your computer is set up for a copy of Prompt Maker that's been removed (${st.setupDir}), so it does nothing.`
+    : `⚠ Starting with your computer and the app menu open another copy of Prompt Maker (${st.setupDir}), not this one.`;
 }
+
+$('#sSetupRepair').addEventListener('click', async e => {
+  e.target.disabled = true;
+  try {
+    const st = await api('/api/autostart/repair', { method: 'POST' });
+    saved.set('launcher', Boolean(st.launcher));
+    renderAutostart(st);
+    toast('🚀 Set up for this copy of Prompt Maker');
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    e.target.disabled = false;
+  }
+});
 
 $('#sAutostart').addEventListener('change', async e => {
   const on = e.target.checked;

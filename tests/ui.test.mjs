@@ -913,6 +913,23 @@ esac
     assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user enable prompt-maker.service'), 'starts at login');
     assert(!(await visible('#settingsDirty')), 'the switch saves on its own');
     assert((await text('#sAutostartHint')).includes('comes back on its own'), 'says what it does');
+    assert(unit.includes(`ConditionPathExists=${path.join(ROOT, 'server.js')}`), 'does nothing once this copy is gone');
+    assert(desktop.includes(`TryExec=${path.join(ROOT, 'start.sh')}`), 'the menu entry hides itself once this copy is gone');
+    assert(!(await visible('#sSetupElsewhere')), 'set up for this copy: nothing to say');
+
+    // The package was removed: the setup points at a folder that's gone. Settings says so; one click points it here.
+    const unitPath = path.join(xdgConfig, 'systemd', 'user', 'prompt-maker.service');
+    await fs.writeFile(unitPath, unit.replaceAll(ROOT, '/opt/prompt-maker-gone/app').replace(`ExecStart="${process.execPath}"`, 'ExecStart="/opt/prompt-maker-gone/node/bin/node"'));
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector("#sSetupElsewhere").hidden', 'removed-copy notice');
+    assert((await text('#sSetupElsewhere')).includes("been removed") && (await text('#sSetupElsewhere')).includes('/opt/prompt-maker-gone/app'), 'says where, plainly');
+    await click('#sSetupRepair');
+    await toastText('Set up for this copy');
+    const fixed = await fs.readFile(unitPath, 'utf8');
+    assert(fixed.includes(`WorkingDirectory=${ROOT}`) && fixed.includes(`ExecStart="${process.execPath}"`) && !fixed.includes('prompt-maker-gone'), 'points here again');
+    assert(await js('document.querySelector("#sAutostart").checked'), 'still starts with the computer');
+    assert(!(await visible('#sSetupElsewhere')), 'notice gone');
 
     // With the server gone, the banner now has a button that starts it.
     await js('window.realFetch = window.fetch; window.fetch = () => Promise.reject(new TypeError("Failed to fetch"))');

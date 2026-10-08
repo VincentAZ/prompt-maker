@@ -5,19 +5,16 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Next
 
-1. **Clean uninstall.** After `apt remove prompt-maker`, the user's background service points at a folder that is
-   gone. Done: the app notices (Settings → Services) and offers the fix; `prompt-maker --uninstall` documented; the
-   package's prerm leaves a note.
-2. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
+1. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
    then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). The v1.30.0
-   release still carries the 1.30.0 package; main is ahead.
-3. **README brainstorm (own session, `readme` worktree).** The opener is fixed; the rest of the README still reads
+   release still carries the 1.30.0 package; main is ahead (1.31.1 built in dist/, not released).
+2. **README brainstorm (own session, `readme` worktree).** The opener is fixed; the rest of the README still reads
    like a manual. Results first: real renders in the first screen, fewer settings screenshots. Bring real renders.
-4. **"Ask again" for the delete warning.** "Don't show this again" is per browser with no way back except clearing
+3. **"Ask again" for the delete warning.** "Don't show this again" is per browser with no way back except clearing
    site data. Done: a small link in Settings → Privacy check that brings the warning back.
-5. **Windows installer.** After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
+4. **Windows installer.** After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
    start sets up the rest). Consider a WebView/Electron wrapper then, so Windows gets an app window too.
-6. **App-name change** (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
+5. **App-name change** (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
    more users: repo, package name, data folder, service unit names, the `promptmaker://` link, the README.
 
 ## Ideas, not scheduled
@@ -30,6 +27,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.31.1 — clean uninstall: the start-up service and the menu entry do nothing once their copy is gone (no failing at
+  every login); a start from another copy moves them there, and Settings → Services says so with Use this copy; the
+  package stops Prompt Maker on removal and says what stays; the README says how to remove it.
 - 1.31.0 — one-click ComfyUI set-up (Settings → Services, and Create): checks the card, driver and Python, fetches
   ComfyUI, its own Python environment (uv or venv), PyTorch for the card, its packages, starts it; root fixes
   (NVIDIA driver, python3-venv) through pkexec; resumable; the .deb recommends git and python3-venv.

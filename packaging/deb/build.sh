@@ -92,12 +92,32 @@ command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
 echo "Prompt Maker is installed. Open it from your app menu (or run: prompt-maker). The first start sets up the rest."
 POST
+# Removing (not upgrading): stop Prompt Maker for whoever is running it from here, and say what stays. The per-user
+# setup in each home folder is left alone (a package doesn't touch homes); it checks for the app before it does
+# anything, so after removal it stays quiet, and installing again brings it back as it was.
+cat > "$PKG/DEBIAN/prerm" <<'PRE'
+#!/bin/sh
+set -e
+[ "$1" = remove ] || [ "$1" = purge ] || exit 0
+for unit in /home/*/.config/systemd/user/prompt-maker.service /root/.config/systemd/user/prompt-maker.service; do
+  [ -f "$unit" ] && grep -q /opt/prompt-maker "$unit" || continue
+  user="$(stat -c %U "$unit")"
+  systemctl --user -M "$user@" stop prompt-maker.service >/dev/null 2>&1 || true
+done
+cat <<'NOTE'
+Removing Prompt Maker. Your pictures, videos, playbooks and settings stay in your data folder
+(~/.local/share/prompt-maker unless you picked another); ComfyUI and LM Studio stay too.
+Its start-with-your-computer entry stays but does nothing now; installing Prompt Maker again brings it back.
+To remove that entry as well, run "prompt-maker --uninstall" before removing the package, or delete
+~/.config/systemd/user/prompt-maker.service and ~/.local/share/applications/prompt-maker.desktop.
+NOTE
+PRE
 cat > "$PKG/DEBIAN/postrm" <<'POST'
 #!/bin/sh
 set -e
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
 POST
-chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/postrm"
+chmod 755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/prerm" "$PKG/DEBIAN/postrm"
 
 DEB="$OUT/prompt-maker_${VERSION}_$ARCH.deb"
 fakeroot dpkg-deb --build --root-owner-group -Zxz "$PKG" "$DEB" >/dev/null

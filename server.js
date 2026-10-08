@@ -1403,6 +1403,8 @@ async function route(req, res) {
     const body = await readBody(req);
     return sendJson(res, 200, await autostart.setAutostart(Boolean(body.enabled)));
   }
+  // Set up for another copy, or one that's gone: point the setup at this one.
+  if (p === '/api/autostart/repair' && m === 'POST') return sendJson(res, 200, await autostart.repair());
 
   // Settings → Services: what's running, and start / stop buttons for each.
   if (p === '/api/services' && m === 'GET') return sendJson(res, 200, await servicesStatus());
@@ -1864,6 +1866,8 @@ server.listen(PORT, HOST, async () => {
   console.log(`Prompt Maker running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${store.IN_MEMORY ? ' · your work is kept in memory for this session' : ''}`);
   // "Start ComfyUI too" (Settings → Services): bring it up along with Prompt Maker, unless it's already running.
   const settings = await store.getSettings().catch(() => null);
+  // The start-with-the-computer setup written by an older version, or for this copy's Node that's gone: rewrite it.
+  autostart.status().then(st => (st.missing || st.old) && !st.elsewhere && autostart.repair()).catch(() => {});
   if (settings?.comfyAutostart && !(await comfyUp(settings))) {
     services.startComfy(settings).then(() => console.log('Starting ComfyUI…'), err => console.warn(`Couldn't start ComfyUI: ${err.message}`));
   }

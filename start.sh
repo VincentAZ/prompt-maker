@@ -64,6 +64,9 @@ if [ "$(field supported <<<"$STATUS")" = true ] && [ "$(field declined <<<"$STAT
   && { [ "$(field service <<<"$STATUS")" != true ] || [ "$(field launcher <<<"$STATUS")" != true ]; }; then
   echo "Setting Prompt Maker up: app menu, start with your computer… (undo: ./start.sh --uninstall)"
   STATUS="$("${SETUP[@]}" install "$(running || echo --now)")"
+# Set up for a copy that's gone (the package removed, the folder moved), or by an older version: point it here.
+elif [ "$(field missing <<<"$STATUS")" = true ] || [ "$(field old <<<"$STATUS")" = true ]; then
+  STATUS="$("${SETUP[@]}" repair)"
 fi
 
 # Set up as a service but stopped? Start the service rather than a second copy.
