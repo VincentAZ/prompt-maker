@@ -56,7 +56,7 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 <div align="center">
 
-<img src="docs/screenshots/create.png" alt="The Create page: pick a model, add a picture, say what you want, and the renders appear beside it" width="900">
+<img src="docs/screenshots/gallery.jpg" alt="The Gallery: every render in one grid, to rate, put side by side, hide and find again" width="900">
 
 </div>
 
