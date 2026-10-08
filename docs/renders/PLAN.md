@@ -47,3 +47,16 @@ Captions here are the exact words typed (Krea 2 RAW unless noted); the Brain wro
 Pixabay silhouette videos (`*_medium.mp4` in this folder) are motion sources for the Wan Animate 2 clip. They are
 git-excluded locally and must not ship: only the finished Wan clip does. Check Pixabay's license before shipping it.
 The earlier long-prompt stills (fisherman, ramen, convertible, ballet) get no captions.
+
+## Variety round (men, scenery; keep the mix balanced, not all women)
+
+| File | The words |
+|---|---|
+| `old-man-dog.webp` | old man with his dog |
+| `lighthouse-storm.webp` | lighthouse in a storm |
+| `street-musician.webp` | street musician at night |
+| `mountain-lake.webp` | mountain lake at dawn |
+| `surfer-sunset.webp` | surfer at sunset |
+| `wan-woman-dance.webp` / `.mp4` | Wan Animate 2: the `woman-pier` picture + a Pixabay silhouette dance clip as motion (3.4 s, no sound); "she dances on the pier as the sun sets" |
+
+The Wan clip's motion source is a Pixabay silhouette video (not shipped; check the license).
