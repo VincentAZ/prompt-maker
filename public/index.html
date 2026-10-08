@@ -626,7 +626,7 @@
             <li class="svc" data-svc="comfy">
               <span class="dot"></span>
               <span class="svc-text"><b>ComfyUI</b><span class="svc-state">…</span></span>
-              <span class="svc-acts"><button type="button" class="btn small primary" data-act="comfy-start" hidden>▶ Start</button><button type="button" class="btn small" data-act="comfy-stop" hidden>■ Stop</button></span>
+              <span class="svc-acts"><button type="button" class="btn small primary" data-act="comfy-setup" hidden>⬇ Set up ComfyUI</button><button type="button" class="btn small primary" data-act="comfy-start" hidden>▶ Start</button><button type="button" class="btn small" data-act="comfy-stop" hidden>■ Stop</button></span>
             </li>
           </ul>
           <p class="hint" id="svcComfyHow"></p>
@@ -833,6 +833,29 @@
     </form>
   </dialog>
 
+  <dialog id="comfySetupDlg" class="modal cloud-dialog comfy-setup-dlg" aria-labelledby="comfySetupTitle" data-not-assistant>
+    <form method="dialog" class="modal-body">
+      <h2 id="comfySetupTitle">🎨 Set up ComfyUI</h2>
+      <p>ComfyUI is the free program that makes the pictures and videos. Prompt Maker fetches it and sets it up for you, in its own folder with its own Python, so nothing else on this computer is changed.</p>
+      <ul class="svc-list cs-checks" id="csChecks">
+        <li class="svc" data-check="gpu"><span class="dot"></span><span class="svc-text"><b>Graphics card</b><span class="svc-state">…</span></span><span class="svc-acts"><button type="button" class="btn small primary" data-fix="driver" hidden>Install the driver</button></span></li>
+        <li class="svc" data-check="python"><span class="dot"></span><span class="svc-text"><b>Python</b><span class="svc-state">…</span></span><span class="svc-acts"><button type="button" class="btn small primary" data-fix="python" hidden>Install it</button></span></li>
+        <li class="svc" data-check="dir"><span class="dot ok"></span><span class="svc-text"><b>Where it goes</b><span class="svc-state" id="csDirShown">…</span><input id="csDir" class="mono" placeholder="~/ComfyUI" aria-label="Folder for ComfyUI" hidden></span><span class="svc-acts"><button type="button" class="btn small" id="csDirChange">Change</button></span></li>
+      </ul>
+      <p class="hint" id="csAbout"></p>
+      <div id="csProgress" class="cs-progress" hidden>
+        <span class="mm-prog indeterminate"><span class="mm-bar"></span></span>
+        <b id="csText"></b>
+        <span class="cs-detail mono" id="csDetail"></span>
+      </div>
+      <p id="csResult" class="test-result" hidden></p>
+      <div class="row cloud-dialog-acts">
+        <button value="no" class="btn" id="csLater">Later</button>
+        <button type="button" class="btn danger" id="csStop" hidden>✕ Stop</button>
+        <button type="button" class="btn primary" id="csGo">⬇ Set it up</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="privacyDlg" class="modal cloud-dialog privacy-dlg" aria-labelledby="privacyDlgTitle" data-not-assistant>
     <form method="dialog" class="modal-body">
       <h2 id="privacyDlgTitle">🔒 How private?</h2>

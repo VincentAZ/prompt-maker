@@ -388,11 +388,39 @@ esac
   const ramDir = path.join(tmp, 'ram');
   await fs.mkdir(ramDir, { recursive: true });
 
+  // A fake computer for the one-click ComfyUI set-up: git (makes a ComfyUI-shaped folder), python (venv copies
+  // itself, pip logs what it was asked for and "installs" torch), nvidia-smi (a card with a driver), no uv.
+  const setupDir = path.join(tmp, 'setup');
+  await fs.mkdir(setupDir, { recursive: true });
+  const gitLog = path.join(setupDir, 'git.log');
+  const fakeGit = path.join(setupDir, 'git');
+  await fs.writeFile(fakeGit, `#!/bin/sh
+echo "$@" >> ${JSON.stringify(gitLog)}
+[ "$1" = --version ] && { echo "git version 2.43.0"; exit 0; }
+if [ "$1" = clone ]; then for a in "$@"; do d="$a"; done; mkdir -p "$d/comfy" "$d/models/checkpoints"; echo 'print("comfy")' > "$d/main.py"; echo 'torch' > "$d/requirements.txt"; echo "Cloning into '$d'..."; exit 0; fi
+exit 1
+`, { mode: 0o755 });
+  const pipLog = path.join(setupDir, 'pip.log');
+  const fakePython = path.join(setupDir, 'python3');
+  await fs.writeFile(fakePython, `#!/bin/sh
+here="$(cd "$(dirname "$0")" && pwd)"
+case "$*" in
+  *"version_info"*) echo 3.12.9 ;;
+  *"import venv, ensurepip"*) exit 0 ;;
+  *"import torch"*) [ -f "$here/torch-ok" ] ;;
+  "-m venv "*) d="$3"; mkdir -p "$d/bin"; cp "$0" "$d/bin/python"; chmod +x "$d/bin/python" ;;
+  "-m pip install "*) echo "$@" >> ${JSON.stringify(pipLog)}; echo "Collecting $4"; sleep 1; echo "Downloading $4 (2.1 GB)"; sleep 1; case "$*" in *torch*) touch "$here/torch-ok";; esac; echo "Successfully installed $4" ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const fakeNvidiaSmi = path.join(setupDir, 'nvidia-smi');
+  await fs.writeFile(fakeNvidiaSmi, '#!/bin/sh\necho "NVIDIA GeForce RTX 4090, 580.65.06"\n', { mode: 0o755 });
+
   // A fake LM Studio home: its server logs quote every request, and deleting from History must clean them.
   const lmsHome = path.join(tmp, 'lmstudio-home');
   await fs.mkdir(path.join(lmsHome, 'server-logs', '2026-10'), { recursive: true });
   // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_LSBLK_BIN: fakeLsblk, PM_PROC_SWAPS: fakeSwaps, PM_SYS_POWER_DISK: fakePowerDisk, PM_GSETTINGS_BIN: fakeGsettings, PM_PKEXEC_BIN: fakePkexec, PM_RAM_DIR: ramDir }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_LSBLK_BIN: fakeLsblk, PM_PROC_SWAPS: fakeSwaps, PM_SYS_POWER_DISK: fakePowerDisk, PM_GSETTINGS_BIN: fakeGsettings, PM_PKEXEC_BIN: fakePkexec, PM_RAM_DIR: ramDir, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let appLog = '';
   app.stdout.on('data', d => { appLog += d; });
   app.stderr.on('data', d => { appLog += d; });
@@ -1049,6 +1077,71 @@ esac
     // Stopping Prompt Maker (or everything) asks for a second click first.
     await click('#stopAllBtn');
     eq(await text('#stopAllBtn'), 'Click again to stop everything', 'asks to confirm');
+    await type('#sComfyFolder', '');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('🎨 one-click ComfyUI set-up: not on this computer → Set up: fetched, its Python, PyTorch for the card, its packages, started', async () => {
+    // Point ComfyUI's folder at a place with nothing in it: as on a fresh computer, there's no ComfyUI to start.
+    const fresh = path.join(tmp, 'fresh', 'ComfyUI');
+    await click('.tabs button[data-view="settings"]');
+    await type('#sComfyFolder', fresh);
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await comfy.stop();
+    await fs.rm(path.join(tmp, 'comfy-active'), { force: true });
+    await fs.writeFile(systemdRunLog, '');
+    await click('.tabs button[data-view="create"]');
+    await waitFor('document.querySelector("#comfyState").hidden || document.querySelector("#comfyState").textContent.includes("isn\'t set up")', 'Create says ComfyUI isn\'t set up (when it has something to render with)', 15000);
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector(\'[data-act="comfy-setup"]\').hidden', 'a Set up ComfyUI button when it isn\'t on this computer');
+    assert((await text('.svc[data-svc="comfy"] .svc-state')).includes('Not on this computer yet'), `says so: ${await text('.svc[data-svc="comfy"] .svc-state')}`);
+    assert(await js('document.querySelector(\'[data-act="comfy-start"]\').hidden'), 'nothing to start');
+
+    // The dialog: what the computer has, where it goes, what it downloads.
+    await click('[data-act="comfy-setup"]');
+    await waitFor('document.querySelector("#comfySetupDlg").open && document.querySelector(\'#csChecks [data-check="gpu"] .svc-state\').textContent.includes("NVIDIA GeForce RTX 4090")', 'the graphics card, by name');
+    assert((await text('#csChecks [data-check="gpu"] .svc-state')).includes('driver 580.65.06'), 'with its driver');
+    assert(await js('document.querySelector(\'#csChecks [data-check="gpu"] [data-fix]\').hidden'), 'no driver to install');
+    assert((await text('#csChecks [data-check="python"] .svc-state')).includes('Python 3.12.9'), `Python, by version: ${await text('#csChecks [data-check="python"] .svc-state')}`);
+    eq(await text('#csDirShown'), fresh, 'goes where Settings → ComfyUI points');
+    assert((await text('#csAbout')).includes('3 GB') && (await text('#csAbout')).includes('step ⑤'), 'says what it downloads, and that models come later');
+    await shot('comfy-setup');
+
+    // Go: each step in plain words, then ComfyUI starts on its own.
+    await click('#csGo');
+    await waitFor('!document.querySelector("#csProgress").hidden && document.querySelector("#csText").textContent.length > 0', 'progress shows');
+    await waitFor('document.querySelector("#csText").textContent.includes("PyTorch")', 'the PyTorch step, named for the card', 20000);
+    assert((await text('#csText')).includes('NVIDIA GeForce RTX 4090'), `for this card: ${await text('#csText')}`);
+    await waitFor('document.querySelector("#csProgress").classList.contains("done")', 'done', 30000);
+    assert((await text('#csText')).includes('set up and starting'), 'says so');
+    assert(await fileExists(path.join(fresh, 'main.py')) && await fileExists(path.join(fresh, 'comfy')), 'ComfyUI fetched into the folder');
+    assert((await fs.readFile(gitLog, 'utf8')).includes(`clone --depth 1 --progress https://github.com/comfyanonymous/ComfyUI.git ${fresh}`), 'a shallow clone of ComfyUI');
+    assert(await fileExists(path.join(fresh, 'venv', 'bin', 'python')), 'its own Python environment');
+    const pips = await fs.readFile(pipLog, 'utf8');
+    assert(pips.includes('torch torchvision torchaudio') && !pips.includes('index-url'), `PyTorch's CUDA build from PyPI for an NVIDIA card: ${pips}`);
+    assert(pips.includes('-r requirements.txt'), 'then ComfyUI\'s packages');
+    assert(pips.indexOf('torch') < pips.indexOf('requirements'), 'in that order');
+    const started = await fs.readFile(systemdRunLog, 'utf8');
+    assert(started.includes(`--working-directory=${fresh}`) && started.includes(path.join(fresh, 'venv', 'bin', 'python')) && started.includes('main.py'), `started from the new folder with its own Python: ${started}`);
+    eq((await (await fetch(`${APP}/api/settings`)).json()).comfyDir, fresh, 'Settings → ComfyUI points at it');
+    eq(await text('#csLater'), 'Done', 'the dialog is done');
+    await click('#csLater');
+    await comfy.start(); // ComfyUI answers
+    await toastText('ComfyUI is running', 15000);
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'shown running');
+    assert(await js('document.querySelector(\'[data-act="comfy-setup"]\').hidden'), 'the Set up button goes');
+
+    // Already set up: the dialog says so and would only finish and start it. The root fixes go through pkexec.
+    const st = await (await fetch(`${APP}/api/comfy/setup`)).json();
+    eq(st.installed, fresh, 'knows it\'s there');
+    const fix = await (await fetch(`${APP}/api/comfy/setup/fix`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what: 'python' }) })).json();
+    assert(fix.ok && (await fs.readFile(pkexecLog, 'utf8')).includes('python3-venv'), `python3-venv through the system's password prompt: ${JSON.stringify(fix)}`);
+    const badDir = await (await fetch(`${APP}/api/comfy/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir: tmp }) })).json();
+    assert(/other things in it/.test(badDir.error), `won't take over a folder with other things in it: ${JSON.stringify(badDir)}`);
+
     await type('#sComfyFolder', '');
     await click('#settingsForm button[type="submit"]');
     await toastText('Settings saved');

@@ -116,7 +116,7 @@ Prompt Maker builds a request out of three parts and sends it to LM Studio: its 
 | **A Brain** (a local AI model) | Any chat model works. Use a **vision** model (tagged "Vision" in LM Studio) if you want to use images. See [Choosing a Brain](#choosing-a-brain). |
 | **Hardware** | Enough memory to run that model. A small 4–8B vision model needs roughly 4–8 GB of GPU VRAM or Mac unified memory. CPU-only works, just slowly. |
 | **A modern browser** | Chrome/Edge 111+, Firefox 121+, Safari 16.2+ |
-| **ComfyUI** *(optional)* | Only for rendering. Any recent [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally (default port `8188`). Node 22+ gives live progress; older Node versions poll instead. |
+| **ComfyUI** *(optional)* | Only for rendering. Any recent [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally (default port `8188`); on Linux, **Settings → Services → ⬇ Set up ComfyUI** installs it for you (see [Rendering](#rendering-with-comfyui-optional)). Node 22+ gives live progress; older Node versions poll instead. |
 
 ## Installation
 
@@ -177,7 +177,7 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 |---|---|
 | **Prompt Maker** | ■ Stop it. The page shows it stopped right away (the rows say *Stopped*) and offers ▶ Start Prompt Maker |
 | **LM Studio** | ▶ Start its server, or ■ Stop it, which first unloads every model to free the GPU |
-| **ComfyUI** | ▶ Start it, or ■ Stop it. It starts from its folder, the way Prompt Maker last saw you run it, or with live previews on (`--preview-method auto`); change the folder or the options under **ComfyUI** in Settings. Tick *Start ComfyUI along with it* to have it come up with Prompt Maker |
+| **ComfyUI** | ▶ Start it, or ■ Stop it. It starts from its folder, the way Prompt Maker last saw you run it, or with live previews on (`--preview-method auto`); change the folder or the options under **ComfyUI** in Settings. Tick *Start ComfyUI along with it* to have it come up with Prompt Maker. Not on this computer yet? **⬇ Set up ComfyUI** installs it (see [Setting up ComfyUI](#setting-up-comfyui-one-click)) |
 
 **■ Stop everything (frees the GPU)** stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker. On Create, *ComfyUI offline* has a **▶ Start it** link too.
 
@@ -443,7 +443,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 
 All but Krea 2 Character use only ComfyUI's own nodes.
 
-1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**.
+1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**. No ComfyUI yet? See [Setting up ComfyUI](#setting-up-comfyui-one-click) below: one click installs it.
 2. On **Create**, pick a model (say *Krea 2 RAW*) and click **＋ Add workflow** in step ⑤. (Or do it in **Models**, which lists every model's workflows.)
 3. Choose where the workflow comes from:
    - **🎁 Comes with Prompt Maker** shows first: the workflow the app has for the model. Click it and it's set up: where the prompt and your picture go, the seed, the sampler. Step ⑤ offers **⬇ Download** for any of its model files you don't have (see [Missing models](#missing-models)). It shows even while ComfyUI is off.
@@ -501,6 +501,23 @@ Click any result to open the **lightbox**, where you can:
 - or delete it.
 
 <img src="docs/screenshots/compare.jpg" alt="Compare: two renders of the same idea side by side, each with its own stars, and Keep this one under the one on the right" width="900">
+
+
+### Setting up ComfyUI (one click)
+
+<img src="docs/screenshots/comfy-setup.png" alt="The Set up ComfyUI dialog: the graphics card with its driver, the Python it found, where ComfyUI goes, and the Set it up button" width="600">
+
+Without a ComfyUI on this computer, **Settings → Services** shows **⬇ Set up ComfyUI**, and so does *ComfyUI isn't set up* in step ⑤ on Create. One click, and Prompt Maker:
+
+1. **Checks the computer**: your graphics card and its driver, and Python. An NVIDIA card without a driver gets **Install the driver** (Ubuntu's own driver tool, or Debian's package, behind the system's password prompt; then restart the computer). Python's environment tool, when Ubuntu left it out, gets **Install it** the same way.
+2. **Fetches ComfyUI** from GitHub into `ComfyUI/` in the data folder (or the folder under **Settings → ComfyUI**, or one you pick with **Change**; an existing folder must be empty, or ComfyUI's own).
+3. **Makes its own Python environment** (`venv/` inside that folder), with [uv](https://docs.astral.sh/uv/) and Python 3.12 when uv is on the computer, else the system's Python. Nothing else on the computer is changed.
+4. **Installs PyTorch for your card**: the CUDA build for NVIDIA (about 3 GB), the ROCm build for AMD (new, not yet tried on a real card), the small CPU build without a card.
+5. **Installs ComfyUI's packages**, then **starts it** and points **Settings → ComfyUI** at it, so ▶ Start, ■ Stop and *Start ComfyUI along with it* work from then on.
+
+Each step shows in plain words, with the last line of what runs under it. Close the dialog and it goes on; Services shows how far it is. **✕ Stop** stops it, and a set-up that stopped (no internet, the laptop closed) **carries on from where it was** next time: what's done is skipped. Model files aren't part of it: step ⑤ offers **⬇ Download** for each one a workflow needs (see [Missing models](#missing-models)).
+
+Linux for now. On Windows and macOS, install [ComfyUI Desktop](https://www.comfy.org/download) and enter its folder in **Settings → ComfyUI**.
 
 ### Missing models
 

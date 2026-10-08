@@ -75,15 +75,15 @@ Section: graphics
 Priority: optional
 Architecture: $ARCH
 Depends: libc6 (>= 2.28), libstdc++6, curl, xdg-utils
-Recommends: ffmpeg
+Recommends: ffmpeg, git, python3-venv, python3-pip
 Installed-Size: $SIZE_KB
 Maintainer: Serpico Enterprises LLC <noreply@github.com>
 Homepage: https://github.com/VincentAZ/prompt-maker
 Description: Pictures and videos made on your own computer, from plain words
  Say what you want to see and get pictures and videos made on your own
  computer. Nothing leaves your machine. Comes with its own Node.js; needs
- LM Studio (the Brain) and, to render, ComfyUI (both free, separate installs).
- Open it from the app menu: the first start sets up the rest.
+ LM Studio (the Brain) and, to render, ComfyUI (both free). Settings sets up
+ ComfyUI in one click. Open it from the app menu: the first start sets up the rest.
 CONTROL
 cat > "$PKG/DEBIAN/postinst" <<'POST'
 #!/bin/sh

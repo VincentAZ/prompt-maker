@@ -16,6 +16,7 @@ import * as cloud from './lib/cloud.js';
 import * as folders from './lib/folders.js';
 import * as computer from './lib/computer.js';
 import * as privacy from './lib/privacy.js';
+import * as comfySetup from './lib/comfy-setup.js';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
@@ -626,6 +627,7 @@ async function servicesStatus() {
     if (JSON.stringify(learned) !== JSON.stringify(settings.comfyLaunch)) Object.assign(settings, await store.updateSettings({ comfyLaunch: learned }));
   }
   const launch = await services.comfyLaunch(settings);
+  if (launch.dir && !(await services.isComfyDir(launch.dir))) launch.dir = null; // a folder that isn't ComfyUI's (yet) counts as not found
   return {
     app: { service: onService, autostart: app.autostart, supported: app.supported },
     lms: { running: Boolean(llms), loaded: llms ? llms.filter(m => m.loaded).length : 0, local: services.isLocalUrl(settings.lmStudioUrl) },
@@ -637,6 +639,7 @@ async function servicesStatus() {
       autostart: settings.comfyAutostart,
       launch: launch.dir ? { dir: launch.dir, command: [launch.python, ...launch.pre, 'main.py', ...launch.args].join(' '), from: launch.from, ram: Boolean(launch.ram) } : null,
       ramDir: services.ramDir(),
+      setup: comfySetup.current(), // the one-click set-up, while it runs (or how it ended)
     },
   };
 }
@@ -1403,6 +1406,19 @@ async function route(req, res) {
 
   // Settings → Services: what's running, and start / stop buttons for each.
   if (p === '/api/services' && m === 'GET') return sendJson(res, 200, await servicesStatus());
+  // One-click ComfyUI set-up: what the computer has, start it (into a folder), watch it, stop it, and the root fixes.
+  if (p === '/api/comfy/setup' && m === 'GET') return sendJson(res, 200, await comfySetup.status(await store.getSettings()));
+  if (p === '/api/comfy/setup' && m === 'POST') {
+    const body = await readBody(req);
+    const start = async dir => {
+      const settings = await store.updateSettings({ comfyDir: dir });
+      await services.startComfy(settings);
+    };
+    return sendJson(res, 200, await comfySetup.install(await store.getSettings(), { dir: body.dir, start }));
+  }
+  if (p === '/api/comfy/setup/job' && m === 'GET') return sendJson(res, 200, comfySetup.current() || { state: 'none' });
+  if (p === '/api/comfy/setup/cancel' && m === 'POST') return sendJson(res, 200, comfySetup.cancel() || { state: 'none' });
+  if (p === '/api/comfy/setup/fix' && m === 'POST') return sendJson(res, 200, await comfySetup.fix(String((await readBody(req)).what || '')));
   if (p === '/api/privacy' && m === 'GET') return sendJson(res, 200, await privacy.check());
   if (p === '/api/privacy/level' && m === 'PUT') return sendJson(res, 200, await setPrivacyLevel(String((await readBody(req)).level || ''), settingsView));
   if (p === '/api/privacy/fix' && m === 'POST') return sendJson(res, 200, await privacy.fix(String((await readBody(req)).what || '')));
@@ -1610,7 +1626,10 @@ async function route(req, res) {
     try {
       return sendJson(res, 200, { ...(await comfy.status(base)), url: base });
     } catch (err) {
-      return sendJson(res, 200, { ok: false, url: base, error: err.message });
+      // Off: say whether it's on this computer at all (found, or being set up), so Create can offer ▶ Start or ⬇ Set it up.
+      const local = services.isLocalUrl(base);
+      const launch = local ? await services.comfyLaunch(settings).catch(() => ({ dir: null })) : { dir: null };
+      return sendJson(res, 200, { ok: false, url: base, error: err.message, local, found: Boolean(launch.dir) && (await services.isComfyDir(launch.dir)), setup: comfySetup.current() });
     }
   }
   if (p === '/api/assistant' && m === 'POST') return assistantChat(req, res);

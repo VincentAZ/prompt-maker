@@ -5,25 +5,19 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Next
 
-1. **One-click ComfyUI set-up.** The .deb makes ComfyUI the next wall a new person hits: today it's a git clone, a
-   Python environment, torch, and the first model files, all by hand. Done: a "Set up ComfyUI" button (Settings →
-   Services, and the Create page's "ComfyUI not found" state) that fetches ComfyUI into the data folder (or a chosen
-   folder), makes its Python environment with the right torch for the GPU, offers the NVIDIA driver through the
-   system's package tool when it's missing, and shows progress in plain words. The voice set-up (lib/voice.js) already
-   installs packages beside ComfyUI's Python: same approach. Verify with a real render.
-2. **Clean uninstall.** After `apt remove prompt-maker`, the user's background service points at a folder that is
+1. **Clean uninstall.** After `apt remove prompt-maker`, the user's background service points at a folder that is
    gone. Done: the app notices (Settings → Services) and offers the fix; `prompt-maker --uninstall` documented; the
    package's prerm leaves a note.
-3. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
+2. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
    then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). The v1.30.0
    release still carries the 1.30.0 package; main is ahead.
-4. **README brainstorm (own session, `readme` worktree).** The opener is fixed; the rest of the README still reads
+3. **README brainstorm (own session, `readme` worktree).** The opener is fixed; the rest of the README still reads
    like a manual. Results first: real renders in the first screen, fewer settings screenshots. Bring real renders.
-5. **"Ask again" for the delete warning.** "Don't show this again" is per browser with no way back except clearing
+4. **"Ask again" for the delete warning.** "Don't show this again" is per browser with no way back except clearing
    site data. Done: a small link in Settings → Privacy check that brings the warning back.
-6. **Windows installer.** After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
+5. **Windows installer.** After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
    start sets up the rest). Consider a WebView/Electron wrapper then, so Windows gets an app window too.
-7. **App-name change** (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
+6. **App-name change** (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
    more users: repo, package name, data folder, service unit names, the `promptmaker://` link, the README.
 
 ## Ideas, not scheduled
@@ -36,6 +30,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.31.0 — one-click ComfyUI set-up (Settings → Services, and Create): checks the card, driver and Python, fetches
+  ComfyUI, its own Python environment (uv or venv), PyTorch for the card, its packages, starts it; root fixes
+  (NVIDIA driver, python3-venv) through pkexec; resumable; the .deb recommends git and python3-venv.
 - 1.30.1 — ComfyUI's console output to comfyui.log (memory at "Nothing stays"), not the journal; the launcher opens
   Prompt Maker as its own browser window with its own profile; workflows test fixed.
 - 1.30.0 — Ubuntu/Debian package with bundled Node; privacy levels named Safe, Safer, Nothing stays.

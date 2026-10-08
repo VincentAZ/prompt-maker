@@ -5135,7 +5135,10 @@ function renderServices(st) {
     ? { dot: 'ok', text: `Running${comfy.gpu ? ` · ${comfy.gpu}` : ''}`, start: false, stop: comfy.local && !busy }
     : comfy.starting || busy === 'start'
       ? { dot: 'warn', text: 'Starting… (up to a minute)', start: false, stop: false }
-      : { dot: 'bad', text: !comfy.local ? 'Off (it runs on another computer)' : comfy.launch ? 'Off' : "Off · not found on this computer: enter its folder under ComfyUI below", start: comfy.local && Boolean(comfy.launch), stop: false });
+      : comfy.setup?.state === 'running'
+        ? { dot: 'warn', text: `Setting up… ${comfy.setup.text}`, start: false, stop: false }
+        : { dot: 'bad', text: !comfy.local ? 'Off (it runs on another computer)' : comfy.launch ? 'Off' : 'Not on this computer yet. Set it up here, or enter its folder under ComfyUI below', start: comfy.local && Boolean(comfy.launch), stop: false });
+  $('[data-act="comfy-setup"]', $('.svc[data-svc="comfy"]')).hidden = comfy.running || comfy.starting || busy === 'start' || !comfy.local || Boolean(comfy.launch) || comfy.setup?.state === 'running';
   const how = comfy.local && comfy.launch;
   $('#svcComfyHow').hidden = !how;
   if (how) {
@@ -5148,7 +5151,7 @@ function renderServices(st) {
   $('#sComfyFolder').placeholder = comfy.launch?.from && comfy.launch.from !== 'set' ? `found: ${comfy.launch.dir}` : 'found automatically';
   // Keep watching while ComfyUI is on its way up.
   clearTimeout(servicesPoll);
-  if ((comfy.starting || busy === 'start') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
+  if ((comfy.starting || busy === 'start' || comfy.setup?.state === 'running') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
 }
 
 // With Prompt Maker's server stopped, nothing here can be checked or pressed: say so instead of showing stale states.
@@ -5190,6 +5193,7 @@ async function startComfyUi() {
 async function serviceAction(btn) {
   const act = btn.dataset.act;
   if (act === 'comfy-start') return startComfyUi();
+  if (act === 'comfy-setup') return openComfySetup();
   if (act === 'app-stop' || btn.id === 'stopAllBtn') {
     const all = btn.id === 'stopAllBtn';
     return confirmClick(btn, all ? 'Click again to stop everything' : 'Click again to stop', async () => {
@@ -5228,8 +5232,160 @@ $('#servicesCard').addEventListener('click', e => {
 });
 // Create's "ComfyUI offline" has a Start link too.
 $('#comfyState').addEventListener('click', e => {
-  if (e.target.closest('.comfy-start')) startComfyUi();
+  if (e.target.closest('.comfy-setup')) openComfySetup();
+  else if (e.target.closest('.comfy-start')) startComfyUi();
 });
+
+// ---------- one-click ComfyUI set-up ----------
+// The dialog checks the computer (graphics card and its driver, Python, where ComfyUI goes), then runs the set-up
+// on the server (fetch ComfyUI, its Python environment, PyTorch for the card, ComfyUI's packages, start it) and
+// shows each step in plain words. A set-up that stopped carries on from where it was next time.
+const cs = { status: null, poll: null };
+
+async function openComfySetup() {
+  const dlg = $('#comfySetupDlg');
+  if (!dlg.open) dlg.showModal();
+  $('#csResult').hidden = true;
+  cs.status = await api('/api/comfy/setup').catch(err => ({ supported: true, error: friendly(err) }));
+  renderComfySetup();
+  if (cs.status?.job?.state === 'running') pollComfySetup();
+}
+
+function renderComfySetup() {
+  const st = cs.status;
+  if (!st) return;
+  const row = (name, dot, text, fix) => {
+    const el = $(`#csChecks .svc[data-check="${name}"]`);
+    $('.dot', el).className = `dot ${dot}`;
+    $('.svc-state', el).textContent = text;
+    const b = $('[data-fix]', el);
+    if (b) b.hidden = !fix;
+  };
+  const job = st.job;
+  const running = job?.state === 'running';
+  if (!st.supported) {
+    row('gpu', 'warn', 'The one-click set-up is for Linux for now.', false);
+    row('python', 'warn', 'On Windows and macOS, install ComfyUI Desktop from comfy.org, then enter its folder in Settings → ComfyUI.', false);
+    $('#csChecks .svc[data-check="dir"]').hidden = true;
+    $('#csGo').hidden = true;
+    $('#csAbout').textContent = '';
+    return;
+  }
+  if (st.error) {
+    row('gpu', 'bad', st.error, false);
+    row('python', '', '', false);
+    $('#csGo').disabled = true;
+    return;
+  }
+  const g = st.gpu || {};
+  row('gpu', g.kind === 'nvidia' && !g.driver ? 'bad' : g.kind === 'cpu' ? 'warn' : 'ok',
+    g.kind === 'nvidia' ? (g.driver ? `${g.name} · NVIDIA driver ${g.driver === 'installed' ? 'installed' : g.driver}` : `${g.name} · no NVIDIA driver yet: install it first (then restart the computer)`)
+      : g.kind === 'amd' ? `${g.name} (AMD). The AMD path is new and hasn't been tried on a real card yet` : 'No NVIDIA or AMD card found: ComfyUI will use the processor, slowly',
+    g.kind === 'nvidia' && !g.driver && st.pkexec);
+  const py = st.python || {};
+  row('python', py.ok ? 'ok' : 'bad',
+    py.via === 'uv' ? `Python ${py.version}, made for ComfyUI by uv (already on this computer)` : py.via === 'system' ? (py.ok ? `Python ${py.version} (${py.bin})` : `Python ${py.version} is here, but its environment tool (python3-venv) is missing`) : 'No Python on this computer: install python3 and python3-venv first',
+    py.via === 'system' && !py.ok && st.pkexec);
+  const dirEl = $('#csDir');
+  if (!dirEl.value) dirEl.value = st.installed || st.dir || '';
+  $('#csDirShown').textContent = st.installed ? `${st.installed} (ComfyUI is already there: this finishes its set-up and starts it)` : dirEl.value;
+  $('#csDirChange').hidden = running || Boolean(st.installed);
+  $('#csAbout').textContent = `It downloads ComfyUI and PyTorch (${st.torchAbout || 'about 3 GB'}${st.git ? '' : '; ComfyUI as an archive, since git isn\'t on this computer'}). Model files come later: step ⑤ offers ⬇ Download for each one a workflow needs.`;
+  $('#csProgress').hidden = !job;
+  $('#csProgress').classList.toggle('done', job?.state === 'done');
+  if (job) {
+    $('#csText').textContent = job.state === 'running' ? job.text : job.state === 'done' ? '✓ ComfyUI is set up and starting. Step ⑤ renders as soon as it answers.' : 'Stopped.';
+    $('#csDetail').textContent = job.state === 'running' ? job.detail || '' : '';
+  }
+  $('#csResult').hidden = job?.state !== 'error';
+  $('#csResult').className = 'test-result bad';
+  if (job?.state === 'error') $('#csResult').textContent = job.error;
+  $('#csGo').hidden = job?.state === 'done';
+  $('#csGo').disabled = running || !py.ok || (g.kind === 'nvidia' && !g.driver);
+  $('#csGo').textContent = job?.state === 'error' ? '↻ Try again' : '⬇ Set it up';
+  $('#csStop').hidden = !running;
+  $('#csLater').textContent = job?.state === 'done' ? 'Done' : running ? 'Close (it goes on)' : 'Later';
+}
+
+function pollComfySetup() {
+  clearTimeout(cs.poll);
+  cs.poll = setTimeout(async () => {
+    const job = await api('/api/comfy/setup/job').catch(() => null);
+    if (!job || job.state === 'none' || !cs.status) return;
+    const was = cs.status.job?.state;
+    cs.status.job = job;
+    renderComfySetup();
+    if (job.state === 'running') return pollComfySetup();
+    if (was === 'running' || was === undefined) {
+      if (job.state === 'done') { toast('🎨 ComfyUI is set up and starting… (up to a minute)'); cs.status.installed = job.dir; renderComfySetup(); startComfyWatch(); }
+      else toast(`ComfyUI's set-up stopped: ${job.error}`, true);
+      loadServices();
+      loadComfyStatus();
+    }
+  }, 1500);
+}
+
+// After the set-up started ComfyUI: watch until it answers, like ▶ Start does.
+async function startComfyWatch() {
+  for (let i = 0; i < 90; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const st = await loadComfyStatus();
+    if (st?.ok) { toast('🎨 ComfyUI is running'); loadServices(); return; }
+  }
+  toast("ComfyUI didn't answer within three minutes. Check its log (comfyui.log in the data folder).", true);
+}
+
+$('#csGo').addEventListener('click', async () => {
+  const b = $('#csGo');
+  b.disabled = true;
+  $('#csResult').hidden = true;
+  try {
+    cs.status.job = await api('/api/comfy/setup', { method: 'POST', body: { dir: $('#csDir').value.trim() } });
+    renderComfySetup();
+    pollComfySetup();
+    loadServices();
+    loadComfyStatus();
+  } catch (err) {
+    b.disabled = false;
+    $('#csResult').hidden = false;
+    $('#csResult').className = 'test-result bad';
+    $('#csResult').textContent = friendly(err);
+  }
+});
+$('#csStop').addEventListener('click', async () => {
+  $('#csStop').disabled = true;
+  await api('/api/comfy/setup/cancel', { method: 'POST' }).catch(() => {});
+  $('#csStop').disabled = false;
+});
+$('#csDirChange').addEventListener('click', () => {
+  const input = $('#csDir');
+  input.hidden = !input.hidden;
+  $('#csDirChange').textContent = input.hidden ? 'Change' : 'OK';
+  if (input.hidden) $('#csDirShown').textContent = input.value.trim() || cs.status?.dir || '';
+  else input.focus();
+});
+// The root fixes: the NVIDIA driver, Python's venv tool, through the system's password prompt.
+$('#csChecks').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-fix]');
+  if (!b || b.disabled) return;
+  const what = b.dataset.fix;
+  b.disabled = true;
+  const was = b.textContent;
+  b.textContent = 'Installing… (enter your password when asked)';
+  try {
+    const r = await api('/api/comfy/setup/fix', { method: 'POST', body: { what } });
+    toast(what === 'driver' ? '✓ The NVIDIA driver is installed. Restart the computer, then come back here.' : '✓ Installed');
+    if (r.restart) { $('#csResult').hidden = false; $('#csResult').className = 'test-result ok'; $('#csResult').textContent = 'The driver is installed. Restart the computer, then open this again to set up ComfyUI.'; }
+    cs.status = await api('/api/comfy/setup').catch(() => cs.status);
+    renderComfySetup();
+  } catch (err) {
+    toast(friendly(err), true);
+  } finally {
+    b.disabled = false;
+    b.textContent = was;
+  }
+});
+$('#comfySetupDlg').addEventListener('close', () => { clearTimeout(cs.poll); if (cs.status?.job?.state === 'running') toast('🎨 ComfyUI\'s set-up goes on in the background: Settings → Services shows how far it is'); });
 
 function renderSettings() {
   const s = state.settings;
@@ -6019,8 +6175,10 @@ function renderComfyState() {
   const c = state.comfy;
   el.hidden = !c || !workflowsFor(state.modelId).length;
   if (el.hidden) return;
-  const startable = !c.ok && state.services?.comfy?.local !== false;
-  el.innerHTML = `<span class="dot ${c.ok ? 'ok' : 'bad'}"></span>${c.ok ? 'ComfyUI ready' : 'ComfyUI offline'}${startable ? '<button type="button" class="comfy-start">▶ Start it</button>' : ''}`;
+  const settingUp = !c.ok && c.setup?.state === 'running';
+  const missing = !c.ok && c.local && c.found === false && !settingUp; // not on this computer: one click sets it up
+  const startable = !c.ok && !missing && !settingUp && c.local !== false;
+  el.innerHTML = `<span class="dot ${c.ok ? 'ok' : settingUp ? 'warn' : 'bad'}"></span>${c.ok ? 'ComfyUI ready' : settingUp ? 'Setting up ComfyUI…' : missing ? 'ComfyUI isn\'t set up' : 'ComfyUI offline'}${startable ? '<button type="button" class="comfy-start">▶ Start it</button>' : ''}${missing || settingUp ? `<button type="button" class="comfy-start comfy-setup">${settingUp ? 'Show progress' : '⬇ Set it up'}</button>` : ''}`;
   el.title = c.ok ? `ComfyUI ${c.version || ''}${c.gpu ? ` on ${c.gpu}` : ''}`.trim() : c.error || '';
 }
 
