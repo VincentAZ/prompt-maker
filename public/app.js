@@ -5048,7 +5048,7 @@ function renderPrivacy(st) {
   note.hidden = true;
 }
 
-const LEVEL_NAMES = { normal: 'Normal', private: 'Private', ram: 'Nothing on this machine' };
+const LEVEL_NAMES = { normal: 'Safe', private: 'Safer', ram: 'Nothing stays' };
 
 // "How private?": the Privacy level, asked once on first start, and from the Privacy check card. Each level is a set
 // of switches; the server applies them (and asks for the password when a fix needs it).

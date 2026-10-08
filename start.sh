@@ -11,7 +11,9 @@ cd "$(dirname "$(readlink -f "$0")")"
 
 PORT="${PORT:-5317}"
 URL="http://127.0.0.1:$PORT"
-NODE="$(command -v node || echo "$HOME/.local/bin/node")"
+# The Node.js that came with the package (a .deb puts it beside the app), else the one on this computer.
+BUNDLED="$(dirname "$PWD")/node/bin/node"
+NODE="$( [ -x "$BUNDLED" ] && echo "$BUNDLED" || command -v node || echo "$HOME/.local/bin/node")"
 LMS="$(command -v lms || echo "$HOME/.lmstudio/bin/lms")"
 SETUP=(env PORT="$PORT" LMS_BIN="$LMS" "$NODE" lib/autostart.js)
 

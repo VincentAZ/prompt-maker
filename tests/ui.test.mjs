@@ -452,13 +452,13 @@ esac
   await test('boot', async () => {
     await goto(`${APP}/`);
     assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'Create view is active');
-    // The first start asks how private; Normal is the default, and the answer is kept.
+    // The first start asks how private; Safe is the default, and the answer is kept.
     await waitFor('document.querySelector("#privacyDlg").open', 'the "How private?" question');
     await waitFor('document.querySelector("#privacyDisk").textContent.includes("not encrypted")', 'the disk verdict');
-    assert((await text('#privacyDlg')).includes('Nothing on this machine'), 'the levels');
-    assert(await js('document.querySelector(\'#privacyDlg input[value="normal"]\').checked'), 'Normal is picked');
+    assert((await text('#privacyDlg')).includes('Nothing stays'), 'the levels');
+    assert(await js('document.querySelector(\'#privacyDlg input[value="normal"]\').checked'), 'Safe is picked');
     await click('#privacyDlg button[value="ok"]');
-    await toastText('Normal');
+    await toastText('Safe');
     eq((await (await fetch(`${APP}/api/settings`)).json()).privacyLevel, 'normal', 'kept');
     await goto(`${APP}/`);
     await sleep(500);
@@ -936,21 +936,21 @@ esac
     eq(await state('hibernation'), 'Off.', 'shown off');
     await fs.writeFile(fakeSwaps, 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n');
 
-    // The level, changed from here: Private switches ComfyUI to memory and runs the fixes that are still needed.
+    // The level, changed from here: Safer switches ComfyUI to memory and runs the fixes that are still needed.
     await fs.writeFile(fakeSwaps, 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/swapfile file 8388604 0 -2\n');
     await fs.writeFile(pkexecLog, '');
-    assert((await text('#privacyLevelLine')).includes('Normal'), `the level shows: ${await text('#privacyLevelLine')}`);
+    assert((await text('#privacyLevelLine')).includes('Safe'), `the level shows: ${await text('#privacyLevelLine')}`);
     await click('#privacyLevelBtn');
     await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog');
     await click('#privacyDlg input[value="private"]');
     await click('#privacyDlg button[value="ok"]');
-    await toastText('Private');
+    await toastText('Safer');
     const sPrivate = await (await fetch(`${APP}/api/settings`)).json();
-    assert(sPrivate.privacyLevel === 'private' && sPrivate.comfyRam && sPrivate.logScrub && !sPrivate.dataRam, 'the Private switches');
+    assert(sPrivate.privacyLevel === 'private' && sPrivate.comfyRam && sPrivate.logScrub && !sPrivate.dataRam, 'the Safer switches');
     assert((await fs.readFile(pkexecLog, 'utf8')).includes('swapoff -a'), 'swap turned off again as part of it');
-    assert((await text('#privacyLevelLine')).includes('Private'), 'the card says so');
+    assert((await text('#privacyLevelLine')).includes('Safer'), 'the card says so');
     assert(await js('document.querySelector("#sComfyRam").checked'), 'the ComfyUI switch in the form follows');
-    // Nothing on this machine: your work in memory, after a restart.
+    // Nothing stays: your work in memory, after a restart.
     await click('#privacyLevelBtn');
     await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog again');
     await click('#privacyDlg input[value="ram"]');
@@ -959,14 +959,14 @@ esac
     const sRam = await (await fetch(`${APP}/api/settings`)).json();
     assert(sRam.privacyLevel === 'ram' && sRam.dataRam && !sRam.inMemory, 'set, not yet in effect');
     assert((await text('#privacyLevelLine')).includes('after a restart'), 'the card says it takes a restart');
-    // Back to Normal.
+    // Back to Safe.
     await click('#privacyLevelBtn');
     await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog once more');
     await click('#privacyDlg input[value="normal"]');
     await click('#privacyDlg button[value="ok"]');
-    await toastText('Normal');
+    await toastText('Safe');
     const sNormal = await (await fetch(`${APP}/api/settings`)).json();
-    assert(sNormal.privacyLevel === 'normal' && !sNormal.comfyRam && !sNormal.dataRam, 'the Normal switches');
+    assert(sNormal.privacyLevel === 'normal' && !sNormal.comfyRam && !sNormal.dataRam, 'the Safe switches');
   });
 
   await test('🔒 a session in memory: History, renders and the chat live in RAM and go when Prompt Maker stops', async () => {
