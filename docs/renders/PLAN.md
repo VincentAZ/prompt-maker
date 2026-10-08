@@ -57,6 +57,6 @@ The earlier long-prompt stills (fisherman, ramen, convertible, ballet) get no ca
 | `street-musician.webp` | street musician at night |
 | `mountain-lake.webp` | mountain lake at dawn |
 | `surfer-sunset.webp` | surfer at sunset |
-| `wan-woman-dance.webp` / `.mp4` | Wan Animate 2: the `woman-pier` picture + a Pixabay silhouette dance clip as motion (3.4 s, no sound); "she dances on the pier as the sun sets" |
+| `wan-woman-dance.webp` / `.mp4` | Wan Animate 2, 720p, 3.15 s, no sound: the standing `woman-studio-red-dress` picture ("woman in a red dress, full body, plain studio") + the first 6 s (24 fps) of a Pixabay silhouette dance as motion; "she dances in a photo studio". The first try (seated pier woman, 3.4 s at 480p) came out bad and was replaced: a character needs a full-length standing picture for a dance. |
 
-The Wan clip's motion source is a Pixabay silhouette video (not shipped; check the license).
+The Wan clip's motion source is a Pixabay silhouette video (not shipped; Pixabay's license allows it, confirmed by the owner).
