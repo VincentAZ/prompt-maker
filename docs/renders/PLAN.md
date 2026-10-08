@@ -73,3 +73,10 @@ The Wan clip's motion source is a Pixabay silhouette video (not shipped; Pixabay
   dock at dawn". Made with ComfyUI's "Wan Animate 2: Motion Transfer" template, which follows the WHOLE motion video
   (the starter that ships with the app animates 81 frames = 3.4 s). Do not stitch Wan clips: each restarts from the
   reference pose. The first woman-dance attempts were bad (flying hair in the source looked fake) and were dropped.
+
+## Decision (2026-10-08, the owner): show NO prompts at all
+
+No prompt or "the words I typed" captions anywhere in the README or the Civitai article, for any render. The renders
+speak for themselves; the tables above are working notes for us, not for shipping. No remake of the convertible.
+Plain titles at most ("Dawn on the dock", "The same man, four scenes"). The line the cook speaks in the MiniMax clip is
+part of the clip, not a prompt, and may be mentioned.
