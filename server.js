@@ -1060,10 +1060,28 @@ async function renderTake(req, res) {
     imageName = await comfy.uploadImage(base, buf, `prompt-maker_${name}`, IMAGE_MIME[ext] || 'image/png');
   }
   let videoName = null;
+  // How many frames the motion video has: a workflow made of pieces gets as many as it needs, and one that loops over
+  // the whole video says how many pieces it's on.
+  let videoFrames = null;
   if (workflow.mapping.video && entry.video?.file) {
     const file = store.videoPath(entry.video.file);
-    const buf = await fs.readFile(file).catch(() => { throw store.httpError(404, 'This take\'s motion video is missing from the data folder.'); });
-    videoName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.video.file}`, VIDEO_MIME[entry.video.file.split('.').pop()] || 'video/mp4');
+    await fs.access(file).catch(() => { throw store.httpError(404, 'This take\'s motion video is missing from the data folder.'); });
+    let info = entry.video.seconds && entry.video.fps ? entry.video : await videotools.probe(file);
+    // Wan Animate 2 takes the video's frames one for one: from a 60 fps phone video its 81 frames are 1.4 s, and the
+    // moves play fast. Over 30 fps, ComfyUI gets a 24 fps copy (made for this render, then shredded).
+    const fps = 24;
+    let copy = null;
+    if (info?.fps > 30 && fps < info.fps && (await videotools.hasFfmpeg())) {
+      copy = await videotools.retime(file, fps).catch(err => { console.warn(`Couldn't make a ${fps} fps copy of the motion video: ${err.message}`); return null; });
+      if (copy) info = (await videotools.probe(copy)) || { ...info, fps };
+    }
+    try {
+      const buf = await fs.readFile(copy || file);
+      videoName = await comfy.uploadImage(base, buf, `prompt-maker_${copy ? entry.video.file.replace(/\.\w+$/, `.${fps}fps.mp4`) : entry.video.file}`, copy ? 'video/mp4' : VIDEO_MIME[entry.video.file.split('.').pop()] || 'video/mp4');
+    } finally {
+      if (copy) await store.shredFile(copy);
+    }
+    if (info?.seconds && info?.fps) videoFrames = Math.round(info.seconds * info.fps);
   }
   // 🎙 The spoken line goes in as the soundtrack; without one, the workflow's sound nodes are left out.
   let audioName = null;
@@ -1074,13 +1092,6 @@ async function renderTake(req, res) {
     audioName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.line.file}`, 'audio/wav');
   }
   const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
-  // How many frames the motion video has: a workflow made of pieces gets as many as it needs, and one that loops over
-  // the whole video says how many pieces it's on.
-  let videoFrames = null;
-  if (workflow.mapping.video && entry.video?.file) {
-    const info = entry.video.seconds && entry.video.fps ? entry.video : await videotools.probe(store.videoPath(entry.video.file));
-    if (info?.seconds && info?.fps) videoFrames = Math.round(info.seconds * info.fps);
-  }
   const pieces = videoFrames ? wf.loopPieces(workflow.prompt, videoFrames) : null;
   // A video in pieces: ComfyUI saves each piece and Prompt Maker joins them, which needs ffmpeg (see wf.splitPieces).
   const joinInApp = Boolean(pieces) && (await videotools.hasFfmpeg());

@@ -61,7 +61,7 @@
     {
       "name": "video_wan_animate2_distilled",
       "title": "Wan Animate 2 Distilled: Motion Transfer",
-      "note": "Distilled model (10 steps). Makes the first 81 frames of the motion video."
+      "note": "Distilled model (10 steps). Follows the whole motion video, 81 frames at a time."
     }
   ],
   "sources": [

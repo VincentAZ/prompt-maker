@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.34.2 — Wan Animate 2 made about 1 s from a 60 fps phone video: renders now use a 24 fps copy of a fast
+  video, and the one-piece Distilled workflow is chained to follow the whole video. Your renders no longer breaks while
+  a render runs (a name clash from 1.33.0).
 - 1.34.1 — Step ⑤: Renders per take (×1–×4) shows under Auto-render, not only with a chain; auto-render uses it.
 - 1.34.0 — History: pick several cards (Ctrl-click, Shift-click or drag a box) and delete them in one go, 8 s to undo.
 - 1.33.0 — Your renders and the Gallery: pick several (Ctrl-click, Shift-click or drag a box) and delete them in one

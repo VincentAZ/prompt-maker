@@ -4015,6 +4015,19 @@ esac
     eq(JSON.stringify(split.prompt.pmsave003.inputs.video), '["pmvideo003",0]', 'and saves its own video');
     assert(!wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 400 }).parts, 'without ffmpeg, ComfyUI joins them as before');
     delete prompt['33'].inputs.audio;
+    // ComfyUI's Distilled template is one piece of 81 frames: a second one carrying on from it is made, then as many as
+    // the video needs, the last only as long as what's left.
+    const distilled = JSON.parse(await fs.readFile(new URL('../workflows/wan-animate-2/motion-transfer.json', import.meta.url), 'utf8'));
+    eq(wfLib.clipFrames(distilled.prompt), 'all', 'the Distilled template covers any length');
+    const dw = { ...distilled, id: 'd', overrides: {}, loras: [] };
+    const lengths = vf => Object.values(wfLib.buildPrompt(dw, { text: 'a robot', videoFrames: vf }).prompt).filter(n => n.class_type === 'WanAnimate2ToVideo').map(n => n.inputs.length).join();
+    eq(lengths(42), '41', 'a short video: one piece, no longer than it');
+    eq(lengths(150), '81,69', 'two pieces, the second as long as what\'s left');
+    eq(lengths(402), '81,81,81,81,81', '400 frames: five');
+    const chained = wfLib.buildPrompt(dw, { text: 'a robot', videoFrames: 402, joinInApp: true });
+    eq(JSON.stringify([chained.prompt['pm1:247'].inputs.continue_motion, chained.prompt['pm1:247'].inputs.video_frame_offset]), '[["pmnext:299",0],["pmnext:247",5]]', 'each carries on from the one before, where it stopped in the video');
+    eq(chained.parts.saves.length, 5, 'saved piece by piece, for Prompt Maker to join');
+    eq(JSON.stringify(chained.prompt.pmvideo002.inputs.images), '["pmnext:trim",0]', 'without the frame it repeats');
     // Each piece loads the same LoRA: one row, and a change reaches every piece.
     const { leads } = wfLib.loraGroups(prompt);
     eq(leads.map(l => `${l.key}×${l.pieces}`).join(), '10:7×2', 'the LoRA shows once, for both pieces');

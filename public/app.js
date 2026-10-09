@@ -2238,17 +2238,15 @@ function renderMotionHint() {
   if (v?.bars) {
     parts.push(`⬛ Black bars: the picture is ${v.bars.width}×${v.bars.height} inside a ${v.width}×${v.height} frame. Wan Animate 2 would take the bars as part of the video, and its shape too.`);
   }
-  if (v?.fps > 32) {
-    parts.push(`⚠️ ${Math.round(v.fps)} fps: Wan Animate 2 uses every frame, so this takes about ${Math.round(v.fps / 24)}× as long as at 24 fps.`);
+  if (v?.fps > 30) {
+    parts.push(v.ffmpeg
+      ? `🎞 ${Math.round(v.fps)} fps: renders use a 24 fps copy, so the moves keep their speed and it takes less time.`
+      : `⚠️ ${Math.round(v.fps)} fps: Wan Animate 2 uses every frame, so the moves play ${Math.round((v.fps / 24) * 10) / 10}× too fast. With ffmpeg installed, Prompt Maker renders from a 24 fps copy.`);
   }
   hint.innerHTML = parts.length ? parts.map(esc).join(' ') : 'The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.';
   if (v?.bars && v.ffmpeg) {
     hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoCrop">✂️ Crop the bars</button>');
     $('#videoCrop').addEventListener('click', e => videoCopy(e.currentTarget, 'crop'));
-  }
-  if (v?.fps > 32 && v.ffmpeg) {
-    hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoRetime">Use a 24 fps copy</button>');
-    $('#videoRetime').addEventListener('click', e => videoCopy(e.currentTarget, 'retime'));
   }
   $('#videoTrim').hidden = !(v?.file && v.ffmpeg && v.seconds > 1); // cutting needs ffmpeg
 }
@@ -2752,12 +2750,12 @@ function renderReel() {
   $('#galleryCount').textContent = all.length || '';
   const items = inReelOrder(all).filter(reelMatch);
   const jobs = rendersNow.filter(reelJobMatch);
-  const going = rendersLeft();
+  const rendering = rendersLeft();
   const shown = all.length - hiddenCount;
   $('#reelCount').textContent = [
     // (In the Gallery the page's heading already says how many there are.)
     reelFilter.hidden ? `${items.length} hidden` : shown && (reelFiltered() ? `${items.length} of ${shown}` : inGallery() ? '' : `${shown} render${shown > 1 ? 's' : ''}`),
-    going && `${going} rendering`,
+    rendering && `${rendering} rendering`,
   ].filter(Boolean).join(' · ');
   $('#reelZoom').hidden = !open || none;
   const videosShown = items.filter(it => it.file.kind === 'video').length;
