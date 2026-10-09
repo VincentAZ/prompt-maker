@@ -53,7 +53,7 @@ The full manual for [Prompt Maker](../README.md): every page, setting and trick.
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
   - **🎁 Every model comes with a workflow**, already attached: pick a model and **▶ Render** is there. A model file you don't have yet is one **⬇ Download** away. Prefer your own? Add it and it's the one used; the one that came with the app stays in the list until you delete it.
   - Watch live progress (and previews) right on the take.
-  - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, and make the box as tall as you like, or full screen.
+  - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, pick several (Ctrl-click or drag a box) to delete them in one go, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
   - **⇆ Compare** two renders side by side and **📌 Keep this one** until the best is left.
   - **🙈 Hide** the ones you don't want to see, without deleting them. **Delete** waits 8 seconds with **↶ Undo**.
@@ -393,6 +393,7 @@ Everything you generate is saved automatically:
 | `←` `→` (full-screen view) | The render before or after |
 | `1` `2` `3` (full-screen view) | Rate it ★, ★★ or ★★★; `0` takes the rating off |
 | `Shift` + `←` `→` on a render card | Move the card in 🎞 Your renders or the Gallery |
+| `Ctrl` / `⌘` + click, `Shift` + click on a render card | Pick several in 🎞 Your renders or the Gallery; `Delete` deletes them (8 s to undo), `Esc` lets go |
 
 ## Rendering with ComfyUI (optional)
 
@@ -580,6 +581,7 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - **Filters:** 📷 Images or 🎬 Videos, **🕘 This session** (only what you made since Prompt Maker last started), **★ & up**, **★★ & up** or **★★★**, a model, and **Find…** to search the words of the prompt. The count says how many show (*12 of 183*). The filters are remembered, except Find.
 - **Arrange them your way.** Drag a card where you want it and the others slide aside to make room: over a card's left half it goes before it, over its right half after it. On a touch screen, hold it a moment first; with the keyboard, **Shift + ←** or **→** moves the card you're on. Your order is saved in your data folder, so it stays. New renders come in first, ahead of the ones you've placed. **↺ Newest first** goes back to newest first.
 - **As big as you want.** Drag the box's bottom edge to make it taller or shorter. It keeps that height while renders arrive, so the takes below don't move. **🔍** makes the pictures bigger or smaller, up to one picture as tall as the box. **⛶ Full screen** gives the box the whole window (**Esc** goes back). **▾** folds it away. All of this is remembered.
+- **Delete several at once.** **Ctrl**-click (**⌘** on a Mac) the cards you want gone, **Shift**-click to take every card up to the one you click, or drag a box across them from an empty spot (or with **Ctrl** held, from a card). Picked cards get a ✓. The bar at the bottom says how many; **🗑 Delete** (click twice: *Sure?*) or the **Delete** key deletes them for good, here and in ComfyUI. They dim for 8 seconds first, with one **↶ Undo** for them all. **Esc**, **✕** or a click on an empty spot lets go of the selection; **Ctrl + A** picks every card shown.
 - **A dragged card is never left hanging.** Let go outside the window, or switch to another program mid-drag, and the card drops where it was.
 - **In the Gallery, a hidden one is marked** (dimmed, with **👁 Show** on it), so you can tell it from the others and bring it back there too.
 - **🙈 Hide** one you don't want in the box: hover it and click **🙈** at its top right (**↶ Undo** brings it back). Nothing is deleted; it stays in History, the Gallery and its take. **🙈 Hidden (n)** in the filters shows the ones you hid; **👁 Show** puts one back.

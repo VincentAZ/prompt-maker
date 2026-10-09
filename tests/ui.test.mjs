@@ -196,7 +196,7 @@ async function type(sel, str, { clear = true } = {}) {
 }
 
 async function press(key, { ctrl = false } = {}) {
-  const codes = { Enter: 13, Escape: 27, ' ': 32, ArrowDown: 40, ArrowUp: 38 };
+  const codes = { Enter: 13, Escape: 27, Delete: 46, ' ': 32, ArrowDown: 40, ArrowUp: 38 };
   const base = { key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: codes[key], modifiers: ctrl ? 2 : 0 };
   for (let attempt = 0; ; attempt++) {
     const before = await js('window.__input?.keys ?? -1');
@@ -2071,6 +2071,51 @@ esac
     eq((await keys()).slice(0, 3).join(), [k0, k1, k2].join(), '↺ Newest first puts them back');
     await waitFor('(async () => (await (await fetch("/api/render-order")).json()).order.length === 0)()', 'and forgets your order');
     assert(!(await visible('#reelNewest')), 'and the button goes');
+
+    // Pick several: Ctrl-click, then a box dragged with Ctrl from a card; the bar deletes them, with ↶ Undo.
+    const cell = n => `#reelGrid > .reel-cell:nth-child(${n + 1})`;
+    const ctrlClick = async n => {
+      const p = await at(n);
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers: 2 });
+      await sleep(60);
+    };
+    await ctrlClick(0);
+    await ctrlClick(1);
+    eq(await count('#reelGrid > .reel-cell.picked'), 2, 'Ctrl-click picks cards');
+    assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
+    assert((await visible('#reelSel')) && (await text('#reelSelCount')) === '2 selected', 'the bar says how many');
+    await ctrlClick(1);
+    eq(await count('#reelGrid > .reel-cell.picked'), 1, 'Ctrl-click again lets one go');
+    await press('Escape');
+    eq(await count('#reelGrid > .reel-cell.picked'), 0, 'Esc lets go of them all');
+    assert(!(await visible('#reelSel')), 'and the bar goes');
+    const b0 = await at(0), b2 = await at(2);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b0.x, y: b0.y, button: 'left', buttons: 1, clickCount: 1, modifiers: 2 });
+    for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b0.x + ((b2.x - b0.x) * k) / 10, y: b0.y + ((b2.y - b0.y) * k) / 10 + 2, button: 'left', buttons: 1, modifiers: 2 });
+    assert(await js('!!document.querySelector(".reel-band") && !document.querySelector(".reel-ghost")'), 'Ctrl-drag draws a box, it doesn\'t carry the card');
+    await shot('24d-your-renders-box');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b2.x, y: b2.y + 2, button: 'left', buttons: 0, clickCount: 1, modifiers: 2 });
+    await sleep(80);
+    assert(!(await js('!!document.querySelector(".reel-band")')), 'the box goes when you let go');
+    assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'it picks every card it touched');
+    assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
+    const picked = await count('#reelGrid > .reel-cell.picked');
+    await shot('24e-your-renders-picked');
+    await click('#reelSelDelete');
+    await click('#reelSelDelete');
+    await toastText('Deleting');
+    eq(await count('#reelGrid > .reel-cell.going'), picked, 'they dim while they wait');
+    await click('#toast .toast-act');
+    await toastText('Kept');
+    eq(await count('#reelGrid > .reel-cell.going'), 0, '↶ Undo keeps them all');
+    const total = await count('#reelGrid > .reel-cell');
+    await ctrlClick(0);
+    await ctrlClick(1);
+    await press('Delete');
+    await press('Delete');
+    await toastText('Deleting 2 renders');
+    await toastText('2 renders deleted', UNDO_WAIT);
+    await waitFor(`document.querySelectorAll("#reelGrid > .reel-cell").length === ${total - 2}`, 'two fewer, after the 8 s');
 
     // Its height stays put (renders scroll inside it); drag the bottom edge, or ↑ ↓ on it, to change it.
     const bodyH = () => js('document.querySelector("#reelBody").offsetHeight');

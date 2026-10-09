@@ -1,6 +1,6 @@
 {
   "name": "prompt-maker",
-  "version": "1.32.1",
+  "version": "1.33.0",
   "description": "Make pictures and videos on your own computer by saying what you want. It writes for each model the way that model likes, keeps the same person across shots and gives them a voice, and helps you rate, compare and keep your best. Seven models ready, more on the way. Free, private, 100% offline. Runs on LM Studio and ComfyUI.",
   "license": "FSL-1.1-ALv2",
   "author": "Serpico Enterprises LLC",

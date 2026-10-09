@@ -2785,6 +2785,9 @@ function renderReel() {
       : 'Nothing matches these filters. <button type="button" class="btn small" data-reel="all">Show everything</button>';
   }
   reelItems = items;
+  const showing = new Set(items.map(reelKey));
+  for (const k of reelPicked) if (!showing.has(k) || going.has(k.split('/')[0])) reelPicked.delete(k);
+  drawReelPicked();
   // Only cards that changed place move (a card put back in the page plays its arrival again).
   const cards = [...jobs.map(reelJobTile), ...items.slice(0, reelShown).map(reelTile)];
   const grid = $('#reelGrid');
@@ -2872,6 +2875,7 @@ function reelTile(it) {
   cell.style.setProperty('--ar', reelRatioOf(it));
   cell.classList.toggle('going', going.has(it.render.id) || going.has(it.entry.id));
   cell.classList.toggle('is-hidden', Boolean(it.render.hidden)); // the Gallery still shows it, marked, with 👁 Show
+  cell.classList.toggle('picked', reelPicked.has(key));
   const theme = it.entry.theme || 'From an image';
   const rating = ratingOf(it.render);
   $('.rt-cap b', cell).textContent = theme;
@@ -2961,7 +2965,7 @@ $('#reelGrid').addEventListener('keydown', () => { reelDropped = false; }, true)
 $('#reelGrid').addEventListener('pointerdown', e => {
   reelDropped = false; // a new press: the last drag's click isn't coming anymore
   const cell = e.target.closest('.reel-cell');
-  if (!cell || e.button !== 0 || reelDrag || e.target.closest('.rate-bar, .rt-hide')) return;
+  if (!cell || e.button !== 0 || reelDrag || e.ctrlKey || e.metaKey || e.target.closest('.rate-bar, .rt-hide')) return;
   const d = { cell, key: cell.dataset.key, pointer: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, touch: e.pointerType !== 'mouse' };
   reelDrag = d;
   if (d.touch) d.hold = setTimeout(() => startReelDrag(d), 400);
@@ -3094,6 +3098,152 @@ $('#reelNewest').addEventListener('click', e => confirmClick(e.currentTarget, 'S
   saveReelOrder();
   toast('Newest first again');
 }));
+
+// ---------- your renders: pick several, delete them ----------
+// Ctrl-click (⌘ on a Mac) picks a card, Shift-click every card up to it; drag across empty space (or Ctrl-drag from a
+// card) draws a box that picks what it touches. The bar at the bottom deletes them, with 8 s to undo. Esc lets go.
+
+const reelPicked = new Set(); // reel keys
+let reelAnchor = null; // the card Shift-click counts from
+let reelBanded = false; // the click that ends a box doesn't open or pick a card
+
+function drawReelPicked() {
+  for (const [k, cell] of reelCells) cell.classList.toggle('picked', reelPicked.has(k));
+  const bar = $('#reelSel');
+  bar.hidden = !reelPicked.size;
+  if (!reelPicked.size) return;
+  const n = reelPickedRenders().length;
+  $('#reelSelCount').textContent = `${n} selected`;
+}
+
+// The renders picked (a render with two files counts once), in grid order.
+function reelPickedRenders() {
+  const seen = new Map();
+  for (const it of reelItems) if (reelPicked.has(reelKey(it)) && !seen.has(it.render.id)) seen.set(it.render.id, it);
+  return [...seen.values()];
+}
+
+function clearReelPicked() {
+  reelPicked.clear();
+  reelAnchor = null;
+  drawReelPicked();
+}
+
+// Ctrl/⌘-click and Shift-click pick instead of opening.
+$('#reelGrid').addEventListener('click', e => {
+  if (reelBanded) { reelBanded = false; e.stopPropagation(); e.preventDefault(); return; }
+  const tile = e.target.closest('.reel-cell > .rtile');
+  if (!tile || !(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+  e.stopPropagation();
+  e.preventDefault();
+  const key = tile.parentElement.dataset.key;
+  if (e.shiftKey && reelAnchor && reelCells.has(reelAnchor)) {
+    const keys = [...$$('#reelGrid > .reel-cell')].map(c => c.dataset.key);
+    const [a, b] = [keys.indexOf(reelAnchor), keys.indexOf(key)].sort((x, y) => x - y);
+    if (a >= 0) keys.slice(a, b + 1).forEach(k => reelPicked.add(k));
+  } else {
+    if (reelPicked.has(key)) reelPicked.delete(key); else reelPicked.add(key);
+    reelAnchor = key;
+  }
+  drawReelPicked();
+}, true);
+
+// The selection box: from empty space in the box, or from a card with Ctrl/⌘ held.
+$('#reelBody').addEventListener('pointerdown', e => {
+  if (e.button !== 0 || e.pointerType !== 'mouse' || reelDrag) return;
+  const onCard = e.target.closest('#reelGrid > .reel-cell');
+  if (onCard ? !(e.ctrlKey || e.metaKey) || e.target.closest('.rate-bar, .rt-hide') : e.target.closest('button, input, select, a, label, .reel-filters, .reel-job')) return;
+  const body = $('#reelBody');
+  const at = ev => { const r = body.getBoundingClientRect(); return { x: ev.clientX - r.left + body.scrollLeft, y: ev.clientY - r.top + body.scrollTop }; };
+  const d = { start: at(e), now: at(e), x: e.clientX, y: e.clientY, base: e.ctrlKey || e.metaKey ? new Set(reelPicked) : new Set(), band: null };
+  const draw = () => {
+    const r = body.getBoundingClientRect();
+    d.now = { x: d.x - r.left + body.scrollLeft, y: d.y - r.top + body.scrollTop };
+    const left = Math.min(d.start.x, d.now.x), top = Math.min(d.start.y, d.now.y);
+    const w = Math.abs(d.now.x - d.start.x), h = Math.abs(d.now.y - d.start.y);
+    Object.assign(d.band.style, { left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` });
+    // (in the screen's terms, to compare with the cards)
+    const box = { left: left + r.left - body.scrollLeft, top: top + r.top - body.scrollTop };
+    box.right = box.left + w;
+    box.bottom = box.top + h;
+    reelPicked.clear();
+    d.base.forEach(k => reelPicked.add(k));
+    for (const c of $$('#reelGrid > .reel-cell')) {
+      if (c.hidden || c.classList.contains('going')) continue;
+      const b = c.getBoundingClientRect();
+      if (b.right > box.left && b.left < box.right && b.bottom > box.top && b.top < box.bottom) reelPicked.add(c.dataset.key);
+    }
+    drawReelPicked();
+  };
+  // Near the top or bottom of the box, it scrolls on.
+  const scroll = () => {
+    const r = body.getBoundingClientRect();
+    const top = Math.max(r.top, $('#reelFilters').getBoundingClientRect().bottom);
+    const by = d.y < top + 40 ? d.y - (top + 40) : d.y > r.bottom - 40 ? d.y - (r.bottom - 40) : 0;
+    if (by) { body.scrollTop += Math.max(-24, Math.min(24, by / 2)); draw(); }
+    d.frame = requestAnimationFrame(scroll);
+  };
+  const move = ev => {
+    d.x = ev.clientX;
+    d.y = ev.clientY;
+    if (!d.band) {
+      if (Math.hypot(d.x - e.clientX, d.y - e.clientY) < 6) return;
+      d.band = Object.assign(document.createElement('div'), { className: 'reel-band' });
+      body.append(d.band);
+      getSelection()?.removeAllRanges();
+      scroll();
+    }
+    ev.preventDefault();
+    draw();
+  };
+  const end = () => {
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', end);
+    removeEventListener('pointercancel', end);
+    removeEventListener('blur', end);
+    cancelAnimationFrame(d.frame);
+    if (d.band) {
+      d.band.remove();
+      reelBanded = Boolean(onCard); // a Ctrl-drag from a card ends in a click on it
+      announce(`${reelPickedRenders().length} selected`);
+    } else if (!onCard) clearReelPicked(); // a click on empty space lets go
+  };
+  if (onCard) e.preventDefault(); // (no text selection from the card)
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', end);
+  addEventListener('pointercancel', end);
+  addEventListener('blur', end);
+});
+$('#reelBody').addEventListener('pointerdown', () => { reelBanded = false; }, true);
+
+$('#reelSelClear').addEventListener('click', clearReelPicked);
+$('#reelSelDelete').addEventListener('click', e => {
+  const list = reelPickedRenders();
+  if (!list.length) return clearReelPicked();
+  const rated = list.filter(it => ratingOf(it.render)).length;
+  confirmClick(e.currentTarget, rated ? `Sure? ${rated} ${rated > 1 ? 'are' : 'is'} rated` : `Sure? ${list.length} go`, () => {
+    clearReelPicked();
+    deleteManySoon(list, () => { if (!$('#lightbox').hidden) lbRender(); renderReel(); });
+  });
+});
+
+// Esc lets go of the selection (before it leaves full screen); Delete deletes it (press twice: Sure?); Ctrl+A picks
+// every card shown.
+document.addEventListener('keydown', e => {
+  if (!$('#lightbox').hidden || document.querySelector('dialog[open]') || e.target.closest?.('input, textarea, select, [contenteditable], #assistant')) return;
+  if (e.key === 'Escape' && reelPicked.size) {
+    e.stopPropagation();
+    e.preventDefault();
+    clearReelPicked();
+  } else if ((e.key === 'Delete' || e.key === 'Backspace') && reelPicked.size) {
+    e.preventDefault();
+    $('#reelSelDelete').click();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && e.target.closest?.('#reel')) {
+    e.preventDefault();
+    for (const c of $$('#reelGrid > .reel-cell')) if (!c.hidden && !c.classList.contains('going')) reelPicked.add(c.dataset.key);
+    drawReelPicked();
+  }
+}, true);
 
 // ---------- your renders: size ----------
 // The box is as tall as you drag it (or the whole window, in full screen); pictures are as big as 🔍 says, up to the
@@ -3958,6 +4108,34 @@ function countDown(id) {
   if (!t.hidden && t.dataset.going === id && t.firstChild?.nodeType === Node.TEXT_NODE) t.firstChild.nodeValue = goingText(item);
 }
 
+// Several renders at once (the grid's selection): each waits in `going` (so it dims and the lightbox offers Undo), under
+// one countdown and one ↶ Undo for them all.
+function deleteManySoon(list, redraw) {
+  const gid = `many-${Date.now()}`;
+  const what = `${list.length} render${list.length > 1 ? 's' : ''}`;
+  const until = Date.now() + UNDO_MS;
+  const members = list.map(it => it.render.id);
+  for (const it of list) going.set(it.render.id, { url: `/api/history/${it.entry.id}/renders/${it.render.id}`, run: () => deleteRenderNow(it.entry, it.render, { quiet: true }), what, until, group: gid });
+  const group = { what, until, members };
+  group.timer = setTimeout(async () => {
+    stopWaiting(gid);
+    let done = 0;
+    for (const it of list) {
+      const item = going.get(it.render.id);
+      if (item?.group !== gid) continue; // undone, or already deleted another way
+      stopWaiting(it.render.id);
+      try { await item.run(); done++; } catch (err) { toast(err.message, true); }
+    }
+    redraw();
+    if (done) toast(`🗑️ ${done} render${done > 1 ? 's' : ''} deleted`);
+  }, UNDO_MS);
+  group.tick = setInterval(() => countDown(gid), 250);
+  going.set(gid, group);
+  redraw();
+  toast(goingText(group), false, { label: '↶ Undo', run: () => undoDelete(gid, redraw) });
+  $('#toast').dataset.going = gid;
+}
+
 // It's being deleted now (its time is up, or the assistant does it): no second delete later.
 function stopWaiting(id) {
   const item = going.get(id);
@@ -3967,8 +4145,11 @@ function stopWaiting(id) {
 }
 
 function undoDelete(id, redraw) {
-  const item = going.get(id);
+  let item = going.get(id);
   if (!item) return toast('Too late: it is already deleted.', true);
+  if (item.group) { id = item.group; item = going.get(id); } // one of several: Undo keeps them all
+  if (!item) return toast('Too late: it is already deleted.', true);
+  for (const m of item.members || []) if (going.get(m)?.group === id) going.delete(m);
   clearTimeout(item.timer);
   clearInterval(item.tick);
   going.delete(id);
@@ -3993,8 +4174,9 @@ async function deleteWarning() {
 window.addEventListener('pagehide', () => {
   for (const [id, item] of going) {
     clearTimeout(item.timer);
+    clearInterval(item.tick);
     going.delete(id);
-    fetch(item.url, { method: 'DELETE', keepalive: true }).catch(() => {});
+    if (item.url) fetch(item.url, { method: 'DELETE', keepalive: true }).catch(() => {});
   }
 });
 
@@ -7860,7 +8042,7 @@ async function rateInLightbox(n) {
 }
 
 // Deletes one render for good (the lightbox's Delete, and the assistant after you confirm).
-async function deleteRenderNow(entry, render) {
+async function deleteRenderNow(entry, render, { quiet = false } = {}) {
   stopWaiting(render.id);
   const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'DELETE' });
   forgetRender(updated);
@@ -7872,7 +8054,7 @@ async function deleteRenderNow(entry, render) {
     lb.index = Math.min(lb.index, lb.items.length - 1);
     if (lb.items.length) lbRender(); else closeLightbox();
   }
-  toast('🗑️ Render deleted');
+  if (!quiet) toast('🗑️ Render deleted');
 }
 
 $('#lbClose').addEventListener('click', closeLightbox);
