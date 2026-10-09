@@ -3099,122 +3099,129 @@ $('#reelNewest').addEventListener('click', e => confirmClick(e.currentTarget, 'S
   toast('Newest first again');
 }));
 
-// ---------- your renders: pick several, delete them ----------
+// ---------- pick several, delete them (Your renders, the Gallery, History) ----------
 // Ctrl-click (⌘ on a Mac) picks a card, Shift-click every card up to it; drag across empty space (or Ctrl-drag from a
-// card) draws a box that picks what it touches. The bar at the bottom deletes them, with 8 s to undo. Esc lets go.
-
-const reelPicked = new Set(); // reel keys
-let reelAnchor = null; // the card Shift-click counts from
-let reelBanded = false; // the click that ends a box doesn't open or pick a card
-
-function drawReelPicked() {
-  for (const [k, cell] of reelCells) cell.classList.toggle('picked', reelPicked.has(k));
-  const bar = $('#reelSel');
-  bar.hidden = !reelPicked.size;
-  if (!reelPicked.size) return;
-  const n = reelPickedRenders().length;
-  $('#reelSelCount').textContent = `${n} selected`;
+// card) draws a box that picks what it touches. A bar deletes them, with 8 s to undo. Esc lets go, Ctrl+A picks all.
+//   grid: what holds the cards; card: a card's selector (it has data-key); host: where the box is drawn (it holds the
+//   grid, is position: relative, and is what scrolls, or scrolls with the page); edge(): the top and bottom where
+//   dragging scrolls on; free(target): a press there may start a box; show(): the bar's count changed.
+function cardPicker({ grid, card, host, edge, free, show }) {
+  const P = { keys: new Set(), anchor: null, banded: false };
+  const cards = () => [...$$(card, grid())].filter(c => !c.hidden && !c.classList.contains('going'));
+  P.draw = () => {
+    for (const c of $$(card, grid())) c.classList.toggle('picked', P.keys.has(c.dataset.key));
+    show();
+  };
+  P.clear = () => { P.keys.clear(); P.anchor = null; P.draw(); };
+  P.all = () => { cards().forEach(c => P.keys.add(c.dataset.key)); P.draw(); };
+  // Ctrl/⌘-click and Shift-click pick instead of opening.
+  P.click = e => {
+    if (P.banded) { P.banded = false; e.stopPropagation(); e.preventDefault(); return; }
+    const c = e.target.closest(card);
+    if (!c || !(e.ctrlKey || e.metaKey || e.shiftKey) || c.classList.contains('going')) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const key = c.dataset.key;
+    const keys = cards().map(x => x.dataset.key);
+    if (e.shiftKey && keys.includes(P.anchor)) {
+      const [i, j] = [keys.indexOf(P.anchor), keys.indexOf(key)].sort((x, y) => x - y);
+      keys.slice(i, j + 1).forEach(k => P.keys.add(k));
+    } else {
+      if (P.keys.has(key)) P.keys.delete(key); else P.keys.add(key);
+      P.anchor = key;
+    }
+    P.draw();
+  };
+  P.press = e => {
+    P.banded = false;
+    if (e.button !== 0 || e.pointerType !== 'mouse') return;
+    const onCard = e.target.closest(card);
+    if (onCard ? !(e.ctrlKey || e.metaKey) : !free(e.target)) return;
+    const el = host();
+    const at = () => { const r = el.getBoundingClientRect(); return { x: d.x - r.left + el.scrollLeft, y: d.y - r.top + el.scrollTop }; };
+    const d = { x: e.clientX, y: e.clientY, base: e.ctrlKey || e.metaKey ? new Set(P.keys) : new Set(), band: null };
+    d.start = at();
+    const draw = () => {
+      const r = el.getBoundingClientRect();
+      const now = at();
+      const left = Math.min(d.start.x, now.x), top = Math.min(d.start.y, now.y);
+      const w = Math.abs(now.x - d.start.x), h = Math.abs(now.y - d.start.y);
+      Object.assign(d.band.style, { left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` });
+      const box = { left: left + r.left - el.scrollLeft, top: top + r.top - el.scrollTop }; // (in the screen's terms)
+      P.keys.clear();
+      d.base.forEach(k => P.keys.add(k));
+      for (const c of cards()) {
+        const b = c.getBoundingClientRect();
+        if (b.right > box.left && b.left < box.left + w && b.bottom > box.top && b.top < box.top + h) P.keys.add(c.dataset.key);
+      }
+      P.draw();
+    };
+    // Near the top or bottom, it scrolls on.
+    const scroll = () => {
+      const { top, bottom, by: scrollBy } = edge();
+      const by = d.y < top + 40 ? d.y - (top + 40) : d.y > bottom - 40 ? d.y - (bottom - 40) : 0;
+      if (by) { scrollBy(Math.max(-24, Math.min(24, by / 2))); draw(); }
+      d.frame = requestAnimationFrame(scroll);
+    };
+    const move = ev => {
+      d.x = ev.clientX;
+      d.y = ev.clientY;
+      if (!d.band) {
+        if (Math.hypot(d.x - e.clientX, d.y - e.clientY) < 6) return;
+        d.band = Object.assign(document.createElement('div'), { className: 'pick-band' });
+        el.append(d.band);
+        getSelection()?.removeAllRanges();
+        scroll();
+      }
+      ev.preventDefault();
+      draw();
+    };
+    const end = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', end);
+      removeEventListener('pointercancel', end);
+      removeEventListener('blur', end);
+      cancelAnimationFrame(d.frame);
+      if (d.band) {
+        d.band.remove();
+        P.banded = Boolean(onCard); // a Ctrl-drag from a card ends in a click on it
+        announce(`${P.keys.size} selected`);
+      } else if (!onCard) P.clear(); // a click on empty space lets go
+    };
+    e.preventDefault(); // (no text selection while drawing the box)
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', end);
+    addEventListener('pointercancel', end);
+    addEventListener('blur', end);
+  };
+  return P;
 }
 
-// The renders picked (a render with two files counts once), in grid order.
+// Picking in Your renders (and the Gallery, the same grid): a render with two files counts once.
+const reelPick = cardPicker({
+  grid: () => $('#reelGrid'),
+  card: '#reelGrid > .reel-cell',
+  host: () => $('#reelBody'),
+  edge: () => { const body = $('#reelBody'); return { top: Math.max(body.getBoundingClientRect().top, $('#reelFilters').getBoundingClientRect().bottom), bottom: body.getBoundingClientRect().bottom, by: n => { body.scrollTop += n; } }; },
+  free: t => !t.closest('button, input, select, a, label, .reel-filters, .reel-job'),
+  show: () => {
+    $('#reelSel').hidden = !reelPick.keys.size;
+    $('#reelSelCount').textContent = `${reelPickedRenders().length} selected`;
+  },
+});
+const reelPicked = reelPick.keys;
+const drawReelPicked = reelPick.draw;
+const clearReelPicked = reelPick.clear;
+
+// The renders picked, in grid order.
 function reelPickedRenders() {
   const seen = new Map();
   for (const it of reelItems) if (reelPicked.has(reelKey(it)) && !seen.has(it.render.id)) seen.set(it.render.id, it);
   return [...seen.values()];
 }
 
-function clearReelPicked() {
-  reelPicked.clear();
-  reelAnchor = null;
-  drawReelPicked();
-}
-
-// Ctrl/⌘-click and Shift-click pick instead of opening.
-$('#reelGrid').addEventListener('click', e => {
-  if (reelBanded) { reelBanded = false; e.stopPropagation(); e.preventDefault(); return; }
-  const tile = e.target.closest('.reel-cell > .rtile');
-  if (!tile || !(e.ctrlKey || e.metaKey || e.shiftKey)) return;
-  e.stopPropagation();
-  e.preventDefault();
-  const key = tile.parentElement.dataset.key;
-  if (e.shiftKey && reelAnchor && reelCells.has(reelAnchor)) {
-    const keys = [...$$('#reelGrid > .reel-cell')].map(c => c.dataset.key);
-    const [a, b] = [keys.indexOf(reelAnchor), keys.indexOf(key)].sort((x, y) => x - y);
-    if (a >= 0) keys.slice(a, b + 1).forEach(k => reelPicked.add(k));
-  } else {
-    if (reelPicked.has(key)) reelPicked.delete(key); else reelPicked.add(key);
-    reelAnchor = key;
-  }
-  drawReelPicked();
-}, true);
-
-// The selection box: from empty space in the box, or from a card with Ctrl/⌘ held.
-$('#reelBody').addEventListener('pointerdown', e => {
-  if (e.button !== 0 || e.pointerType !== 'mouse' || reelDrag) return;
-  const onCard = e.target.closest('#reelGrid > .reel-cell');
-  if (onCard ? !(e.ctrlKey || e.metaKey) || e.target.closest('.rate-bar, .rt-hide') : e.target.closest('button, input, select, a, label, .reel-filters, .reel-job')) return;
-  const body = $('#reelBody');
-  const at = ev => { const r = body.getBoundingClientRect(); return { x: ev.clientX - r.left + body.scrollLeft, y: ev.clientY - r.top + body.scrollTop }; };
-  const d = { start: at(e), now: at(e), x: e.clientX, y: e.clientY, base: e.ctrlKey || e.metaKey ? new Set(reelPicked) : new Set(), band: null };
-  const draw = () => {
-    const r = body.getBoundingClientRect();
-    d.now = { x: d.x - r.left + body.scrollLeft, y: d.y - r.top + body.scrollTop };
-    const left = Math.min(d.start.x, d.now.x), top = Math.min(d.start.y, d.now.y);
-    const w = Math.abs(d.now.x - d.start.x), h = Math.abs(d.now.y - d.start.y);
-    Object.assign(d.band.style, { left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` });
-    // (in the screen's terms, to compare with the cards)
-    const box = { left: left + r.left - body.scrollLeft, top: top + r.top - body.scrollTop };
-    box.right = box.left + w;
-    box.bottom = box.top + h;
-    reelPicked.clear();
-    d.base.forEach(k => reelPicked.add(k));
-    for (const c of $$('#reelGrid > .reel-cell')) {
-      if (c.hidden || c.classList.contains('going')) continue;
-      const b = c.getBoundingClientRect();
-      if (b.right > box.left && b.left < box.right && b.bottom > box.top && b.top < box.bottom) reelPicked.add(c.dataset.key);
-    }
-    drawReelPicked();
-  };
-  // Near the top or bottom of the box, it scrolls on.
-  const scroll = () => {
-    const r = body.getBoundingClientRect();
-    const top = Math.max(r.top, $('#reelFilters').getBoundingClientRect().bottom);
-    const by = d.y < top + 40 ? d.y - (top + 40) : d.y > r.bottom - 40 ? d.y - (r.bottom - 40) : 0;
-    if (by) { body.scrollTop += Math.max(-24, Math.min(24, by / 2)); draw(); }
-    d.frame = requestAnimationFrame(scroll);
-  };
-  const move = ev => {
-    d.x = ev.clientX;
-    d.y = ev.clientY;
-    if (!d.band) {
-      if (Math.hypot(d.x - e.clientX, d.y - e.clientY) < 6) return;
-      d.band = Object.assign(document.createElement('div'), { className: 'reel-band' });
-      body.append(d.band);
-      getSelection()?.removeAllRanges();
-      scroll();
-    }
-    ev.preventDefault();
-    draw();
-  };
-  const end = () => {
-    removeEventListener('pointermove', move);
-    removeEventListener('pointerup', end);
-    removeEventListener('pointercancel', end);
-    removeEventListener('blur', end);
-    cancelAnimationFrame(d.frame);
-    if (d.band) {
-      d.band.remove();
-      reelBanded = Boolean(onCard); // a Ctrl-drag from a card ends in a click on it
-      announce(`${reelPickedRenders().length} selected`);
-    } else if (!onCard) clearReelPicked(); // a click on empty space lets go
-  };
-  if (onCard) e.preventDefault(); // (no text selection from the card)
-  addEventListener('pointermove', move);
-  addEventListener('pointerup', end);
-  addEventListener('pointercancel', end);
-  addEventListener('blur', end);
-});
-$('#reelBody').addEventListener('pointerdown', () => { reelBanded = false; }, true);
+$('#reelGrid').addEventListener('click', reelPick.click, true);
+$('#reelBody').addEventListener('pointerdown', e => { if (!reelDrag) reelPick.press(e); });
 
 $('#reelSelClear').addEventListener('click', clearReelPicked);
 $('#reelSelDelete').addEventListener('click', e => {
@@ -3223,7 +3230,9 @@ $('#reelSelDelete').addEventListener('click', e => {
   const rated = list.filter(it => ratingOf(it.render)).length;
   confirmClick(e.currentTarget, rated ? `Sure? ${rated} ${rated > 1 ? 'are' : 'is'} rated` : `Sure? ${list.length} go`, () => {
     clearReelPicked();
-    deleteManySoon(list, () => { if (!$('#lightbox').hidden) lbRender(); renderReel(); });
+    const n = list.length;
+    deleteManySoon(list.map(it => ({ id: it.render.id, url: `/api/history/${it.entry.id}/renders/${it.render.id}`, run: () => deleteRenderNow(it.entry, it.render, { quiet: true }) })),
+      `${n} render${n > 1 ? 's' : ''}`, () => { if (!$('#lightbox').hidden) lbRender(); renderReel(); });
   });
 });
 
@@ -3231,17 +3240,17 @@ $('#reelSelDelete').addEventListener('click', e => {
 // every card shown.
 document.addEventListener('keydown', e => {
   if (!$('#lightbox').hidden || document.querySelector('dialog[open]') || e.target.closest?.('input, textarea, select, [contenteditable], #assistant')) return;
-  if (e.key === 'Escape' && reelPicked.size) {
+  const [pick, del] = isView('history') ? [historyPick, '#historySelDelete'] : [reelPick, '#reelSelDelete'];
+  if (e.key === 'Escape' && pick.keys.size) {
     e.stopPropagation();
     e.preventDefault();
-    clearReelPicked();
-  } else if ((e.key === 'Delete' || e.key === 'Backspace') && reelPicked.size) {
+    pick.clear();
+  } else if ((e.key === 'Delete' || e.key === 'Backspace') && pick.keys.size) {
     e.preventDefault();
-    $('#reelSelDelete').click();
-  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && e.target.closest?.('#reel')) {
+    $(del).click();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && (isView('history') || e.target.closest?.('#reel'))) {
     e.preventDefault();
-    for (const c of $$('#reelGrid > .reel-cell')) if (!c.hidden && !c.classList.contains('going')) reelPicked.add(c.dataset.key);
-    drawReelPicked();
+    pick.all();
   }
 }, true);
 
@@ -4108,28 +4117,26 @@ function countDown(id) {
   if (!t.hidden && t.dataset.going === id && t.firstChild?.nodeType === Node.TEXT_NODE) t.firstChild.nodeValue = goingText(item);
 }
 
-// Several renders at once (the grid's selection): each waits in `going` (so it dims and the lightbox offers Undo), under
-// one countdown and one ↶ Undo for them all.
-function deleteManySoon(list, redraw) {
+// Several at once (a selection): each waits in `going` (so it dims, and its own Undo works), under one countdown and
+// one ↶ Undo for them all. list: [{ id, url, run }]; what: "3 renders".
+function deleteManySoon(list, what, redraw) {
   const gid = `many-${Date.now()}`;
-  const what = `${list.length} render${list.length > 1 ? 's' : ''}`;
   const until = Date.now() + UNDO_MS;
-  const members = list.map(it => it.render.id);
-  for (const it of list) going.set(it.render.id, { url: `/api/history/${it.entry.id}/renders/${it.render.id}`, run: () => deleteRenderNow(it.entry, it.render, { quiet: true }), what, until, group: gid });
-  const group = { what, until, members };
+  for (const x of list) going.set(x.id, { url: x.url, run: x.run, what, until, group: gid });
+  const group = { what, until, members: list.map(x => x.id) };
   group.timer = setTimeout(async () => {
     stopWaiting(gid);
     let done = 0;
-    for (const it of list) {
-      const item = going.get(it.render.id);
+    for (const x of list) {
+      const item = going.get(x.id);
       if (item?.group !== gid) continue; // undone, or already deleted another way
-      stopWaiting(it.render.id);
+      stopWaiting(x.id);
       try { await item.run(); done++; } catch (err) { toast(err.message, true); }
     }
     redraw();
-    if (done) toast(`🗑️ ${done} render${done > 1 ? 's' : ''} deleted`);
+    if (done) toast(`🗑️ ${done === list.length ? what : done} deleted`);
   }, UNDO_MS);
-  group.tick = setInterval(() => countDown(gid), 250);
+  group.tick = setInterval(() => { countDown(gid); group.members.forEach(countDown); }, 250);
   going.set(gid, group);
   redraw();
   toast(goingText(group), false, { label: '↶ Undo', run: () => undoDelete(gid, redraw) });
@@ -4184,7 +4191,7 @@ const ratedIn = entry => entry.variations.flatMap(v => v.renders || []).filter(r
 
 // Deletes an entry for good (History's Delete once its Undo time is over, and the assistant after you confirm).
 // Returns a note if ComfyUI's copies may be out of reach.
-async function deleteEntryNow(entry) {
+async function deleteEntryNow(entry, { quiet = false } = {}) {
   for (const id of [entry.id, ...entry.variations.flatMap(v => (v.renders || []).map(r => r.id))]) stopWaiting(id);
   const { left } = await api(`/api/history/${entry.id}`, { method: 'DELETE' });
   historyDeletes++;
@@ -4194,7 +4201,7 @@ async function deleteEntryNow(entry) {
   bumpHistoryBadge(-1);
   renderHistoryFilters();
   if (isView('history')) renderHistory();
-  toast(left ? `🗑️ Deleted. ${left}` : '🗑️ Deleted for good', Boolean(left));
+  if (!quiet || left) toast(left ? `🗑️ Deleted. ${left}` : '🗑️ Deleted for good', Boolean(left));
   return left || null;
 }
 
@@ -4286,7 +4293,7 @@ function renderHistory() {
     const renderCount = allRenders.length;
     const cover = allRenders.length ? allRenders.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)).files[0] : null;
     return `${heading}
-      <article class="hcard${e.id === state.entry?.id ? ' current' : ''}${going.has(e.id) ? ' going' : ''}" data-id="${esc(e.id)}" style="--m:${color}"${e.id === state.entry?.id ? ' aria-current="true" title="Open on Create"' : ''}>
+      <article class="hcard${e.id === state.entry?.id ? ' current' : ''}${going.has(e.id) ? ' going' : ''}${historyPick.keys.has(e.id) ? ' picked' : ''}" data-id="${esc(e.id)}" data-key="${esc(e.id)}" style="--m:${color}"${e.id === state.entry?.id ? ' aria-current="true" title="Open on Create"' : ''}>
         <div class="hthumb hopen${cover || e.imageFile ? '' : ' textonly'}" data-act="open" aria-hidden="true">
           ${cover ? mediaTag(cover, { hover: true }) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="" loading="lazy">` : kindIcon(e.modelKind)}
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${e.manual ? '🖼️ image' : { reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
@@ -4306,7 +4313,42 @@ function renderHistory() {
       </article>`;
   }).join('') + (items.length > shown.length ? `<button type="button" class="btn more" data-act="more">Show ${Math.min(48, items.length - shown.length)} more (${items.length - shown.length} left)</button>` : '');
   if (focused) $(`.hcard[data-id="${CSS.escape(focused.id)}"] button[data-act="${focused.act}"]`, list)?.focus();
+  const shownIds = new Set(shown.map(e => e.id));
+  for (const k of historyPick.keys) if (!shownIds.has(k) || going.has(k)) historyPick.keys.delete(k);
+  historyPick.draw();
 }
+
+// Picking History cards (see cardPicker): the bar at the bottom deletes them, with everything they hold.
+const historyPick = cardPicker({
+  grid: () => $('#historyList'),
+  card: '#historyList > .hcard',
+  host: () => $('#historyList'),
+  edge: () => ({ top: $('.topbar')?.getBoundingClientRect().bottom || 0, bottom: innerHeight, by: n => scrollBy(0, n) }),
+  free: t => !t.closest('button, input, select, a, label, .hcard, .toolbar, .empty'),
+  show: () => {
+    const n = historyPick.keys.size;
+    $('#historySel').hidden = !n;
+    $('#historySelCount').textContent = `${n} selected`;
+  },
+});
+$('#historyList').addEventListener('click', historyPick.click, true);
+$('#view-history').addEventListener('pointerdown', historyPick.press);
+$('#historySelClear').addEventListener('click', historyPick.clear);
+$('#historySelDelete').addEventListener('click', async e => {
+  const list = state.history.filter(x => historyPick.keys.has(x.id) && !going.has(x.id));
+  if (!list.length) return historyPick.clear();
+  const n = list.length;
+  const go = () => {
+    historyPick.clear();
+    deleteManySoon(list.map(entry => ({ id: entry.id, url: `/api/history/${entry.id}`, run: () => deleteEntryNow(entry, { quiet: true }) })), `${n} prompt${n > 1 ? 's' : ''}`, renderHistory);
+  };
+  if (!saved.get('deleteWarned', false)) {
+    if (await deleteWarning()) go();
+    return;
+  }
+  const rated = list.reduce((k, entry) => k + ratedIn(entry), 0);
+  confirmClick(e.currentTarget, rated ? `Sure? ${rated} rated render${rated > 1 ? 's' : ''} go too` : `Sure? ${n} go`, go);
+});
 
 $('#historySearch').addEventListener('input', () => { state.historyLimit = 48; renderHistory(); });
 $('#historyFilters').addEventListener('click', e => {

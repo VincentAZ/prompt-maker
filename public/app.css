@@ -1479,13 +1479,17 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .reel-cell.seen > .rtile { box-shadow: 0 0 0 2px var(--m); }
 .reel-ghost { rotate: 0deg; transition: none; }
 .reel-cell[hidden] { display: none; }
-/* Several picked (Ctrl-click, Shift-click, or a box dragged across them) */
-.reel-body { position: relative; }
+/* Several picked (Ctrl-click, Shift-click, or a box dragged across them): Your renders, the Gallery, History */
+.reel-body, .history-grid { position: relative; }
 .reel-cell.picked > .rtile { box-shadow: 0 0 0 3px var(--grape); }
-.reel-cell.picked::after { content: '✓'; position: absolute; top: 6px; left: 6px; z-index: 2; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; font: 800 13px var(--mono); color: #fff; background: var(--grape); box-shadow: 0 2px 8px rgb(0 0 0 / 50%); pointer-events: none; }
-.reel-band { position: absolute; z-index: 4; border: 1px solid var(--grape); background: rgb(164 123 255 / 14%); border-radius: 4px; pointer-events: none; }
-.reel-sel { position: sticky; bottom: 0; z-index: 5; width: max-content; max-width: 100%; height: 40px; box-sizing: border-box; margin: -40px auto 0; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border-radius: 999px; background: var(--panel-solid, #120f1a); border: 1px solid var(--line-2); box-shadow: 0 8px 24px rgb(0 0 0 / 55%); font-size: 13px; }
-.reel-sel[hidden] { display: none; }
+.hcard.picked { border-color: var(--grape); box-shadow: 0 0 0 3px var(--grape); }
+.reel-cell.picked::after, .hcard.picked::after { content: '✓'; position: absolute; top: 6px; left: 6px; z-index: 2; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; font: 800 13px var(--mono); color: #fff; background: var(--grape); box-shadow: 0 2px 8px rgb(0 0 0 / 50%); pointer-events: none; }
+.hcard.picked::after { top: 10px; left: 10px; width: 26px; height: 26px; }
+.pick-band { position: absolute; z-index: 4; border: 1px solid var(--grape); background: rgb(164 123 255 / 14%); border-radius: 4px; pointer-events: none; }
+.pick-bar { z-index: 5; width: max-content; max-width: 100%; height: 40px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border-radius: 999px; background: var(--panel-solid, #120f1a); border: 1px solid var(--line-2); box-shadow: 0 8px 24px rgb(0 0 0 / 55%); font-size: 13px; }
+.pick-bar[hidden] { display: none; }
+.reel-sel { position: sticky; bottom: 0; margin: -40px auto 0; }
+.pick-bar.fixed { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 30; }
 
 /* Delete stands apart from the buttons beside it, so a slip of the mouse doesn't hit it. */
 #deleteModelBtn { order: -1; margin-right: 14px; }

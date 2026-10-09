@@ -1480,6 +1480,37 @@ esac
     await click('#toast .toast-act');
     await toastText('Kept');
     eq(await count('.hcard.going'), 0, 'the toast\'s Undo does the same');
+    // Pick several cards: Ctrl-click, or a box dragged from the space between them; the bar deletes them, ↶ Undo keeps them.
+    const hAt = (n, fx = 0.5, fy = 0.5) => js(`(() => { const c = document.querySelectorAll("#historyList > .hcard")[${n}]; c.scrollIntoView({ block: "center" }); const r = c.getBoundingClientRect(); return { x: r.left + r.width * ${fx}, y: r.top + r.height * ${fy}, right: r.right, top: r.top }; })()`);
+    const hCtrlClick = async n => {
+      const p = await hAt(n, 0.5, 0.15);
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers: 2 });
+      await sleep(60);
+    };
+    await hCtrlClick(0);
+    await hCtrlClick(1);
+    eq(await count('.hcard.picked'), 2, 'Ctrl-click picks History cards');
+    assert(await js('document.querySelector("#view-history").classList.contains("active") || !document.querySelector("#view-history").hidden'), 'and stays in History (opens nothing)');
+    eq(await text('#historySelCount'), '2 selected', 'the bar says how many');
+    await press('Escape');
+    eq(await count('.hcard.picked'), 0, 'Esc lets go');
+    const g = await hAt(0);
+    const g1 = await hAt(1);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: g.right + 6, y: g.top + 4, button: 'left', buttons: 1, clickCount: 1 });
+    for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g.right + 6 + ((g1.x - g.right - 6) * k) / 10, y: g.top + 4 + ((g1.y - g.top) * k) / 10, button: 'left', buttons: 1 });
+    assert(await js('!!document.querySelector(".pick-band")'), 'a box is drawn');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: g1.x, y: g1.y, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(80);
+    assert(await count('.hcard.picked') >= 1, 'the box picks what it touched');
+    await shot('20b-history-picked');
+    const hPicked = await count('.hcard.picked');
+    await click('#historySelDelete');
+    await click('#historySelDelete');
+    await toastText('Deleting');
+    eq(await count('.hcard.going'), hPicked, 'they dim, with Undo, while they wait');
+    await click('#toast .toast-act');
+    await toastText('Kept');
+    eq(await count('.hcard.going'), 0, 'one ↶ Undo keeps them all');
     // Nothing of it stays anywhere: not in the copy of History from before the delete, not in a job's log, not in
     // LM Studio's own server logs (which quote every request, the middle of long texts cut).
     const allCards = await (await fetch(`${APP}/api/history`)).json();
@@ -1515,6 +1546,22 @@ esac
       if (jobsBefore === null) for (const f of [jobsFile, `${jobsFile}.bak`]) await fs.rm(f, { force: true });
       else await fs.writeFile(jobsFile, jobsBefore);
     }
+  });
+
+  await test('history: delete several at once', async () => {
+    const before = await count('.hcard');
+    for (const n of [0, 1]) {
+      const p = await js(`(() => { const c = document.querySelectorAll("#historyList > .hcard")[${n}]; c.scrollIntoView({ block: "center" }); const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height * 0.15 }; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers: 2 });
+      await sleep(60);
+    }
+    eq(await count('.hcard.picked'), 2, 'two picked');
+    await press('Delete');
+    await press('Delete');
+    await toastText('Deleting 2 prompts');
+    await toastText('2 prompts deleted', UNDO_WAIT);
+    eq(await count('.hcard'), before - 2, 'two fewer cards');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, before - 2, 'and on the server');
   });
 
   await test('models: edit, dirty guard, switch', async () => {
@@ -2092,11 +2139,11 @@ esac
     const b0 = await at(0), b2 = await at(2);
     await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b0.x, y: b0.y, button: 'left', buttons: 1, clickCount: 1, modifiers: 2 });
     for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b0.x + ((b2.x - b0.x) * k) / 10, y: b0.y + ((b2.y - b0.y) * k) / 10 + 2, button: 'left', buttons: 1, modifiers: 2 });
-    assert(await js('!!document.querySelector(".reel-band") && !document.querySelector(".reel-ghost")'), 'Ctrl-drag draws a box, it doesn\'t carry the card');
+    assert(await js('!!document.querySelector(".pick-band") && !document.querySelector(".reel-ghost")'), 'Ctrl-drag draws a box, it doesn\'t carry the card');
     await shot('24d-your-renders-box');
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b2.x, y: b2.y + 2, button: 'left', buttons: 0, clickCount: 1, modifiers: 2 });
     await sleep(80);
-    assert(!(await js('!!document.querySelector(".reel-band")')), 'the box goes when you let go');
+    assert(!(await js('!!document.querySelector(".pick-band")')), 'the box goes when you let go');
     assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'it picks every card it touched');
     assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
     const picked = await count('#reelGrid > .reel-cell.picked');

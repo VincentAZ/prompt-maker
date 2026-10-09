@@ -23,6 +23,7 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.34.0 — History: pick several cards (Ctrl-click, Shift-click or drag a box) and delete them in one go, 8 s to undo.
 - 1.33.0 — Your renders and the Gallery: pick several (Ctrl-click, Shift-click or drag a box) and delete them in one
   go, with 8 s to undo them all.
 - 1.32.1 — Chains: a video step's duration is a 1–20 s slider.
