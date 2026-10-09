@@ -2892,6 +2892,10 @@ esac
     eq(await text('#genCost'), '⛓ 2 stills → you pick → videos', 'it says what it will make');
     assert((await visible('#wfpRenders')) && !(await visible('#wfpAutoRow')), 'step 5 asks for renders per take instead');
     await type('.chain-card [data-f="direction"]', 'a calm sea');
+    eq(await js('[document.querySelector(\'.chain-card [data-f="duration"]\').type, document.querySelector(\'.chain-card [data-f="duration"]\').min, document.querySelector(\'.chain-card [data-f="duration"]\').max].join()'), 'range,1,20', 'duration is a 1–20 s slider');
+    await js(`(() => { const r = document.querySelector('.chain-card [data-f="duration"]'); r.value = 7; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    eq(await text('.chain-card .cc-dur output'), '7s', 'the slider shows its seconds');
+    assert((await text('.chain-card .cc-title small')).endsWith('7s'), 'and the step\'s summary too');
     await type('#theme', 'a lighthouse in a storm');
     await shot('38-chain-built', { full: true });
     const before = comfy.prompts.length;
@@ -2918,6 +2922,7 @@ esac
     const child = all.find(e => e.chain?.runId === root.chain.runId && e.chain.step === 1);
     eq(root.chain.steps.length, 2, 'the run remembers its steps');
     eq(child.source.entryId, root.id, 'step 2 links to step 1');
+    eq(child.duration, '7s', 'step 2 rendered at the slider\'s duration');
     eq(comfy.uploads.at(-1), `prompt-maker_${child.source.file}`, 'the original still went to ComfyUI');
     await shot('40-chain-done', { full: true });
     await click('.take .refine input');

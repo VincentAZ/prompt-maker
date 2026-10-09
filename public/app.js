@@ -7000,6 +7000,12 @@ function chainWorkflow(modelId, ref) {
   return (active?.maps.image ? active : flows.find(f => f.maps.image))?.id || null;
 }
 
+// A Then step's video length: whole seconds on a 1–20 slider, kept as "6s" like the model's own durations.
+function chainSeconds(duration, m) {
+  const n = Number.parseFloat(duration) || Number.parseFloat(m.defaults.duration) || Number.parseFloat(m.durations[0]) || 5;
+  return `${clampInt(n, 1, 20)}s`;
+}
+
 function thenStep(st = {}) {
   const m = modelById(st.modelId) || animateTarget() || state.models[0];
   const uses = chainUses(m);
@@ -7011,7 +7017,7 @@ function thenStep(st = {}) {
     direction: st.direction || '',
     takes: clampInt(st.takes ?? 1, 1, 4),
     renders: clampInt(st.renders ?? 1, 1, 4),
-    duration: m?.kind === 'video' ? (m.durations.includes(st.duration) ? st.duration : m.defaults.duration || m.durations[0] || '') : '',
+    duration: m?.kind === 'video' ? chainSeconds(st.duration, m) : '',
     gate: GATES.includes(st.gate) ? st.gate : 'pick',
     open: st.open ?? true,
   };
@@ -7118,11 +7124,11 @@ function stepCardHtml(st, i, warn) {
             <button type="button" class="btn small" data-act="addwf" title="Add a workflow for ${esc(m?.name || 'this model')}" aria-label="Add a workflow">＋</button>
           </div>
         </div>
-        <div class="cc-grid${video && m.durations.length ? ' three' : ''}">
+        <div class="cc-grid">
           <div class="dial"><span>Takes</span><div class="seg" data-f="takes" role="radiogroup" aria-label="Takes">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">${n}</button>`).join('')}</div></div>
           <div class="dial"><span>Renders each</span><div class="seg" data-f="renders" role="radiogroup" aria-label="Renders per take">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div></div>
-          ${video && m.durations.length ? `<label class="dial"><span>Duration</span><select data-f="duration">${m.durations.map(d => `<option${d === st.duration ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select></label>` : ''}
         </div>
+        ${video ? `<label class="dial cc-dur"><span>Duration <output class="temp-val">${esc(st.duration)}</output></span><input type="range" data-f="duration" min="1" max="20" step="1" value="${Number.parseFloat(st.duration)}" aria-label="Duration in seconds"><span class="range-labels"><span>1s</span><span>20s</span></span></label>` : ''}
         <p class="warn-line cc-warn"${warn ? '' : ' hidden'}>${esc(warn ? `⚠️ ${warn}` : '')}</p>
       </div>
     </li>`;
@@ -7240,11 +7246,13 @@ $('#chainBox').addEventListener('change', e => {
   const st = f && chainStepOf(e.target);
   if (!st || f === 'direction') return;
   if (f === 'modelId') Object.assign(st, thenStep({ ...st, modelId: e.target.value, workflowId: null, duration: '' }), { open: true });
+  else if (f === 'duration') st.duration = `${e.target.value}s`;
   else st[f] = e.target.value || null;
   saveChainState();
   renderChainEditor();
 });
 $('#chainBox').addEventListener('input', e => {
+  if (e.target.dataset.f === 'duration') { $('output', e.target.closest('.dial')).textContent = `${e.target.value}s`; return; } // saved on release
   if (e.target.dataset.f !== 'direction') return;
   chainStepOf(e.target).direction = e.target.value;
   saveChainState();
