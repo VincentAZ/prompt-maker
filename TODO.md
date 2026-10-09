@@ -23,6 +23,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.32.0 — Chains: a third choice between steps, 🧠 Brain picks. The Brain looks at every render of the step and
+  only the best one goes on (16 stills → the best one → 2 videos, instead of 32 on Auto).
 - 1.31.6 — Opening took a minute: a test copy's start-up rewrote the start-with-the-computer service to its own
   port and folder, and the launcher waited 60 s for it. Rewrites now keep the service's own port and data folder;
   the launcher stops waiting as soon as the service fails. "How private?" choices were squeezed unreadable (the

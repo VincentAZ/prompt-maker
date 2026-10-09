@@ -2930,6 +2930,26 @@ esac
     await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'the run kept the refined version');
   });
 
+  await test('chains: the Brain picks the best still, and only it goes on', async () => {
+    await click('.chain-gate button[data-gate="brain"]');
+    await click('#varSeg button[data-value="2"]');
+    await click('#wfpRenders button[data-value="2"]');
+    eq(await text('#genCost'), '⛓ 4 stills → 🧠 the best one → 1 video', 'four stills, one video');
+    const before = comfy.prompts.length;
+    await type('#theme', 'a hot air balloon at dawn');
+    await click('#generateBtn');
+    await toastText('the Brain picked take 1', 30000);
+    await waitFor('document.querySelector("#runStrip .rs-status")?.textContent.includes("Done")', 'ran straight through', 30000);
+    eq(comfy.prompts.length, before + 5, 'four stills and one video, no clicks');
+    const all = await (await fetch(`${APP}/api/history`)).json();
+    const root = all.find(e => e.chain?.step === 0 && e.theme === 'a hot air balloon at dawn');
+    const kids = all.filter(e => e.chain?.runId === root.chain.runId && e.chain.step === 1);
+    eq(kids.length, 1, 'one still went on');
+    eq(kids[0].source.renderId, root.variations[0].renders[1].id, 'the one the Brain named (number 2 of 4)');
+    await click('#wfpRenders button[data-value="1"]');
+    await click('.chain-gate button[data-gate="pick"]');
+  });
+
   await test('chains: auto runs straight through; save, reload, load, export, delete', async () => {
     await click('.chain-gate button[data-gate="auto"]');
     await click('#varSeg button[data-value="1"]');

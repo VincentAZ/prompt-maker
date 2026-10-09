@@ -6978,6 +6978,8 @@ async function continueFrom(it, { animate, character = false }) {
 // Step 1 is the Create form itself; each "Then" step takes the renders of the step before as its input image.
 // state.chain = { steps: [then steps], renders: renders per take for step 1, recipeId }.
 
+// Between steps: you pick which renders go on, the Brain picks the best one, or every render goes on.
+const GATES = ['pick', 'brain', 'auto'];
 const USE_LABEL = { animate: 'first frame', reference: 'reference', recreate: 'recreate', character: 'character' };
 // How a Then step's model can use the image of the step before: first frame first on video models.
 const chainUses = m => (m?.imageRoles?.length ? m.imageRoles : m?.kind === 'video' ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate']);
@@ -7010,7 +7012,7 @@ function thenStep(st = {}) {
     takes: clampInt(st.takes ?? 1, 1, 4),
     renders: clampInt(st.renders ?? 1, 1, 4),
     duration: m?.kind === 'video' ? (m.durations.includes(st.duration) ? st.duration : m.defaults.duration || m.durations[0] || '') : '',
-    gate: st.gate === 'auto' ? 'auto' : 'pick',
+    gate: GATES.includes(st.gate) ? st.gate : 'pick',
     open: st.open ?? true,
   };
 }
@@ -7045,6 +7047,10 @@ function chainCost() {
     if (st.gate === 'pick') {
       parts.push('you pick', outputNoun(m, 2).replace(/^2 /, ''));
       break;
+    }
+    if (st.gate === 'brain') {
+      parts.push('🧠 the best one');
+      n = 1;
     }
     n *= st.takes * st.renders;
     parts.push(outputNoun(m, n));
@@ -7086,6 +7092,7 @@ function stepCardHtml(st, i, warn) {
     <li class="chain-gate" data-i="${i}">
       <div class="seg gate" role="radiogroup" aria-label="Between ${from} and this step">
         <button type="button" role="radio" data-gate="pick" title="Wait while you pick which renders go on">⏸️ Let me pick</button>
+        <button type="button" role="radio" data-gate="brain" title="The Brain looks at every render and only the best one goes on">🧠 Brain picks</button>
         <button type="button" role="radio" data-gate="auto" title="Send every render on straight away">⚡ Auto</button>
       </div>
     </li>
@@ -7389,6 +7396,11 @@ async function advance(run, k) {
   const next = runStep(run, k + 1);
   if (!next) return finishRun(run, '✓ Chain done');
   if (next.gate === 'auto') return continueWith(run, k, stepOutputs(run, k).filter(it => !continuedFrom(run, it)));
+  if (next.gate === 'brain') {
+    const best = await brainBest(run, k, next);
+    if (best) return continueWith(run, k, [best]);
+    if (run.stopped || state.run !== run) return finishRun(run);
+  }
   finishRun(run);
   toast(`⏸️ Pick the ${outputNoun(modelById(runStep(run, k).modelId), 2).replace(/^2 /, '')} to continue with, then Continue ▶`);
 }
@@ -7446,6 +7458,30 @@ async function continueWith(run, k, items) {
   await Promise.all(rendering);
   if (run.stopped || state.run !== run) return finishRun(run);
   await advance(run, k + 1);
+}
+
+// The Brain picks the one render of step k the next step goes on from; null (and a toast) if it can't.
+async function brainBest(run, k, next) {
+  const items = stepOutputs(run, k).filter(it => !it.render.hidden && !continuedFrom(run, it));
+  if (items.length < 2) return items[0] || null;
+  const m = modelById(next.modelId);
+  const role = USE_LABEL[next.use] || 'starting picture';
+  const purpose = `the ${role} of the next step (${m?.name || 'the next model'}${next.direction.trim() ? `: ${next.direction.trim()}` : ''}), for “${run.theme || 'the idea'}”`;
+  run.picking = true;
+  renderRunStrip();
+  try {
+    needVision();
+    const { it, why } = await brainPicks(items, purpose);
+    if (run.stopped || state.run !== run) return null;
+    toast(`🧠 Out of ${items.length}, the Brain picked take ${it.index + 1}: ${why.replace(/[.!]+$/, '')}`);
+    return it;
+  } catch (err) {
+    if (!run.stopped) toast(`🧠 The Brain couldn't pick: ${friendly(err)}`, true);
+    return null;
+  } finally {
+    run.picking = false;
+    renderRunStrip();
+  }
 }
 
 function finishRun(run, message) {
@@ -7514,7 +7550,7 @@ function renderRunStrip() {
   const picks = [...run.picks.values()].filter(it => it.entry.chain?.step === last);
   const writing = state.chainActive && state.busy;
   const status = run.status === 'running'
-    ? (writing ? `✍️ Writing step ${state.entry?.chain?.step + 1 || 1}…` : run.rendering.size ? '🎨 Rendering…' : '⛓ Running…')
+    ? (writing ? `✍️ Writing step ${state.entry?.chain?.step + 1 || 1}…` : run.picking ? '🧠 Picking the best one…' : run.rendering.size ? '🎨 Rendering…' : '⛓ Running…')
     : next ? (outputs.length ? `⏸️ Pick ${outputNoun(modelById(steps[last].modelId), 2).replace(/^2 /, '')} to continue with` : 'Waiting for renders') : '✓ Done';
   const chip = e => {
     const files = e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files.map(f => ({ ...f, at: r.createdAt })))).filter(f => f.kind !== 'audio');
@@ -7534,7 +7570,7 @@ function renderRunStrip() {
     <ol class="rs-steps">${steps.map((st, k) => {
       const m = modelById(st.modelId);
       const entries = run.entries.filter(e => e.chain?.step === k);
-      return `${k ? `<li class="rs-gate" title="${st.gate === 'auto' ? 'Every render goes on' : 'You pick which renders go on'}">${st.gate === 'auto' ? '⚡' : '⏸️'}</li>` : ''}
+      return `${k ? `<li class="rs-gate" title="${({ auto: 'Every render goes on', brain: 'The Brain picks the best render to go on' })[st.gate] || 'You pick which renders go on'}">${({ auto: '⚡', brain: '🧠' })[st.gate] || '⏸️'}</li>` : ''}
         <li class="rs-step" style="--m:${m ? modelColor(m) : 'var(--hot)'}">
           <span class="rs-label">${k + 1} · ${kindIcon(m?.kind)} ${esc(m?.name || st.modelId)}</span>
           <div class="rs-items">${entries.map(chip).join('') || '<span class="rs-wait">…</span>'}</div>
@@ -8397,7 +8433,7 @@ const TOOLS = [
     model: S('The model to use it with, e.g. the video model to animate with; default: the last video model for animate, else the one on Create'),
   }, ['use']),
   T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
-    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'auto'], 'pick = wait for the user to choose renders; auto = all go on') }, required: ['model'] } },
+    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'brain', 'auto'], 'pick = wait for the user to choose renders; brain = you (the Brain) pick the best render and only it goes on; auto = all go on') }, required: ['model'] } },
   }, ['steps']),
   T('clear_chain', 'Remove every step from step 6, back to a single step.'),
   T('load_chain', 'Load a saved chain by name.', { name: S('Chain name') }, ['name']),
