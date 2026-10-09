@@ -39,7 +39,9 @@ open_app() {
     xdg-open "$URL" >/dev/null 2>&1 || true
   fi
 }
-wait_up() { for _ in $(seq 1 60); do running && return 0; sleep 1; done; return 1; }
+wait_up() { for _ in $(seq 1 60); do running && return 0; service_failing && return 1; sleep 1; done; return 1; }
+# The service stopped with an error (and is waiting to retry, or gave up): don't wait the full minute for it.
+service_failing() { systemctl --user show -p SubState --value prompt-maker.service 2>/dev/null | grep -qE '^(auto-restart|failed)$'; }
 field() { sed -n "s/.*\"$1\":\([a-z]*\).*/\1/p"; } # reads one true/false from the status JSON
 
 case "${1:-}" in
@@ -72,7 +74,8 @@ fi
 # Set up as a service but stopped? Start the service rather than a second copy.
 if ! running && [ "$(field service <<<"$STATUS")" = true ]; then
   systemctl --user start prompt-maker.service
-  wait_up || true
+  # It won't come up: stop its retrying and start Prompt Maker right here instead (below).
+  wait_up || systemctl --user stop prompt-maker.service
 fi
 
 if running; then

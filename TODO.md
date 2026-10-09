@@ -23,6 +23,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.31.6 — Opening took a minute: a test copy's start-up rewrote the start-with-the-computer service to its own
+  port and folder, and the launcher waited 60 s for it. Rewrites now keep the service's own port and data folder;
+  the launcher stops waiting as soon as the service fails. "How private?" choices were squeezed unreadable (the
+  text-box style hit the radio buttons): fixed.
 - 1.31.3 — README rewritten, results first: a 22 s film of one man in four scenes, a grid of real renders, the
   same person in every shot, still → video, three-step install; the manual moved to `docs/guide.md` (with its
   screenshots); the in-app assistant reads both; the .deb carries the guide. No prompts shown anywhere.
