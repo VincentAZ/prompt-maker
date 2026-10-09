@@ -2471,7 +2471,7 @@ esac
     eq(await text('#genLabel'), 'Generate “Hero shots”', 'Generate runs it');
     eq(await text('#genCost'), '🎞 4 images, one prompt', 'what it will do');
     assert(await js('[...document.querySelectorAll("#varSeg button")].every(b => b.disabled)'), 'Takes are set by the batch');
-    assert(!(await visible('#wfpAutoRow')), 'a batch always renders: no auto-render switch');
+    assert(!(await visible('#wfpAutoRow')) && !(await visible('#wfpRenders')), 'a batch always renders and counts its own: no auto-render switch, no renders per take');
     await js('document.querySelector("#renderStep").scrollIntoView({ block: "center" })');
     await shot('batch');
 
@@ -2782,10 +2782,21 @@ esac
     await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered with no click', 10000);
     eq(comfy.prompts.length, before + 1, 'one render queued by itself');
     eq(comfy.prompts.at(-1).prompt['6'].inputs.text, await value('.take .prompt-text'), 'the new take was sent');
+    // Renders per take sits under the switch: ×2 renders each new take twice, and the take's Render bar starts there.
+    assert(await visible('#wfpRenders'), 'renders per take shows with a workflow, no chain needed');
+    await click('#wfpRenders button[data-value="2"]');
+    before = comfy.prompts.length;
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'two renders with no click', 12000);
+    eq(comfy.prompts.length, before + 2, 'two renders queued by themselves');
+    eq(await js('document.querySelector(".take .rb-count .active")?.dataset.value'), '2', 'the Render bar starts at ×2');
+    await click('#wfpRenders button[data-value="1"]');
+    await click('.take .rb-count button[data-value="1"]');
     before = comfy.prompts.length;
     await click('.take .refine input');
     await click('.take .chips button');
-    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'refined take rendered too', 12000);
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 3 && !document.querySelector(".take .rtile.running")', 'refined take rendered too', 12000);
     eq(comfy.prompts.length, before + 1, 'refining renders again');
     await shot('32-auto-render', { full: true });
     await click('#renderStep .switch');
@@ -2820,7 +2831,7 @@ esac
     eq(await text('[data-panel="create-theme"] h2'), 'Your prompt', 'step 2 is your prompt now');
     assert(!(await visible('#roleBlock')) && !(await visible('#roleHint')), 'the image goes in as it is: no role to pick');
     assert(!(await visible('#surpriseBtn')) && !(await visible('#lengthField')) && !(await visible('#tempField')), 'the Brain\'s dials step aside');
-    assert(!(await visible('#wfpAutoRow')), 'no auto-render switch: your own prompt always renders');
+    assert(!(await visible('#wfpAutoRow')) && !(await visible('#wfpRenders')), 'no auto-render switch: your own prompt always renders, Takes counts them');
     assert(!(await visible('#chainStep')), 'no chain: its steps are written by the Brain');
     eq(await text('#takesLabel'), 'Renders', 'Takes becomes how many renders');
     await click('#varSeg button[data-value="2"]');

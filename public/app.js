@@ -6484,6 +6484,9 @@ function renderBatch() {
   const on = picked.length > 0;
   $('#batchBox').hidden = !batchAvailable();
   $('#wfpAutoRow').hidden = chainOn() || on || state.manual; // a batch (and your own prompt) always renders
+  // How many renders each take gets: on Auto-render and as each take's Render bar starts, or step 1 of a chain.
+  // A batch counts its own, and with your own prompt Takes is the count.
+  $('#wfpRenders').hidden = !chainOn() && (on || state.manual);
   const pick = $('#batchPick');
   pick.innerHTML = '<option value="">No batch: just the takes from step 4</option>'
     + list.map(b => `<option value="${esc(b.id)}">🎞 ${esc(b.name)} · ${esc(batchLine(b))}</option>`).join('')
@@ -6796,7 +6799,7 @@ function renderZone(card) {
   zone.inert = writing;
   let bar = '';
   if (flows.length) {
-    card.rb ??= { count: 1 };
+    card.rb ??= { count: state.chain.renders }; // starts from Renders per take in step ⑤
     card.rb.workflowId = activeWorkflowId(model.id);
     const name = card.el.getAttribute('aria-label');
     bar = `<div class="render-bar">
@@ -7395,7 +7398,6 @@ function renderChainEditor() {
     setActive($(`.chain-card[data-i="${i}"] [data-f="renders"]`, box), st.renders);
   });
   if (focus?.sel) $(`${focus.i != null ? `[data-i="${focus.i}"].chain-card ` : ''}${focus.sel}`, box)?.focus();
-  $('#wfpRenders').hidden = !chainOn();
   setActive($('#wfpRenders .seg'), state.chain.renders);
   renderBatch(); // a chain turns the batch off, and hides auto-render
 
@@ -8651,7 +8653,7 @@ const TOOLS = [
     reset: B('First put every sampler setting back to the workflow\'s own'),
     unlock_cfg: B('Allow changing a CFG of 1 (distilled, turbo and lightning models need 1): only when the user asks for it'),
   }),
-  T('set_auto_render', 'Turn auto-render on or off for the current model (renders every new prompt right away).', { on: B('On or off') }, ['on']),
+  T('set_auto_render', 'Turn auto-render on or off for the current model (renders every new prompt right away), and how many renders each take gets.', { on: B('On or off'), renders_per_take: I('Renders per take, 1–4 (also where each take\'s Render bar starts)') }, ['on']),
   T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in History.'),
   T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 6). Waits until they are written.'),
   T('refine_take', 'Change a take with an instruction, e.g. "golden hour" or "shorter".', { take: I('Take number, starting at 1'), instruction: S('What to change') }, ['take', 'instruction']),
@@ -8922,7 +8924,7 @@ function assistantState() {
       ...(state.manual ? { takes: state.manualRenders } : { length: state.length, takes: state.variations, temperature: Number($('#temperature').value) }),
     },
     comfyui: state.comfy ? (state.comfy.ok ? 'ready' : 'offline') : 'unknown',
-    workflow: flow && { name: flow.name, takesImage: flow.maps.image, ...(flow.maps.video ? { takesMotionVideo: true } : {}), others: workflowsFor(m.id).filter(f => f.id !== flow.id).map(f => f.name), autoRender: saved.get(autoRenderKey(m.id), false) },
+    workflow: flow && { name: flow.name, takesImage: flow.maps.image, ...(flow.maps.video ? { takesMotionVideo: true } : {}), others: workflowsFor(m.id).filter(f => f.id !== flow.id).map(f => f.name), autoRender: saved.get(autoRenderKey(m.id), false), rendersPerTake: state.chain.renders },
     loras: flow ? [...flowLoras(flow).own.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on, inWorkflow: true })), ...flowLoras(flow).added.map(l => ({ name: loraShort(l.name), strength: l.strength, on: l.on }))] : [],
     batches: batches().map(b => ({ name: b.name, count: b.count, prompts: b.mode })),
     batch_runs: pickedBatches().map(b => b.name), // what Generate runs: none, one batch, or all in order
@@ -9901,12 +9903,13 @@ const TOOL_IMPL = {
     renderLine();
     return { summary: `🎙 Made and kept the voice “${v.name}” (${d.seconds}s sample; the user can hear it on the Voices page)`, voice: v.name };
   },
-  set_auto_render: ({ on }) => {
+  set_auto_render: ({ on, renders_per_take }) => {
     const m = currentModel();
     if (!workflowsFor(m.id).length) throw new Error(`${m.name} has no workflow to render with yet.`);
     saved.set(autoRenderKey(m.id), Boolean(on));
+    if (renders_per_take != null) { state.chain.renders = clampInt(renders_per_take, 1, 4); saveChainState(); renderChainEditor(); }
     renderWorkflowPicker();
-    return { summary: `Auto-render ${on ? 'on' : 'off'} for ${m.name}` };
+    return { summary: `Auto-render ${on ? 'on' : 'off'} for ${m.name}${on ? `, ×${state.chain.renders} per take` : ''}` };
   },
   new_session: async () => {
     notBusy();
@@ -9919,7 +9922,7 @@ const TOOL_IMPL = {
     const m = currentModel();
     const auto = m && (state.manual || saved.get(autoRenderKey(m.id), false)) && workflowsFor(m.id).length > 0 && !chainOn();
     if (auto && state.manual) await okToRenderVideos(state.manualRenders, `Generate would render the prompt in step 2${state.manualRenders > 1 ? ` ${state.manualRenders} times` : ''} right away (✍️ your own prompt is on)`);
-    else if (auto) await okToRenderVideos(state.variations, `Generate would also render ${state.variations} take${state.variations > 1 ? 's' : ''} right away (auto-render is on for ${m.name})`);
+    else if (auto) await okToRenderVideos(state.variations * state.chain.renders, `Generate would also render ${state.variations} take${state.variations > 1 ? 's' : ''}${state.chain.renders > 1 ? ` ×${state.chain.renders}` : ''} right away (auto-render is on for ${m.name})`);
     const before = state.entry;
     await generate();
     if (!state.entry?.id || state.entry === before) throw new Error(stageError() || 'Nothing was generated.');
@@ -10828,7 +10831,7 @@ const PANEL_SUMMARY = {
     ...(state.manual ? [!$('#takesField').hidden && `×${state.manualRenders}`]
       : [`${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`, `${state.variations} take${state.variations > 1 ? 's' : ''}`, adventureWord(Number($('#temperature').value))]),
   ].filter(Boolean).join(' · '),
-  'create-render': () => (workflowsFor(state.modelId).length ? `${activeFlow()?.name || ''}${$('#wfpAuto').checked && !state.manual ? ' · ⚡ auto-render' : ''}` : 'No workflow yet'),
+  'create-render': () => (workflowsFor(state.modelId).length ? `${activeFlow()?.name || ''}${$('#wfpAuto').checked && !state.manual ? ` · ⚡ auto-render${state.chain.renders > 1 ? ` ×${state.chain.renders}` : ''}` : ''}` : 'No workflow yet'),
   'create-render-adv': () => [
     !$('#wfpSeed').hidden && ({ random: 'Seed: new each render', fixed: 'Seed: the same each render', increment: 'Seed: one higher each render', decrement: 'Seed: one lower each render' }[activeFlow()?.seed?.mode] || 'Seed'),
     // (Counted from the workflow, not from the rows on screen, which arrive a moment later.)

@@ -271,18 +271,18 @@
               <div id="wfpModels" class="wfp-models" role="status" aria-live="polite" hidden></div>
               <div id="wfpStale" class="wfp-stale" hidden><span></span><button type="button" class="btn small">↻ Update</button></div>
               <label class="switch" id="wfpAutoRow"><input type="checkbox" id="wfpAuto"><span class="track" aria-hidden="true"></span><span>Auto-render every new prompt</span></label>
+              <div id="wfpRenders" class="wfp-renders" hidden>
+                <span>Renders per take</span>
+                <div class="seg" role="radiogroup" aria-label="Renders per take">
+                  <button type="button" role="radio" data-value="1">×1</button><button type="button" role="radio" data-value="2">×2</button><button type="button" role="radio" data-value="3">×3</button><button type="button" role="radio" data-value="4">×4</button>
+                </div>
+              </div>
               <div id="batchBox" class="wfp-batch" data-panel="create-render-batch" data-default="collapsed" hidden>
                 <div class="panel-head"><b>Batch</b><span class="opt">named batches of images or videos</span></div>
                 <label class="batch-pick"><span>Generate runs</span><select id="batchPick" aria-label="What Generate runs"></select></label>
                 <ul id="batchList" class="batch-list" aria-label="Your batches"></ul>
                 <button type="button" id="batchAdd" class="btn small">＋ New batch</button>
                 <p id="batchHint" class="hint"></p>
-              </div>
-              <div id="wfpRenders" class="wfp-renders" hidden>
-                <span>Renders per take</span>
-                <div class="seg" role="radiogroup" aria-label="Renders per take">
-                  <button type="button" role="radio" data-value="1">×1</button><button type="button" role="radio" data-value="2">×2</button><button type="button" role="radio" data-value="3">×3</button><button type="button" role="radio" data-value="4">×4</button>
-                </div>
               </div>
             </div>
           </section>
