@@ -3573,7 +3573,7 @@ esac
     await press('Enter');
     await idle();
     const amb = await acts();
-    assert(amb.includes('could be Krea 2') && amb.includes('Krea 2 RAW i2i'), `a name that fits two models is an error, not a guess: ${amb}`);
+    assert(amb.includes('could be Krea 2') && amb.includes('Krea 2 RAW Edit'), `a name that fits two models is an error, not a guess: ${amb}`);
     assert(amb.includes('Not run: set_model failed'), `the rest of that step is not run: ${amb}`);
     assert((await value('#theme')) !== 'after a failure', 'the theme was left alone');
     assert((await bot()).includes('which?'), 'and it asks');

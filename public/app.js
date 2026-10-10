@@ -1443,29 +1443,23 @@ const CREATIVE_TASKS = [
   { id: 'motion', label: 'Copy movement', prefer: 'wan-animate-2' },
   { id: 'video', label: 'Make a video', prefer: '' },
 ];
+// The task a model is for: its playbook says (task), else its inputs place it.
 function modelTask(m) {
+  if (CREATIVE_TASKS.some(t => t.id === m.task)) return m.task;
   if (m.motionVideo) return 'motion';
   if (m.characterSheet || m.imageRoles?.includes('character')) return 'person';
-  if (m.id === 'krea-2-raw-i2i') return 'edit';
-  if (m.kind === 'video') return ['ltx-2-3', 'minimax-h3'].includes(m.id) || workflowsFor(m.id).some(f => f.maps?.image) ? 'animate' : 'video';
+  if (m.kind === 'video') return workflowsFor(m.id).some(f => f.maps?.image) ? 'animate' : 'video';
   return workflowsFor(m.id).some(f => f.maps?.image) ? 'edit' : 'picture';
 }
-const modelPurpose = m => m.edited && m.description ? m.description : ({
-  'krea2-raw': 'Detailed pictures from your words.',
-  'krea-2-raw-i2i': 'Edit a picture: change its scene, style or details.',
-  'krea-2-character': 'Keep the same person in a new picture.',
-  'ltx-2-3': 'Bring a picture to life with movement and sound.',
-  'minimax-h3': 'Turn a picture into a short video with sound.',
-  'minimax-h3-ref': 'Keep the same person in a new video.',
-  'wan-animate-2': 'Make a character copy the moves from a video.',
-}[m.id] || m.description || `Make ${m.kind === 'video' ? 'videos' : 'pictures'} from your ideas.`);
-const modelDisplayName = m => m.id === 'krea-2-raw-i2i' && m.name === 'Krea 2 RAW i2i' ? 'Krea 2 RAW · Edit' : m.name;
+const modelPurpose = m => m.description || `Make ${m.kind === 'video' ? 'videos' : 'pictures'} from your ideas.`;
 function renderCreativeTask() {
   const m = currentModel();
   const task = m && modelTask(m);
-  $('#taskChoices').innerHTML = CREATIVE_TASKS.filter(t => state.models.some(x => modelTask(x) === t.id)).map(t =>
+  const box = $('#taskChoices');
+  const html = CREATIVE_TASKS.filter(t => state.models.some(x => modelTask(x) === t.id)).map(t =>
     `<button type="button" class="task-choice" data-task="${t.id}" aria-pressed="${task === t.id}">${t.label}</button>`).join('');
-  $('#chosenModel').textContent = m ? modelDisplayName(m) : 'Choose a model';
+  if (box.dataset.key !== html) { box.dataset.key = html; box.innerHTML = html; } // (redrawn only when it changes: a redraw drops keyboard focus)
+  $('#chosenModel').textContent = m ? m.name : 'Choose a model';
   if (!m) $('#modelChoice').open = true;
 }
 $('#taskChoices').addEventListener('click', e => {
@@ -1493,7 +1487,7 @@ function renderModelChips() {
   if (grid.dataset.key !== key) {
     grid.dataset.key = key;
     grid.innerHTML = state.models.map(m => `<button type="button" class="model-card" role="radio" data-id="${esc(m.id)}" style="--m:${modelColor(m)}" aria-label="${esc(`${m.name}, ${m.kind} model`)}" title="${esc(m.description)}">
-      <span class="mc-ico" aria-hidden="true">${kindIcon(m.kind)}</span><span class="mc-name">${esc(modelDisplayName(m))}</span><span class="mc-kind" aria-hidden="true">${esc(m.kind)}</span>
+      <span class="mc-ico" aria-hidden="true">${kindIcon(m.kind)}</span><span class="mc-name">${esc(m.name)}</span><span class="mc-kind" aria-hidden="true">${esc(m.kind)}</span>
     </button>`).join('');
   }
   // Update selection in place so keyboard focus stays on the card.
@@ -2895,7 +2889,7 @@ function renderReel() {
   empty.hidden = Boolean(items.length || jobs.length);
   if (empty.dataset.none !== `${none}${inGallery()}`) {
     empty.dataset.none = `${none}${inGallery()}`;
-    empty.innerHTML = none && inGallery() ? 'No renders yet. Attach a ComfyUI workflow to a model (Models tab), then hit <b>▶ Render</b> on any take: every picture and video lands here.'
+    empty.innerHTML = none && inGallery() ? 'No pictures or videos yet. On Create, describe your idea and press <b>Make image</b> (or <b>Write prompt</b>, then <b>▶ Render</b> on the take): everything you make lands here.'
       : none ? 'Every render you make lands here, newest first, and stays. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.'
       : 'Nothing matches these filters. <button type="button" class="btn small" data-reel="all">Show everything</button>';
   }
@@ -3007,7 +3001,7 @@ function reelTile(it) {
   $('.rt-cap span', cell).textContent = [it.entry.modelName, `take ${it.index + 1}`, it.render.seed != null && `seed ${it.render.seed}`, it.render.createdAt && madeOn(it.render.createdAt)].filter(Boolean).join(' · ');
   $('.rtile', cell).setAttribute('aria-label', `Open render: ${theme.slice(0, 80)}${rating ? `, rated ${RATINGS[rating].toLowerCase()}` : ''}. Shift and an arrow key move it.`);
   const hide = $('.rt-hide', cell);
-  hide.textContent = it.render.hidden ? 'Show in Create' : 'Hide from Create';
+  hide.innerHTML = it.render.hidden ? 'Show<span class="rt-hide-long"> in Create</span>' : 'Hide<span class="rt-hide-long"> from Create</span>'; // (the long form only where the tile has room)
   hide.title = it.render.hidden ? 'Show it in Create again' : 'Hide from Create only. It stays in Gallery and Saved prompts.';
   hide.setAttribute('aria-label', it.render.hidden ? 'Show in Create again' : 'Hide from Create');
   if (cell.dataset.rating !== String(rating)) {
@@ -4753,10 +4747,12 @@ function modelReadiness(m) {
   return 'Ready on this computer';
 }
 function renderModelCatalog() {
-  $('#modelCatalogGrid').innerHTML = state.models.map(m => {
+  const grid = $('#modelCatalogGrid');
+  const html = state.models.map(m => {
     const needs = m.guide?.youNeed || (m.motionVideo ? 'A character picture and a motion video.' : m.characterSheet ? 'A clear picture of your person.' : workflowsFor(m.id).some(f => f.maps?.image) ? 'A starting picture.' : 'Your idea in a few words.');
-    return `<article class="catalog-model" style="--m:${modelColor(m)}"><div class="catalog-kind">${m.kind === 'video' ? 'Video' : 'Picture'} model</div><h2>${esc(modelDisplayName(m))}</h2><p>${esc(modelPurpose(m))}</p><p class="catalog-needs"><b>You need</b> ${esc(needs)}</p><p class="catalog-ready">${esc(modelReadiness(m))}</p><div class="row"><button type="button" class="btn small primary" data-catalog-use="${esc(m.id)}">Use this model</button><button type="button" class="btn small" data-catalog-edit="${esc(m.id)}">Customize</button></div></article>`;
+    return `<article class="catalog-model" style="--m:${modelColor(m)}"><div class="catalog-kind">${m.kind === 'video' ? 'Video' : 'Picture'} model</div><h2>${esc(m.name)}</h2><p>${esc(modelPurpose(m))}</p><p class="catalog-needs"><b>You need</b> ${esc(needs)}</p><p class="catalog-ready">${esc(modelReadiness(m))}</p><div class="row"><button type="button" class="btn small primary" data-catalog-use="${esc(m.id)}">Use this model</button><button type="button" class="btn small" data-catalog-edit="${esc(m.id)}">Customize</button></div></article>`;
   }).join('');
+  if (grid.dataset.key !== html) { grid.dataset.key = html; grid.innerHTML = html; } // (redrawn only when it changes: ComfyUI's status comes in every few seconds while it's down)
 }
 $('#modelCatalogGrid').addEventListener('click', e => {
   const use = e.target.closest('[data-catalog-use]');
@@ -5012,7 +5008,7 @@ function fillModelForm(m, isNew) {
   $('#mRes').value = m.resolutions.join(', ');
   $('#mDur').value = m.durations.join(', ');
   $('#mMotion').checked = Boolean(m.motionVideo);
-  modelExtras = { imageRoles: m.imageRoles, comfyTemplates: m.comfyTemplates, characterSheet: m.characterSheet, sheetSection: m.sheetSection };
+  modelExtras = { imageRoles: m.imageRoles, comfyTemplates: m.comfyTemplates, characterSheet: m.characterSheet, sheetSection: m.sheetSection, task: m.task };
   refreshDefaultSelects(m.defaults);
   $('#dLen').value = m.defaults.length;
   $('#dTemp').value = m.defaults.temperature;
@@ -5045,6 +5041,7 @@ function readModelForm() {
     ...(motionVideo ? { motionVideo, imageRoles: roles?.includes('character') ? roles : ['character'] } : roles && (!roles.includes('character') || modelExtras.characterSheet) ? { imageRoles: roles } : {}),
     ...(modelExtras.characterSheet ? { characterSheet: true, ...(modelExtras.sheetSection ? { sheetSection: modelExtras.sheetSection } : {}) } : {}),
     ...(modelExtras.comfyTemplates?.length ? { comfyTemplates: modelExtras.comfyTemplates } : {}),
+    ...(modelExtras.task ? { task: modelExtras.task } : {}),
     id: state.editId || undefined,
     name: $('#mName').value.trim(),
     kind: $('#mKind').value,

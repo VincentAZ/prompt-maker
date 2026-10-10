@@ -23,6 +23,19 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.37.1 — Creator UI, second pass: the idea field is in view on a laptop (task chips, tighter steps, the review
+  choice on one line); the top bar says Prompts (the page is still Saved prompts); each built-in playbook carries its
+  plain description and its task (step ①'s "What do you want to make?"), and the i2i model is Krea 2 RAW Edit, so
+  nothing about a model is hard-coded in the page; Hide from Create shortens to Hide on a small tile; the task chips
+  and the Models chooser redraw only when they change (no lost focus while ComfyUI is checked); on a narrow screen the
+  Create / Results switch no longer scrolls what it opens under itself; stale "Generate" wording in the guide and the
+  Gallery's empty text.
+- 1.37.0 — Creator UI: Create starts with "What do you want to make?" (five tasks pick the model; Change model, the
+  guide and the precise dials are folded); the main button says what it makes (Write prompt, Make 8 images, Run all
+  steps) with Review prompt first beside it; Create / Results switch when the form and the work can't sit side by side;
+  Ask starts closed; History is Saved prompts with bookmarks (stars stay for artwork); Gallery: Select → two →
+  Compare 2, Pin on the left, Filters folded on a phone; Models opens as a chooser (what it makes, what you need,
+  ready or not; Customize opens the editor).
 - 1.36.1 — The app-menu icon opened nothing for about a minute after 1.35.0: the launcher shredded the old on-disk
   browser profile before opening the window. The window opens at once now, and the shredding runs after it, in the
   background at low priority (one that was cut short goes at the next start).

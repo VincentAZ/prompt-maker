@@ -2,7 +2,8 @@
   "id": "minimax-h3",
   "name": "MiniMax H3 (Hailuo 03)",
   "kind": "video",
-  "description": "MiniMax's omni-modal 2K video model with native stereo audio; structured shot-by-shot prompts, 4–15 s.",
+  "task": "animate",
+  "description": "Turn a picture into a short video with sound, 4 to 15 seconds.",
   "guide": {
     "bestFor": "Clips of 4–15 seconds with sound, including several shots with cuts, dialogue in many languages and believable action.",
     "youNeed": "Optional: a picture to start from.",

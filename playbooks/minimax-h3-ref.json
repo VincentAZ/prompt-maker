@@ -2,7 +2,8 @@
   "id": "minimax-h3-ref",
   "name": "MiniMax H3 Reference",
   "kind": "video",
-  "description": "MiniMax H3 reference-to-video (ref2va): the person in your picture, kept as they are, in a new clip with sound, 4–15 s.",
+  "task": "person",
+  "description": "Keep the same person in a new video with sound.",
   "guide": {
     "bestFor": "A video of the same person in a brand-new scene, with sound. Their face and look stay; everything else is new.",
     "youNeed": "One clear picture of the person. It is NOT the first frame: the scene comes from your words.",

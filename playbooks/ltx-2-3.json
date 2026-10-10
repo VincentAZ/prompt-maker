@@ -2,7 +2,8 @@
   "id": "ltx-2-3",
   "name": "LTX 2.3",
   "kind": "video",
-  "description": "Lightricks' open 22B video+audio model: cinematic text/image-to-video with synced sound, dialogue and lip sync.",
+  "task": "animate",
+  "description": "Bring a picture to life with movement and sound, or make a video from words.",
   "guide": {
     "bestFor": "Short cinematic clips with sound: ambience, music, even people talking with matching lips. Can start from a picture or from words.",
     "youNeed": "Optional: a picture to be the first frame of the clip.",

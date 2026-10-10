@@ -1,8 +1,9 @@
 {
   "id": "krea-2-raw-i2i",
-  "name": "Krea 2 RAW i2i",
+  "name": "Krea 2 RAW Edit",
   "kind": "image",
-  "description": "Krea 2 RAW image-to-image: edits an attached image from a dense literal caption.",
+  "task": "edit",
+  "description": "Edit a picture: change its scene, style or details and keep the rest.",
   "guide": {
     "bestFor": "Changing a picture you already have: a new style, new light, a new season, small edits, while the layout stays the same.",
     "youNeed": "The picture you want to change.",

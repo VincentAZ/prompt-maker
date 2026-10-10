@@ -2,7 +2,8 @@
   "id": "krea2-raw",
   "name": "Krea 2 RAW",
   "kind": "image",
-  "description": "Krea 2's undistilled 12B open-weights base: literal, full-CFG, rewards dense natural-language captions.",
+  "task": "picture",
+  "description": "Detailed pictures from your words. It does exactly what you write.",
   "guide": {
     "bestFor": "New pictures from words alone: photos, products, illustration, anime, paintings. It does exactly what you write, so it rewards detail.",
     "youNeed": "Nothing but an idea. No picture needed.",

@@ -1528,10 +1528,10 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 
 /* Creator workspace: the task and idea lead; model mechanics stay one click away. */
 .director { --bar-fade: 12px; box-shadow: none; }
-.director-steps { gap: 22px; }
-.step { gap: 12px; }
-.task-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-.task-choice { min-height: 42px; padding: 9px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: transparent; text-align: left; font-size: 13.5px; font-weight: 650; }
+.director-steps { gap: 18px; }
+.step { gap: 10px; }
+.task-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-choice { min-height: 34px; padding: 6px 12px; border: 1px solid var(--line-2); border-radius: 999px; background: transparent; font-size: 13px; font-weight: 650; }
 .task-choice[aria-pressed="true"] { border-color: var(--hot); background: rgb(255 77 141 / 12%); }
 .task-choice:hover { background: var(--panel-3); }
 .model-choice > summary { display: flex; justify-content: space-between; gap: 10px; cursor: pointer; font-size: 13px; color: var(--text-2); }
@@ -1550,9 +1550,10 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .more-options > .dial { margin-top: 12px; }
 .more-options #sizeAuto { align-self: start; }
 #sizeSummary { margin: 0; }
-.review-choice { display: flex; gap: 9px; align-items: center; font-size: 13.5px; flex-basis: 100%; cursor: pointer; }
+.review-row { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-bottom: 2px; }
+.review-choice { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; white-space: nowrap; cursor: pointer; }
 .review-choice input { accent-color: var(--hot); width: 17px; height: 17px; }
-.outcome-hint { flex-basis: 100%; font-size: 12.5px; line-height: 1.4; color: var(--text-2); margin: 0 0 5px; }
+.outcome-hint { flex: 1 1 200px; font-size: 12.5px; line-height: 1.4; color: var(--muted); margin: 0; }
 .generate-bar { background: var(--panel-solid); border-top: 1px solid var(--line); padding-top: 12px; }
 .btn-generate { height: 50px; font-size: 17px; box-shadow: none; }
 .btn.primary { box-shadow: none; }
@@ -1587,7 +1588,10 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .reel-grid.selecting .reel-cell.picked::before { content: '✓'; background: var(--hot); color: var(--ink); display: grid; place-items: center; font-weight: 800; }
 .reel-grid.selecting .rate-slot, .reel-grid.selecting .rt-hide { display: none; }
 .reel-grid.selecting .rtile { cursor: pointer; }
-.rt-hide { font-size: 11.5px; }
+.rt-hide { font-size: 11.5px; max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* "Hide from Create" where the tile has room, "Hide" on a small one */
+.reel-cell { container-type: inline-size; }
+@container (max-width: 150px) { .rt-hide-long { display: none; } }
 .hactions .open { background: var(--panel-3); color: var(--text); box-shadow: none; }
 .tabs button { padding-inline: 12px; }
 @media (max-width: 600px) {
@@ -1599,6 +1603,8 @@ body.narrow .create-switch { display: flex; }
 body.narrow #view-create:not(.show-results) .stage, body.narrow #view-create.show-results .director { display: none; }
 body.narrow .create { min-height: 0; }
 body.narrow .stage { max-height: none; }
+/* The switch is sticky, so what a switch scrolls to stops under it, not behind it. */
+body.narrow #stage, body.narrow #theme { scroll-margin-top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px) + 70px); }
 .create-switch { position: sticky; top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px)); z-index: 5; gap: 8px; padding: 10px 0; margin-bottom: 10px; background: var(--ink); }
 .create-switch button { min-height: 40px; flex: 1; }
 .create-switch button[aria-pressed="true"] { background: var(--panel-3); border-color: var(--hot); }
@@ -1606,6 +1612,7 @@ body.narrow .stage { max-height: none; }
   .create-switch { display: flex; }
   #view-create:not(.show-results) .stage, #view-create.show-results .director { display: none; }
   #view-create .stage { max-height: none; }
+  #stage, #theme { scroll-margin-top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px) + 70px); }
 }
 @media (max-width: 760px) {
   .reel-filters { flex-wrap: wrap; overflow: visible; }

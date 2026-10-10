@@ -3,7 +3,7 @@
 //   DEMO  (port 5320): an isolated folder with approved sample renders, empty prompts and seed 0.
 //         Start it with PORT=5320 PROMPT_MAKER_DATA=<folder> node server.js
 //   CLEAN (port 5321): an empty data folder, isolated XDG_CONFIG_HOME/XDG_DATA_HOME, and service commands disabled.
-//   Override DEMO, CLEAN and CDP_PORT for other local ports. No conversation is generated for the Ask screenshot.
+//   Override DEMO, CLEAN and CDP_PORT for other local ports, CHROME_DIR for the browser profile. No conversation is generated for the Ask screenshot.
 // Then:  node tests/screenshots.mjs create gallery models voices comfy-setup ask   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
 // Look at every picture before it ships: no prompts or personal names. Models shows the chooser, not example prompts.
 // shots.mjs: sharp 1760x1100 screenshots of the running demo apps, no prompt text on screen.
@@ -26,7 +26,7 @@ class Cdp {
 }
 
 const PORT = Number(process.env.CDP_PORT) || 9333;
-const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${PORT}`, '--user-data-dir=/tmp/promptmaker-demo/chrome', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--remote-allow-origins=*', '--window-size=1760,1100', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
+const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${process.env.CHROME_DIR || '/tmp/promptmaker-demo/chrome'}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--remote-allow-origins=*', '--window-size=1760,1100', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
 let target;
 for (let i = 0; i < 60 && !target; i++) { await sleep(150); target = await fetch(`http://127.0.0.1:${PORT}/json/list`).then(r => r.json()).then(l => l.find(t => t.type === 'page')).catch(() => null); }
 const cdp = await Cdp.connect(target.webSocketDebuggerUrl);
@@ -56,7 +56,7 @@ const pictures = async size => {
 const steps = {
   async create() {
     await open(`${DEMO}/#create`);
-    await js(`[...document.querySelectorAll('.model-card')].find(e => e.textContent.includes('Krea 2 RAW') && !e.textContent.includes('i2i'))?.click(); 1`);
+    await js(`[...document.querySelectorAll('.model-card')].find(e => e.textContent.includes('Krea 2 RAW') && !e.textContent.includes('Edit'))?.click(); 1`);
     await sleep(1200);
     await js(`document.querySelector('#theme').value=''; document.querySelector('#theme').dispatchEvent(new Event('input',{bubbles:true})); 1`);
     await pictures(150);

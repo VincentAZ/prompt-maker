@@ -2,7 +2,8 @@
   "id": "wan-animate-2",
   "name": "Wan Animate 2",
   "kind": "video",
-  "description": "Wan-AI's character animation model: your character image performs the moves of a motion video, in a new setting written in text.",
+  "task": "motion",
+  "description": "Make your character copy the moves from a video.",
   "guide": {
     "bestFor": "Making your character do the exact moves from another video: a dance, a gesture, a walk. The moves come from the video, the look from your picture.",
     "youNeed": "A picture of your character AND a short video of someone doing the moves (a phone clip is fine).",

@@ -25,7 +25,7 @@
       </button>
       <button type="button" data-view="history" aria-label="Saved prompts" title="Saved prompts">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>
-        <span>Saved prompts</span><em id="historyBadge" class="badge" hidden></em>
+        <span>Prompts</span><em id="historyBadge" class="badge" hidden></em>
       </button>
       <button type="button" data-view="gallery" aria-label="Gallery" title="Gallery">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
@@ -299,8 +299,10 @@
           </div>
 
           <div class="generate-bar">
-            <label class="review-choice" id="reviewChoice"><input type="checkbox" id="reviewFirst" checked> Review prompt first</label>
-            <p id="outcomeHint" class="outcome-hint"></p>
+            <div class="review-row">
+              <label class="review-choice" id="reviewChoice"><input type="checkbox" id="reviewFirst" checked> Review prompt first</label>
+              <p id="outcomeHint" class="outcome-hint"></p>
+            </div>
             <p id="genCost" class="gen-cost" hidden></p>
             <button type="submit" id="generateBtn" class="btn-generate">
               <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Write prompt</span><kbd>Ctrl ↵</kbd>
