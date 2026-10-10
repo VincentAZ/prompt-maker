@@ -502,6 +502,10 @@ A workflow can load a model file your ComfyUI doesn't have yet: a checkpoint, a 
 - **A file in a subfolder** (the workflow says `sam3.1.safetensors`, your ComfyUI has `wan-2.1/sam3.1.safetensors`) is found there, with nothing to do.
 - **ComfyUI skipping part of a workflow** (an output that fails its checks) also stops the render, with ComfyUI's reasons in short. Before, the render ran without its result.
 
+**Missing nodes.** A workflow can also use a node your ComfyUI doesn't offer right now. Most often the node's pack *is* installed but didn't load when ComfyUI started (a Python package broke, a ComfyUI update changed something it needs), and ComfyUI only says so in its log, so a render would just say "Node 'Image Save' not found". Prompt Maker reads that log: step ⑤ names the node, the pack it comes from and why it didn't load ("the pack was-node-suite-comfyui didn't load when ComfyUI started: cannot import name 'ThreadpoolController'…"), with **↻ Restart ComfyUI** for once you've fixed the pack in ComfyUI (Manager → Try fix, or install what it says is missing) and **↻ Check again**. A node no loaded pack has is reported too: install the pack (ComfyUI Manager → Install Missing Custom Nodes), then restart ComfyUI.
+
+**Checked at start, for every workflow.** When Prompt Maker starts (and whenever ComfyUI comes back, and every ten minutes while it runs), every workflow of every model is checked against ComfyUI in the background: nodes it lacks, model files it lacks. A workflow that can't render is marked **⚠** in step ⑤'s workflow list and the notice says why, before you pick it; a toast says so once. **Settings → ComfyUI** lists them all, with **↻ Check again**.
+
 ### Seed
 
 Step ⑤ has a **🎲 Seed** row for the picked workflow, with ComfyUI's four modes:
@@ -871,9 +875,15 @@ ComfyUI checked the workflow and found a part it can't run (it names the node an
 </details>
 
 <details>
-<summary><b>"This workflow uses nodes your ComfyUI doesn't have"</b></summary>
+<summary><b>"This workflow uses nodes your ComfyUI doesn't have"</b> (adding a workflow)</summary>
 
 The workflow needs custom nodes that aren't installed. In ComfyUI, open **Manager → Install Missing Custom Nodes**, restart, then add the workflow again.
+</details>
+
+<details>
+<summary><b>"This workflow uses a node your ComfyUI doesn't have right now"</b> / <b>"Node 'X' not found"</b></summary>
+
+A node the workflow uses isn't in ComfyUI at the moment. Step ⑤ says which, and when the node's pack is installed but didn't load when ComfyUI started, which pack and why (from ComfyUI's log: usually a Python package that broke or an update the pack hasn't caught up with). Fix the pack in ComfyUI (**Manager → Try fix**, or install what the reason names), then **↻ Restart ComfyUI** in the notice and **↻ Check again**. If no pack has the node, install the one that does (**Manager → Install Missing Custom Nodes**) and restart. See [Missing models](#missing-models).
 </details>
 
 <details>

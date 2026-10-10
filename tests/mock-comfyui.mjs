@@ -136,6 +136,20 @@ function filesIn(dir, prefix = '') {
 
 // root: a fake ComfyUI install folder; finished renders are saved to root/output like the real thing, and the
 // checkpoints in root/models/checkpoints are offered next to mock_model.safetensors.
+// The node types the starter workflows that ship with the app use (workflows/*/*.json): a real ComfyUI with their
+// packs lists them, so the mock does too, as plain nodes (no model-file choices: nothing to check there).
+const REPO = path.join(path.dirname(new URL(import.meta.url).pathname), '..');
+for (const dir of fs.readdirSync(path.join(REPO, 'workflows'), { withFileTypes: true })) {
+  if (!dir.isDirectory()) continue;
+  for (const file of fs.readdirSync(path.join(REPO, 'workflows', dir.name)).filter(f => f.endsWith('.json'))) {
+    const w = JSON.parse(fs.readFileSync(path.join(REPO, 'workflows', dir.name, file), 'utf8'));
+    for (const node of Object.values(w.prompt || {})) {
+      const type = node?.class_type;
+      if (type && !OBJECT_INFO[type]) OBJECT_INFO[type] = { input: { required: {} }, input_order: { required: [] }, output: [], output_node: false, display_name: type };
+    }
+  }
+}
+
 export function startMockComfy(port, { png, root = null, mp4 = null }) {
   const prompts = [];
   const uploads = [];

@@ -684,6 +684,8 @@
             <div class="row"><input id="sComfyUrl" placeholder="http://127.0.0.1:8188"><button type="button" id="sComfyTest" class="btn small">Test connection</button></div>
           </label>
           <p id="sComfyResult" class="test-result" hidden></p>
+          <div id="sComfyHealth" class="health" hidden><p></p><ul></ul><button type="button" id="sComfyRecheck" class="btn small">↻ Check again</button></div>
+          <p class="hint">Every workflow is checked against ComfyUI when Prompt Maker starts, whenever ComfyUI comes back and every ten minutes: a node pack that didn't load, a model file it lacks. What can't render is marked ⚠ in step ⑤, which says why.</p>
           <label class="check-row"><input type="checkbox" id="sComfyCleanup"> <span>After copying a render, delete it from ComfyUI's output folder</span></label>
           <label class="field" id="sComfyDirField"><span>ComfyUI output folder <small>only if ComfyUI was started with <code>--output-directory</code></small></span><input id="sComfyDir" placeholder="found automatically"></label>
           <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer. Deleting from History always removes ComfyUI's copies of those renders too, so the folder matters even with this off.</p>

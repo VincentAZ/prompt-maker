@@ -1037,11 +1037,42 @@ async function workflowLinks(workflow, base) {
   return json && isUiWorkflow(json) ? models.modelLinks(json) : [];
 }
 
+// Node packs that didn't load when ComfyUI started, and which of them has a node: from ComfyUI's log and the packs'
+// source, kept for five minutes (a restart of ComfyUI changes both; "fresh" reads again).
+const nodePacks = { at: 0, failures: [], dir: null, packs: new Map() };
+async function failedPacks(settings, { fresh = false } = {}) {
+  if (!fresh && Date.now() - nodePacks.at < 5 * 60_000) return nodePacks;
+  const dirs = await comfy.folders(settings.comfyUrl, { roots: [settings.comfyDir, settings.comfyLaunch?.dir] }).catch(() => ({}));
+  nodePacks.failures = await comfy.importFailures([dirs.user && path.join(dirs.user, 'comfyui.log'), services.comfyLog()]);
+  nodePacks.dir = dirs.customNodes || null;
+  nodePacks.packs = new Map();
+  nodePacks.at = Date.now();
+  return nodePacks;
+}
+async function packForNode(settings, type, opts) {
+  const np = await failedPacks(settings, opts);
+  if (!np.packs.has(type)) np.packs.set(type, await comfy.packFor(np.dir, np.failures, type).catch(() => null));
+  return np.packs.get(type);
+}
+
 // The model files a workflow needs that ComfyUI doesn't have (with their download links), as the render would use
-// it: a LoRA switched off doesn't count. fresh: ask ComfyUI again (a model was just added). Returns { info, missing, fixes }.
+// it: a LoRA switched off doesn't count, and the nodes it uses that ComfyUI doesn't offer (with the pack that failed
+// to load, when the log says). fresh: ask ComfyUI again (a model was just added). Returns { info, missing, fixes, nodes }.
 async function workflowModels(workflow, base, { fresh = false } = {}) {
   let info = await comfy.objectInfo(base, { fresh }).catch(() => null);
-  if (!info) return { info, missing: [], fixes: [], checked: false };
+  if (!info) return { info, missing: [], fixes: [], nodes: [], checked: false };
+  let nodes = models.checkNodes(workflow.prompt, info);
+  if (nodes.length && !fresh) { // maybe installed since Prompt Maker last asked
+    info = await comfy.objectInfo(base, { fresh: true }).catch(() => info);
+    nodes = models.checkNodes(workflow.prompt, info);
+  }
+  if (nodes.length) {
+    const settings = await store.getSettings();
+    for (const n of nodes) {
+      const pack = await packForNode(settings, n.type, { fresh });
+      if (pack) Object.assign(n, { pack: pack.pack, reason: pack.reason });
+    }
+  }
   let probe;
   try {
     probe = wf.buildPrompt(workflow, { text: '' }, info).prompt;
@@ -1054,14 +1085,43 @@ async function workflowModels(workflow, base, { fresh = false } = {}) {
     check = models.checkModels(probe, info);
   }
   if (check.missing.length) check = models.checkModels(probe, info, await workflowLinks(workflow, base));
-  return { info, ...check, checked: true };
+  return { info, ...check, nodes, checked: true };
 }
 
-// Stops a render before anything is sent when ComfyUI lacks a model file the workflow loads. Returns /object_info.
+// Stops a render before anything is sent when ComfyUI lacks a node or a model file the workflow uses. Returns /object_info.
 async function checkWorkflowModels(workflow, base) {
-  const { info, missing } = await workflowModels(workflow, base);
+  const { info, missing, nodes } = await workflowModels(workflow, base);
+  if (nodes.length) throw store.httpError(400, models.describeMissingNodes(nodes));
   if (missing.length) throw Object.assign(store.httpError(400, models.describeMissing(missing)), { missingModels: missing });
   return info;
+}
+
+// Every workflow checked against ComfyUI (nodes it lacks, model files it lacks): at start, whenever ComfyUI comes
+// back, every ten minutes while it's up, and on request. Step ⑤ and Settings → ComfyUI show what can't render.
+const health = { at: 0, comfyOk: null, running: null, workflows: [] };
+async function checkAllWorkflows(settings, { fresh = false } = {}) {
+  if (health.running) return health.running;
+  health.running = (async () => {
+    const out = [];
+    for (const sum of await wf.listWorkflows()) {
+      const w = await wf.getWorkflow(sum.id).catch(() => null);
+      if (!w) continue;
+      const r = await workflowModels(w, settings.comfyUrl, { fresh }).catch(() => null);
+      if (!r?.checked) return; // ComfyUI went away: keep what was known
+      if (!r.missing.length && !r.nodes.length) continue;
+      const model = await store.getModel(w.modelId).catch(() => null);
+      out.push({ id: w.id, name: w.name, modelId: w.modelId, modelName: model?.name || '', missing: r.missing, nodes: r.nodes });
+    }
+    health.workflows = out;
+    health.at = Date.now();
+  })().finally(() => { health.running = null; });
+  return health.running;
+}
+// Called whenever ComfyUI answers: a check when it just came back (its node packs may differ) or is ten minutes old.
+function comfyAnswered(settings, ok) {
+  const came = ok && health.comfyOk !== true;
+  health.comfyOk = ok;
+  if (ok && (came || Date.now() - health.at > 10 * 60_000)) checkAllWorkflows(settings, { fresh: came }).catch(() => {});
 }
 
 async function renderTake(req, res) {
@@ -1672,13 +1732,23 @@ async function route(req, res) {
     const settings = await store.getSettings();
     const base = url.searchParams.get('url') || settings.comfyUrl;
     try {
-      return sendJson(res, 200, { ...(await comfy.status(base)), url: base });
+      const st = await comfy.status(base);
+      if (base === settings.comfyUrl) comfyAnswered(settings, true);
+      return sendJson(res, 200, { ...st, url: base });
     } catch (err) {
+      if (base === settings.comfyUrl) comfyAnswered(settings, false);
       // Off: say whether it's on this computer at all (found, or being set up), so Create can offer ▶ Start or ⬇ Set it up.
       const local = services.isLocalUrl(base);
       const launch = local ? await services.comfyLaunch(settings).catch(() => ({ dir: null })) : { dir: null };
       return sendJson(res, 200, { ok: false, url: base, error: err.message, local, found: Boolean(launch.dir) && (await services.isComfyDir(launch.dir)), setup: comfySetup.current() });
     }
+  }
+  // What can't render right now, over every workflow (see checkAllWorkflows). fresh: check again now.
+  if (p === '/api/comfy/health' && m === 'GET') {
+    const settings = await store.getSettings();
+    if (url.searchParams.has('fresh') || (!health.at && !health.running)) await checkAllWorkflows(settings, { fresh: url.searchParams.has('fresh') }).catch(() => {});
+    else if (health.running) await health.running.catch(() => {});
+    return sendJson(res, 200, { checkedAt: health.at || null, problems: health.workflows });
   }
   if (p === '/api/assistant' && m === 'POST') return assistantChat(req, res);
   if (p === '/api/assistant/guide' && m === 'GET') return sendJson(res, 200, await assistant.searchGuide(url.searchParams.get('q')));
@@ -1785,8 +1855,15 @@ async function route(req, res) {
     const existing = await wf.getWorkflow(match[1]);
     if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
     const settings = await store.getSettings();
-    const { missing, fixes, checked } = await workflowModels(existing, settings.comfyUrl, { fresh: url.searchParams.has('fresh') });
-    return sendJson(res, 200, { checked, missing, fixes: fixes.length });
+    // A workflow the check over every workflow lists is asked about afresh (ComfyUI's node list is kept five
+    // minutes, so a routine look could say "fine" from before), and only a fresh answer revises that list.
+    const fresh = url.searchParams.has('fresh') || health.workflows.some(p => p.id === existing.id);
+    const { missing, fixes, nodes, checked } = await workflowModels(existing, settings.comfyUrl, { fresh });
+    if (checked && fresh && health.at) { // the newer answer for this one goes into the check over every workflow
+      health.workflows = health.workflows.filter(p => p.id !== existing.id);
+      if (missing.length || nodes.length) health.workflows.push({ id: existing.id, name: existing.name, modelId: existing.modelId, modelName: (await store.getModel(existing.modelId).catch(() => null))?.name || '', missing, nodes });
+    }
+    return sendJson(res, 200, { checked, missing, nodes, fixes: fixes.length });
   }
   if (p === '/api/comfy/downloads' && m === 'GET') return sendJson(res, 200, models.listDownloads());
   if (p === '/api/comfy/downloads' && m === 'POST') {
@@ -1918,5 +1995,7 @@ server.listen(PORT, HOST, async () => {
   autostart.status().then(st => (st.missing || st.old) && !st.elsewhere && autostart.repair()).catch(() => {});
   if (settings?.comfyAutostart && !(await comfyUp(settings))) {
     services.startComfy(settings).then(() => console.log('Starting ComfyUI…'), err => console.warn(`Couldn't start ComfyUI: ${err.message}`));
+  } else if (settings && (await comfyUp(settings))) {
+    comfyAnswered(settings, true); // every workflow checked in the background, so step ⑤ can say what can't render
   }
 });

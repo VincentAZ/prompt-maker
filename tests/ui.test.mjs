@@ -2161,8 +2161,7 @@ esac
     assert(await js('!!document.querySelector(".pick-band") && !document.querySelector(".reel-ghost")'), 'Ctrl-drag draws a box, it doesn\'t carry the card');
     await shot('24d-your-renders-box');
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b2.x, y: b2.y + 2, button: 'left', buttons: 0, clickCount: 1, modifiers: 2 });
-    await sleep(80);
-    assert(!(await js('!!document.querySelector(".pick-band")')), 'the box goes when you let go');
+    await waitFor('!document.querySelector(".pick-band")', 'the box goes when you let go', 3000);
     assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'it picks every card it touched');
     assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
     const picked = await count('#reelGrid > .reel-cell.picked');
@@ -4175,6 +4174,56 @@ esac
     await click('#stageError .x');
   });
 
+  await test('nodes: a node pack that didn\'t load in ComfyUI: step 5 names the pack and why, the check at start lists it, the render stops', async () => {
+    // ComfyUI's log says the pack failed to import, and the pack's source names the node.
+    const pack = path.join(comfyRoot, 'custom_nodes', 'mock-saver');
+    await fs.mkdir(pack, { recursive: true });
+    await fs.writeFile(path.join(pack, 'nodes.py'), 'NODE_CLASS_MAPPINGS = {"SaveImage": MockSaver}\n');
+    await fs.mkdir(path.join(comfyRoot, 'user'), { recursive: true });
+    await fs.writeFile(path.join(comfyRoot, 'user', 'comfyui.log'), `\x1b[33m[WARNING]\x1b[0m Cannot import ${comfyRoot}/custom_nodes/mock-saver module for custom nodes: cannot import name 'Thing' from 'threadpoolctl' (${comfyRoot}/venv/threadpoolctl.py)\n`);
+    const savedType = OBJECT_INFO.SaveImage;
+    delete OBJECT_INFO.SaveImage;
+    try {
+      const health = await js(`fetch('/api/comfy/health?fresh=1').then(r => r.json())`);
+      const bad = health.problems.find(p => p.nodes.some(n => n.type === 'SaveImage'));
+      assert(bad, `the check over every workflow lists one that uses the node: ${JSON.stringify(health).slice(0, 300)}`);
+      const node = bad.nodes.find(n => n.type === 'SaveImage');
+      assert(node.pack === 'mock-saver' && node.reason.includes("cannot import name 'Thing'") && !node.reason.includes(comfyRoot), `with the pack and why, no paths: ${JSON.stringify(node)}`);
+      assert(node.nodes[0].startsWith('#'), `and which node: ${node.nodes[0]}`);
+
+      await click('.tabs button[data-view="settings"]');
+      await click('#sComfyRecheck');
+      await waitFor('(document.querySelector("#sComfyHealth p")?.textContent || "").includes("can\'t render right now")', 'Settings → ComfyUI lists it');
+      assert((await text('#sComfyHealth')).includes('mock-saver'), `with the pack: ${await text('#sComfyHealth')}`);
+
+      await click('.tabs button[data-view="create"]');
+      await click('.model-card[data-id="krea2-raw"]');
+      await waitFor('!document.querySelector("#wfpModels").hidden && document.querySelector("#wfpModels").textContent.includes("mock-saver")', 'step 5 names the pack');
+      const notice = await text('#wfpModels');
+      assert(notice.includes('SaveImage') && notice.includes("didn't load when ComfyUI started") && notice.includes("cannot import name 'Thing'") && notice.includes('Restart ComfyUI'), `which node, which pack, why, and a restart: ${notice}`);
+      assert((await js('document.querySelector("#wfpSelect").selectedOptions[0].textContent')).startsWith('⚠ '), 'the workflow is marked in the list');
+
+      // Rendering anyway: the same words, nothing sent to ComfyUI.
+      const before = comfy.prompts.length;
+      await click('.take .rb-go');
+      await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("doesn\'t have right now")', 'the render says what is missing');
+      const msg = await text('#stageError');
+      assert(msg.includes('mock-saver') && msg.includes('restart ComfyUI'), `with the pack and the fix: ${msg}`);
+      eq(comfy.prompts.length, before, 'nothing was sent to ComfyUI');
+      await click('#stageError .x');
+    } finally {
+      OBJECT_INFO.SaveImage = savedType;
+      await fs.rm(path.join(comfyRoot, 'user', 'comfyui.log'), { force: true });
+      await fs.rm(pack, { recursive: true, force: true });
+    }
+    // The pack fixed and ComfyUI restarted (here: the node is back): Check again clears it everywhere.
+    await click('#wfpModels [data-act="mm-recheck"]');
+    await toastText('it can render now');
+    await waitFor('document.querySelector("#wfpModels").hidden', 'the notice goes');
+    assert(!(await js('document.querySelector("#wfpSelect").selectedOptions[0].textContent')).startsWith('⚠'), 'and the mark');
+    eq((await js(`fetch('/api/comfy/health').then(r => r.json())`)).problems.length, 0, 'and the check over every workflow is clean');
+  });
+
   await test('gallery: a render moved out of the renders folder leaves every view, and comes back with its file', async () => {
     const all = await (await fetch(`${APP}/api/history`)).json();
     const entry = all.find(e => e.variations.some(v => v.renders?.length));
@@ -4335,7 +4384,7 @@ esac
     await click('#ivClose');
     await click('.job [data-job="only"]');
     eq(await count('.job .ju'), 2, 'Only the skipped ones');
-    assert(await js('document.querySelector(".job .ju.s-skipped .ju-thumb").classList.contains("broken")'), 'a picture that won\'t open shows ⚠ instead');
+    await waitFor('document.querySelector(".job .ju.s-skipped .ju-thumb")?.classList.contains("broken")', 'a picture that won\'t open shows ⚠ instead', 3000);
     await click('#jobsClose');
     assert(await js('document.querySelector("#jobsBtn").hidden'), 'once seen, the pill goes away');
     assert(!(await js('document.querySelector("#asJobs").hidden')), 'the log stays a click away in the assistant panel');

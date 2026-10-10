@@ -47,6 +47,7 @@ const state = {
   line: { voice: '', text: '' }, // 🎙 what the person says, in which voice (step 3, video models)
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   wfMissing: new Map(), // workflow id → model files it needs that ComfyUI doesn't have
+  wfNodes: new Map(), // workflow id → nodes it uses that ComfyUI doesn't have (with the pack that didn't load)
   trim: null, // { a, b }: the frames kept (a first, b after the last) while picking part of the motion video (✂️ Trim)
   downloads: [], // model downloads into ComfyUI (running in the server)
   comfy: null,
@@ -5676,6 +5677,7 @@ function renderSettings() {
   $('#sComfyFolder').value = s.comfyDir || '';
   $('#sComfyArgs').value = s.comfyArgs || '';
   showOutputDir();
+  renderComfyHealth();
   $('#sThinking').value = s.thinking;
   $('#sMaster').value = s.masterPrompt;
   $('#sAdult').checked = Boolean(s.adultContent);
@@ -6300,7 +6302,7 @@ function renderWorkflowPicker() {
   if (flows.length) {
     const id = activeWorkflowId(m.id);
     const sel = $('#wfpSelect');
-    sel.innerHTML = flows.map(f => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
+    sel.innerHTML = flows.map(f => `<option value="${esc(f.id)}">${flowTrouble(f.id) ? '⚠ ' : ''}${esc(f.name)}</option>`).join('');
     sel.value = id;
     sel.title = flows.find(f => f.id === id)?.name || '';
     $('#wfpSettings').innerHTML = settingsHtml(flows.find(f => f.id === id));
@@ -6359,25 +6361,110 @@ function checkWorkflowModels(id, { fresh = false } = {}) {
   if (!id || !state.comfy?.ok || (!fresh && Date.now() - (checkedModels.get(id) || 0) < 60_000)) return;
   checkedModels.set(id, Date.now());
   api(`/api/workflows/${encodeURIComponent(id)}/models${fresh ? '?fresh=1' : ''}`)
-    .then(r => { if (r.checked) noteMissingModels(id, r.missing); })
+    .then(r => { if (r.checked) noteMissingModels(id, r.missing, r.nodes); })
     .catch(() => checkedModels.delete(id));
 }
 
-function noteMissingModels(id, missing) {
+function noteMissingModels(id, missing, nodes = []) {
   state.wfMissing.set(id, missing || []);
+  state.wfNodes.set(id, nodes || []);
   renderModelNotice();
+  renderPickerMarks();
   if (missing?.some(m => m.folder === 'loras') && !state.loraList) loadLoraList().then(renderModelNotice); // another version may be there
 }
 
 const sizeLabel = b => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`);
 const downloadFor = m => state.downloads.find(d => d.file === m.file && d.folder === m.folder);
 
+// Every workflow, checked against ComfyUI on the server (at start, whenever ComfyUI comes back, every ten minutes):
+// what can't render right now feeds step ⑤ and Settings → ComfyUI, before any workflow is picked.
+let healthToasted = false;
+async function loadHealth({ fresh = false } = {}) {
+  const h = await api(`/api/comfy/health${fresh ? '?fresh=1' : ''}`).catch(() => null);
+  if (!h) return null;
+  state.health = h;
+  const bad = new Set(h.problems.map(p => p.id));
+  if (fresh) for (const f of state.workflows) if (!bad.has(f.id)) { state.wfMissing.set(f.id, []); state.wfNodes.set(f.id, []); }
+  for (const p of h.problems) {
+    if ((checkedModels.get(p.id) || 0) > (h.checkedAt || 0)) continue; // step ⑤ asked more recently: its answer is newer
+    state.wfMissing.set(p.id, p.missing);
+    state.wfNodes.set(p.id, p.nodes);
+  }
+  renderModelNotice();
+  renderPickerMarks();
+  renderComfyHealth();
+  if (h.problems.length && !healthToasted) {
+    healthToasted = true;
+    const names = h.problems.slice(0, 3).map(p => `“${p.name}”`).join(', ');
+    toast(`⚠️ ${h.problems.length === 1 ? 'A workflow' : `${h.problems.length} workflows`} can't render right now: ${names}${h.problems.length > 3 ? '…' : ''}. Step ⑤ says why.`, true);
+  }
+  return h;
+}
+
+// ⚠ in front of a workflow that can't render right now, in the picker.
+const flowTrouble = id => (state.wfNodes.get(id)?.length || 0) + (state.wfMissing.get(id)?.length || 0) > 0;
+function renderPickerMarks() {
+  for (const o of $('#wfpSelect').options) {
+    const name = state.workflows.find(f => f.id === o.value)?.name || o.textContent.replace(/^⚠ /, '');
+    o.textContent = flowTrouble(o.value) ? `⚠ ${name}` : name;
+  }
+}
+
+// Settings → ComfyUI: the result of the check over every workflow.
+function renderComfyHealth() {
+  const box = $('#sComfyHealth');
+  const h = state.health;
+  box.hidden = !h || !state.workflows.length;
+  if (box.hidden) return;
+  const when = h.checkedAt ? `checked ${new Date(h.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'not checked yet (is ComfyUI running?)';
+  $('p', box).textContent = !h.checkedAt ? `Workflow check: ${when}.` : h.problems.length ? `Workflow check (${when}): ${h.problems.length === 1 ? 'one workflow' : `${h.problems.length} workflows`} can't render right now.` : `Workflow check (${when}): all ${state.workflows.length} workflows can render.`;
+  $('ul', box).innerHTML = h.problems.map(p => {
+    const why = [...p.nodes.map(n => `node “${esc(n.type)}”${n.pack ? ` — the pack ${esc(n.pack)} didn't load${n.reason ? `: ${esc(n.reason)}` : ''}` : ' isn\'t installed'}`),
+      ...p.missing.map(m => `model file ${esc(m.file)} (models/${esc(m.folder || '…')})`)];
+    return `<li><b>${esc(p.name)}</b>${p.modelName ? ` <span class="mm-where">${esc(p.modelName)}</span>` : ''}: ${why.join('; ')}</li>`;
+  }).join('');
+}
+$('#sComfyRecheck').addEventListener('click', async () => {
+  const b = $('#sComfyRecheck');
+  b.disabled = true;
+  try { await loadHealth({ fresh: true }); } finally { b.disabled = false; }
+  toast(state.health?.problems.length ? 'Checked: see the list' : 'Checked: every workflow can render');
+});
+
+// Stops ComfyUI and starts it again (a node pack fixed in ComfyUI loads at its next start).
+async function restartComfyUi() {
+  try {
+    toast('🎨 Restarting ComfyUI…');
+    await api('/api/services/comfy/stop', { method: 'POST' });
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+  await startComfyUi();
+}
+
 function renderModelNotice() {
   const box = $('#wfpModels');
   const flow = state.workflows.find(f => f.id === $('#wfpSelect').value && f.modelId === state.modelId);
   const missing = flow && !$('#wfpBox').hidden ? state.wfMissing.get(flow.id) || [] : [];
-  box.hidden = !missing.length;
-  if (!missing.length) return box.replaceChildren();
+  const nodes = flow && !$('#wfpBox').hidden ? state.wfNodes.get(flow.id) || [] : [];
+  box.hidden = !missing.length && !nodes.length;
+  if (box.hidden) return box.replaceChildren();
+  if (nodes.length) {
+    // A node ComfyUI doesn't offer: its pack didn't load (the log says why) or isn't installed. Nothing to download here.
+    const c = state.comfy;
+    const restartable = c?.ok && c.local !== false;
+    const row = n => `<li><code>${esc(n.type)}</code><span class="mm-where">${esc(n.nodes.join(', '))}</span><span class="mm-act"><span class="mm-none">${n.pack
+      ? `Its node pack <b>${esc(n.pack)}</b> didn't load when ComfyUI started${n.reason ? `: ${esc(n.reason)}` : ''}.`
+      : 'No node pack ComfyUI loaded has it.'}</span></span></li>`;
+    const fix = nodes.some(n => n.pack)
+      ? 'Fix the pack in ComfyUI (Manager → Try fix, or install what it says is missing), then restart ComfyUI.'
+      : 'Install the pack that has it (ComfyUI Manager → Install Missing Custom Nodes), then restart ComfyUI.';
+    box.innerHTML = `<p>⚠️ “${esc(flow.name)}” uses ${nodes.length === 1 ? 'a node' : `${nodes.length} nodes`} your ComfyUI doesn't have right now, so it can't render:</p>
+      <ul>${nodes.map(row).join('')}</ul>
+      <p class="hint">${fix} ${restartable ? '<button type="button" class="btn small" data-act="mm-restart">↻ Restart ComfyUI</button> ' : ''}<button type="button" class="btn small" data-act="mm-recheck">↻ Check again</button></p>`;
+    return;
+  }
   const row = m => {
     const d = downloadFor(m);
     const where = `<span class="mm-where">→ ComfyUI/models/${esc(m.folder || '…')}</span>`;
@@ -6415,6 +6502,8 @@ $('#wfpModels').addEventListener('click', e => {
   const b = e.target.closest('button[data-act]');
   if (!b) return;
   const missing = state.wfMissing.get($('#wfpSelect').value) || [];
+  if (b.dataset.act === 'mm-restart') return restartComfyUi();
+  if (b.dataset.act === 'mm-recheck') return loadHealth({ fresh: true }).then(() => toast(flowTrouble($('#wfpSelect').value) ? 'Checked: still missing' : 'Checked: it can render now'));
   if (b.dataset.act === 'mm-get') downloadModels(missing.filter(m => m.file === b.dataset.file));
   else if (b.dataset.act === 'mm-all') downloadModels(missing.filter(m => m.download && !['running', 'done'].includes(downloadFor(m)?.state)));
   else if (b.dataset.act === 'mm-swap') {
@@ -6681,7 +6770,8 @@ function loadComfyStatus() {
         checkWorkflowUpdates();
         const m = currentModel();
         if (m && workflowsFor(m.id).length) checkWorkflowModels(activeWorkflowId(m.id));
-      }
+        if (state.workflows.length) loadHealth(); // the server's check over every workflow (cached; fresh when ComfyUI just came back)
+      } else renderComfyHealth();
       return st;
     });
   return comfyLoading;

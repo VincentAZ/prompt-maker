@@ -502,6 +502,13 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 .wfp-models code { font-family: var(--mono, monospace); font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
 .wfp-models .mm-where { color: var(--text-2); font-size: 12.5px; }
 .wfp-models .mm-act { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.wfp-models .hint .btn { margin-left: 4px; vertical-align: middle; }
+.health { padding: 9px 12px; border-radius: var(--radius-sm); background: rgb(255 196 77 / 8%); border: 1px solid rgb(255 196 77 / 25%); font-size: 13.5px; }
+.health p { margin: 0 0 6px; }
+.health ul { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+.health ul:empty { display: none; }
+.health li { overflow-wrap: anywhere; }
+.health .mm-where { color: var(--text-2); font-size: 12.5px; }
 .wfp-models .mm-prog { width: 110px; height: 6px; border-radius: 3px; background: rgb(255 255 255 / 12%); overflow: hidden; }
 .wfp-models .mm-bar { display: block; height: 100%; background: var(--hot, #ffb347); transition: width .4s; }
 .wfp-models .mm-pct { font-variant-numeric: tabular-nums; font-size: 12.5px; }

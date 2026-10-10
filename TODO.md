@@ -23,6 +23,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.36.0 — Step ⑤ names a node ComfyUI lacks, the pack it comes from and why it didn't load (from ComfyUI's log),
+  with ↻ Restart ComfyUI and ↻ Check again; a render stops with the same words instead of "Node 'X' not found".
+  Every workflow is checked against ComfyUI in the background at start, whenever ComfyUI comes back and every ten
+  minutes: ⚠ in the workflow list, the list in Settings → ComfyUI.
 - 1.35.0 — Step ③'s Duration is a number box (whole seconds, 1–20), not a menu of the model's few lengths.
   Deleting a card left its picture and theme on Create when the renders strip failed to redraw (1.33.0 to
   1.34.1): Create is cleared first now, whatever else fails. Deletes also reach ComfyUI's folders on disk from before it
