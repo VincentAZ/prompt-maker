@@ -224,10 +224,12 @@
           </section>
 
           <section class="step" data-panel="create-dials">
-            <header class="step-head"><span class="num">4</span><h2>Shape &amp; variations</h2></header>
+            <header class="step-head"><span class="num">4</span><h2>Shape, size &amp; variations</h2></header>
             <div class="dials">
               <label class="dial" id="aspectField"><span>Shape</span><select id="aspect" aria-label="Shape"></select><em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">from image</em></label>
+              <label class="dial" id="resolutionField"><span>Size</span><select id="resolution" aria-label="Size"></select></label>
               <label class="dial" id="durationField"><span>Duration <small>seconds</small></span><input id="duration" type="number" min="1" max="20" step="1" inputmode="numeric" aria-label="Duration in seconds"></label>
+              <span id="resCustom" class="res-custom" hidden><input id="resW" type="text" inputmode="numeric" maxlength="4" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="text" inputmode="numeric" maxlength="4" aria-label="Height" placeholder="Height"><button type="button" id="resUse" class="btn small primary" title="Use this size and keep it in the menu">✓ Use</button><button type="button" id="resForget" class="btn small" title="Take this size out of the menu">✕ Forget</button></span>
             </div>
               <div class="dial" id="takesField">
                 <span id="takesLabel">Variations</span>
@@ -238,9 +240,7 @@
                   <button type="button" role="radio" data-value="4">4</button>
                 </div>
               </div>
-            <p class="hint" id="sizeSummary"></p>
-            <details id="writingOptions" class="more-options"><summary>More options <span>size &amp; prompt writing</span></summary>
-              <div class="dial" id="resolutionField"><span>Image size</span><select id="resolution" aria-label="Resolution"></select><span id="resCustom" class="res-custom" hidden><input id="resW" type="text" inputmode="numeric" maxlength="4" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="text" inputmode="numeric" maxlength="4" aria-label="Height" placeholder="Height"><button type="button" id="resUse" class="btn small primary" title="Use this size and keep it in the menu">✓ Use</button><button type="button" id="resForget" class="btn small" title="Take this size out of the menu">✕ Forget</button></span><button type="button" id="sizeAuto" class="chip-btn">Use automatic size</button></div>
+            <details id="writingOptions" class="more-options"><summary>More options <span>prompt writing</span></summary>
               <div class="dial" id="lengthField"><span>Prompt length</span><div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length"><button type="button" role="radio" data-value="short">Short</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="long">Long</button></div></div>
             <div class="dial temp" id="tempField">
               <span title="How freely the Brain strays from the obvious (its “temperature”)">How adventurous <small id="tempWord" class="temp-word"></small> <output id="tempOut" class="temp-val" title="Temperature"></output></span>

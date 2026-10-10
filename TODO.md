@@ -23,6 +23,12 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.37.2 — Size is back in step ④, next to Shape (1.37.0 had folded it under More options, where your own width ×
+  height was hard to find), and it offers real choices: every size in the picked shape from Small (~0.5 MP) through
+  Standard, Large, Extra large and Huge to Giant (~4 MP), with HD, Full HD, 2K and 4K by name, instead of one ~1 MP
+  size per shape on picture models. A shape change keeps about the same size. ✎ Type your own size… opens its boxes
+  on a row of their own, so Shape and Size stay put. The "Automatic size" line and button are gone: the size starts on
+  the model's usual one and follows the shape.
 - 1.37.1 — Creator UI, second pass: the idea field is in view on a laptop (task chips, tighter steps, the review
   choice on one line); the top bar says Prompts (the page is still Saved prompts); each built-in playbook carries its
   plain description and its task (step ①'s "What do you want to make?"), and the i2i model is Krea 2 RAW Edit, so

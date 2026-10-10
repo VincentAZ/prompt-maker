@@ -518,7 +518,15 @@ esac
     assert(!(await js('document.querySelector("#modelGuide").open')), 'the guide starts folded');
     assert(!(await js('document.querySelector("#writingOptions").open')), 'precise dials start folded');
     eq(await text('#genLabel'), 'Write prompt', 'review is the safe existing default');
-    assert((await text('#sizeSummary')).startsWith('Automatic size'), 'new models use automatic size');
+    assert(await visible('#resolution'), 'Size sits in view, next to Shape');
+    eq(await text('#resolution option:checked'), 'Standard · 1024×1024', 'it starts on the model\'s usual size, in plain words');
+    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '736×736|1024×1024|1248×1248|1440×1440|1760×1760|2048×2048|__custom', 'small to about 4 megapixels, all square, then your own');
+    await choose('#aspect', '16:9');
+    eq(await value('#resolution'), '1344×768', 'the size follows the shape, the model\'s own first');
+    await choose('#resolution', '1920×1088');
+    await choose('#aspect', '1:1');
+    eq(await value('#resolution'), '1440×1440', 'and keeps about the same size');
+    await choose('#resolution', '1024×1024');
     await viewport(1280, 800);
     assert(await js('document.querySelector("#theme").getBoundingClientRect().top < innerHeight - 150'), 'idea field is in the first laptop viewport');
     await click('[data-task="edit"]');
@@ -687,7 +695,7 @@ esac
     // A video's first frame sets its shape: no LTX preset fits 1.6, so it gets the image's own ratio.
     eq(await value('#aspect'), '8:5', 'LTX takes the image\'s own ratio');
     eq(await text('#aspect option:checked'), 'Landscape · 8:5 🖼️', 'and says so');
-    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '1216×768|1280×800|1824×1152|2432×1504|3648×2272|__custom', 'its sizes, redrawn in that shape');
+    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '928×576|1216×768|1600×992|1824×1152|2432×1504|3648×2272|__custom', 'its sizes and the ladder, drawn in that shape');
     eq(await value('#resolution'), '1824×1152', 'the one nearest the 1080p it had');
     assert(await visible('#aspectNote'), '"from image" note on the video model too');
     assert(await visible('#roleBlock [data-value="animate"]'), 'animate for video model');
@@ -715,10 +723,10 @@ esac
     await choose('#aspect', '9:16');
     eq(await value('#resolution'), '1080×1920', 'back on a preset: the preset sizes');
     await choose('#aspect', '1:1');
-    eq(await value('#resolution'), '1024×1024', 'resolution follows a manual aspect change');
+    eq(await value('#resolution'), '1440×1440', 'resolution follows a manual aspect change, about the same size');
     await choose('#resolution', '__custom');
     assert(await visible('#resCustom'), 'width and height boxes for your own size');
-    eq(await value('#resolution'), '1024×1024', 'still on the size in use until one is typed');
+    eq(await value('#resolution'), '1440×1440', 'still on the size in use until one is typed');
     await type('#resW', '1000'); await type('#resH', '700');
     await shot('04b-own-size');
     await click('#resUse');

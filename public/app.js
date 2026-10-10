@@ -371,15 +371,35 @@ function ownAspect(m, ratio) {
   return m.aspectRatios.some(a => ratioOf(a) && ratioDist(ratioOf(a), ratio) < 0.01) ? null : ratioLabel(ratio);
 }
 
-// The Resolution choices for an Aspect: the model's own, or for an image's own ratio, its W×H sizes redrawn in that
-// shape (same pixel counts, multiples of 32). Models with "768p"/"2K" sizes keep theirs; the size follows the ratio.
+// The Size choices for a Shape, smallest first, all in that shape: the model's own sizes that fit it, its other sizes
+// redrawn in it (same pixel counts), and a ladder from about half a megapixel to four (multiples of 32). Sizes within
+// ~15% of each other count once, the model's own first. Models with "768p"/"2K" sizes keep theirs; the size follows the shape.
+const SIZE_LADDER = [0.5, 1, 1.5, 2, 3, 4].map(mp => mp * 1024 * 1024);
 function sizeChoices(m, aspect) {
   const ar = ratioOf(aspect);
-  if (!m || !ar || m.aspectRatios.includes(aspect)) return m?.resolutions || [];
+  const exact = (m?.resolutions || []).map(r => /^(\d+)\s*[×x]\s*(\d+)$/.exec(r)).filter(Boolean).map(x => [Number(x[1]), Number(x[2])]);
+  if (!ar || !exact.length) return m?.resolutions || [];
   const snap = v => Math.max(32, Math.round(v / 32) * 32);
-  const sizes = m.resolutions.map(r => /^(\d+)\s*[×x]\s*(\d+)$/.exec(r)).filter(Boolean).map(x => Number(x[1]) * Number(x[2]))
-    .sort((a, b) => a - b).map(px => `${snap(Math.sqrt(px * ar))}×${snap(Math.sqrt(px / ar))}`);
-  return sizes.length ? [...new Set(sizes)] : m.resolutions;
+  const near = m.aspectRatios?.includes(aspect) ? 0.05 : 0.005; // an image's own shape keeps its exact sizes
+  const fits = exact.filter(([w, h]) => ratioDist(w / h, ar) < near).sort((a, b) => ratioDist(a[0] / a[1], ar) - ratioDist(b[0] / b[1], ar));
+  const drawn = [...exact.map(([w, h]) => w * h), ...SIZE_LADDER].map(px => [snap(Math.sqrt(px * ar)), snap(Math.sqrt(px / ar))]);
+  const picked = [];
+  for (const [w, h] of [...fits, ...drawn]) {
+    if (w > 8192 || h > 8192 || picked.some(([pw, ph]) => ratioDist(pw * ph, w * h) < 0.15)) continue;
+    picked.push([w, h]);
+  }
+  return picked.sort((a, b) => a[0] * a[1] - b[0] * b[1]).map(([w, h]) => `${w}×${h}`);
+}
+
+// A size in plain words: "Full HD · 1920×1080", "Large · 1248×1248" (Small, Standard, Large, Extra large, Huge, Giant). "768p" and the like stay as they are.
+const VIDEO_SIZES = { '1280×720': 'HD', '1920×1080': 'Full HD', '2560×1440': '2K', '3840×2160': '4K' };
+function sizeName(size) {
+  const [w, h] = (/^(\d+)×(\d+)$/.exec(size) || []).slice(1).map(Number);
+  if (!w) return size;
+  const named = VIDEO_SIZES[`${w}×${h}`] || VIDEO_SIZES[`${h}×${w}`];
+  const mp = (w * h) / (1024 * 1024);
+  const word = named || (mp < 0.75 ? 'Small' : mp < 1.25 ? 'Standard' : mp < 1.75 ? 'Large' : mp < 2.5 ? 'Extra large' : mp < 3.5 ? 'Huge' : 'Giant');
+  return `${word} · ${size}`;
 }
 
 // Fills Aspect with the model's presets, plus the attached image's own ratio when it needs one.
@@ -430,33 +450,21 @@ function keepOwnSize(size, keep = true) {
   const rest = ownSizes(m).filter(s => s !== size);
   saved.set(`sizes.${m.id}`, keep ? [...rest, size].slice(-12) : rest);
 }
+// A size that isn't on the list (one from another shape, or none yet) becomes the one nearest it in pixels, else
+// nearest the model's default: never just the smallest.
 function fillResolution(choices, value) {
   const sel = $('#resolution');
   const own = ownSizes().filter(s => !choices.includes(s));
+  const m = currentModel();
+  if (m && !choices.includes(value) && !own.includes(value)) {
+    value = resolutionFor({ ...m, resolutions: choices }, $('#aspect').value, isSize(value) ? value : m.defaults.resolution) ?? value;
+  }
   fillSelect(sel, [...choices, ...own], value);
-  for (const o of sel.options) if (own.includes(o.value)) o.textContent = `Your size: ${o.value}`;
+  for (const o of sel.options) o.textContent = own.includes(o.value) ? `Your size: ${o.value}` : sizeName(o.value);
   sel.dataset.last = sel.value;
   sel.insertAdjacentHTML('beforeend', `<option value="${CUSTOM_RES}">✎ Type your own size…</option>`);
   showCustomRes(own.includes(sel.value));
-  syncSizeSummary();
 }
-
-function syncSizeSummary() {
-  const m = currentModel();
-  if (!m) return;
-  const automatic = saved.get(`autoSize.${m.id}`, !saved.get(prefsKey(m.id), {}).resolution);
-  $('#sizeSummary').textContent = `${automatic ? 'Automatic size' : 'Size'}: ${$('#resolution').value || 'model default'}`;
-  $('#sizeSummary').hidden = !m.resolutions.length;
-  $('#sizeAuto').disabled = automatic;
-}
-$('#sizeAuto').addEventListener('click', () => {
-  const m = currentModel();
-  if (!m) return;
-  saved.set(`autoSize.${m.id}`, true);
-  fillResolution(sizeChoices(m, $('#aspect').value), resolutionFor(m, $('#aspect').value, m.defaults.resolution));
-  savePrefs();
-  syncSizeSummary();
-});
 // The width × height boxes: open on ✎ and on one of your sizes (to change or forget it).
 function showCustomRes(on) {
   $('#resCustom').hidden = !on;
@@ -469,7 +477,6 @@ function applyCustomRes() {
   const w = Math.round(Number($('#resW').value)), h = Math.round(Number($('#resH').value));
   if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return toast('Width and height: 64 to 8192 each', true);
   keepOwnSize(`${w}×${h}`);
-  saved.set(`autoSize.${state.modelId}`, false);
   const best = closestAspect(currentModel(), w / h); // the size's shape: 1280×720 turns a 2:3 Aspect to 16:9
   if (best && ratioDist(ratioOf($('#aspect').value) || 1, w / h) > 0.05) { $('#aspect').value = best; $('#aspectNote').hidden = true; }
   fillResolution(sizeChoices(currentModel(), $('#aspect').value), `${w}×${h}`);
@@ -1565,7 +1572,6 @@ function selectModel(id, { values } = {}) {
   renderWorkflowPicker();
   renderChainEditor();
   if (!m) return;
-  if (saved.get(`autoSize.${m.id}`, null) === null) saved.set(`autoSize.${m.id}`, !saved.get(prefsKey(m.id), {}).resolution);
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
   fillAspect(m, v.aspectRatio);
   if (isSize(v.resolution) && !m.resolutions.includes(v.resolution) && !values) keepOwnSize(v.resolution); // typed before sizes were a list
@@ -1581,7 +1587,6 @@ function selectModel(id, { values } = {}) {
   $('#aspectNote').hidden = true;
   if (!values) matchImageAspect();
   renderRole();
-  syncSizeSummary();
   updateGenerateLabel();
 }
 
@@ -1770,7 +1775,6 @@ $('#aspect').addEventListener('change', () => {
 });
 $('#resolution').addEventListener('focus', e => { if (e.target.value !== CUSTOM_RES) e.target.dataset.last = e.target.value; });
 $('#resolution').addEventListener('change', e => {
-  saved.set(`autoSize.${state.modelId}`, false);
   if (e.target.value !== CUSTOM_RES) { e.target.dataset.last = e.target.value; return showCustomRes(ownSizes().includes(e.target.value)); }
   e.target.value = e.target.dataset.last || e.target.options[0].value; // stays on the size in use until one is typed
   showCustomRes(true);
@@ -1786,7 +1790,7 @@ $('#resForget').addEventListener('click', () => {
   savePrefs();
   toast(`Forgot ${size}`);
 });
-for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', () => { savePrefs(); syncSizeSummary(); });
+for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', savePrefs);
 // Step ③'s Duration box: whole seconds, 1 to 20, sent as "12s" like the model's own durations. Empty while hidden
 // (a model without durations, like Wan Animate 2, is as long as its motion video).
 const durationValue = () => {
