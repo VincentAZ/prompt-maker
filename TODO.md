@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.36.1 — The app-menu icon opened nothing for about a minute after 1.35.0: the launcher shredded the old on-disk
+  browser profile before opening the window. The window opens at once now, and the shredding runs after it, in the
+  background at low priority (one that was cut short goes at the next start).
 - 1.36.0 — Step ⑤ names a node ComfyUI lacks, the pack it comes from and why it didn't load (from ComfyUI's log),
   with ↻ Restart ComfyUI and ↻ Check again; a render stops with the same words instead of "Node 'X' not found".
   Every workflow is checked against ComfyUI in the background at start, whenever ComfyUI comes back and every ten

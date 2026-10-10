@@ -25,15 +25,17 @@ running() { curl -fs -o /dev/null "$URL/api/settings"; }
 # one, the page opens in whatever browser is the default. PM_BROWSER=/path forces a browser (or "default").
 DATA="${PROMPT_MAKER_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/prompt-maker}"
 open_app() {
-  local bin="${PM_BROWSER:-}" profile="$DATA/browser"
+  local bin="${PM_BROWSER:-}" profile="$DATA/browser" old=false
   if grep -qsE '"(dataRam|comfyRam)": true' "$DATA/settings.json"; then
     profile="${PM_RAM_DIR:-/dev/shm}/prompt-maker-session/browser"
-    # A profile left on disk by a lower level goes (shredded), unless a window still runs from it.
+    # A profile left on disk by a lower level goes (shredded), unless a window still runs from it. It's moved aside
+    # at once and shredded after the window opens: a browser profile has thousands of files, and shredding them first
+    # kept the window from opening for a minute (1.35.0).
     if [ -d "$DATA/browser" ] && ! pgrep -f -- "--user-data-dir=$DATA/browser" >/dev/null 2>&1; then
-      if command -v shred >/dev/null 2>&1; then find "$DATA/browser" -type f -exec shred -u -n 3 {} + 2>/dev/null; fi
-      rm -rf "$DATA/browser"
+      mv "$DATA/browser" "$DATA/.browser-old-$$" 2>/dev/null && old=true
     fi
   fi
+  compgen -G "$DATA/.browser-old-*" >/dev/null && old=true # one an earlier start didn't finish (the computer turned off)
   if [ -z "$bin" ]; then
     for c in brave-browser brave chromium chromium-browser google-chrome google-chrome-stable microsoft-edge; do
       command -v "$c" >/dev/null 2>&1 && { bin="$(command -v "$c")"; break; }
@@ -45,7 +47,22 @@ open_app() {
   else
     xdg-open "$URL" >/dev/null 2>&1 || true
   fi
+  $old && shred_old_profiles &
+  return 0
 }
+# Shreds the profiles moved aside, in the background and at low priority, one start at a time.
+shred_old_profiles() {
+  exec 9>"$DATA/.browser-old.lock"
+  command -v flock >/dev/null 2>&1 && { flock -n 9 || return 0; }
+  local slow=(nice -n 19)
+  command -v ionice >/dev/null 2>&1 && slow+=(ionice -c3)
+  for dir in "$DATA"/.browser-old-*; do
+    [ -d "$dir" ] || continue
+    if command -v shred >/dev/null 2>&1; then "${slow[@]}" find "$dir" -type f -exec shred -u -n 3 {} + 2>/dev/null; fi
+    rm -rf "$dir"
+  done
+  rm -f "$DATA/.browser-old.lock"
+} >/dev/null 2>&1
 wait_up() { for _ in $(seq 1 60); do running && return 0; service_failing && return 1; sleep 1; done; return 1; }
 # The service stopped with an error (and is waiting to retry, or gave up): don't wait the full minute for it.
 service_failing() { systemctl --user show -p SubState --value prompt-maker.service 2>/dev/null | grep -qE '^(auto-restart|failed)$'; }
