@@ -1,19 +1,19 @@
 // Takes the guide's screenshots (docs/screenshots): sharp 1760x1100, no prompt text on screen.
 // Needs two running copies of the app and Chrome (google-chrome) on this machine:
-//   DEMO  (port 5320): a data folder with renders you may show, rated, and LM Studio running (the Ask shot asks the Brain a how-to question).
+//   DEMO  (port 5320): an isolated folder with approved sample renders, empty prompts and seed 0.
 //         Start it with PORT=5320 PROMPT_MAKER_DATA=<folder> node server.js
-//   CLEAN (port 5321): an empty data folder AND a fake HOME/XDG_*, so ComfyUI isn't found and Set up ComfyUI shows real values:
-//         HOME=/tmp/promptmaker-demo/home PORT=5321 PROMPT_MAKER_DATA=/tmp/promptmaker-demo/data XDG_CONFIG_HOME=... XDG_DATA_HOME=... node server.js
+//   CLEAN (port 5321): an empty data folder, isolated XDG_CONFIG_HOME/XDG_DATA_HOME, and service commands disabled.
+//   Override DEMO, CLEAN and CDP_PORT for other local ports. No conversation is generated for the Ask screenshot.
 // Then:  node tests/screenshots.mjs create gallery models voices comfy-setup ask   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
-// Look at every picture before it ships: no prompts, no personal names (the Models shot is cropped above its example prompts).
+// Look at every picture before it ships: no prompts or personal names. Models shows the chooser, not example prompts.
 // shots.mjs: sharp 1760x1100 screenshots of the running demo apps, no prompt text on screen.
 // usage: node shots.mjs <name>...   (names: create gallery models voices comfy-setup ask)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 
 const OUT = process.env.OUT || '/tmp/promptmaker-demo/shots';
-const DEMO = 'http://127.0.0.1:5320';   // the demo app (renders, no prompts shown)
-const CLEAN = 'http://127.0.0.1:5321';  // a clean app with a fake home
+const DEMO = process.env.DEMO || 'http://127.0.0.1:5320'; // scrubbed demonstration data only
+const CLEAN = process.env.CLEAN || 'http://127.0.0.1:5321'; // empty data folder
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 await fs.mkdir(OUT, { recursive: true });
 
@@ -25,7 +25,7 @@ class Cdp {
   send(method, params = {}) { const id = ++this.id; this.ws.send(JSON.stringify({ id, method, params })); return new Promise((res, rej) => this.pending.set(id, { res, rej })); }
 }
 
-const PORT = 9333;
+const PORT = Number(process.env.CDP_PORT) || 9333;
 const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${PORT}`, '--user-data-dir=/tmp/promptmaker-demo/chrome', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--remote-allow-origins=*', '--window-size=1760,1100', '--hide-scrollbars', 'about:blank'], { stdio: 'ignore' });
 let target;
 for (let i = 0; i < 60 && !target; i++) { await sleep(150); target = await fetch(`http://127.0.0.1:${PORT}/json/list`).then(r => r.json()).then(l => l.find(t => t.type === 'page')).catch(() => null); }
@@ -60,7 +60,7 @@ const steps = {
     await sleep(1200);
     await js(`document.querySelector('#theme').value=''; document.querySelector('#theme').dispatchEvent(new Event('input',{bubbles:true})); 1`);
     await pictures(150);
-    await js(`[...document.querySelectorAll('summary, .panel-head, h3, h2, button')].find(e => /How to use this model/.test(e.textContent) && e.offsetParent && e.textContent.length < 60)?.click(); 1`);
+    await js(`document.querySelector('#modelGuide').open = false; document.querySelector('#modelChoice').open = false; document.querySelector('.director-steps').scrollTop = 0; 1`);
     await sleep(1200); await shot('create');
   },
   async gallery() {
@@ -71,14 +71,10 @@ const steps = {
   async ask() {
     await open(`${DEMO}/#gallery`, true);
     await pictures(190);
-    await js(`document.querySelector('#asClear')?.click(); 1`); await sleep(800);
-    await js(`(() => { const i = document.querySelector('#asInput'); i.value = 'How do I add a LoRA to a workflow?'; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#asSend').click(); return 1; })()`);
-    let last = -1, same = 0;
-    for (let i = 0; i < 120; i++) { await sleep(2000); const n = await js(`document.querySelector('#asLog').innerText.length + (document.querySelector('#asStop').hidden ? 0 : 100000)`); if (n === last && n < 100000) { if (++same >= 3) break; } else same = 0; last = n; }
-    console.log('answer length', last);
+    // Show the optional entry point without saving a conversation or exposing prompts.
     await sleep(800); await shot('ask');
   },
-  async models() { await open(`${DEMO}/#models`); await sleep(1500); await shot('models', 890); },
+  async models() { await open(`${DEMO}/#models`); await sleep(1500); await shot('models'); },
   async voices() { await open(`${DEMO}/#voices`); await sleep(1500); await shot('voices', 440); },
   async ['comfy-setup']() {
     await open(`${CLEAN}/#settings`);

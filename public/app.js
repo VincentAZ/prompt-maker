@@ -64,6 +64,30 @@ const saved = {
   set(k, v) { try { localStorage.setItem(`pm.${k}`, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
 
+// Workspace switching is only needed when the form and work cannot sit side by side.
+let createWorkspace = 'create';
+function setCreateWorkspace(which, { focus = false } = {}) {
+  createWorkspace = which === 'results' ? 'results' : 'create';
+  $('#view-create').classList.toggle('show-results', createWorkspace === 'results');
+  $('#showCreate').setAttribute('aria-pressed', String(createWorkspace === 'create'));
+  $('#showResults').setAttribute('aria-pressed', String(createWorkspace === 'results'));
+  if (focus) {
+    const el = createWorkspace === 'results' ? $('#stage') : $('#theme');
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: 'nearest', behavior: scrollMode() });
+  }
+}
+$('#showCreate').addEventListener('click', () => setCreateWorkspace('create', { focus: true }));
+$('#showResults').addEventListener('click', () => setCreateWorkspace('results', { focus: true }));
+
+const bookmarkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>';
+const utilityIcon = name => `<svg class="utility-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${({
+  download: 'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',
+  copy: 'M9 9h11v12H9zM15 9V3H3v12h6',
+  delete: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7',
+  compare: 'M3 5h7v14H3zM14 5h7v14h-7z',
+})[name]}"/></svg>`;
+
 // The assistant panel is as wide as you dragged it (420px to start with), up to the whole window.
 const AS_W = 420;
 const AS_MIN_W = 320;
@@ -83,7 +107,7 @@ function syncNarrow() {
 addEventListener('resize', syncNarrow);
 
 // Tells the server which pictures and videos this page still holds: the form's (the start-up tidy leaves them
-// alone) and those of prompts waiting in line (deleting a History card that shares one leaves them alone too).
+// alone) and those of prompts waiting in line (deleting a Saved prompts card that shares one leaves them alone too).
 let holdsTimer;
 function syncHolds() {
   clearTimeout(holdsTimer);
@@ -368,6 +392,11 @@ function fillAspect(m, value) {
   const own = ownAspect(m, shapeRatio(m));
   fillSelect($('#aspect'), own ? [...m.aspectRatios, own] : m.aspectRatios, value);
   if (own) $(`#aspect option[value="${own}"]`).textContent = `${own} ${shapeIcon(m)}`; // the image icon, like the "from image" note
+  for (const option of $('#aspect').options) {
+    const ratio = ratioOf(option.value);
+    const label = ratio === 1 ? 'Square' : ratio > 2 ? 'Wide' : ratio > 1 ? 'Landscape' : 'Portrait';
+    option.textContent = `${label} · ${option.textContent}`;
+  }
 }
 
 // Sets Aspect to the attached image's shape: its own ratio on a video model, else the model's closest option.
@@ -409,7 +438,25 @@ function fillResolution(choices, value) {
   sel.dataset.last = sel.value;
   sel.insertAdjacentHTML('beforeend', `<option value="${CUSTOM_RES}">✎ Type your own size…</option>`);
   showCustomRes(own.includes(sel.value));
+  syncSizeSummary();
 }
+
+function syncSizeSummary() {
+  const m = currentModel();
+  if (!m) return;
+  const automatic = saved.get(`autoSize.${m.id}`, !saved.get(prefsKey(m.id), {}).resolution);
+  $('#sizeSummary').textContent = `${automatic ? 'Automatic size' : 'Size'}: ${$('#resolution').value || 'model default'}`;
+  $('#sizeSummary').hidden = !m.resolutions.length;
+  $('#sizeAuto').disabled = automatic;
+}
+$('#sizeAuto').addEventListener('click', () => {
+  const m = currentModel();
+  if (!m) return;
+  saved.set(`autoSize.${m.id}`, true);
+  fillResolution(sizeChoices(m, $('#aspect').value), resolutionFor(m, $('#aspect').value, m.defaults.resolution));
+  savePrefs();
+  syncSizeSummary();
+});
 // The width × height boxes: open on ✎ and on one of your sizes (to change or forget it).
 function showCustomRes(on) {
   $('#resCustom').hidden = !on;
@@ -422,6 +469,7 @@ function applyCustomRes() {
   const w = Math.round(Number($('#resW').value)), h = Math.round(Number($('#resH').value));
   if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return toast('Width and height: 64 to 8192 each', true);
   keepOwnSize(`${w}×${h}`);
+  saved.set(`autoSize.${state.modelId}`, false);
   const best = closestAspect(currentModel(), w / h); // the size's shape: 1280×720 turns a 2:3 Aspect to 16:9
   if (best && ratioDist(ratioOf($('#aspect').value) || 1, w / h) > 0.05) { $('#aspect').value = best; $('#aspectNote').hidden = true; }
   fillResolution(sizeChoices(currentModel(), $('#aspect').value), `${w}×${h}`);
@@ -482,6 +530,7 @@ function showView(name, { push = true, byUser = false } = {}) {
   const hash = name === 'models' && modelsPane === 'brains' ? '#models/brains' : `#${name}`;
   if (push && location.hash !== hash) history.pushState(null, '', hash);
   if (name === 'history') loadHistory();
+  if (name === 'models') renderModelCatalog();
   if (name === 'gallery') loadGallery();
   if (name === 'voices') loadVoices();
   if (name === 'settings' && !state.settingsDirty) renderSettings();
@@ -489,7 +538,7 @@ function showView(name, { push = true, byUser = false } = {}) {
   if (name === 'settings') { loadServices(); loadPrivacy(); loadAutostart(); }
   if (name === 'settings') loadProviders();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
-    if (state.models.length) editModel(state.modelId || state.models[0].id); else newModel();
+    if (state.models.length) editModel(state.modelId || state.models[0].id, { customize: false }); else newModel();
   } else if (name === 'models') renderWorkflowList(); // workflows may have changed elsewhere (e.g. in ComfyUI)
   requestAnimationFrame(resizeTextareas);
 }
@@ -1386,6 +1435,52 @@ setInterval(() => {
   themePlaceholder();
 }, 3500);
 
+const CREATIVE_TASKS = [
+  { id: 'picture', label: 'Make a picture', prefer: 'krea2-raw' },
+  { id: 'edit', label: 'Edit a picture', prefer: 'krea-2-raw-i2i' },
+  { id: 'person', label: 'Keep the same person', prefer: 'krea-2-character' },
+  { id: 'animate', label: 'Animate a picture', prefer: 'ltx-2-3' },
+  { id: 'motion', label: 'Copy movement', prefer: 'wan-animate-2' },
+  { id: 'video', label: 'Make a video', prefer: '' },
+];
+function modelTask(m) {
+  if (m.motionVideo) return 'motion';
+  if (m.characterSheet || m.imageRoles?.includes('character')) return 'person';
+  if (m.id === 'krea-2-raw-i2i') return 'edit';
+  if (m.kind === 'video') return ['ltx-2-3', 'minimax-h3'].includes(m.id) || workflowsFor(m.id).some(f => f.maps?.image) ? 'animate' : 'video';
+  return workflowsFor(m.id).some(f => f.maps?.image) ? 'edit' : 'picture';
+}
+const modelPurpose = m => m.edited && m.description ? m.description : ({
+  'krea2-raw': 'Detailed pictures from your words.',
+  'krea-2-raw-i2i': 'Edit a picture: change its scene, style or details.',
+  'krea-2-character': 'Keep the same person in a new picture.',
+  'ltx-2-3': 'Bring a picture to life with movement and sound.',
+  'minimax-h3': 'Turn a picture into a short video with sound.',
+  'minimax-h3-ref': 'Keep the same person in a new video.',
+  'wan-animate-2': 'Make a character copy the moves from a video.',
+}[m.id] || m.description || `Make ${m.kind === 'video' ? 'videos' : 'pictures'} from your ideas.`);
+const modelDisplayName = m => m.id === 'krea-2-raw-i2i' && m.name === 'Krea 2 RAW i2i' ? 'Krea 2 RAW · Edit' : m.name;
+function renderCreativeTask() {
+  const m = currentModel();
+  const task = m && modelTask(m);
+  $('#taskChoices').innerHTML = CREATIVE_TASKS.filter(t => state.models.some(x => modelTask(x) === t.id)).map(t =>
+    `<button type="button" class="task-choice" data-task="${t.id}" aria-pressed="${task === t.id}">${t.label}</button>`).join('');
+  $('#chosenModel').textContent = m ? modelDisplayName(m) : 'Choose a model';
+  if (!m) $('#modelChoice').open = true;
+}
+$('#taskChoices').addEventListener('click', e => {
+  const task = CREATIVE_TASKS.find(t => t.id === e.target.closest('[data-task]')?.dataset.task);
+  if (!task) return;
+  const models = state.models.filter(m => modelTask(m) === task.id);
+  const remembered = saved.get(`taskModel.${task.id}`, '');
+  const m = models.find(m => m.id === remembered) || models.find(m => m.id === task.prefer) || models[0];
+  if (!m) return;
+  selectModel(m.id);
+  $('#modelChoice').open = false;
+  setCreateWorkspace('create');
+  $('#theme').focus({ preventScroll: true });
+});
+
 function renderModelChips() {
   const grid = $('#modelChips');
   $('#createForm').classList.toggle('no-models', !state.models.length);
@@ -1398,7 +1493,7 @@ function renderModelChips() {
   if (grid.dataset.key !== key) {
     grid.dataset.key = key;
     grid.innerHTML = state.models.map(m => `<button type="button" class="model-card" role="radio" data-id="${esc(m.id)}" style="--m:${modelColor(m)}" aria-label="${esc(`${m.name}, ${m.kind} model`)}" title="${esc(m.description)}">
-      <span class="mc-ico" aria-hidden="true">${kindIcon(m.kind)}</span><span class="mc-name">${esc(m.name)}</span><span class="mc-kind" aria-hidden="true">${esc(m.kind)}</span>
+      <span class="mc-ico" aria-hidden="true">${kindIcon(m.kind)}</span><span class="mc-name">${esc(modelDisplayName(m))}</span><span class="mc-kind" aria-hidden="true">${esc(m.kind)}</span>
     </button>`).join('');
   }
   // Update selection in place so keyboard focus stays on the card.
@@ -1414,6 +1509,7 @@ function renderModelChips() {
 $('.skip-link').addEventListener('click', e => {
   e.preventDefault();
   showView('create');
+  setCreateWorkspace('results');
   $('#stage').focus();
 });
 
@@ -1450,7 +1546,7 @@ function renderModelGuide(m) {
   const box = $('#modelGuide');
   box.hidden = !g;
   if (!g) return;
-  box.open = saved.get('modelGuideOpen', true);
+  box.open = saved.get('modelGuideOpen', false);
   $('#modelGuideBody').innerHTML = `
     ${g.bestFor ? `<p><b>Good for:</b> ${esc(g.bestFor)}</p>` : ''}
     ${g.youNeed ? `<p><b>You need:</b> ${esc(g.youNeed)}</p>` : ''}
@@ -1462,17 +1558,20 @@ function renderModelGuide(m) {
 $('#modelGuide').addEventListener('toggle', e => saved.set('modelGuideOpen', e.target.open));
 
 function selectModel(id, { values } = {}) {
-  const m = modelById(id) || state.models[0] || null;
+  const m = modelById(id) || modelById('krea2-raw') || state.models[0] || null;
   state.modelId = m?.id || null;
   saved.set('modelId', state.modelId);
   renderModelChips();
+  renderCreativeTask();
+  if (m) saved.set(`taskModel.${modelTask(m)}`, m.id);
   document.documentElement.style.setProperty('--m', m ? modelColor(m) : '#ff4d8d');
-  $('#modelDesc').textContent = m?.description || '';
-  $('#modelDesc').hidden = !m?.description;
+  $('#modelDesc').textContent = m ? modelPurpose(m) : '';
+  $('#modelDesc').hidden = !m;
   renderModelGuide(m);
   renderWorkflowPicker();
   renderChainEditor();
   if (!m) return;
+  if (saved.get(`autoSize.${m.id}`, null) === null) saved.set(`autoSize.${m.id}`, !saved.get(prefsKey(m.id), {}).resolution);
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
   fillAspect(m, v.aspectRatio);
   if (isSize(v.resolution) && !m.resolutions.includes(v.resolution) && !values) keepOwnSize(v.resolution); // typed before sizes were a list
@@ -1488,6 +1587,8 @@ function selectModel(id, { values } = {}) {
   $('#aspectNote').hidden = true;
   if (!values) matchImageAspect();
   renderRole();
+  syncSizeSummary();
+  updateGenerateLabel();
 }
 
 function setTemperature(t) {
@@ -1544,7 +1645,7 @@ function setSheet(text, { persist = true } = {}) {
 $('#sheetText').addEventListener('input', () => setSheet($('#sheetText').value));
 $('#sheetRedo').addEventListener('click', () => {
   setSheet('');
-  toast('🧾 A fresh character sheet is written from your picture at the next Generate');
+  toast('🧾 A fresh character sheet is written from your picture next time you create');
 });
 
 // 🪪 Turnaround: renders a reference sheet of the person (word for word, no Brain) with the picked workflow, then
@@ -1579,6 +1680,7 @@ async function useTurnaround(entryId, sheet) {
 // The look under the theme (step 2). Not per model: it belongs to the shot you describe.
 const LOOK_NAMES = Object.fromEntries($$('#lookRow button').map(b => [b.dataset.value, b.textContent.trim()]));
 function setLook(v, { persist = true } = {}) {
+  $('#chosenLook').textContent = LOOK_NAMES[v] || 'Automatic';
   state.look = Object.hasOwn(LOOK_NAMES, v) ? v : '';
   setActive($('#lookRow'), state.look);
   if (persist) saved.set('look', state.look);
@@ -1601,10 +1703,11 @@ function setManual(on, { persist = true } = {}) {
   $('#createForm').classList.toggle('manual', state.manual);
   $('#manualHint').hidden = !state.manual;
   $('[data-panel="create-theme"] h2').textContent = state.manual ? 'Your prompt' : 'Describe the shot';
-  $('#theme').setAttribute('aria-label', state.manual ? 'Your prompt' : 'Theme');
+  $('#theme').setAttribute('aria-label', state.manual ? 'Your prompt' : 'Describe your idea');
   $('#surpriseBtn').hidden = state.manual;
   $('#lengthField').hidden = state.manual;
   $('#lookRow').hidden = state.manual; // the look tells the Brain how to shoot it: no Brain, no look
+  $('.look-options').hidden = state.manual;
   $('#tempField').hidden = state.manual;
   $('#chainStep').hidden = state.manual;
   $('#manualHint').textContent = `No Brain: your text, image and model go straight to the render.${state.manual && state.chain.steps.length ? ' Your chain (step 6) waits until this is off.' : ''}`;
@@ -1616,7 +1719,7 @@ function setManual(on, { persist = true } = {}) {
 function renderManualDials() {
   const on = state.manual;
   const flows = workflowsFor(state.modelId).length > 0;
-  $('#takesLabel').textContent = on ? 'Renders' : 'Takes';
+  $('#takesLabel').textContent = on ? (currentModel()?.kind === 'video' ? 'Videos' : 'Pictures') : 'Variations';
   $('#varSeg').setAttribute('aria-label', on ? 'How many renders of your prompt' : 'Number of variations');
   $('#takesField').hidden = on && !flows; // nothing renders without a workflow: your prompt is just kept
   $$('#varSeg button').forEach(b => {
@@ -1633,7 +1736,10 @@ $('#manualMode').addEventListener('change', e => {
 
 $('#modelChips').addEventListener('click', e => {
   const card = e.target.closest('.model-card');
-  if (card) selectModel(card.dataset.id);
+  if (card) {
+    selectModel(card.dataset.id);
+    if (e.detail) { $('#modelChoice').open = false; $('#modelChoice summary').focus({ preventScroll: true }); }
+  }
 });
 $('#lengthSeg').addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -1670,6 +1776,7 @@ $('#aspect').addEventListener('change', () => {
 });
 $('#resolution').addEventListener('focus', e => { if (e.target.value !== CUSTOM_RES) e.target.dataset.last = e.target.value; });
 $('#resolution').addEventListener('change', e => {
+  saved.set(`autoSize.${state.modelId}`, false);
   if (e.target.value !== CUSTOM_RES) { e.target.dataset.last = e.target.value; return showCustomRes(ownSizes().includes(e.target.value)); }
   e.target.value = e.target.dataset.last || e.target.options[0].value; // stays on the size in use until one is typed
   showCustomRes(true);
@@ -1685,7 +1792,7 @@ $('#resForget').addEventListener('click', () => {
   savePrefs();
   toast(`Forgot ${size}`);
 });
-for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', savePrefs);
+for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', () => { savePrefs(); syncSizeSummary(); });
 // Step ③'s Duration box: whole seconds, 1 to 20, sent as "12s" like the model's own durations. Empty while hidden
 // (a model without durations, like Wan Animate 2, is as long as its motion video).
 const durationValue = () => {
@@ -2265,7 +2372,7 @@ const videoForRequest = () => {
   return v?.file ? { file: v.file, preview: v.preview || undefined, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, fps: v.fps || undefined } : null;
 };
 
-// A take's motion video put back on Create (from History, or after a reload). What ffmpeg says about it (black bars,
+// A take's motion video put back on Create (from Saved prompts, or after a reload). What ffmpeg says about it (black bars,
 // frame rate) isn't kept with the take, so it's asked again.
 function restoreVideo(v) {
   setVideo(v?.file ? { ...v, ratio: v.width && v.height ? v.width / v.height : null } : null);
@@ -2418,6 +2525,7 @@ function errorTitle(msg) {
 function showError(msg) {
   const card = $('#stageError');
   if (!msg) { card.hidden = true; card.innerHTML = ''; return; }
+  if (isView('create')) setCreateWorkspace('results');
   const [ico, title] = errorTitle(msg);
   const canStart = /reach LM Studio|stopped responding/i.test(msg);
   // ComfyUI's own words (which step, the raw error) go under Details; what to do about it comes first.
@@ -2485,6 +2593,7 @@ function rendersLeft() {
 }
 
 function drawRenders() {
+  renderCreationProgress();
   const btn = $('#rendersBtn');
   btn.hidden = !rendersNow.length;
   if (!rendersNow.length) showRendersPanel(false);
@@ -2547,10 +2656,10 @@ $('#rendersList').addEventListener('click', async e => {
     return pollRenders();
   }
   showRendersPanel(false);
-  if (state.entry?.id === job.historyId) return showView('create');
+  if (state.entry?.id === job.historyId) { showView('create'); setCreateWorkspace('results', { focus: true }); return; }
   if (state.busy || state.chainActive) return toast('Hold on, something is still cooking. Stop it or wait.', true);
   const entry = await api(`/api/history/${job.historyId}`).catch(() => null);
-  if (!entry) return toast('That take is no longer in History.', true);
+  if (!entry) return toast('That take is no longer in Saved prompts.', true);
   await openEntry(entry);
 });
 $('#rendersCancelAll').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', async () => {
@@ -2582,7 +2691,7 @@ function rateBarHtml(rating, label = 'this render') {
   return `<div class="rate-bar" role="group" aria-label="Rate ${esc(label)}">${[1, 2, 3].map(n => `<button type="button" class="${n <= rating ? 'on' : ''}" data-rate="${n}" aria-pressed="${n === rating}" title="${RATINGS[n]}${n === rating ? ' (click to take the rating off)' : ''}" aria-label="${RATINGS[n]}">★</button>`).join('')}</div>`;
 }
 
-// Hides a render from 🎞 Your renders, or shows it there again. It stays in History, the Gallery and its take.
+// Hides a render from 🎞 Your renders, or shows it there again. It stays in Saved prompts, the Gallery and its take.
 async function hideRender(entry, render, hidden) {
   const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'PATCH', body: { hidden } });
   forgetRender(updated);
@@ -2652,7 +2761,7 @@ function reelGroups() {
 }
 
 // Every render the page knows of, newest first, one item per file, each from the liveliest copy of its entry: the
-// one on the stage, then one a render brought in, then History's.
+// one on the stage, then one a render brought in, then Saved prompts's.
 function allRenders() {
   const entries = new Map();
   for (const e of [state.entry, ...sessionCache.values(), ...state.history]) if (e?.id && !entries.has(e.id)) entries.set(e.id, e);
@@ -2746,7 +2855,7 @@ function renderReel() {
   const box = $('#reel');
   if (!box) return;
   const all = allRenders();
-  box.hidden = !all.length && !rendersNow.length && !state.workflows.length && !inGallery();
+  box.hidden = !all.length && !rendersNow.length && !inGallery();
   if (box.hidden) return reelFullScreen(false);
   const open = reelOpen();
   const full = box.classList.contains('full');
@@ -2827,7 +2936,17 @@ function renderReelFilters(all) {
   $$('#reelRated button').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.min) === f.min));
   $('#reelSession').setAttribute('aria-pressed', f.session);
   if ($('#reelFind') !== document.activeElement) $('#reelFind').value = f.q;
+  const count = Number(Boolean(f.kind)) + Number(Boolean(f.model)) + Number(Boolean(f.min)) + Number(Boolean(f.session)) + Number(Boolean(f.hidden)) + Number(Boolean(f.q.trim()));
+  $('#reelFilterToggle').textContent = count ? `Filters (${count})` : 'Filters';
+  $('#reelFilterClear').hidden = !count && !f.q;
 }
+
+$('#reelFilterToggle').addEventListener('click', () => {
+  const open = $('#reelFilterToggle').getAttribute('aria-expanded') !== 'true';
+  $('#reelFilterToggle').setAttribute('aria-expanded', String(open));
+  $('#reelFilters').classList.toggle('filters-open', open);
+});
+$('#reelFilterClear').addEventListener('click', () => setReelFilter({ kind: '', model: '', min: 0, session: false, hidden: false, q: '' }));
 
 function setReelFilter(change) {
   Object.assign(reelFilter, change);
@@ -2888,9 +3007,9 @@ function reelTile(it) {
   $('.rt-cap span', cell).textContent = [it.entry.modelName, `take ${it.index + 1}`, it.render.seed != null && `seed ${it.render.seed}`, it.render.createdAt && madeOn(it.render.createdAt)].filter(Boolean).join(' · ');
   $('.rtile', cell).setAttribute('aria-label', `Open render: ${theme.slice(0, 80)}${rating ? `, rated ${RATINGS[rating].toLowerCase()}` : ''}. Shift and an arrow key move it.`);
   const hide = $('.rt-hide', cell);
-  hide.textContent = it.render.hidden ? '👁 Show' : '🙈';
-  hide.title = it.render.hidden ? 'Show it in Your renders again' : 'Hide it from Your renders (it stays in History and the Gallery)';
-  hide.setAttribute('aria-label', it.render.hidden ? 'Show in Your renders again' : 'Hide from Your renders');
+  hide.textContent = it.render.hidden ? 'Show in Create' : 'Hide from Create';
+  hide.title = it.render.hidden ? 'Show it in Create again' : 'Hide from Create only. It stays in Gallery and Saved prompts.';
+  hide.setAttribute('aria-label', it.render.hidden ? 'Show in Create again' : 'Hide from Create');
   if (cell.dataset.rating !== String(rating)) {
     cell.dataset.rating = rating;
     $('.rate-slot', cell).innerHTML = rateBarHtml(rating, `the render of “${theme.slice(0, 40)}”`);
@@ -2918,7 +3037,7 @@ $('#reelGrid').addEventListener('click', async e => {
     const want = !it.render.hidden;
     try {
       await hideRender(it.entry, it.render, want);
-      if (want) toast('🙈 Hidden from Your renders', false, { label: '↶ Undo', run: () => hideRender(it.entry, it.render, false).catch(err => toast(err.message, true)) });
+      if (want) toast('Hidden from Create. Still in Gallery and Saved prompts.', false, { label: '↶ Undo', run: () => hideRender(it.entry, it.render, false).catch(err => toast(err.message, true)) });
       else toast('👁 Back in Your renders');
     } catch (err) {
       toast(err.message, true);
@@ -2971,7 +3090,7 @@ $('#reelGrid').addEventListener('keydown', () => { reelDropped = false; }, true)
 $('#reelGrid').addEventListener('pointerdown', e => {
   reelDropped = false; // a new press: the last drag's click isn't coming anymore
   const cell = e.target.closest('.reel-cell');
-  if (!cell || e.button !== 0 || reelDrag || e.ctrlKey || e.metaKey || e.target.closest('.rate-bar, .rt-hide')) return;
+  if (!cell || e.button !== 0 || reelDrag || reelSelecting || e.ctrlKey || e.metaKey || e.target.closest('.rate-bar, .rt-hide')) return;
   const d = { cell, key: cell.dataset.key, pointer: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, touch: e.pointerType !== 'mouse' };
   reelDrag = d;
   if (d.touch) d.hold = setTimeout(() => startReelDrag(d), 400);
@@ -3105,17 +3224,24 @@ $('#reelNewest').addEventListener('click', e => confirmClick(e.currentTarget, 'S
   toast('Newest first again');
 }));
 
-// ---------- pick several, delete them (Your renders, the Gallery, History) ----------
+// ---------- pick several, delete them (Your renders, the Gallery, Saved prompts) ----------
 // Ctrl-click (⌘ on a Mac) picks a card, Shift-click every card up to it; drag across empty space (or Ctrl-drag from a
 // card) draws a box that picks what it touches. A bar deletes them, with 8 s to undo. Esc lets go, Ctrl+A picks all.
 //   grid: what holds the cards; card: a card's selector (it has data-key); host: where the box is drawn (it holds the
 //   grid, is position: relative, and is what scrolls, or scrolls with the page); edge(): the top and bottom where
 //   dragging scrolls on; free(target): a press there may start a box; show(): the bar's count changed.
-function cardPicker({ grid, card, host, edge, free, show }) {
+function cardPicker({ grid, card, host, edge, free, show, selecting = () => false }) {
   const P = { keys: new Set(), anchor: null, banded: false };
   const cards = () => [...$$(card, grid())].filter(c => !c.hidden && !c.classList.contains('going'));
   P.draw = () => {
-    for (const c of $$(card, grid())) c.classList.toggle('picked', P.keys.has(c.dataset.key));
+    for (const c of $$(card, grid())) {
+      c.classList.toggle('picked', P.keys.has(c.dataset.key));
+      const button = $('.rtile', c);
+      if (button) {
+        if (selecting()) button.setAttribute('aria-pressed', String(P.keys.has(c.dataset.key)));
+        else button.removeAttribute('aria-pressed');
+      }
+    }
     show();
   };
   P.clear = () => { P.keys.clear(); P.anchor = null; P.draw(); };
@@ -3124,7 +3250,7 @@ function cardPicker({ grid, card, host, edge, free, show }) {
   P.click = e => {
     if (P.banded) { P.banded = false; e.stopPropagation(); e.preventDefault(); return; }
     const c = e.target.closest(card);
-    if (!c || !(e.ctrlKey || e.metaKey || e.shiftKey) || c.classList.contains('going')) return;
+    if (!c || !(selecting() || e.ctrlKey || e.metaKey || e.shiftKey) || c.classList.contains('going')) return;
     e.stopPropagation();
     e.preventDefault();
     const key = c.dataset.key;
@@ -3204,20 +3330,37 @@ function cardPicker({ grid, card, host, edge, free, show }) {
 }
 
 // Picking in Your renders (and the Gallery, the same grid): a render with two files counts once.
+let reelSelecting = false;
 const reelPick = cardPicker({
+  selecting: () => reelSelecting,
   grid: () => $('#reelGrid'),
   card: '#reelGrid > .reel-cell',
   host: () => $('#reelBody'),
   edge: () => { const body = $('#reelBody'); return { top: Math.max(body.getBoundingClientRect().top, $('#reelFilters').getBoundingClientRect().bottom), bottom: body.getBoundingClientRect().bottom, by: n => { body.scrollTop += n; } }; },
   free: t => !t.closest('button, input, select, a, label, .reel-filters, .reel-job'),
   show: () => {
-    $('#reelSel').hidden = !reelPick.keys.size;
+    $('#reelSel').hidden = !reelSelecting && !reelPick.keys.size;
     $('#reelSelCount').textContent = `${reelPickedRenders().length} selected`;
+    $('#reelCompare').disabled = reelItems.filter(it => reelPick.keys.has(reelKey(it))).length !== 2;
+    $('#reelSelDelete').disabled = !reelPick.keys.size;
   },
 });
 const reelPicked = reelPick.keys;
 const drawReelPicked = reelPick.draw;
 const clearReelPicked = reelPick.clear;
+
+$('#reelSelect').addEventListener('click', () => {
+  reelSelecting = !reelSelecting;
+  $('#reelSelect').setAttribute('aria-pressed', String(reelSelecting));
+  $('#reelSelect').textContent = reelSelecting ? 'Done selecting' : 'Select';
+  $('#reelGrid').classList.toggle('selecting', reelSelecting);
+  if (!reelSelecting) clearReelPicked(); else drawReelPicked();
+});
+$('#reelCompare').addEventListener('click', () => {
+  const items = reelItems.filter(it => reelPicked.has(reelKey(it)));
+  if (items.length !== 2) return;
+  openLightbox(items, 1, { fromGallery: inGallery(), compare: true });
+});
 
 // The renders picked, in grid order.
 function reelPickedRenders() {
@@ -3247,10 +3390,11 @@ $('#reelSelDelete').addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (!$('#lightbox').hidden || document.querySelector('dialog[open]') || e.target.closest?.('input, textarea, select, [contenteditable], #assistant')) return;
   const [pick, del] = isView('history') ? [historyPick, '#historySelDelete'] : [reelPick, '#reelSelDelete'];
-  if (e.key === 'Escape' && pick.keys.size) {
+  if (e.key === 'Escape' && (pick.keys.size || (pick === reelPick && reelSelecting))) {
     e.stopPropagation();
     e.preventDefault();
     pick.clear();
+    if (pick === reelPick && reelSelecting) $('#reelSelect').click();
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && pick.keys.size) {
     e.preventDefault();
     $(del).click();
@@ -3365,7 +3509,7 @@ $('#reelEmpty').addEventListener('click', e => {
 // Opens the take a chained entry came from.
 async function openSource(src) {
   const parent = await api('/api/history').then(h => { state.history = h; return h.find(e => e.id === src.entryId); }).catch(() => null);
-  if (!parent) return toast('That take is no longer in History.', true);
+  if (!parent) return toast('That take is no longer in Saved prompts.', true);
   openEntry(parent);
 }
 
@@ -3539,6 +3683,7 @@ const stageScrolls = () => getComputedStyle($('.stage')).overflowY !== 'visible'
 
 function renderResults(entry, { totalSecs } = {}) {
   state.entry = entry;
+  renderCreationProgress();
   renderReel();
   const list = $('#resultsList');
   list.innerHTML = '';
@@ -3640,7 +3785,7 @@ function setThemeQuietly(text) {
   sizeTheme();
 }
 
-// A clean slate: theme, image and takes go; the model, dials and workflow stay. The takes are already in History.
+// A clean slate: theme, image and takes go; the model, dials and workflow stay. The takes are already in Saved prompts.
 async function newSession() {
   if (state.busy) return;
   await flushEdits();
@@ -3653,15 +3798,16 @@ async function newSession() {
   closeRun();
   renderResults(null);
   setTitle('');
+  setCreateWorkspace('create');
   window.scrollTo({ top: 0, behavior: scrollMode() });
   $('.director-steps').scrollTo({ top: 0, behavior: scrollMode() });
   $('#theme').focus({ preventScroll: true });
   announce('New session. The theme, image and takes are cleared.');
   const rendering = state.renderRuns.size ? ' Renders still running will land in the Gallery.' : '';
-  toast(`✨ Fresh start.${before.entry ? ' Your takes are in History.' : ''}${rendering}`, false, {
+  toast(`✨ Fresh start.${before.entry ? ' Your takes are in Saved prompts.' : ''}${rendering}`, false, {
     label: '↶ Undo',
     run: () => {
-      if (state.busy || state.entry) return toast('Too late to undo here. It\'s all in History.', true);
+      if (state.busy || state.entry) return toast('Too late to undo here. It\'s all in Saved prompts.', true);
       setThemeQuietly(before.theme);
       setImage(before.image);
       if (before.video) restoreVideo(before.video);
@@ -3904,6 +4050,7 @@ function formBody(m, theme, motion) {
 // Writes the takes for a request into the stage, streaming. Returns the saved history entry, or null.
 // rendersNext: auto-render renders the takes when they're written, so each shows where its render will be.
 async function runGeneration(body, m, { rendersNext = false } = {}) {
+  setCreateWorkspace('results');
   // Placeholder entry so the stage header and meters work while streaming.
   state.entry = { ...body, modelName: m.name, modelKind: m.kind, variations: [] };
   state.timings = {};
@@ -4195,7 +4342,7 @@ window.addEventListener('pagehide', () => {
 
 const ratedIn = entry => entry.variations.flatMap(v => v.renders || []).filter(r => ratingOf(r)).length;
 
-// Deletes an entry for good (History's Delete once its Undo time is over, and the assistant after you confirm).
+// Deletes an entry for good (Saved prompts's Delete once its Undo time is over, and the assistant after you confirm).
 // Returns a note if ComfyUI's copies may be out of reach.
 async function deleteEntryNow(entry, { quiet = false } = {}) {
   for (const id of [entry.id, ...entry.variations.flatMap(v => (v.renders || []).map(r => r.id))]) stopWaiting(id);
@@ -4214,7 +4361,7 @@ async function deleteEntryNow(entry, { quiet = false } = {}) {
 // Counts deletes, so a list fetched before one can't bring the deleted card back.
 let historyDeletes = 0;
 
-// Opening History shows the card that is open on Create (further down the list, it's revealed and scrolled to).
+// Opening Saved prompts shows the card that is open on Create (further down the list, it's revealed and scrolled to).
 function revealCurrentCard() {
   const i = state.history.findIndex(e => e.id === state.entry?.id);
   if (i >= state.historyLimit) state.historyLimit = Math.ceil((i + 1) / 48) * 48;
@@ -4277,7 +4424,7 @@ function renderHistory() {
     list.innerHTML = `<div class="empty" style="grid-column:1/-1">
       <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
       <h3>${none ? 'Nothing here yet' : 'No matches'}</h3>
-      <p>${none ? 'Every prompt you generate lands here automatically.' : 'Try a different search, model or the favorites filter.'}</p>
+      <p>${none ? 'Every prompt you write lands here automatically.' : 'Try a different search, model or the Bookmarks filter.'}</p>
       ${none ? '<div class="try"><button type="button" class="btn primary" data-go="create">✦ Make your first prompt</button></div>' : ''}</div>`;
     $('[data-go]', list)?.addEventListener('click', () => showView('create'));
     return;
@@ -4305,7 +4452,7 @@ function renderHistory() {
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${e.manual ? '🖼️ image' : { reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
           ${LOOK_NAMES[e.look] && e.look && !e.manual ? `<span class="tag kind" title="The look picked under the theme">${esc(LOOK_NAMES[e.look])}</span>` : ''}
         </div>
-        <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Favorite this prompt: ${esc(title)}" title="${e.favorite ? 'Take this prompt out of your favorites' : 'Favorite this prompt, to find it again (its renders have their own ★ ratings)'}">${e.favorite ? '★' : '☆'}</button>
+        <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Bookmark this prompt: ${esc(title)}" title="${e.favorite ? 'Remove prompt bookmark' : 'Bookmark this prompt to reuse. Rate the artwork in Gallery.'}">${bookmarkIcon}</button>
         <div class="hbody">
           <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.batch ? `<span class="tag batch" title="From the batch “${esc(e.batch)}”">🎞 ${esc(e.batch)}</span>` : ''}${e.manual ? '<span class="tag" title="You wrote this prompt yourself: it was sent word for word, no Brain">✍️ your own prompt</span>' : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
           <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open">${esc(title)}</div>
@@ -4313,7 +4460,7 @@ function renderHistory() {
           <div class="hactions">
             <button type="button" class="btn small" data-act="copy" aria-label="Copy ${takes > 1 ? `all ${takes} takes` : 'prompt'}: ${esc(title)}">${takes > 1 ? `Copy all ${takes}` : 'Copy'}</button>
             ${going.has(e.id) ? `<span class="hgoing" role="status">${goingText(going.get(e.id))}</span><button type="button" class="btn small primary open" data-act="undo" aria-label="Undo deleting: ${esc(title)}">↶ Undo</button>` : `<button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image, motion video, spoken line and renders, here and in ComfyUI, shredded. You get a few seconds to undo">Delete</button>
-            <button type="button" class="btn small primary open" data-act="open" aria-label="Open: ${esc(title)}">Open ➜</button>`}
+            <button type="button" class="btn small open" data-act="open" aria-label="Open: ${esc(title)}">Open prompt →</button>`}
           </div>
         </div>
       </article>`;
@@ -4324,7 +4471,7 @@ function renderHistory() {
   historyPick.draw();
 }
 
-// Picking History cards (see cardPicker): the bar at the bottom deletes them, with everything they hold.
+// Picking Saved prompts cards (see cardPicker): the bar at the bottom deletes them, with everything they hold.
 const historyPick = cardPicker({
   grid: () => $('#historyList'),
   card: '#historyList > .hcard',
@@ -4368,7 +4515,7 @@ $('#historyFilters').addEventListener('click', e => {
 $('#historyFav').addEventListener('click', e => {
   state.historyFav = !state.historyFav;
   e.currentTarget.setAttribute('aria-pressed', state.historyFav);
-  e.currentTarget.textContent = state.historyFav ? '★ Favorites' : '☆ Favorites';
+  e.currentTarget.innerHTML = `${bookmarkIcon} Bookmarks`;
   renderHistory();
 });
 $('#historyList').addEventListener('click', async e => {
@@ -4409,7 +4556,7 @@ $('#historyList').addEventListener('click', async e => {
   }
 });
 
-// Every copy of an entry the page holds: the stage, History, earlier runs and the chain run each may have their own.
+// Every copy of an entry the page holds: the stage, Saved prompts, earlier runs and the chain run each may have their own.
 const copiesOf = id => new Set([state.entry, ...state.history, ...sessionCache.values(), ...(state.run?.entries || [])].filter(e => e?.id === id));
 
 // A deleted (or re-starred) render changes every view at once, so no stale thumbnail stays on screen.
@@ -4544,6 +4691,7 @@ async function openEntry(entry) {
   state.timings = {};
   showView('create');
   renderResults(entry);
+  setCreateWorkspace('results');
   await restoreSetup(entry);
   requestAnimationFrame(() => {
     const stage = $('.stage');
@@ -4588,6 +4736,40 @@ const NEW_MODEL = {
 // ---------- Brains (Models → Brains) ----------
 
 let modelsPane = saved.get('modelsPane', 'models');
+let modelEditOpen = false;
+function showModelEditor(open) {
+  modelEditOpen = open;
+  $('#modelsPane').hidden = modelsPane !== 'models' || !open;
+  $('#modelCatalog').hidden = modelsPane !== 'models' || open;
+}
+function modelReadiness(m) {
+  const flows = workflowsFor(m.id);
+  if (!state.workflowsLoaded) return 'Checking setup…';
+  if (!flows.length) return 'Prompt writing only · add a workflow to render';
+  if (!state.comfy) return 'Checking connection…';
+  if (!state.comfy.ok) return 'Start ComfyUI to make pictures or videos';
+  if (!state.health?.checkedAt) return 'Connected · checking model files…';
+  if (flows.every(f => flowTrouble(f.id))) return 'Setup needed · missing files or tools';
+  return 'Ready on this computer';
+}
+function renderModelCatalog() {
+  $('#modelCatalogGrid').innerHTML = state.models.map(m => {
+    const needs = m.guide?.youNeed || (m.motionVideo ? 'A character picture and a motion video.' : m.characterSheet ? 'A clear picture of your person.' : workflowsFor(m.id).some(f => f.maps?.image) ? 'A starting picture.' : 'Your idea in a few words.');
+    return `<article class="catalog-model" style="--m:${modelColor(m)}"><div class="catalog-kind">${m.kind === 'video' ? 'Video' : 'Picture'} model</div><h2>${esc(modelDisplayName(m))}</h2><p>${esc(modelPurpose(m))}</p><p class="catalog-needs"><b>You need</b> ${esc(needs)}</p><p class="catalog-ready">${esc(modelReadiness(m))}</p><div class="row"><button type="button" class="btn small primary" data-catalog-use="${esc(m.id)}">Use this model</button><button type="button" class="btn small" data-catalog-edit="${esc(m.id)}">Customize</button></div></article>`;
+  }).join('');
+}
+$('#modelCatalogGrid').addEventListener('click', e => {
+  const use = e.target.closest('[data-catalog-use]');
+  const edit = e.target.closest('[data-catalog-edit]');
+  if (use) { selectModel(use.dataset.catalogUse); showView('create'); setCreateWorkspace('create', { focus: true }); }
+  if (edit) guardDirty(edit.dataset.catalogEdit, () => editModel(edit.dataset.catalogEdit));
+});
+$('#customizeModels').addEventListener('click', () => showModelEditor(true));
+$('#backToModels').addEventListener('click', () => guardDirty('__catalog', () => {
+  if (state.dirty) editModel(state.editId || state.models[0]?.id, { customize: false });
+  showModelEditor(false);
+  renderModelCatalog();
+}));
 let brainSort = saved.get('brainSort', 'fit');
 const brainFilter = loadBrainFilter('brainFilters');
 function showModelsPane(pane, { push = true } = {}) {
@@ -4598,7 +4780,7 @@ function showModelsPane(pane, { push = true } = {}) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', String(on));
   });
-  $('#modelsPane').hidden = modelsPane !== 'models';
+  showModelEditor(modelEditOpen);
   $('#modelsIntro').hidden = modelsPane !== 'models';
   $('#brainsPane').hidden = modelsPane !== 'brains';
   $('#brainsIntro').hidden = modelsPane !== 'brains';
@@ -4779,6 +4961,7 @@ function stopQuickCheck() {
 }
 
 function renderModelList() {
+  renderModelCatalog();
   $('#modelList').innerHTML = state.models.map(m => `
     <li><button type="button" data-id="${esc(m.id)}" class="${m.id === state.editId ? 'active' : ''}" style="--m:${modelColor(m)}" aria-current="${m.id === state.editId}">
       <span class="mdot" aria-hidden="true"></span><span class="mname">${esc(m.name)}</span>${workflowsFor(m.id).length ? `<span class="wf-count" title="ComfyUI workflows">🎨 ${workflowsFor(m.id).length}</span>` : ''}<span title="${esc(m.kind)}" aria-label="${esc(m.kind)}">${kindIcon(m.kind)}</span>
@@ -4908,16 +5091,18 @@ function guardDirty(target, go) {
   go();
 }
 
-function editModel(id) {
+function editModel(id, { customize = true } = {}) {
   const m = modelById(id);
   if (!m) return newModel();
   state.editId = m.id;
+  if (customize) showModelEditor(true);
   renderModelList();
   fillModelForm(m, false);
   renderWorkflowList();
 }
 
 function newModel(template = NEW_MODEL) {
+  showModelEditor(true);
   state.editId = null;
   renderModelList();
   fillModelForm({ ...structuredClone(template), id: '' }, true);
@@ -6060,7 +6245,7 @@ const versionLabel = n => { const v = loraVersion(n); return v ? (v.step ? `step
 const loraSkipKey = (from, to) => `loraNewerSkip.${from}→${to}`;
 
 // LoRA files as they are now (size and date), asked at most once a minute per name. A render records the files it
-// used; one replaced under the same name since then renders differently, and the lightbox and History say so.
+// used; one replaced under the same name since then renders differently, and the lightbox and Saved prompts say so.
 const loraFilesNow = new Map(); // name → { at, file }
 async function loraFilesChanged(loras) {
   const recorded = (loras || []).filter(l => l.file);
@@ -6404,6 +6589,8 @@ async function loadHealth({ fresh = false } = {}) {
 // ⚠ in front of a workflow that can't render right now, in the picker.
 const flowTrouble = id => (state.wfNodes.get(id)?.length || 0) + (state.wfMissing.get(id)?.length || 0) > 0;
 function renderPickerMarks() {
+  renderModelCatalog();
+  updateGenerateLabel();
   for (const o of $('#wfpSelect').options) {
     const name = state.workflows.find(f => f.id === o.value)?.name || o.textContent.replace(/^⚠ /, '');
     o.textContent = flowTrouble(o.value) ? `⚠ ${name}` : name;
@@ -6534,6 +6721,9 @@ async function pollDownloads() {
 }
 
 function renderComfyState() {
+  renderModelCatalog();
+  renderCreativeTask();
+  updateGenerateLabel();
   const el = $('#comfyState');
   const c = state.comfy;
   el.hidden = !c || !workflowsFor(state.modelId).length;
@@ -6551,8 +6741,15 @@ $('#wfpSettings').addEventListener('click', () => editWorkflow($('#wfpSelect').v
 for (const id of ['#wfpAdd', '#wfpAddFirst']) $(id).addEventListener('click', () => openWorkflowDialog({ modelId: state.modelId }));
 $('#wfpAuto').addEventListener('change', e => {
   saved.set(autoRenderKey(state.modelId), e.target.checked);
+  updateGenerateLabel();
   const flow = state.workflows.find(f => f.id === $('#wfpSelect').value);
   toast(e.target.checked ? `⚡ Auto-render on: new prompts go straight to “${flow?.name}”` : 'Auto-render off: hit ▶ Render when you\'re ready');
+});
+
+$('#reviewFirst').addEventListener('change', e => {
+  saved.set(autoRenderKey(state.modelId), !e.target.checked);
+  $('#wfpAuto').checked = !e.target.checked;
+  updateGenerateLabel();
 });
 
 // Renders freshly written takes right away when the model's auto-render switch is on.
@@ -6708,7 +6905,7 @@ $('#batchList').addEventListener('click', e => {
   toast(`🗑 Deleted the batch “${b.name}”`, false, { label: '↶ Undo', run: undo });
 });
 
-// Runs an order's batches one after another. Each is its own Generate: its own takes and History entry, named after it.
+// Runs an order's batches one after another. Each is its own Generate: its own takes and Saved prompts entry, named after it.
 async function runBatches(order) {
   const { batches: list, model: m } = order;
   const run = { list, index: 0, name: '', total: 0, done: 0, allDone: 0, stopped: false };
@@ -7291,6 +7488,7 @@ async function continueFrom(it, { animate, character = false }) {
   }
   await flushEdits();
   showView('create');
+  setCreateWorkspace('create');
   if (target) {
     if (target.id !== state.modelId) selectModel(target.id);
     state.imageRole = character ? 'character' : 'animate';
@@ -7299,12 +7497,12 @@ async function continueFrom(it, { animate, character = false }) {
   const source = { entryId: it.entry.id, index: it.index, renderId: it.render.id, file: it.file.file, modelName: it.entry.modelName, seed: it.render.seed ?? null };
   await loadImageFile(new File([blob], it.file.name || it.file.file, { type: blob.type || 'image/png' }), { source, quiet: true });
   if (character) {
-    toast(`🧍 Your still is the character for ${target.name}.${state.video ? ' Say where they are (or leave it to the AI), then Generate' : ' Now add a motion video for its moves'}`);
+    toast(`🧍 Your still is the character for ${target.name}.${state.video ? ' Say where they are (or leave it to the AI), then use the main button' : ' Now add a motion video for its moves'}`);
     announce(`The still is now the character for ${target.name}.`);
     $(state.video ? '#theme' : '#motionZone').scrollIntoView({ block: 'center', behavior: scrollMode() });
   } else if (target) {
     replaceTheme(''); // the theme now says what happens; ↶ Undo brings the still's theme back
-    toast(`🎬 Ready to animate with ${target.name}. Say what happens (or leave it to the AI), then Generate`);
+    toast(`🎬 Ready to animate with ${target.name}. Say what happens (or leave it to the AI), then use the main button`);
     announce(`The still is now the first frame for ${target.name}. Describe what happens, then generate.`);
     $('#theme').scrollIntoView({ block: 'center', behavior: scrollMode() });
   } else {
@@ -7407,20 +7605,44 @@ function updateGenerateLabel() {
   const chained = chainOn();
   const list = chained ? [] : pickedBatches();
   const run = state.batchRun;
+  const model = currentModel();
+  const flow = model && activeFlow();
+  const direct = Boolean(flow && (state.manual || saved.get(autoRenderKey(model.id), false)));
+  const amount = state.manual ? state.manualRenders : state.variations * (direct ? state.chain.renders : 1);
+  const media = model?.kind === 'video' ? 'video' : 'image';
+  const action = direct ? `Make ${amount > 1 ? `${amount} ${media}s` : media}` : state.manual ? 'Keep my prompt' : `Write ${state.variations > 1 ? `${state.variations} prompts` : 'prompt'}`;
+  $('#reviewChoice').hidden = state.manual || chained || Boolean(list.length);
+  $('#reviewFirst').checked = !flow || !saved.get(autoRenderKey(model?.id), false);
+  $('#reviewFirst').disabled = !flow;
+  $('#outcomeHint').textContent = chained ? 'Runs every step shown below.' : list.length ? `${list.reduce((n, b) => n + b.count, 0)} ${media}s across ${list.length} batch${list.length > 1 ? 'es' : ''}.`
+    : direct ? `${state.manual ? 'Your exact prompt' : 'Writes the prompt'}, then makes ${amount} ${media}${amount > 1 ? 's' : ''}.${!state.comfy?.ok || flowTrouble(flow.id) ? ' Rendering setup needs attention in step 5.' : ''}`
+      : !flow ? `${state.manual ? 'Saves your exact prompt' : 'Writes a prompt to use anywhere'}. Add a workflow in step 5 to make it here.` : `You can edit the prompt before making your ${media}.`;
   const which = run && (run.list.length > 1 ? `Batch ${run.index + 1}/${run.list.length}` : `“${cut(run.name, 22)}”`);
   $('#genLabel').textContent = run ? (run.stopped ? 'Stopping…' : state.busy ? `${which}: writing…` : `${which}: ${run.done} of ${run.total} rendered`)
-    : state.busy ? 'Cooking…' : state.chainActive ? 'Chain running…'
-      : chained ? 'Run chain' : list.length > 1 ? `Generate all ${list.length} batches` : list.length ? `Generate “${cut(list[0].name, 22)}”`
-        : state.manual ? (!workflowsFor(state.modelId).length ? 'Keep my prompt' : state.manualRenders > 1 ? `Render ×${state.manualRenders}` : 'Render')
-          : state.variations > 1 ? `Generate ${state.variations} takes` : 'Generate';
+    : state.busy ? 'Writing prompt…' : state.chainActive ? 'Steps running…'
+      : chained ? 'Run all steps' : list.length ? `Make ${list.reduce((n, b) => n + b.count, 0)} ${media}s` : action;
   // The Ctrl ↵ hint only fits beside the short label; a longer one gets the room.
-  $('#generateBtn').classList.toggle('long-label', !['Generate', 'Render'].includes($('#genLabel').textContent));
+  $('#generateBtn').classList.toggle('long-label', $('#genLabel').textContent.length > 14);
   const total = list.reduce((n, b) => n + b.count, 0);
   const chainLine = chained && !state.busy && !state.chainActive ? chainCost() : '';
   const cost = chainLine ? `⛓ ${chainLine}`
     : list.length && !state.busy && !run ? `🎞 ${list.length > 1 ? `${list.length} batches · ${total} ${outputWord(total)}` : batchLine(list[0])}` : '';
   $('#genCost').hidden = !cost;
   $('#genCost').textContent = cost;
+  renderCreationProgress();
+}
+
+function renderCreationProgress() {
+  const progress = $('#creationProgress');
+  if (!progress) return;
+  const entry = state.entry;
+  const jobs = typeof rendersNow === 'undefined' ? [] : rendersNow.filter(j => j.historyId === entry?.id);
+  const rendering = jobs.length || [...state.renderRuns].some(r => r.card && state.cards.includes(r.card));
+  const count = entry?.variations?.reduce((n, v) => n + (v.renders?.length || 0), 0) || 0;
+  const kind = entry?.modelKind === 'video' ? 'video' : 'image';
+  progress.hidden = !entry && !state.busy;
+  progress.textContent = state.busy ? 'Writing prompt…' : rendering ? `Making ${kind}${jobs.length > 1 ? 's' : ''}…${count ? ` ${count} ready.` : ''}` : count ? `Ready · ${count} ${kind}${count > 1 ? 's' : ''} saved` : entry ? 'Prompt ready · review it, then make your picture or video.' : '';
+  $('#resultCount').textContent = count ? String(count) : '';
 }
 
 function stepCardHtml(st, i, warn) {
@@ -7660,7 +7882,7 @@ function applyRecipe(r, { quiet = false } = {}) {
   state.chain = { recipeId: r.id || null, renders: first.renders || 1, steps: rest.map(s => thenStep({ ...s, open: false })) };
   saveChainState();
   renderChainEditor();
-  if (!quiet) toast(`⛓ “${r.name}” is set up. Describe the shot, then Run chain`);
+  if (!quiet) toast(`⛓ “${r.name}” is set up. Describe the shot, then Run all steps`);
 }
 
 async function loadRecipes() {
@@ -7857,6 +8079,7 @@ function showEntry(entry) {
   if (state.busy) return toast('Hold on, a prompt is still cooking.', true);
   state.timings = {};
   renderResults(entry);
+  setCreateWorkspace('results');
   renderRunStrip();
 }
 
@@ -7911,7 +8134,7 @@ function renderRunStrip() {
       <span class="rs-status" aria-live="polite">${esc(status)}</span>
       <span class="spacer"></span>
       ${next && run.status !== 'running' && outputs.length ? `${pool.length > 1 ? `<button type="button" class="btn small" data-act="pick-all">Pick all ${pool.length}</button>` : ''}<button type="button" class="btn small primary" data-act="continue"${picks.length ? '' : ' disabled'}>Continue ▶${picks.length ? ` ${picks.length}` : ''}</button>` : ''}
-      <button type="button" class="icon-btn" data-act="close" aria-label="Close the chain view" title="Close (the run stays in History)">✕</button>
+      <button type="button" class="icon-btn" data-act="close" aria-label="Close the chain view" title="Close (the run stays in Saved prompts)">✕</button>
     </div>
     <ol class="rs-steps">${steps.map((st, k) => {
       const m = modelById(st.modelId);
@@ -7944,10 +8167,10 @@ $('#runStrip').addEventListener('click', e => {
   }
 });
 
-// Reopens a whole run from History: the Create form gets its first step and its chain back.
+// Reopens a whole run from Saved prompts: the Create form gets its first step and its chain back.
 async function openRun(entry) {
   const all = await api('/api/history').catch(() => null);
-  if (!all) return toast('Couldn\'t load History.', true);
+  if (!all) return toast('Couldn\'t load Saved prompts.', true);
   state.history = all;
   const entries = all.filter(e => e.chain?.runId === entry.chain.runId).reverse();
   const root = entries.find(e => e.chain.step === 0);
@@ -7981,11 +8204,11 @@ async function openRun(entry) {
 // rating or redrawing the side panel doesn't start a playing video again.
 const lb = { items: [], index: 0, fromGallery: false, returnFocus: null, pin: null, shown: '' };
 
-function openLightbox(items, index, { fromGallery = false } = {}) {
+function openLightbox(items, index, { fromGallery = false, compare = false } = {}) {
   lb.items = items;
   lb.index = index;
   lb.fromGallery = fromGallery;
-  lb.pin = null;
+  lb.pin = compare ? items[0] : null;
   lb.returnFocus = document.activeElement;
   $('#lightbox').hidden = false;
   document.body.style.overflow = 'hidden';
@@ -8034,7 +8257,7 @@ function drawLbStage(it) {
   const pin = lb.pin && lb.items.find(x => key(x) === key(lb.pin)); // (gone if it was deleted meanwhile)
   if (lb.pin && !pin) lb.pin = null;
   const shown = pin ? `${key(pin)}|${key(it)}` : key(it);
-  const stars = (r, side) => `<div class="lb-pane-bar"><span class="lb-pane-name">${side === 'left' ? '📌 ' : ''}${esc(cut(r.entry.theme || 'From an image', 40))} · take ${r.index + 1}${r.render.seed != null ? ` · seed ${r.render.seed}` : ''}</span>${rateBarHtml(ratingOf(r.render), side === 'left' ? 'the one on the left' : 'the one on the right')}${side === 'right' ? '<button type="button" class="btn small" data-pane="keep" title="Keep this one on the left instead, and go on comparing">📌 Keep this one</button>' : ''}</div>`;
+  const stars = (r, side) => `<div class="lb-pane-bar"><span class="lb-pane-name">${side === 'left' ? 'Pinned · ' : ''}${esc(cut(r.entry.theme || 'From an image', 40))} · take ${r.index + 1}${r.render.seed != null ? ` · seed ${r.render.seed}` : ''}</span>${rateBarHtml(ratingOf(r.render), side === 'left' ? 'the one on the left' : 'the one on the right')}${side === 'right' ? '<button type="button" class="btn small" data-pane="keep" title="Use this as the comparison reference. Ratings are saved separately.">Pin on the left</button>' : ''}</div>`;
   if (shown !== lb.shown) {
     lb.shown = shown;
     stage.classList.toggle('pair', Boolean(pin));
@@ -8121,16 +8344,17 @@ function lbRender() {
     <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
     <pre class="lb-prompt">${esc(render.text)}</pre>
     <div class="lb-actions">
-      <a class="btn small primary" href="/renders/${encodeURIComponent(file.file)}" download="${esc(file.name || file.file)}">⬇ Download</a>
-      <button type="button" class="btn small" data-lb="copy">📋 Copy prompt</button>
+      <a class="btn small primary" href="/renders/${encodeURIComponent(file.file)}" download="${esc(file.name || file.file)}">${utilityIcon('download')} Download</a>
+      <button type="button" class="btn small" data-lb="copy">${utilityIcon('copy')} Copy prompt</button>
       ${file.kind === 'image' && animateTarget() ? `<button type="button" class="btn small" data-lb="animate" title="Make a video from this still: it becomes the first frame">🎬 Animate this</button>` : ''}
       ${file.kind === 'image' && characterTarget() ? `<button type="button" class="btn small" data-lb="character" title="Make it perform a motion video's moves with ${esc(characterTarget().name)}">🧍 Animate as a character</button>` : ''}
       ${file.kind === 'video' && characterTarget() ? `<button type="button" class="btn small" data-lb="motion" title="Use this video's moves for a character, with ${esc(characterTarget().name)}">🕺 Use as motion video</button>` : ''}
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
-      ${onStage ? '<button type="button" class="btn small" data-lb="again">🎲 Render again</button>' : entry.joined ? '' : '<button type="button" class="btn small" data-lb="open">↗ Open in Create</button>'}
-      ${lb.items.length > 1 ? `<button type="button" class="btn small" data-lb="compare" aria-pressed="${Boolean(lb.pin)}" title="${lb.pin ? 'Back to one at a time' : 'Keep this one on the left and browse the others beside it'}">${lb.pin ? '✕ Stop comparing' : '⇆ Compare'}</button>` : ''}
-      ${going.has(render.id) ? '<button type="button" class="btn small primary" data-lb="undo">↶ Undo delete</button>' : '<button type="button" class="btn small danger" data-lb="delete" title="Deletes this render for good, here and in ComfyUI. You get a few seconds to undo">🗑 Delete</button>'}
+      ${onStage ? '<button type="button" class="btn small" data-lb="again">Render again</button>' : ''}
+      ${entry.joined ? '' : '<button type="button" class="btn small" data-lb="open">Open original prompt</button>'}
+      ${lb.items.length > 1 ? `<button type="button" class="btn small" data-lb="compare" aria-pressed="${Boolean(lb.pin)}" title="${lb.pin ? 'Back to one at a time' : 'Pin this on the left and browse the others beside it'}">${lb.pin ? '✕ Stop comparing' : `${utilityIcon('compare')} Compare`}</button>` : ''}
+      ${going.has(render.id) ? '<button type="button" class="btn small primary" data-lb="undo">↶ Undo delete</button>' : `<button type="button" class="btn small danger" data-lb="delete" title="Deletes this render for good, here and in ComfyUI. You get a few seconds to undo">${utilityIcon('delete')} Delete</button>`}
     </div>
     <dl class="lb-facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
     <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · 1 2 3 to rate · Esc to close</p>`;
@@ -8154,6 +8378,7 @@ function lbRender() {
     closeLightbox();
     await flushEdits();
     showView('create');
+    setCreateWorkspace('create');
     const target = characterTarget();
     if (target.id !== state.modelId) selectModel(target.id);
     await useRenderAsVideo(it);
@@ -8738,7 +8963,7 @@ const TOOLS = [
   T('list_workflows', 'The ComfyUI workflows of a model, and which one is picked.', { model: S('Model name; default: the current model') }),
   T('list_loras', 'The LoRAs available for a model (from its LoRA folder) and the ones in use on the picked workflow.', { model: S('Model name; default: the current model'), search: S('Words to filter by') }),
   T('read_guide', 'Look up how something in Prompt Maker works, in its user guide. Use it before answering how-to questions.', { topic: S('What to look up, e.g. "LoRAs" or "animate a still"') }, ['topic']),
-  T('search_history', 'Find earlier prompts in History by words in their theme or text.', { query: S('Words to look for'), limit: I('How many, up to 10') }, ['query']),
+  T('search_history', 'Find earlier prompts in Saved prompts by words in their theme or text.', { query: S('Words to look for'), limit: I('How many, up to 10') }, ['query']),
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
@@ -8766,7 +8991,7 @@ const TOOLS = [
     unlock_cfg: B('Allow changing a CFG of 1 (distilled, turbo and lightning models need 1): only when the user asks for it'),
   }),
   T('set_auto_render', 'Turn auto-render on or off for the current model (renders every new prompt right away), and how many renders each take gets.', { on: B('On or off'), renders_per_take: I('Renders per take, 1–4 (also where each take\'s Render bar starts)') }, ['on']),
-  T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in History.'),
+  T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in Saved prompts.'),
   T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 6). Waits until they are written.'),
   T('refine_take', 'Change a take with an instruction, e.g. "golden hour" or "shorter".', { take: I('Take number, starting at 1'), instruction: S('What to change') }, ['take', 'instruction']),
   T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–50; default 1') }),
@@ -8797,7 +9022,7 @@ const TOOLS = [
   }),
   T('undo_playbook_edit', 'Put back the playbook as it was before your last edit_playbook.'),
   T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
-  T('open_history', 'Open an earlier prompt from History on the Create page.', { query: S('Words from its theme or text') }, ['query']),
+  T('open_history', 'Open an earlier prompt from Saved prompts on the Create page.', { query: S('Words from its theme or text') }, ['query']),
   T('look_at', 'See renders (images, or frames of videos), the input image, or pictures and videos in a folder, with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest. When the user speaks of renders they made ("in the gallery", "my renders", "the ones of the diver"), use gallery with find: every render Prompt Maker ever made is there.', {
     what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery', 'files'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started, newest run first; gallery: every render ever made, newest first; files: pictures or videos in a folder on this computer (folder, files). Each render comes with its render id (for use_render_as_image)'),
     find: S('this_session or gallery: words of what the renders show or of their prompt, e.g. "woman walking apartment"; the best matches come first'),
@@ -8827,9 +9052,9 @@ const TOOLS = [
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
   T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (🎞 Your renders and the Gallery show it, and filter by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
-  T('favorite_entry', 'Star (★) the prompt on screen in History, or unstar it.', { on: B('true = star (default), false = unstar') }),
+  T('favorite_entry', 'Bookmark the prompt on screen in Saved prompts, or remove its bookmark.', { on: B('true = bookmark (default), false = remove bookmark') }),
   T('delete_render', 'Delete a render for good (asks the user to confirm on screen). Default: the one in the lightbox. Only when the user asked.', { take: I('Take number'), render: I('1 = newest render of that take') }),
-  T('delete_entry', 'Delete a prompt from History for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
+  T('delete_entry', 'Delete a prompt from Saved prompts for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
   T('cancel_renders', 'Cancel renders in progress (🎨 Rendering): those of one take on screen, or all.', { take: I('Take number on screen; leave out for every render') }),
   T('set_brain', 'Switch the Brain (the LLM in the top bar) that writes prompts and runs you. A ☁️ cloud Brain asks the user first.', { name: S('Brain name or part of it') }, ['name']),
   T('list_folder', 'List the pictures (and videos) in a folder on this computer (for a job, look_at, use_image or use_motion_video). A name alone, or one close to it ("renderings" finds "renders"), is looked for in Prompt Maker\'s and ComfyUI\'s folders, then everywhere in the home folder and on other drives; others lists more folders that fit.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
@@ -8851,7 +9076,7 @@ const TOOLS = [
   T('run_command', `Run a command or program on this computer, as the user, and get its output. ${navigator.platform.startsWith('Win') ? 'PowerShell' : 'bash'}; it starts in the home folder. A program that keeps running (an app with a window) goes in the background: \`gimp file.png &\`. Anything that deletes asks the user first.`, { command: S('The command'), folder: S('Optional: the folder to run it in'), seconds: I('How long it may take, 1–600; default 60') }, ['command']),
   T('read_file', 'Read a text file anywhere on this computer (or what is in a folder). Long files come in parts: give from to read on.', { path: S('Full path or ~/…'), from: I('Where to go on reading (more_from of the last part)') }, ['path']),
   T('write_file', 'Write a text file anywhere on this computer (makes its folder if needed). Replacing a file that is already there asks the user first.', { path: S('Full path or ~/…'), text: S('What to write'), append: B('Add to the end instead of replacing') }, ['path', 'text']),
-  T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup', 'log_scrub'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render; log_scrub: on/off, deleting from History also cleans LM Studio\'s and ComfyUI\'s logs'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
+  T('change_setting', 'Change a setting.', { setting: E(['adult_content', 'thinking', 'top_p', 'max_tokens', 'comfy_cleanup', 'log_scrub'], 'adult_content: on/off; thinking: off/low/medium/high/default; top_p: 0–1; max_tokens: 256–32768; comfy_cleanup: delete ComfyUI\'s copy after copying a render; log_scrub: on/off, deleting from Saved prompts also cleans LM Studio\'s and ComfyUI\'s logs'), value: S('The new value, e.g. "on", "off", "high", "0.9"') }, ['setting', 'value']),
 ];
 
 // Tools for this computer beyond Prompt Maker: only sent, and only run, while Settings allows it.
@@ -8888,7 +9113,7 @@ const callsThisApp = cmd => location.port && new RegExp(String.raw`(localhost|12
 // What the assistant shows while a tool runs.
 const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
-  search_history: 'Looking through History…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
+  search_history: 'Looking through Saved prompts…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
   run_command: 'Running it…', read_file: 'Reading…', write_file: 'Writing…', look_at: 'Looking…', find: 'Searching this computer…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
   pick_best: 'Choosing the best…', judge_renders: 'Rating the renders…', use_render_as_image: 'Putting it in step 3…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
 };
@@ -9399,7 +9624,7 @@ const TOOL_IMPL = {
     } else if (what === 'this_session' || what === 'earlier_runs') {
       items = reelGroups().flatMap((g, run) => g.items.map(it => ({ it, label: `${g.id === state.entry?.id ? 'the run on screen' : `session run ${run + 1}`} (“${(it.entry.theme || 'from an image').slice(0, 40)}”), take ${it.index + 1}` })));
     } else if (what === 'gallery') {
-      state.history = await api('/api/history'); // renders made since History was last opened count too
+      state.history = await api('/api/history'); // renders made since Saved prompts was last opened count too
       items = galleryItems().map(it => ({ it, label: `“${(it.entry.theme || 'from an image').slice(0, 40)}” (${it.entry.modelName})` }));
     } else {
       const cards = take ? [needCard(take)] : state.cards.filter(c => !c.interrupted);
@@ -9450,7 +9675,7 @@ const TOOL_IMPL = {
     const h = state.history.find(x => x.id === state.entry.id);
     if (h) h.favorite = updated.favorite;
     if (isView('history')) renderHistory();
-    return { summary: want ? '★ Starred in History' : 'Unstarred' };
+    return { summary: want ? 'Bookmarked in Saved prompts' : 'Bookmark removed' };
   },
   delete_render: async ({ take, render }) => {
     const it = needRender({ take, render });
@@ -9466,7 +9691,7 @@ const TOOL_IMPL = {
       const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
       entry = all.find(x => [x.theme, x.modelName, ...x.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase().includes(words.join(' '))) || all.find(x => { const t = [x.theme, x.modelName, ...x.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase(); return words.every(w => t.includes(w)); });
     }
-    if (!entry) throw new Error(query ? `Nothing in History matches “${query}”.` : 'There\'s no prompt on screen to delete.');
+    if (!entry) throw new Error(query ? `Nothing in Saved prompts matches “${query}”.` : 'There\'s no prompt on screen to delete.');
     notBusy();
     const renders = entry.variations.reduce((n, v) => n + (v.renders?.length || 0), 0);
     if (!(await confirmInChat(`Delete “${entry.theme || 'from an image'}” (${entry.modelName}) for good? Its prompts${renders ? ` and ${renders} render${renders > 1 ? 's' : ''}` : ''} go, here and in ComfyUI.`, '🗑 Delete for good'))) return { summary: 'Kept it: the user said no', declined: true };
@@ -9666,7 +9891,7 @@ const TOOL_IMPL = {
     state.history = all;
     const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
     const hits = all.filter(e => { const t = [e.theme, e.modelName, ...e.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase(); return words.every(w => t.includes(w)); });
-    return { summary: `${hits.length} match${hits.length === 1 ? '' : 'es'} in History`, results: hits.slice(0, Math.min(10, limit || 6)).map(e => ({ when: timeAgo(e.createdAt), model: e.modelName, theme: e.theme, takes: e.variations.length, renders: e.variations.reduce((n, v) => n + (v.renders?.length || 0), 0) })) };
+    return { summary: `${hits.length} match${hits.length === 1 ? '' : 'es'} in Saved prompts`, results: hits.slice(0, Math.min(10, limit || 6)).map(e => ({ when: timeAgo(e.createdAt), model: e.modelName, theme: e.theme, takes: e.variations.length, renders: e.variations.reduce((n, v) => n + (v.renders?.length || 0), 0) })) };
   },
   read_take: ({ take }) => {
     const card = needCard(take);
@@ -10186,7 +10411,7 @@ const TOOL_IMPL = {
     const all = await api('/api/history');
     const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
     const e = all.find(x => { const t = [x.theme, x.modelName, ...x.variations.map(v => v.versions.at(-1).text)].join(' ').toLowerCase(); return words.every(w => t.includes(w)); });
-    if (!e) throw new Error(`Nothing in History matches “${query}”.`);
+    if (!e) throw new Error(`Nothing in Saved prompts matches “${query}”.`);
     await openEntry(e);
     return { summary: `Opened “${e.theme || 'from an image'}” (${e.modelName})` };
   },
@@ -10387,7 +10612,7 @@ function syncAssistantBusy() {
   $('#asBrain').textContent = selectedLlm()?.name ? `· ${selectedLlm().name}` : '';
 }
 
-// The assistant is on by default: its panel opens with the app (on a wide enough screen) and stays as you left it.
+// Ask starts compact. An opened panel stays as the user left it on wide screens.
 async function openAssistant(open = $('#assistant').hidden, { focus = true } = {}) {
   const panel = $('#assistant');
   panel.hidden = !open;
@@ -10824,7 +11049,7 @@ function renderJobsList() {
       mine && '<button type="button" class="btn small danger" data-job="stop">■ Stop now</button>',
       !mine && job.status !== 'running' && c.left > 0 && `<button type="button" class="btn small primary" data-job="resume"${job.status === 'queued' ? ' disabled' : ''}>${job.status === 'queued' ? 'Waiting to start…' : '▶ Resume'}</button>`,
       c.skipped > 0 && job.status !== 'running' && `<button type="button" class="btn small" data-job="retry" title="Try the skipped items again">↻ Retry ${c.skipped} skipped</button>`,
-      !mine && job.status !== 'running' && '<button type="button" class="btn small danger" data-job="remove" title="Remove this job and its log (what it made stays in History)">🗑 Remove</button>',
+      !mine && job.status !== 'running' && '<button type="button" class="btn small danger" data-job="remove" title="Remove this job and its log (what it made stays in Saved prompts)">🗑 Remove</button>',
     ].filter(Boolean).join('');
     el.className = `job s-${job.status}`;
     $('.job-top', el).innerHTML = `<div class="job-head"><b>${esc(job.title)}</b><span class="job-chip">${job.status === 'running' && !mine ? 'running in another tab' : esc(JOB_STATUS[job.status])}</span><span class="spacer"></span><span class="muted small">${esc(timeAgo(job.createdAt))}</span></div>
@@ -10917,7 +11142,7 @@ $('#jobsList').addEventListener('click', async e => {
   if (b.dataset.ju === 'open') {
     if (jobs.current) return toast('The job is using Create right now. Pause it first, or use 👁 View.', true);
     const entry = await api(`/api/history/${u.entries.at(-1)}`).catch(() => null);
-    if (!entry) return toast('That one is no longer in History.', true);
+    if (!entry) return toast('That one is no longer in Saved prompts.', true);
     $('#jobsDlg').close();
     return openEntry(entry);
   }
@@ -11062,6 +11287,7 @@ async function loadModels() {
 }
 
 (async function boot() {
+  $('#historyFav').innerHTML = `${bookmarkIcon} Bookmarks`;
   $$('[data-panel]').forEach(decoratePanel);
   try {
     [state.settings, state.models] = await Promise.all([api('/api/settings'), api('/api/models')]);
@@ -11108,7 +11334,7 @@ async function loadModels() {
   pollRenders();
   pollDownloads(); // model downloads keep going through a reload
   loadJobs();
-  if (saved.get('assistantOpen', true) && innerWidth >= 1100) await openAssistant(true, { focus: false });
+  if (saved.get('assistantOpen', false) && innerWidth >= 1100) await openAssistant(true, { focus: false });
   document.documentElement.dataset.ready = '1';
 })();
 

@@ -138,6 +138,21 @@ const count = sel => js(`document.querySelectorAll(${q(sel)}).length`);
 const value = sel => js(`document.querySelector(${q(sel)})?.value ?? null`);
 
 async function click(sel) {
+  // Follow the new disclosure/navigation controls before exercising the existing feature.
+  // These remain real clicks; assertions about default visibility do not use this helper.
+  const reveal = await js(`(() => {
+    const el = document.querySelector(${q(sel)});
+    if (!el) return '';
+    if (el.closest('#modelsPane') && document.querySelector('#modelsPane').hidden) return '#customizeModels';
+    if (el.closest('.director') && getComputedStyle(document.querySelector('.director')).display === 'none') return '#showCreate';
+    if (el.closest('.stage') && getComputedStyle(document.querySelector('.stage')).display === 'none') return '#showResults';
+    const fold = el.closest('details:not([open])');
+    if (fold && !el.closest('summary')) return '#' + (fold.id || (fold.id = 'test-disclosure')) + ' > summary';
+    const panel = el.closest('[data-panel].collapsed');
+    if (panel && !el.closest('.panel-toggle')) return '[data-panel="' + panel.dataset.panel + '"] .collapse-btn';
+    return '';
+  })()`);
+  if (reveal && reveal !== sel) await click(reveal);
   // Like a person: wait until the element holds still (async updates can move things for a moment).
   let box;
   for (let tries = 0; tries < 20; tries++) {
@@ -261,6 +276,12 @@ async function goto(url) {
 
 async function toastText(expected = '', timeout = 8000) {
   return waitFor(`(() => { const t = document.querySelector("#toast"); return !t.hidden && t.textContent.includes(${q(expected)}) && t.textContent; })()`, `toast "${expected}"`, timeout);
+}
+async function reloadPage() {
+  await js('document.documentElement.dataset.ready = ""');
+  // Let DevTools navigate directly; evaluating location.reload() can destroy its own reply.
+  await cdp.send('Page.reload');
+  await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
 }
 const UNDO_WAIT = 14000; // a clicked delete waits 8 s for ↶ Undo before it happens
 
@@ -443,8 +464,6 @@ esac
   await Promise.all(['Page.enable', 'Runtime.enable', 'Log.enable', 'DOM.enable'].map(m => cdp.send(m)));
   // Every toast, in order, with when it showed: there's one toast slot, and a later toast replaces the one before.
   // And every click and key press that reached the page, so a lost one can be told apart from one the app ignored.
-  // The assistant opens by default; most tests want the page as it is without it (one test checks the default).
-  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.origin === ${JSON.stringify(APP)} && localStorage.getItem('pm.assistantOpen') === null && !sessionStorage.getItem('default-assistant')) localStorage.setItem('pm.assistantOpen', 'false');` });
   // The technical cards start folded for a new user; the tests work in them, so here they start open.
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.origin === ${JSON.stringify(APP)} && localStorage.getItem('pm.panels') === null) localStorage.setItem('pm.panels', JSON.stringify({ 'set-lmstudio': false, 'set-comfy': false, 'set-thinking': false, 'set-master': false, 'model-instructions': false, 'model-sizes': false, 'models-defaults': false, 'models-lengths': false }));` });
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__toasts = [];
@@ -493,6 +512,57 @@ esac
     await shot('01-create-empty');
   });
 
+  await test('creator experience: task first, optional details, model chooser and reachable results', async () => {
+    assert(!(await visible('#assistant')), 'Ask leaves room for the work by default');
+    assert(!(await js('document.querySelector("#modelChoice").open')), 'model choices start folded');
+    assert(!(await js('document.querySelector("#modelGuide").open')), 'the guide starts folded');
+    assert(!(await js('document.querySelector("#writingOptions").open')), 'precise dials start folded');
+    eq(await text('#genLabel'), 'Write prompt', 'review is the safe existing default');
+    assert((await text('#sizeSummary')).startsWith('Automatic size'), 'new models use automatic size');
+    await viewport(1280, 800);
+    assert(await js('document.querySelector("#theme").getBoundingClientRect().top < innerHeight - 150'), 'idea field is in the first laptop viewport');
+    await click('[data-task="edit"]');
+    assert((await text('#chosenModel')).includes('Edit'), 'the task chooses an editing model');
+    await click('[data-task="picture"]');
+    await click('#askBtn');
+    assert(await visible('#showResults'), 'laptop with Ask has workspace switching');
+    await click('#showResults');
+    assert(await visible('#resultsEmpty') && !(await visible('#theme')), 'results replace the long form');
+    await click('#showCreate');
+    assert(await visible('#theme'), 'one click returns to the idea');
+    await click('#askBtn');
+    await viewport(390, 844, true);
+    await click('#showResults');
+    assert(await visible('#resultsEmpty'), 'phone results are immediately reachable');
+    await click('#showCreate');
+    assert(await visible('#theme'), 'phone creation is reachable');
+    assert(await js('document.documentElement.scrollWidth <= innerWidth + 1'), 'no sideways scrolling');
+    await click('#generateBtn');
+    await waitFor('!document.querySelector("#stageError").hidden', 'validation feedback');
+    assert(await visible('#stageError'), 'phone validation is visible in Results');
+    await click('#stageError .x');
+    await click('#showCreate');
+    await viewport(1440, 900);
+    await click('.tabs [data-view="models"]');
+    assert(await visible('#modelCatalog'), 'Models starts as a chooser');
+    assert(!(await visible('#modelsPane')), 'editing is behind Customize');
+    eq(await count('[data-catalog-use]'), 7, 'every model can be chosen');
+    await click('[data-catalog-edit="krea2-raw"]');
+    assert(await visible('#modelsPane'), 'Customize opens the existing editor');
+    const description = await value('#mDesc');
+    await type('#mDesc', 'An unsaved description');
+    await click('#backToModels');
+    assert(await visible('#modelFormMsg'), 'returning to the catalog guards unsaved changes');
+    await click('#backToModels');
+    await click('[data-catalog-edit="krea2-raw"]');
+    eq(await value('#mDesc'), description, 'discarding restores the saved playbook');
+    await click('#backToModels');
+    await click('[data-catalog-use="krea2-raw"]');
+    assert(await visible('#theme'), 'Use this model returns to the idea');
+    await goto(`${APP}/#create`);
+    eq(await text('#chosenModel'), 'Krea 2 RAW', 'the selected model is remembered');
+  });
+
   await test('validation: nothing to work with', async () => {
     await type('#theme', '');
     await click('#generateBtn');
@@ -524,12 +594,12 @@ esac
   await test('generate 2 takes (theme only)', async () => {
     await click('.model-card[data-id="krea2-raw"]');
     await click('#varSeg button[data-value="2"]');
-    eq(await text('#genLabel'), 'Generate 2 takes', 'button label');
+    eq(await text('#genLabel'), 'Write 2 prompts', 'button label');
     await type('#theme', 'woman at beach with soda in her hand');
     const before = mockCalls();
     await click('#generateBtn');
     await waitFor('document.querySelector("#generateBtn").disabled', 'busy state');
-    eq(await text('#genLabel'), 'Cooking…', 'busy label');
+    eq(await text('#genLabel'), 'Writing prompt…', 'busy label');
     await waitFor('[...document.querySelectorAll(".take .prompt-view")].some(v => !v.hidden)', 'streaming text');
     await shot('02-streaming');
     await genDone();
@@ -616,7 +686,7 @@ esac
     await click('.model-card[data-id="ltx-2-3"]');
     // A video's first frame sets its shape: no LTX preset fits 1.6, so it gets the image's own ratio.
     eq(await value('#aspect'), '8:5', 'LTX takes the image\'s own ratio');
-    eq(await text('#aspect option:checked'), '8:5 🖼️', 'and says so');
+    eq(await text('#aspect option:checked'), 'Landscape · 8:5 🖼️', 'and says so');
     eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '1216×768|1280×800|1824×1152|2432×1504|3648×2272|__custom', 'its sizes, redrawn in that shape');
     eq(await value('#resolution'), '1824×1152', 'the one nearest the 1080p it had');
     assert(await visible('#aspectNote'), '"from image" note on the video model too');
@@ -822,6 +892,7 @@ esac
       await js('document.querySelector(".director-steps").scrollTop = 1e6');
       await sleep(100);
       const dialsHead = '[data-panel="create-dials"] > .step-head';
+      await js(`document.querySelector(${q(dialsHead)}).scrollIntoView({ block: 'center' })`);
       const stepHead = await top(dialsHead);
       await pressAt(`${dialsHead} .collapse-btn`);
       assert(await js('document.querySelector(\'[data-panel="create-dials"]\').classList.contains("collapsed")'), 'step 4 folded');
@@ -1661,6 +1732,7 @@ esac
 
   await test('keyboard: Space on a model card keeps focus', async () => {
     await click('.tabs button[data-view="create"]');
+    await click('#modelChoice > summary');
     await js('document.querySelector(\'.model-card[data-id="krea2-raw"]\').focus()');
     await press(' ');
     assert(await js('document.activeElement?.dataset.id === "krea2-raw" && document.activeElement.classList.contains("active")'), 'focused card selected and still focused');
@@ -2159,7 +2231,7 @@ esac
     await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b0.x, y: b0.y, button: 'left', buttons: 1, clickCount: 1, modifiers: 2 });
     for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b0.x + ((b2.x - b0.x) * k) / 10, y: b0.y + ((b2.y - b0.y) * k) / 10 + 2, button: 'left', buttons: 1, modifiers: 2 });
     assert(await js('!!document.querySelector(".pick-band") && !document.querySelector(".reel-ghost")'), 'Ctrl-drag draws a box, it doesn\'t carry the card');
-    await shot('24d-your-renders-box');
+    // Capture after release: headless Chrome can lose pointer-up immediately after a screenshot.
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b2.x, y: b2.y + 2, button: 'left', buttons: 0, clickCount: 1, modifiers: 2 });
     await waitFor('!document.querySelector(".pick-band")', 'the box goes when you let go', 3000);
     assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'it picks every card it touched');
@@ -2282,8 +2354,7 @@ esac
 
   await test('render: a page reload doesn\'t stop it; the page picks it up, and ✕ Cancel still works', async () => {
     const reload = async () => {
-      await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
-      await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+      await reloadPage();
     };
     await type('#theme', 'SLOWRENDER lanterns on a river');
     await click('#generateBtn');
@@ -2338,15 +2409,15 @@ esac
     eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
   });
 
-  await test('assistant: on by default, sees the renders and says which it likes; ratings; asks before deleting', async () => {
+  await test('assistant: closed by default, sees the renders and says which it likes; ratings; asks before deleting', async () => {
     const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
     const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
-    // On by default: with no choice saved, the panel opens with the app.
+    // With no choice saved, Ask leaves room for the work.
     // (ready is cleared first, so the wait below can't be met by the page that's going away)
-    await js('document.documentElement.dataset.ready = ""; localStorage.removeItem("pm.assistantOpen"); sessionStorage.setItem("default-assistant", "1"); location.reload()');
-    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
-    assert(await visible('#assistant'), 'the assistant is open from the start');
-    await js('sessionStorage.removeItem("default-assistant")');
+    await js('localStorage.removeItem("pm.assistantOpen")');
+    await reloadPage();
+    assert(!(await visible('#assistant')), 'the assistant starts closed');
+    await click('#askBtn');
     try {
     await click('.model-card[data-id="krea2-raw"]');
     await click('#varSeg button[data-value="1"]');
@@ -2430,8 +2501,7 @@ esac
     const picked = await js('document.querySelector(".take .rb-wf")?.selectedOptions[0]?.textContent || ""');
     const flow = (await flows()).find(f => f.modelId === 'krea2-raw' && f.name === picked);
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'fixed', value: 4242 } }) });
-    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
-    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    await reloadPage();
     await click('.model-card[data-id="krea2-raw"]');
     await click('#varSeg button[data-value="1"]');
     await type('#theme', 'a glass of lemonade on a porch');
@@ -2442,8 +2512,7 @@ esac
     await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered ×2', 10000);
     // Change the setup: random seed, ×1, another prompt.
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'random' } }) });
-    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
-    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    await reloadPage();
     await type('#theme', 'something else entirely');
     await click('.tabs button[data-view="history"]');
     await waitFor(`[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("a glass of lemonade"))`, 'the card');
@@ -2470,6 +2539,51 @@ esac
     await click('#varSeg button[data-value="1"]');
   });
 
+  await test('creator review: output totals, saved preference, Gallery selection and narrow filters', async () => {
+    await click('.tabs [data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg [data-value="4"]');
+    await js('localStorage.setItem("pm.autoRender.krea2-raw", "false")');
+    await goto(`${APP}/#create`);
+    eq(await text('#genLabel'), 'Write 4 prompts', 'existing review preference is preserved');
+    await click('#reviewFirst');
+    await click('#wfpRenders button[data-value="2"]');
+    eq(await text('#genLabel'), 'Make 8 images', 'four variations times two renders is explicit');
+    await goto(`${APP}/#create`);
+    eq(await text('#genLabel'), 'Make 8 images', 'direct creation is remembered');
+    await click('#reviewFirst');
+    await click('#varSeg [data-value="1"]');
+    await click('#wfpRenders button[data-value="1"]');
+    await click('.tabs [data-view="gallery"]');
+    if (await visible('#reelFilterClear')) await click('#reelFilterClear');
+    const candidates = await js('[...document.querySelectorAll("#reelGrid .reel-cell")].slice(0,3).map(c => c.dataset.key)');
+    assert(candidates.length === 3, 'at least three candidates');
+    await click('#reelSelect');
+    assert(await js('document.querySelector("#reelCompare").disabled'), 'comparison requires two');
+    await click('#reelGrid .reel-cell:nth-child(1) .rtile');
+    await click('#reelGrid .reel-cell:nth-child(3) .rtile');
+    eq(await text('#reelSelCount'), '2 selected', 'nonadjacent choices selected');
+    await click('#reelCompare');
+    eq(await count('#lbStage .lb-pane'), 2, 'two large comparison panes');
+    assert((await text('#lbStage')).includes('Pin on the left'), 'pinning is explicit');
+    await viewport(390, 844, true);
+    assert(await js('[...document.querySelectorAll("#lbStage .lb-pane")].every(e => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })'), 'both comparison panes fit on a phone');
+    await viewport(1440, 900);
+    await press('Escape');
+    await click('#reelSelect');
+    await viewport(390, 844, true);
+    assert(await visible('#reelFind'), 'search remains visible');
+    assert(!(await visible('#reelFilterOptions')), 'extra filters start folded');
+    await click('#reelFilterToggle');
+    assert(await visible('#reelFilterOptions'), 'Filters reveals all choices');
+    await type('#reelFind', 'lighthouse');
+    assert((await text('#reelFilterToggle')).includes('1'), 'active filter count');
+    await click('#reelFilterClear');
+    eq(await value('#reelFind'), '', 'clear removes the query');
+    await viewport(1440, 900);
+    await click('.tabs [data-view="create"]');
+  });
+
   await test('batches: named, each its own count and prompts; run one or all in order; Stop; saved', async () => {
     await openPanel('create-render');
     await openPanel('create-render-batch');
@@ -2486,7 +2600,7 @@ esac
     eq(await text('#batchList li:nth-child(1) .b-count span'), 'images', 'counted in images for an image model');
     await click('#batchList li:nth-child(1) [data-mode="same"]');
     eq(await text('#batchPick option:checked'), '🎞 Hero shots · 4 images, one prompt', 'picked, and says what it is');
-    eq(await text('#genLabel'), 'Generate “Hero shots”', 'Generate runs it');
+    eq(await text('#genLabel'), 'Make 4 images', 'the button promises the total output');
     eq(await text('#genCost'), '🎞 4 images, one prompt', 'what it will do');
     assert(await js('[...document.querySelectorAll("#varSeg button")].every(b => b.disabled)'), 'Takes are set by the batch');
     assert(!(await visible('#wfpAutoRow')) && !(await visible('#wfpRenders')), 'a batch always renders and counts its own: no auto-render switch, no renders per take');
@@ -2519,7 +2633,7 @@ esac
 
     // All batches, one after another: each its own takes and History entry.
     await choose('#batchPick', '*');
-    eq(await text('#genLabel'), 'Generate all 2 batches', 'Generate runs them all');
+    eq(await text('#genLabel'), 'Make 7 images', 'the button totals every batch');
     eq(await text('#genCost'), '🎞 2 batches · 7 images', 'how much in all');
     before = comfy.prompts.length;
     await click('#generateBtn');
@@ -2547,7 +2661,7 @@ esac
     // Saved: still there after a reload. Delete, with undo.
     await goto(`${APP}/#create`);
     eq(await js('[...document.querySelectorAll("#batchList .b-name")].map(i => i.value).join("|")'), 'Hero shots|Explore', 'batches are saved');
-    eq(await text('#genLabel'), 'Generate “Explore”', 'and so is the pick');
+    eq(await text('#genLabel'), 'Make 8 images', 'and so is the pick');
     await openPanel('create-render-batch');
     await click('#batchList li:nth-child(2) .b-del');
     eq(await count('#batchList li'), 1, 'deleted');
@@ -2559,7 +2673,7 @@ esac
     eq(await js('[...document.querySelectorAll("#batchList .b-name")].map(i => i.value).join("|")'), 'Hero shots|Explore', 'where it was');
     eq(await value('#batchList li .b-count input'), '7', 'and what changed meanwhile is kept');
     await choose('#batchPick', '');
-    eq(await text('#genLabel'), 'Generate', 'no batch: a plain Generate again');
+    eq(await text('#genLabel'), 'Write prompt', 'no batch: prompt review again');
     assert(!(await js('document.querySelector("#varSeg button").disabled')), 'Takes are yours again');
   });
 
@@ -2851,9 +2965,9 @@ esac
     assert(!(await visible('#surpriseBtn')) && !(await visible('#lengthField')) && !(await visible('#tempField')), 'the Brain\'s dials step aside');
     assert(!(await visible('#wfpAutoRow')) && !(await visible('#wfpRenders')), 'no auto-render switch: your own prompt always renders, Takes counts them');
     assert(!(await visible('#chainStep')), 'no chain: its steps are written by the Brain');
-    eq(await text('#takesLabel'), 'Renders', 'Takes becomes how many renders');
+    eq(await text('#takesLabel'), 'Pictures', 'Variations becomes the number of finished outputs');
     await click('#varSeg button[data-value="2"]');
-    eq(await text('#genLabel'), 'Render ×2', 'Generate says what it does');
+    eq(await text('#genLabel'), 'Make 2 images', 'the button says what it makes');
     const prompt = 'masterpiece, (red kite:1.3) over dunes, 35mm — keep EXACTLY as typed';
     await type('#theme', prompt);
     const calls = mockCalls();
@@ -2875,8 +2989,8 @@ esac
 
     await click('.manual-row .switch');
     await toastText('Brain writes the prompts again');
-    assert(await visible('#tempField') && await visible('#roleBlock') && await visible('#chainStep'), 'everything is back');
-    eq(await text('#takesLabel'), 'Takes', 'Takes again');
+    assert(await js('!document.querySelector("#tempField").hidden') && await visible('#roleBlock') && await visible('#chainStep'), 'writing options are restored under More options, and image and chain controls return');
+    eq(await text('#takesLabel'), 'Variations', 'prompt variations again');
     await click('#imageClear');
     await click('#varSeg button[data-value="1"]');
   });
@@ -3009,7 +3123,7 @@ esac
     eq(await value('.chain-card [data-f="use"]'), 'animate', 'the still becomes the first frame');
     eq(await js('document.querySelector(".chain-card [data-f=workflowId]").selectedOptions[0].textContent'), 'Mock I2V', 'an image-to-video workflow is picked');
     assert(await js('document.querySelector(\'.chain-gate button[data-gate="pick"]\').classList.contains("active")'), 'you pick by default');
-    eq(await text('#genLabel'), 'Run chain', 'Generate becomes Run chain');
+    eq(await text('#genLabel'), 'Run all steps', 'the button describes the chain');
     eq(await text('#genCost'), '⛓ 2 stills → you pick → videos', 'it says what it will make');
     assert((await visible('#wfpRenders')) && !(await visible('#wfpAutoRow')), 'step 5 asks for renders per take instead');
     await type('.chain-card [data-f="direction"]', 'a calm sea');
@@ -3092,10 +3206,10 @@ esac
     eq(comfy.prompts.length, before + 2, 'one still and one video, no clicks');
     await goto(`${APP}/#create`);
     eq(await count('.chain-card'), 1, 'the chain being built survives a reload');
-    eq(await text('#genLabel'), 'Run chain', 'still a chain');
+    eq(await text('#genLabel'), 'Run all steps', 'still a chain');
     await click('.chain-card [data-act="remove"]');
     eq(await count('.chain-card'), 0, 'step removed');
-    eq(await text('#genLabel'), 'Generate', 'back to a single step');
+    eq(await text('#genLabel'), 'Write prompt', 'back to a single step');
     await click('.cr-item button[data-recipe="my-still-to-video"]');
     await toastText('is set up');
     eq(await count('.chain-card'), 1, 'loading the chain brings its step back');
@@ -3694,8 +3808,7 @@ esac
     await click('#generateBtn');
     await genDone();
     await waitFor(`${tiles}.length === ${all.length}`, 'Your renders keeps the renders of the run that left the stage');
-    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
-    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    await reloadPage();
     await waitFor(`${tiles}.length === ${all.length}`, 'Your renders survives a reload');
     const originalOf = r => path.join(comfyRoot, 'output', `mock_${r.promptId.slice(0, 6)}.png`);
 
@@ -3802,8 +3915,7 @@ esac
     await click('.tabs button[data-view="create"]');
     eq(await value('#theme'), '', 'the Create form lets go of its theme');
     assert(!(await visible('.dz-preview')), 'and its image');
-    await js('document.documentElement.dataset.ready = ""; location.reload()'); // not ready until the new page is
-    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+    await reloadPage();
     eq(await value('#theme'), '', 'still empty after a reload');
     assert(!(await visible('.dz-preview')), 'no image after a reload');
 
@@ -4943,8 +5055,7 @@ esac
     eq(await width(), 1300, 'and keeps filling it when the window changes');
     await click('#asWide');
     eq(await width(), 700, 'again: back to the width it had');
-    await js('location.reload()');
-    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
+    await reloadPage();
     await sleep(350);
     eq(await width(), 700, 'the width is remembered');
     await js('document.querySelector("#asGrip").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))');

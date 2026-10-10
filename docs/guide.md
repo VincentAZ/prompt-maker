@@ -47,16 +47,16 @@ The full manual for [Prompt Maker](../README.md): every page, setting and trick.
   - Timing for each take, plus a status while the model loads or thinks.
   - Progress shown in the browser tab title.
 - **✦ Assistant with 🗂 jobs.** A creative partner that sees your renders and runs the whole app, anything you can click, and takes long jobs that run on their own, judge as they go and leave a log to review (*"8 stills of her in a noir café, same seed; animate the best in MiniMax at 20, 17, 13 and 10 steps. I'll be back in a couple of hours."*).
-- **History.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, star favorites, and reopen any entry to keep refining.
-- **Delete means shredded.** Deleting a card takes everything about it with it: prompts, picture, motion video, spoken line and renders, in Prompt Maker and in ComfyUI (its folders on disk included, from before it worked in memory). The files are written over three times before they're removed (the three passes of the DoD 5220.22-M wipe) and its words are wiped from the assistant chat, from jobs and from LM Studio's and ComfyUI's own logs. See [History](#history).
+- **Saved prompts.** Every prompt is saved automatically and grouped by day. You can search it, filter by model, bookmark favorites, and reopen any entry to keep refining.
+- **Delete means shredded.** Deleting a card takes everything about it with it: prompts, picture, motion video, spoken line and renders, in Prompt Maker and in ComfyUI (its folders on disk included, from before it worked in memory). The files are written over three times before they're removed (the three passes of the DoD 5220.22-M wipe) and its words are wiped from the assistant chat, from jobs and from LM Studio's and ComfyUI's own logs. See [Saved prompts](#saved-prompts).
 - **🎨 Render with ComfyUI (optional).** Attach as many ComfyUI workflows as you like to each model, then hit **▶ Render** on any take:
   - Pick any workflow you've saved in ComfyUI. Prompt Maker reads it directly, with no "Export (API)" step, and works out where the prompt, image, size, duration and seed go.
   - **🎁 Every model comes with a workflow**, already attached: pick a model and **▶ Render** is there. A model file you don't have yet is one **⬇ Download** away. Prefer your own? Add it and it's the one used; the one that came with the app stays in the list until you delete it.
   - Watch live progress (and previews) right on the take.
   - **🎞 Your renders**, above the takes, holds every render you've made, newest first, with filters, so nothing gets lost below a long prompt. Drag the cards into your own order, pick several (Ctrl-click or drag a box) to delete them in one go, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
-  - **⇆ Compare** two renders side by side and **📌 Keep this one** until the best is left.
-  - **🙈 Hide** the ones you don't want to see, without deleting them. **Delete** waits 8 seconds with **↶ Undo**.
+  - **⇆ Compare** two renders side by side and **Pin on the left** until the best is left.
+  - **Hide from Create** tidies your workspace; the artwork stays in Gallery and Saved prompts. **Delete** waits 8 seconds with **↶ Undo**.
   - Browse every result in the **Gallery**: the same grid as 🎞 Your renders, as tall as the window, in the same order you dragged them into. View any of them in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
 - **🧠 Brain profiles.** **Models → Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
@@ -163,32 +163,34 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 ## Quick start
 
 1. **Pick a brain.** Use the **Brain** menu at the top right: models marked 👁 can see images, and "loaded" means it's ready right now.
-2. **Pick a target model**, for example *Krea 2 RAW*.
+2. **Choose what to make**, for example **Make a picture**. The task picks a suitable model; **Change model** lets you choose another.
 3. **Describe the shot.** Type a theme, or hit **🎲 Surprise me**. **✕ Clear** empties the box in one click (**↶ Undo** brings it back).
-4. Click **Generate**, or press `Ctrl+Enter`.
+4. Click **Write prompt**, or turn off **Review prompt first** to **Make image** or **Make video** with your configured workflow. `Ctrl+Enter` runs the same action. Existing auto-render preferences are preserved.
 5. **Copy** the prompt, or tweak it: type *"make it night time"* in the box under the take and press Enter.
 
 ## Using Prompt Maker
 
 ### Create
 
-<img src="screenshots/create.png" alt="The Create page: pick a model, then your shot, picture and settings on the left; your renders in one grid on the right" width="900">
+<img src="screenshots/create.png" alt="Create starts with your creative task and idea; model details stay folded and artwork has its own stage" width="900">
 
 | Step | What it does |
 |---|---|
-| **① Pick your model** | The generator you're writing for. Its color follows you across the app. The seven built-in models are there from the start; models you add yourself (see [Adding or updating a model](#adding-or-updating-a-model)) show up beside them. **📖 How to use this model** under the cards says, in plain words, what the model is good for, what you need to give it, the steps to follow, and a few themes to try: click one and it goes into ②. It stays open until you close it. |
+| **① What do you want to make?** | Choose a creative task. Its recommended model appears below; **Change model** opens the full choice and remembers your preference. **How to use this model** starts folded and offers the practical guide and example ideas when you want them. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. Under it, the **🎥 Look** sets how the camera and light feel (see below). Have the exact prompt already? **✍️ Use my own prompt, word for word** (below) sends it as it is, with no Brain (the Look steps aside). |
 | **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
-| **④ Dial it in** | Aspect ratio, resolution (a preset, or ✎ your own width × height), duration (video), prompt length, number of takes, and how adventurous the writing is. |
+| **④ Shape & variations** | Choose Portrait, Square, Landscape or Wide (with the exact ratio), video duration and the number of alternatives. Size starts automatically. **More options** holds exact dimensions, your own width × height, prompt length and adventurousness. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
 | **⑥ Then…** | Optional. Chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
 
-**＋ New session** (next to Generate) starts a new session: it clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in History.
+**Review prompt first** beside the main action remembers your choice per model. The button states the outcome and total count, such as **Make 8 images** for four variations rendered twice. Progress shows **Writing prompt → Making image/video → Ready**. On narrow screens, including a laptop with Ask open, **Create / Results** switches directly between the form and current work. Current results come before the historical render grid.
+
+**＋ New session** beside the main action clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in Saved prompts.
 
 **⏳ Queue: line up as many as you like.** While a prompt is cooking (or a batch is rendering), **＋ Queue** appears next to **■ Stop**; it (or `Ctrl+Enter`) puts the form, as it is right then, in line:
 
 - **What you see when you click is what runs.** Each one in line keeps its model, theme, image and role, dials, takes, batch, and render setup (workflow, auto-render, LoRAs and sampler settings). Change the form afterwards to set up the next one; it won't touch those already waiting. (The Brain and the seed are the ones in use when its turn comes.)
-- **They run in order**, each its own run and History entry. A take's renders go on in ComfyUI while the next prompt is written; a batch finishes its renders before the next starts.
+- **They run in order**, each its own run and Saved prompts entry. A take's renders go on in ComfyUI while the next prompt is written; a batch finishes its renders before the next starts.
 - **Up next**, at the top of the results, lists them (the ＋ Queue button counts them): **✕** takes one out (with **↶ Undo**), **Clear** empties the line. Clicking twice on the same form within a second queues it once.
 - **■ Stop** (or `Esc`) stops only the one running; the rest carry on. If one fails (LM Studio or ComfyUI went away, say), the line goes **⏸ on hold** so the rest don't fail the same way: fix it, then **▶ Carry on**.
 - A chain (step ⑥) can't wait in line, since it may stop to ask you to pick. The line lives in the page: reloading it lets go of what's waiting (the page asks first).
@@ -198,8 +200,8 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 - **② Your prompt** is the prompt. What you type or paste goes to the model letter for letter: weights like `(red kite:1.3)`, odd spellings, all of it. It must not be empty.
 - **③ Your image** goes into the workflow as it is: there's no Reference / Recreate / Animate to pick, since those tell the Brain what to write.
 - **① Your model** and **⑤ your workflow** are the ones that render it. Aspect, resolution and duration in step ④ still set the size; prompt length and how adventurous step aside, and **Takes** becomes **Renders**: how many times your prompt is rendered (×1–4), each with its own seed.
-- **Generate** becomes **▶ Render** and renders right away (auto-render isn't needed). No workflow for that model yet? It becomes **Keep my prompt**: the take is saved, ready to copy or render later.
-- The take says *✍️ your own prompt, word for word*, and History marks it the same way. Reopening one from History switches the mode back on; reopening a Brain's prompt switches it off. You can still click **Refine** on the take if you do want the Brain's help with it.
+- The main button becomes **Make image** or **Make video** and renders right away (auto-render isn't needed). No workflow for that model yet? It becomes **Keep my prompt**: the take is saved, ready to copy or render later.
+- The take says *✍️ your own prompt, word for word*, and Saved prompts marks it the same way. Reopening one from Saved prompts switches the mode back on; reopening a Brain's prompt switches it off. You can still click **Refine** on the take if you do want the Brain's help with it.
 - A batch renders your one prompt as many times as it says. A chain (step ⑥) is written by the Brain, so it's hidden while the switch is on, and waits for you, untouched, until you switch it off.
 - LM Studio doesn't need to be running.
 
@@ -228,7 +230,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 | 🏔️ **Epic** | Huge and grand: very wide, everything sharp, hazy light from behind. |
 | 💎 **Luxury** | A polished ad: studio light, gleaming highlights, perfect composition. |
 
-On a video model the look also picks the camera's move (a slow push in for Intimate, handheld for Gritty, a drone reveal for Epic). Anything your theme says about the camera or light still wins. The look is remembered, saved with each prompt (History shows it on the card), and the ✦ assistant can set it too.
+On a video model the look also picks the camera's move (a slow push in for Intimate, handheld for Gritty, a drone reveal for Epic). Anything your theme says about the camera or light still wins. The look is remembered, saved with each prompt (Saved prompts shows it on the card), and the ✦ assistant can set it too.
 
 **How adventurous** (the Brain's *temperature*; the number is beside the slider) runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
 
@@ -247,7 +249,7 @@ The **🎙 Voices** page makes speech on this computer, so the same person can s
 - **One-time setup.** Click **⬇ Install voices**: Prompt Maker fetches two speech models ([Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache 2.0, about 9 GB) into its data folder and sets up the few packages they need, beside ComfyUI's own Python. ComfyUI's packages aren't changed, so nothing there can break. After that, voices work offline. A graphics card makes a line take a few seconds; without one it still works, slower.
 - **Describe a voice** in plain words (age, warmth, accent, pace, mood), give it a sentence, and **▶ Hear it**. Not it? Change the words and hear it again. Right? Name it and **💾 Keep this voice**. No real person is cloned: the voice is made from your description.
 - **Your voices** are listed with their description. **▶ Sample** plays the sentence they were made with; type any line in **Try a line** and **🗣 Say it** on a voice to hear it. **✏** renames, **🗑** deletes (it asks once).
-- **In a video** ([MiniMax H3](#target-models)): step ③ shows **🎙 Says a line**. If the picked workflow takes no line but one of the model's does (or the one that comes with the app), it offers **🎙 Use the one that does**: one click adds and picks it; the assistant's `set_line` does the same by itself. Then: pick the voice, write the line word for word. At **Generate** the line is said in that voice and the Brain writes the take around it; at **Render** the clip is the video's soundtrack, so the person in your picture says exactly those words, lips in time, and the video is made at least as long as the line. The line is saved with the prompt (History puts it back; the full-screen view shows *Says*). A take with no line renders as before: the sound nodes are simply left out.
+- **In a video** ([MiniMax H3](#target-models)): step ③ shows **🎙 Says a line**. If the picked workflow takes no line but one of the model's does (or the one that comes with the app), it offers **🎙 Use the one that does**: one click adds and picks it; the assistant's `set_line` does the same by itself. Then: pick the voice, write the line word for word. At **Generate** the line is said in that voice and the Brain writes the take around it; at **Render** the clip is the video's soundtrack, so the person in your picture says exactly those words, lips in time, and the video is made at least as long as the line. The line is saved with the prompt (Saved prompts puts it back; the full-screen view shows *Says*). A take with no line renders as before: the sound nodes are simply left out.
 - **The assistant does it too:** *"make a new voice called Sam: a deep, calm narrator"* (`make_voice`), *"make her say 'Hello there' in Sam's voice"* (`set_line`). In a job, a `set_line` step before `generate` gives each cut its line, so a whole promo can run overnight: stills, the pick, the line, the video, the judge.
 - **Where it lives:** `voice/` in your data folder: the packages (`site/`), the models (`hf/`), your voices (`voices.json`) and their clips (`clips/`). Delete the folder to start over.
 
@@ -255,7 +257,7 @@ The **🎙 Voices** page makes speech on this computer, so the same person can s
 
 Two models keep the person in your picture instead of repainting the picture: **Krea 2 Character** (pictures) and **MiniMax H3 Reference** (video clips with sound, MiniMax's *ref2va*). Your picture only tells them *who*: the place, clothes, pose, camera and light come from your theme. There is no denoise to set.
 
-- **🧾 Character sheet.** Pick one of the two models and add a picture in step ③: a **Character sheet** box appears under it. At **Generate**, your Brain (one that sees images 👁) looks at the picture and writes the person's traits, one per line: age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height and marks (freckles, moles, tattoos). Then every take carries **all** of them, in the sheet's words; a trait the Brain leaves out is added back by the app. It's saved with the prompt in History.
+- **🧾 Character sheet.** Pick one of the two models and add a picture in step ③: a **Character sheet** box appears under it. At **Generate**, your Brain (one that sees images 👁) looks at the picture and writes the person's traits, one per line: age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height and marks (freckles, moles, tattoos). Then every take carries **all** of them, in the sheet's words; a trait the Brain leaves out is added back by the app. It's saved with the prompt in Saved prompts.
   - **Fix a line** by typing in the box (the Brain got the eye color wrong, say): the next Generate uses your sheet as it is.
   - **↻** writes a fresh one from the picture at the next Generate. A new picture starts a new sheet.
 - **🪪 Turnaround** (Krea 2 Character): one click renders the person on a plain background from the front, three-quarter, side and back, with a close-up of the face, and when it's done it becomes your picture in step ③ (the sheet stays). From then on every render reproduces them from all sides, and a full-body turnaround also lets the sheet name their build and height. It uses the workflow that comes with the model (or yours) in step ⑤.
@@ -320,13 +322,13 @@ The setup's **🎛️ Sampler** settings add Wan Animate 2's own controls:
 
 **From a render.** In the lightbox, **🧍 Animate as a character** sends a still to Wan Animate 2 as the character, and **🕺 Use as motion video** sends a video render as the moves. A chain can do it too: a **Then** step on Wan Animate 2 uses the still before it as the 🧍 *character* and the motion video in step ③.
 
-The motion video is kept with the take (History puts it back), and deleting the History card deletes it, here and in ComfyUI.
+The motion video is kept with the take (Saved prompts puts it back), and deleting the Saved prompts card deletes it, here and in ComfyUI.
 
 ### ✦ The assistant
 
-<img src="screenshots/ask.jpg" alt="The assistant panel beside the Gallery, answering a how-to question in plain steps" width="900">
+<img src="screenshots/ask.jpg" alt="The optional Assistant panel beside the Gallery, ready to help with your artwork" width="900">
 
-Your creative partner, on from the start: its panel opens with the app (on a wide screen) and stays as you leave it. **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. The page takes all the room beside the panel and nothing lies under it: on a smaller window the Create page goes to one column while the panel is open. The top bar's menus (Brain, 🎨 Rendering) open over it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
+Your creative partner, ready when you need it: **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. It starts closed and remembers your choice. The page takes the room beside the panel; when Create becomes one column, **Create / Results** keeps either workspace one click away. The top bar's menus (Brain, 🎨 Rendering) open over it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
 - **As big as you like.** Drag the panel's left edge to make it wider or narrower, as far as the whole window; **⤢** in its header fills the window in one click, and **⤡** puts it back at the side. The message box grows as you write, and dragging the little bar above it makes it as tall as you want. A double click on either edge goes back to normal. Your sizes are remembered.
 - **Ask what it thinks.** *"Which of these renders do you like better?"*, *"Should the princess be in the high tower or the dungeon?"*, *"Based on this prompt, what aspect ratio should it be?"* It gives a real opinion with a reason, and offers to act on it.
@@ -338,7 +340,7 @@ Your creative partner, on from the start: its panel opens with the app (on a wid
 - **💻 Let it use your computer (opt-in).** Switch on **Settings → ✦ Assistant → 💻 Let the assistant use my computer** and click **Save settings**, and it can also work outside Prompt Maker: run programs and commands (*"open these in GIMP"*, *"make a folder Best of October and copy my excellent renders into it"*), and read and write any file. It doesn't ask each time, except before anything that may delete, move, copy over or replace a file, however the command is written (`/bin/rm`, inside `bash -c "…"`, `> file`, code handed to Python or PowerShell), and before a command that talks to Prompt Maker itself: it shows you the command and waits for **▶ Run it**. Off by default; only you can switch it (the assistant can't press that switch), and only the app on this computer can use it.
 - **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, this session's runs and their ratings, renders in progress.
 - **Tell it what to make.** *"Set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them."* Or *"use seconds 12 to 15 of the motion video and crop its black bars."*
-  - It runs the app with the same controls you have: model, theme, dials, workflow, sampler settings (steps, CFG, sampler, scheduler, denoise), LoRAs, seed, takes, renders, refining, animating, motion videos (trimmed, cropped, 24 fps) and characters (Wan Animate 2), chains, History, playbooks, ratings, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
+  - It runs the app with the same controls you have: model, theme, dials, workflow, sampler settings (steps, CFG, sampler, scheduler, denoise), LoRAs, seed, takes, renders, refining, animating, motion videos (trimmed, cropped, 24 fps) and characters (Wan Animate 2), chains, Saved prompts, playbooks, ratings, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
   - **And anything else on screen.** It reads what the app is showing (every page, dialog, fold and setting) and presses, types and picks there like you do: *"make a batch called Hero shots, 6 images, a different prompt each"*, *"add my ComfyUI workflow z_image_base to Krea as a second workflow"*, *"set the LM Studio address and save"*, *"start ComfyUI"*. Pressing anything that deletes or removes asks you first.
   - **It picks the best for you.** *"Pick the best render for a winter poster and use it as the reference"*: it looks at them, says which and why, and puts it in step ③ (as a reference, the first frame of a video, or the character).
   - Each step shows in the chat ("✓ Model → Krea 2 RAW") and on screen.
@@ -350,7 +352,7 @@ Your creative partner, on from the start: its panel opens with the app (on a wid
   - It looks in the folder (a full path, `~/…`, or just its name, found anywhere in your home folder or on your other drives), plans the job, and starts it. The job then runs **on its own**, one item after another, while you do other things. Its tools don't pull you back to Create.
   - Anything that fails is **skipped and logged**, and the job goes on. If the same thing fails 3 times in a row (LM Studio off, ComfyUI down…), it pauses so you can fix that first.
   - **🗂 Job** in the top bar shows progress (item 3 of 8). On Create, a strip says a job is using the page: changes you make there go into it. You can leave Create and come back any time: the job's steps don't pull you back, and the **Create** tab always answers your click.
-  - The **Jobs** window has each job's log: ✓ done or ⏭ skipped (with why), the picture (click it to look closer), **👁 View** for what it rendered and **↗ Open** to bring it onto Create. **Only the skipped ones** filters the log, and **↻ Retry skipped** tries them again. You can **⏸ Pause** (after the current item), **■ Stop now**, **▶ Resume** or **🗑 Remove** (what the job made stays in History).
+  - The **Jobs** window has each job's log: ✓ done or ⏭ skipped (with why), the picture (click it to look closer), **👁 View** for what it rendered and **↗ Open** to bring it onto Create. **Only the skipped ones** filters the log, and **↻ Retry skipped** tries them again. You can **⏸ Pause** (after the current item), **■ Stop now**, **▶ Resume** or **🗑 Remove** (what the job made stays in Saved prompts).
   - Jobs survive reloads: each step is saved. If the page reloads or closes mid-job, the job pauses, the item it was on is marked to check, and a toast offers **Resume**.
   - Ask *"how did the job go?"* and it tells you what was done and what was skipped, and why. Once you've seen a finished job's log, the pill goes away; **🗂** in the assistant panel opens the Jobs window any time.
 - **It keeps working in a long session.** Only the newest pictures it looked at are kept in the conversation, so asking it to look at renders many times doesn't make the conversation too big to send. A long file or command output keeps its start and its end. If it runs out of room in the middle of a step, it says so (*say "go on"*) instead of showing half a step as text.
@@ -370,15 +372,15 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 - You can edit a prompt by hand. Click **💾 Save edit**, or page away and it's saved automatically.
 - **Stop** (■ or `Esc`) cancels a run but keeps any takes that already finished. Runs waiting in line (see [Queue](#create)) carry on.
 
-### History
+### Saved prompts
 
 Everything you generate is saved automatically:
 
-- **Find things:** search themes and prompts, filter by model, or show only ★ favorites.
-- **Pick up where you left off:** click a card to reopen it exactly as it was made: model, theme, image and its role, aspect, resolution, duration, length, temperature, takes and batch, plus how it was rendered (workflow, renders per take, seed and seed mode, LoRAs and their strengths, sampler settings). Keep refining, or Generate / Render again the same way. The card that's open on Create is ringed in History, which scrolls to it.
+- **Find things:** search themes and prompts, filter by model, or show only **Bookmarks**. The bookmark saves a prompt for reuse; stars in Gallery rate artwork.
+- **Pick up where you left off:** click a card to reopen it exactly as it was made: model, theme, image and its role, aspect, resolution, duration, length, temperature, takes and batch, plus how it was rendered (workflow, renders per take, seed and seed mode, LoRAs and their strengths, sampler settings). Keep refining, or Generate / Render again the same way. The card that's open on Create is ringed in Saved prompts, which scrolls to it.
 - **Delete several at once.** **Ctrl**-click (**⌘** on a Mac) the cards, **Shift**-click to take every card up to the one you click, or drag a box across them from an empty spot (or with **Ctrl** held, from a card). Picked cards get a ✓ and a bar at the bottom says how many; **🗑 Delete** (twice: *Sure?*) or the **Delete** key deletes them all the way one Delete does, with one **↶ Undo** for all of them during the 8 seconds. **Esc**, **✕** or a click on an empty spot lets go; **Ctrl + A** picks every card shown.
-- **Delete gives you a few seconds to undo, then it's for good.** The first time, **Delete** opens **Delete it for good?**, which says what goes; tick **Don't show this again** and from then on it's **Delete**, then **Sure?** (**Settings → 🔒 Privacy check → Show it again** brings the warning back) (it says so when rated renders go too; a double click only asks, it doesn't confirm). Either way the card stays in place, dimmed, for 8 seconds with **↶ Undo** on it and in the toast, both counting down the seconds left; a render deleted from the full-screen view works the same way. After that, or when you close the page, it's gone. Deleting a card removes its prompts, its input image and motion video (unless another card, or a prompt waiting in line or being written, uses the same one), the clip of its spoken line, and its renders, along with ComfyUI's copies of them: the files in its output folder, the image and clip uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. A render you made yourself in ComfyUI with the same prompt is yours and stays. If the Create form still shows the deleted card's theme, picture or motion video, it lets go of them too. Quotes of it in the assistant chat and in jobs become "[deleted]", and so do the lines in LM Studio's own server logs that quote the request and the answer, and any line in ComfyUI's log that names one of its files (both unless you switch that off in [Settings](#settings); LM Studio keeps those logs in its `.lmstudio/server-logs` folder, and when it runs on another computer, the toast says its logs there are out of reach). A video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render, image or video no History card uses anymore; a picture or motion video still waiting in the Create form is never one of them.
-- **Shredded, not just removed.** Every file a delete takes (renders, pictures, videos, clips, ComfyUI's copies, and the copy of History from before the delete) is written over three times, with zeros, ones and random bytes, each pass put on the disk before the next, then given a meaningless name and removed: the three passes of the DoD 5220.22-M wipe, so a recovery tool finds nothing. Honest limit: an SSD, and a file system that keeps old copies of blocks (Btrfs, ZFS, APFS), may hold the old bytes somewhere no program can reach; full-disk encryption covers that.
+- **Delete gives you a few seconds to undo, then it's for good.** The first time, **Delete** opens **Delete it for good?**, which says what goes; tick **Don't show this again** and from then on it's **Delete**, then **Sure?** (**Settings → 🔒 Privacy check → Show it again** brings the warning back) (it says so when rated renders go too; a double click only asks, it doesn't confirm). Either way the card stays in place, dimmed, for 8 seconds with **↶ Undo** on it and in the toast, both counting down the seconds left; a render deleted from the full-screen view works the same way. After that, or when you close the page, it's gone. Deleting a card removes its prompts, its input image and motion video (unless another card, or a prompt waiting in line or being written, uses the same one), the clip of its spoken line, and its renders, along with ComfyUI's copies of them: the files in its output folder, the image and clip uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. A render you made yourself in ComfyUI with the same prompt is yours and stays. If the Create form still shows the deleted card's theme, picture or motion video, it lets go of them too. Quotes of it in the assistant chat and in jobs become "[deleted]", and so do the lines in LM Studio's own server logs that quote the request and the answer, and any line in ComfyUI's log that names one of its files (both unless you switch that off in [Settings](#settings); LM Studio keeps those logs in its `.lmstudio/server-logs` folder, and when it runs on another computer, the toast says its logs there are out of reach). A video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render, image or video no Saved prompts card uses anymore; a picture or motion video still waiting in the Create form is never one of them.
+- **Shredded, not just removed.** Every file a delete takes (renders, pictures, videos, clips, ComfyUI's copies, and the copy of Saved prompts from before the delete) is written over three times, with zeros, ones and random bytes, each pass put on the disk before the next, then given a meaningless name and removed: the three passes of the DoD 5220.22-M wipe, so a recovery tool finds nothing. Honest limit: an SSD, and a file system that keeps old copies of blocks (Btrfs, ZFS, APFS), may hold the old bytes somewhere no program can reach; full-disk encryption covers that.
 
 ### Keyboard shortcuts
 
@@ -394,7 +396,7 @@ Everything you generate is saved automatically:
 | `←` `→` (full-screen view) | The render before or after |
 | `1` `2` `3` (full-screen view) | Rate it ★, ★★ or ★★★; `0` takes the rating off |
 | `Shift` + `←` `→` on a render card | Move the card in 🎞 Your renders or the Gallery |
-| `Ctrl` / `⌘` + click, `Shift` + click on a render card | Pick several in 🎞 Your renders, the Gallery or History; `Delete` deletes them (8 s to undo), `Esc` lets go |
+| `Ctrl` / `⌘` + click, `Shift` + click on a render card | Pick several in 🎞 Your renders, the Gallery or Saved prompts; `Delete` deletes them (8 s to undo), `Esc` lets go |
 
 ## Rendering with ComfyUI (optional)
 
@@ -457,7 +459,7 @@ Step **⑤ Render it** on the Create page is your control center:
   - **how many** images or videos (any number up to 50),
   - **🔁 One prompt** (one prompt, rendered that many times with a new seed each) or **🔀 A different prompt each** (that many different prompts, each rendered once).
 
-  **Generate runs** picks what the next **Generate** does: no batch, one of your batches, or **all of them, one after another**. Each batch is its own run, with its own takes and its own History entry, tagged 🎞 with its name (search History by it). The button says what will happen and counts along while it renders. **■ Stop** (or `Esc`) cancels the rest and keeps what finished. **✕** deletes a batch (**↶ Undo** puts it back where it was, and keeps any batch you made or changed in the meantime). While a batch renders, History cards can't be opened on Create, so the batch always renders its own takes. While a batch is picked, it decides the number of takes; a chain (step ⑥) has its own takes and renders, so Batch hides while you build one.
+  **Generate runs** picks what the next **Generate** does: no batch, one of your batches, or **all of them, one after another**. Each batch is its own run, with its own takes and its own Saved prompts entry, tagged 🎞 with its name (search Saved prompts by it). The button says what will happen and counts along while it renders. **■ Stop** (or `Esc`) cancels the rest and keeps what finished. **✕** deletes a batch (**↶ Undo** puts it back where it was, and keeps any batch you made or changed in the meantime). While a batch renders, Saved prompts cards can't be opened on Create, so the batch always renders its own takes. While a batch is picked, it decides the number of takes; a chain (step ⑥) has its own takes and renders, so Batch hides while you build one.
 
 Every take also has a **🎨 Render** bar:
 
@@ -470,7 +472,7 @@ Every take also has a **🎨 Render** bar:
 Click any result to open the **lightbox**, where you can:
 - rate it (the stars come first, right under the title) and read its prompt, seed, size and timing,
 - watch a video with sound: it plays at the volume you left the last one at (or muted, if you muted it), so you set it once. In ⇆ Compare only the one on the right is heard,
-- **⇆ Compare** it with another: it stays on the left while **← →** browse the others on the right, each with its own stars. **📌 Keep this one** moves the one on the right to the left, so you can work through a set and end with the best. **✕ Stop comparing** goes back to one at a time,
+- **⇆ Compare** it with another: it stays on the left while **← →** browse the others on the right, each with its own stars. **Pin on the left** moves the one on the right to the left, so you can work through a set and end with the best. **✕ Stop comparing** goes back to one at a time,
 - **download** the file,
 - **render again** with a new seed,
 - **🎬 Animate this** (see below), or **🖼️ use it as the input image** for your next prompt,
@@ -544,7 +546,7 @@ Step ⑤ shows the **🧬 LoRAs** of the picked workflow:
 
 - **The assistant swaps versions too:** *"use the newest film grain"*. When it changes a LoRA, it says if a newer version is in the folder.
 
-Your LoRA choices are saved with the workflow in your data folder. Every render records the LoRAs it used, shown in its lightbox, and each file's size and date (read from the file with ComfyUI on this computer, else from ComfyUI's model list). **A LoRA file replaced under the same name** since a render (you downloaded v2 over v1) is marked *⚠️ file changed since* in that render's lightbox, and opening it from History says so: a render now may look different.
+Your LoRA choices are saved with the workflow in your data folder. Every render records the LoRAs it used, shown in its lightbox, and each file's size and date (read from the file with ComfyUI on this computer, else from ComfyUI's model list). **A LoRA file replaced under the same name** since a render (you downloaded v2 over v1) is marked *⚠️ file changed since* in that render's lightbox, and opening it from Saved prompts says so: a render now may look different.
 
 ### 3. Turn a still into a video
 
@@ -553,7 +555,7 @@ Hover any still you rendered and click **🎬 Animate** (it's also in the lightb
 - **The still becomes the first frame.** Create switches to your video model (the one you used last) and picks 🎬 *Animate*. The theme box asks **what happens**. Leave it empty and the Brain picks fitting motion.
 - **It stays consistent.** The Brain sees the frame and also gets the still's prompt, so people, clothes and places are described the same way.
 - **Full quality.** ComfyUI gets the original render file as the first frame, not a re-compressed copy.
-- **It remembers where it came from.** The video's results, History card and lightbox link back with **⬑ from Krea 2 RAW · take 1 · seed …**.
+- **It remembers where it came from.** The video's results, Saved prompts card and lightbox link back with **⬑ from Krea 2 RAW · take 1 · seed …**.
 
 You'll need an image-to-video workflow (one with a *Load Image* node) on the video model. Step ⑤ warns you if the picked workflow can't take the frame.
 
@@ -564,14 +566,14 @@ A chain runs several steps in a row, each one continuing from the renders of the
 1. Set up step 1 as usual (model, theme, dials, and a workflow in step ⑤).
 2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*; 🧍 *character* on Wan Animate 2, which also uses the motion video in step ③), **what happens** (optional; empty lets the Brain choose), its workflow, takes and renders, and for a video step its **duration** (a slider, 1 to 20 seconds).
 3. Between steps, choose **⏸️ Let me pick** (the chain waits while you pick the best renders), **🧠 Brain picks** (the Brain looks at every render and only the best one goes on, so 16 stills and a video step with 2 takes make 2 videos, not 32) or **⚡ Auto** (every render goes on). Brain picks needs a Brain that can see images (👁); if it can't pick, the chain waits for you instead.
-4. Click **Run chain**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
+4. Click **Run all steps**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
 
 While a chain runs, a strip above the results shows every step. Click any thumbnail to see that step's takes.
 
 - **At a ⏸️ step,** tick **☐ Pick** on the renders you like and click **Continue ▶**. Pick several to make one video from each.
 - **Change a step while you pick,** for example what happens next. Continue uses the chain as you see it.
 - **Stop (■ or Esc)** ends the chain. Finished steps are kept.
-- **Reopen a run any time from History.** Its cards are marked ⛓. You can send more stills on from it later.
+- **Reopen a run any time from Saved prompts.** Its cards are marked ⛓. You can send more stills on from it later.
 
 **💾 Save as a chain** keeps your steps, so you can run them again with a new idea. Saved chains show up under the steps, next to the starter chains *Still → Video* and *One still, 3 motions*. **⤒** exports one to share, and **⤓ Import** adds one from a file. A chain from someone else picks your matching workflows by name, or asks you to choose.
 
@@ -590,7 +592,7 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - **Delete several at once.** **Ctrl**-click (**⌘** on a Mac) the cards you want gone, **Shift**-click to take every card up to the one you click, or drag a box across them from an empty spot (or with **Ctrl** held, from a card). Picked cards get a ✓. The bar at the bottom says how many; **🗑 Delete** (click twice: *Sure?*) or the **Delete** key deletes them for good, here and in ComfyUI. They dim for 8 seconds first, with one **↶ Undo** for them all. **Esc**, **✕** or a click on an empty spot lets go of the selection; **Ctrl + A** picks every card shown.
 - **A dragged card is never left hanging.** Let go outside the window, or switch to another program mid-drag, and the card drops where it was.
 - **In the Gallery, a hidden one is marked** (dimmed, with **👁 Show** on it), so you can tell it from the others and bring it back there too.
-- **🙈 Hide** one you don't want in the box: hover it and click **🙈** at its top right (**↶ Undo** brings it back). Nothing is deleted; it stays in History, the Gallery and its take. **🙈 Hidden (n)** in the filters shows the ones you hid; **👁 Show** puts one back.
+- **Hide from Create** at a picture's top right tidies this grid (**↶ Undo** brings it back). Nothing is deleted; it stays in Saved prompts, Gallery and its take. **Hidden (n)** in the filters shows the ones you hid; **Show in Create** puts one back.
 - Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage.
 
 **Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
@@ -598,15 +600,17 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - Click the stars on a render in **Your renders** (hover a render to see them), or the buttons at the top of the lightbox's side panel, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**).
 - Renders you marked ♥ favorite before ratings count as ★★★ Excellent.
 
-Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Gallery and it's moved on Create too). The Gallery always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its History card.
+Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Gallery and it's moved on Create too). The Gallery always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its Saved prompts card.
 
 - After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
+- **Select → choose two → Compare 2** opens those exact pictures or videos side by side. **Pin on the left** changes the comparison reference; stars rate the work. **Open original prompt** returns to its saved prompt on Create.
+- Search stays visible on narrow screens. **Filters** opens the remaining choices and counts active filters; **Clear filters** resets them and the search together.
 - Video tiles show a still of their first frame and play while you hover them.
 - **🎨 Rendering** in the top bar shows while anything renders, with how many are left. Click it for every render still going, from any take (also ones you moved off the stage, started in another tab, or before a reload): its live preview and progress, **Open** to bring its take back with live tiles, **✕ Cancel**, and **Cancel all**.
 - **If ComfyUI crashes mid-render** (it ran out of memory, say, or was closed), the render stops within seconds and says so: *ComfyUI stopped before this render finished*, instead of staying stuck at 0% · Starting… Close other big programs (games especially) and render again. A ComfyUI that is only too busy to answer (a heavy step can do that for minutes) is waited for: the render is given up only after 15 minutes without an answer.
 - **Many renders at once don't slow the page.** However many are going, Stop, Cancel, Generate and saving settings answer right away. **✕ Cancel** on a ×2–×4 render also stops the ones that hadn't started yet, whenever you click it.
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
-- **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Gallery, History, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
+- **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Gallery, Saved prompts, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
 
 > **Tip:** if a workflow runs its own prompt-writing node (an LLM inside the workflow; some LTX workflows have one), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.
 
@@ -632,9 +636,9 @@ Seven models come with ready-made playbooks, researched from their official prom
 
 ### Adding or updating a model
 
-<img src="screenshots/models.png" alt="The Models page: the seven built-in models, with a model's ComfyUI workflow and its playbook" width="900">
+<img src="screenshots/models.png" alt="The Models chooser: what each model makes, what it needs, local readiness and a Use this model action" width="900">
 
-New models come out constantly. Open the **Models** tab and:
+The **Models** tab first shows what each model makes, what input it needs and whether its rendering setup is ready locally. **Use this model** returns to Create. **Customize** opens its playbook and workflows; **Customize models** opens the full editor. From there:
 
 - **＋ New model** (or **Duplicate** a similar one), then fill in:
 
@@ -721,11 +725,11 @@ Settings is a page of cards: **🖥️ Services**, **🔌 LM Studio**, **☁️ 
 | **Start ComfyUI along with it** (Services) | Off | ComfyUI comes up with Prompt Maker. |
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
 | **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
-| **Privacy level** (🔒 Privacy check card → Change the level) | Safe | Three levels, each a set of the switches below. **Safe**: deletes shred and clean the logs; your work stays in the data folder until you delete it. **Safer**: and ComfyUI's working files and the app window's own files are in memory, swap and hibernation are turned off and the screen locks on its own (it may ask for your password once); your work still stays in the data folder until you delete it. **Nothing stays**: and your work (History, pictures, videos, renders, the assistant chat, jobs) lives in memory for the session only, gone when Prompt Maker stops; settings, playbooks, workflows, chains, voices and what the app learned stay in the data folder. That last one takes a restart, and the card says so. The dialog also tells you whether the disk is encrypted. |
+| **Privacy level** (🔒 Privacy check card → Change the level) | Safe | Three levels, each a set of the switches below. **Safe**: deletes shred and clean the logs; your work stays in the data folder until you delete it. **Safer**: and ComfyUI's working files and the app window's own files are in memory, swap and hibernation are turned off and the screen locks on its own (it may ask for your password once); your work still stays in the data folder until you delete it. **Nothing stays**: and your work (Saved prompts, pictures, videos, renders, the assistant chat, jobs) lives in memory for the session only, gone when Prompt Maker stops; settings, playbooks, workflows, chains, voices and what the app learned stay in the data folder. That last one takes a restart, and the card says so. The dialog also tells you whether the disk is encrypted. |
 | **Privacy check** (its own card) | — | What this computer does with your files below the app: whether the system disk is encrypted (chosen when the system is installed; the card says so, it can't switch it on), whether swap is on and in the open (one click turns it off, now and for good), whether hibernation can write all of memory to disk (one click turns it off), and whether the screen locks on its own (one click turns it on, after 5 minutes away). The root steps ask for your password with the system's own prompt. Linux, GNOME for the screen lock; elsewhere the card says what to set by hand. |
 | **Keep ComfyUI's working files in memory (RAM), never on disk** | Off | When Prompt Maker starts ComfyUI, its output, input and temp folders are put in memory (`/dev/shm`), so nothing it writes while it works touches the disk, and it's all gone when the computer turns off. Renders are still copied into your data folder. Takes effect the next time ComfyUI starts from here; a ComfyUI you start yourself keeps its own folders. Prompt Maker finds ComfyUI's folders from the options it runs with, so cleanup and deletes reach the ones in memory. Linux only. |
-| **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. Deleting from History removes ComfyUI's copies whether this is on or not, so set the folder in that case even with this off. |
-| **When I delete from History, also clean LM Studio's and ComfyUI's logs of it** | On | On from the start, because deleting is meant to leave nothing behind, and that includes the other apps' logs. LM Studio writes every request and answer to its own server logs, so a deleted prompt would live on there. With this on, a delete replaces the card's words with "[deleted]" in LM Studio's server logs (`~/.lmstudio/server-logs`) and in ComfyUI's log (`user/comfyui.log`, which may name the files a node saved), on this computer only. Off leaves the other apps' logs alone. The assistant's `change_setting` knows it as `log_scrub`. |
+| **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. Deleting from Saved prompts removes ComfyUI's copies whether this is on or not, so set the folder in that case even with this off. |
+| **When I delete from Saved prompts, also clean LM Studio's and ComfyUI's logs of it** | On | On from the start, because deleting is meant to leave nothing behind, and that includes the other apps' logs. LM Studio writes every request and answer to its own server logs, so a deleted prompt would live on there. With this on, a delete replaces the card's words with "[deleted]" in LM Studio's server logs (`~/.lmstudio/server-logs`) and in ComfyUI's log (`user/comfyui.log`, which may name the files a node saved), on this computer only. Off leaves the other apps' logs alone. The assistant's `change_setting` knows it as `log_scrub`. |
 | **ComfyUI folder** and **Start options** | found automatically | Where **▶ Start** in Services starts ComfyUI from, and with which options (live previews are on: `--preview-method auto`). |
 | **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. It's the default for every Brain; a Brain can have its own level on **Models → Brains**. |
 | **Top P** | 0.95 | Lower is more focused. *How adventurous* (the temperature) is set for each run on the Create page. |
@@ -758,7 +762,7 @@ Settings is a page of cards: **🖥️ Services**, **🔌 LM Studio**, **☁️ 
 - **The computer underneath, checked.** **Settings → 🔒 Privacy check** says whether the disk is encrypted, and turns off swap and hibernation and turns on the screen lock with one click each (see [Settings](#settings)). Disk encryption is the one thing it can't do: it's a checkbox in the system installer, and it's what makes a drive that leaves your hands unreadable, old deleted blocks included.
 - **Its own browser window.** The launcher opens Prompt Maker as an app window with its own browser profile, so your everyday browser keeps no history of it. That window sends nothing home: the browser's own usage reports (Brave's "privacy-preserving product analytics" and daily usage ping, Chrome's and Edge's usage statistics) and its background checks are turned off before it opens. At Safer and "Nothing stays", that profile is in memory (a browser keeps old copies of what its pages showed in its own files, which a delete can't reach), and the one a lower level left on disk is shredded in the background once the window is open; at "Nothing stays", ComfyUI's console output goes to a file in memory instead of the system journal.
 - **ComfyUI can work in memory.** With *Keep ComfyUI's working files in memory* on, ComfyUI's output, input and temp folders live in RAM while it runs, and vanish at shutdown.
-- **Deleted means shredded.** Deleting from History leaves nothing behind on this computer that Prompt Maker can reach: in its own data folder (the copy of History from before the delete included), in ComfyUI (its folders on disk too, from before it worked in memory; uploads of Prompt Maker's that no card uses anymore go when it starts), in the assistant chat and jobs, or in LM Studio's server logs (see [History](#history)); the files are written over before they go, and renders aren't kept in the browser's cache.
+- **Deleted means shredded.** Deleting from Saved prompts leaves nothing behind on this computer that Prompt Maker can reach: in its own data folder (the copy of Saved prompts from before the delete included), in ComfyUI (its folders on disk too, from before it worked in memory; uploads of Prompt Maker's that no card uses anymore go when it starts), in the assistant chat and jobs, or in LM Studio's server logs (see [Saved prompts](#saved-prompts)); the files are written over before they go, and renders aren't kept in the browser's cache.
 - **Localhost only by default.** The web server binds to `127.0.0.1`, so other devices can't reach it.
 - **Protected from websites you visit.** Requests from other websites (cross-site requests) and DNS-rebinding tricks are rejected, so a web page can't quietly drive your local Prompt Maker.
 
@@ -795,8 +799,8 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 
 - **The app folder is read-only to the app.** The only playbooks in it are the built-ins in `playbooks/`.
 - **Back up the data folder** to keep everything.
-- **A damaged file doesn't stop the app.** If a file can't be read (a power cut at the wrong moment, a full disk), Prompt Maker uses the copy from before its last save (`.bak`), so at most your last change is lost. The damaged file is kept next to it as `….damaged-…`, and nothing is tidied away while a damaged History is set aside.
-- **Upgrading from an older version?** Older versions kept data in `./data` inside the app folder. It moves to the data folder automatically the first time you start the new version; if the data folder already has a History, the old one is added to it.
+- **A damaged file doesn't stop the app.** If a file can't be read (a power cut at the wrong moment, a full disk), Prompt Maker uses the copy from before its last save (`.bak`), so at most your last change is lost. The damaged file is kept next to it as `….damaged-…`, and nothing is tidied away while a damaged Saved prompts is set aside.
+- **Upgrading from an older version?** Older versions kept data in `./data` inside the app folder. It moves to the data folder automatically the first time you start the new version; if the data folder already has a Saved prompts, the old one is added to it.
 
 ## Troubleshooting
 
@@ -966,7 +970,7 @@ npm run test:ui
 The suite runs the real app against a mock LM Studio and a mock ComfyUI in headless Chrome, and uses a temporary data folder so your models and history are never touched:
 
 - **Real clicks:** it uses real mouse events, so a button hidden under something else fails.
-- **Coverage:** generating, refining, versions, images, errors, stopping, History, Models, Settings, keyboard use, ComfyUI workflows, rendering, the Gallery and security checks.
+- **Coverage:** generating, refining, versions, images, errors, stopping, Saved prompts, Models, Settings, keyboard use, ComfyUI workflows, rendering, the Gallery and security checks.
 - **Strict:** it fails on any console error.
 - **Layout:** it checks for sideways scrolling at six screen sizes, from 360px phones to 1920px desktops.
 

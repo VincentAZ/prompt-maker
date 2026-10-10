@@ -23,9 +23,9 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
         <span>Create</span>
       </button>
-      <button type="button" data-view="history" aria-label="History" title="History">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
-        <span>History</span><em id="historyBadge" class="badge" hidden></em>
+      <button type="button" data-view="history" aria-label="Saved prompts" title="Saved prompts">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>
+        <span>Saved prompts</span><em id="historyBadge" class="badge" hidden></em>
       </button>
       <button type="button" data-view="gallery" aria-label="Gallery" title="Gallery">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
@@ -85,16 +85,24 @@
   <main>
     <!-- ================= CREATE ================= -->
     <section id="view-create" class="view" aria-label="Create">
+      <div class="create-switch" role="group" aria-label="Create workspace">
+        <button type="button" class="btn small" id="showCreate" aria-pressed="true" aria-controls="createForm">Create</button>
+        <button type="button" class="btn small" id="showResults" aria-pressed="false" aria-controls="stage">Results <span id="resultCount"></span></button>
+      </div>
       <div class="create">
         <div id="jobBar" class="job-bar" role="status" hidden></div>
         <form id="createForm" class="director" autocomplete="off" novalidate>
           <div class="director-steps">
           <section class="step" data-panel="create-model">
-            <header class="step-head"><span class="num">1</span><h2>Pick your model</h2></header>
+            <header class="step-head"><span class="num">1</span><h2>What do you want to make?</h2></header>
+            <div id="taskChoices" class="task-choices" role="group" aria-label="Creative task"></div>
+            <details id="modelChoice" class="model-choice">
+              <summary><span id="chosenModel"></span><span class="model-change">Change model</span></summary>
             <div id="modelChips" class="model-grid" role="radiogroup" aria-label="Target model"></div>
+            </details>
             <p id="modelDesc" class="model-desc"></p>
             <details id="modelGuide" class="model-guide" hidden>
-              <summary>📖 How to use this model</summary>
+              <summary>How to use this model</summary>
               <div id="modelGuideBody"></div>
             </details>
           </section>
@@ -108,7 +116,8 @@
                 <button type="button" id="surpriseBtn" class="chip-btn" title="Fill in a random theme">🎲 Surprise me</button>
               </span>
             </header>
-            <textarea id="theme" class="theme" rows="3" aria-label="Theme" autocomplete="off"></textarea>
+            <textarea id="theme" class="theme" rows="3" aria-label="Describe your idea" autocomplete="off"></textarea>
+            <details class="look-options"><summary>Choose a look <span id="chosenLook">Automatic</span></summary>
             <div class="looks" id="lookRow" role="radiogroup" aria-label="Look: how the camera and light feel">
               <span class="looks-label" title="How the camera and the light feel: how close, from which angle, what kind of light">🎥 <b>Look</b></span>
               <button type="button" class="chip-btn" role="radio" data-value="" title="The Brain picks the camera and light that suit your theme">✨ Brain picks</button>
@@ -124,6 +133,7 @@
               <button type="button" class="chip-btn" role="radio" data-value="epic" title="Huge and grand: very wide, everything sharp, hazy light from behind">🏔️ Epic</button>
               <button type="button" class="chip-btn" role="radio" data-value="luxury" title="Polished ad: studio light, gleaming highlights, perfect composition">💎 Luxury</button>
             </div>
+            </details>
             <div class="manual-row">
               <label class="switch mini" title="Off: your Brain writes the prompt from your idea. On: what you type here is the prompt, sent as it is"><input type="checkbox" id="manualMode"><span class="track" aria-hidden="true"></span><span>✍️ Use my own prompt, word for word</span></label>
               <span id="manualHint" class="hint" hidden>No Brain: your text, image and model go straight to the render.</span>
@@ -164,10 +174,10 @@
                 <span class="zone-label">🧾 <b>Character sheet</b> <span class="muted">same in every render</span></span>
                 <span class="sheet-acts">
                 <button type="button" id="turnaroundBtn" class="chip-btn" title="Render a turnaround of this person (front, three-quarter, side, back and a face close-up) and use it as the picture: every render after that reproduces them from it">🪪 Turnaround</button>
-                <button type="button" id="sheetRedo" class="icon-btn" title="Write it again from the picture at the next Generate" aria-label="Write the character sheet again">↻</button>
+                <button type="button" id="sheetRedo" class="icon-btn" title="Write it again from the picture next time you create" aria-label="Write the character sheet again">↻</button>
                 </span>
               </div>
-              <textarea id="sheetText" class="sheet-text" rows="7" autocomplete="off" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you press Generate: face, eyes, hair, skin, build… Then every take keeps all of it. Edit any line to fix it."></textarea>
+              <textarea id="sheetText" class="sheet-text" rows="7" autocomplete="off" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you create: face, eyes, hair, skin, build… Then every variation keeps all of it. Edit any line to fix it."></textarea>
             </div>
             <div id="wfpDenoise" class="wfp-denoise" hidden></div>
             <div id="lineBlock" class="line-block" hidden>
@@ -179,7 +189,7 @@
                 <input id="lineText" placeholder="What they say, word for word" maxlength="600" autocomplete="off" aria-label="The line">
                 <button type="button" id="lineClear" class="icon-btn" title="No line" aria-label="Clear the line">✕</button>
               </div>
-              <p id="lineHint" class="hint" hidden>At Generate the line is said in that voice, and the video follows it (it's made at least as long as the line).</p>
+              <p id="lineHint" class="hint" hidden>When you create, the line is said in that voice, and the video follows it (it's made at least as long as the line).</p>
             </div>
             <div id="motionBlock" hidden>
               <p class="zone-label">🕺 <b>Motion video</b> <span class="muted">the moves your character copies</span></p>
@@ -214,23 +224,13 @@
           </section>
 
           <section class="step" data-panel="create-dials">
-            <header class="step-head"><span class="num">4</span><h2>Dial it in</h2></header>
+            <header class="step-head"><span class="num">4</span><h2>Shape &amp; variations</h2></header>
             <div class="dials">
-              <label class="dial" id="aspectField"><span>Aspect</span><select id="aspect"></select><em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">🖼️ from image</em></label>
-              <div class="dial" id="resolutionField"><span>Resolution</span><select id="resolution" aria-label="Resolution"></select><span id="resCustom" class="res-custom" hidden><input id="resW" type="text" inputmode="numeric" maxlength="4" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="text" inputmode="numeric" maxlength="4" aria-label="Height" placeholder="Height"><button type="button" id="resUse" class="btn small primary" title="Use this size and keep it in the menu">✓ Use</button><button type="button" id="resForget" class="btn small" title="Take this size out of the menu">✕ Forget</button></span></div>
+              <label class="dial" id="aspectField"><span>Shape</span><select id="aspect" aria-label="Shape"></select><em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">from image</em></label>
               <label class="dial" id="durationField"><span>Duration <small>seconds</small></span><input id="duration" type="number" min="1" max="20" step="1" inputmode="numeric" aria-label="Duration in seconds"></label>
             </div>
-            <div class="dials two">
-              <div class="dial" id="lengthField">
-                <span>Prompt length</span>
-                <div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length">
-                  <button type="button" role="radio" data-value="short">Short</button>
-                  <button type="button" role="radio" data-value="medium">Medium</button>
-                  <button type="button" role="radio" data-value="long">Long</button>
-                </div>
-              </div>
               <div class="dial" id="takesField">
-                <span id="takesLabel">Takes</span>
+                <span id="takesLabel">Variations</span>
                 <div class="seg" id="varSeg" role="radiogroup" aria-label="Number of variations">
                   <button type="button" role="radio" data-value="1">1</button>
                   <button type="button" role="radio" data-value="2">2</button>
@@ -238,15 +238,19 @@
                   <button type="button" role="radio" data-value="4">4</button>
                 </div>
               </div>
-            </div>
+            <p class="hint" id="sizeSummary"></p>
+            <details id="writingOptions" class="more-options"><summary>More options <span>size &amp; prompt writing</span></summary>
+              <div class="dial" id="resolutionField"><span>Image size</span><select id="resolution" aria-label="Resolution"></select><span id="resCustom" class="res-custom" hidden><input id="resW" type="text" inputmode="numeric" maxlength="4" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="text" inputmode="numeric" maxlength="4" aria-label="Height" placeholder="Height"><button type="button" id="resUse" class="btn small primary" title="Use this size and keep it in the menu">✓ Use</button><button type="button" id="resForget" class="btn small" title="Take this size out of the menu">✕ Forget</button></span><button type="button" id="sizeAuto" class="chip-btn">Use automatic size</button></div>
+              <div class="dial" id="lengthField"><span>Prompt length</span><div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length"><button type="button" role="radio" data-value="short">Short</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="long">Long</button></div></div>
             <div class="dial temp" id="tempField">
               <span title="How freely the Brain strays from the obvious (its “temperature”)">How adventurous <small id="tempWord" class="temp-word"></small> <output id="tempOut" class="temp-val" title="Temperature"></output></span>
               <input type="range" id="temperature" min="0" max="2" step="0.05" aria-label="How adventurous the writing is (temperature)">
               <div class="range-labels"><span>🎯 precise</span><span>🌶️ wild</span></div>
             </div>
+            </details>
           </section>
 
-          <section class="step" id="renderStep" data-panel="create-render">
+          <section class="step" id="renderStep" data-panel="create-render" data-default="collapsed">
             <header class="step-head">
               <span class="num">5</span><h2>Render it</h2><span class="opt">optional</span>
               <span class="head-actions"><span id="comfyState" class="comfy-state" hidden></span></span>
@@ -279,7 +283,7 @@
               </div>
               <div id="batchBox" class="wfp-batch" data-panel="create-render-batch" data-default="collapsed" hidden>
                 <div class="panel-head"><b>Batch</b><span class="opt">named batches of images or videos</span></div>
-                <label class="batch-pick"><span>Generate runs</span><select id="batchPick" aria-label="What Generate runs"></select></label>
+                <label class="batch-pick"><span>Batch to make</span><select id="batchPick" aria-label="Which batch to make"></select></label>
                 <ul id="batchList" class="batch-list" aria-label="Your batches"></ul>
                 <button type="button" id="batchAdd" class="btn small">＋ New batch</button>
                 <p id="batchHint" class="hint"></p>
@@ -288,20 +292,22 @@
           </section>
 
           <section class="step" id="chainStep" data-panel="create-chain">
-            <header class="step-head"><span class="num">6</span><h2>Then…</h2><span class="opt">optional · chain more steps</span></header>
+            <header class="step-head"><span class="num">6</span><h2>Then…</h2><span class="opt">optional · add more steps</span></header>
             <div id="chainBox" class="chain"></div>
             <input type="file" id="chainImportInput" accept=".json,application/json" hidden>
           </section>
           </div>
 
           <div class="generate-bar">
+            <label class="review-choice" id="reviewChoice"><input type="checkbox" id="reviewFirst" checked> Review prompt first</label>
+            <p id="outcomeHint" class="outcome-hint"></p>
             <p id="genCost" class="gen-cost" hidden></p>
             <button type="submit" id="generateBtn" class="btn-generate">
-              <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Generate</span><kbd>Ctrl ↵</kbd>
+              <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Write prompt</span><kbd>Ctrl ↵</kbd>
             </button>
             <button type="button" id="stopBtn" class="btn-stop" hidden>■ Stop <kbd>Esc</kbd></button>
             <button type="button" id="queueBtn" class="btn-queue" title="Queue the form as it is now (Ctrl+Enter). It runs when what's going is done, and changing the form afterwards won't change it." hidden>＋ Queue<b id="queueCount" hidden></b></button>
-            <button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in History." aria-label="New session">＋ New session</button>
+            <button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in Saved prompts." aria-label="New session">＋ New session</button>
           </div>
         </form>
 
@@ -316,18 +322,31 @@
           </div>
           <div id="runStrip" class="run-strip" role="region" aria-label="Chain run" hidden></div>
           <div id="stageHead" class="stage-head" hidden></div>
+          <p id="creationProgress" class="creation-progress" role="status" hidden></p>
+          <div id="stageError" class="error-card" role="alert" hidden></div>
+          <div id="resultsList" class="takes"></div>
+          <div id="resultsEmpty" class="empty">
+            <h3>Your next idea starts here.</h3>
+            <p>Describe what you want to see. Your <b>Brain</b> is the AI model that writes the prompt. Review it first, or make a picture when your model is ready.</p>
+            <div class="try"><span>Try an idea:</span><div id="tryChips" class="try-chips"></div></div>
+          </div>
           <section id="reel" class="reel" aria-labelledby="reelTitle" hidden>
             <div class="reel-head">
               <button type="button" id="reelToggle" class="icon-btn reel-toggle" aria-controls="reelBody" aria-expanded="true">▾</button>
               <h2 id="reelTitle" class="reel-title">🎞 Your renders</h2>
               <span id="reelCount" class="reel-count"></span>
               <span class="spacer"></span>
+              <button type="button" id="reelSelect" class="btn small" aria-pressed="false">Select</button>
               <label id="reelZoom" class="reel-zoom" title="Picture size">🔍<input type="range" id="reelSize" min="80" max="1000" step="10" value="160" aria-label="Picture size"></label>
               <button type="button" id="reelJoin" class="btn small" title="Join the videos shown here, in this order, into one video" hidden>🎬 Join</button>
               <button type="button" id="reelFull" class="btn small" aria-label="Full screen" title="Fill the window (Esc to go back)"><span class="ico" aria-hidden="true">⛶</span> <span class="lbl">Full screen</span></button>
             </div>
             <div id="reelBody" class="reel-body">
               <div id="reelFilters" class="reel-filters">
+                <input type="search" id="reelFind" class="reel-find" placeholder="Search your artwork…" aria-label="Find renders by their prompt">
+                <button type="button" id="reelFilterToggle" class="btn small" aria-expanded="false" aria-controls="reelFilterOptions">Filters</button>
+                <button type="button" id="reelFilterClear" class="chip-btn" hidden>Clear filters</button>
+                <div id="reelFilterOptions" class="reel-filter-options">
                 <div id="reelKinds" class="filter-chips" role="group" aria-label="Show">
                   <button type="button" class="chip-btn" data-kind="" aria-pressed="true">All</button>
                   <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">📷 Images</button>
@@ -340,37 +359,26 @@
                   <button type="button" class="chip-btn rated" data-min="3" aria-pressed="false" title="Rated excellent">★★★</button>
                 </div>
                 <select id="reelModel" class="reel-model" aria-label="Filter by model"></select>
-                <input type="search" id="reelFind" class="reel-find" placeholder="Find…" aria-label="Find renders by their prompt">
                 <button type="button" id="reelHidden" class="chip-btn" aria-pressed="false" title="The renders you hid. Click 👁 Show on one to bring it back." hidden>🙈 Hidden</button>
                 <button type="button" id="reelNewest" class="chip-btn" title="You've dragged cards into your own order. This puts them back newest first." hidden>↺ Newest first</button>
+                </div>
               </div>
               <p id="reelEmpty" class="reel-empty">Every render you make lands here, newest first, and stays. Rate the good ones with the stars: ★ pretty good, ★★ very good, ★★★ excellent.</p>
               <div id="reelGrid" class="reel-grid"></div>
               <div id="reelMore" class="reel-more" aria-hidden="true"></div>
-              <div id="reelSel" class="pick-bar reel-sel" role="toolbar" aria-label="Selected renders" hidden><b id="reelSelCount"></b><button type="button" id="reelSelDelete" class="btn small danger" title="Deletes them for good, here and in ComfyUI. You get 8 seconds to undo">🗑 Delete</button><button type="button" id="reelSelClear" class="btn small" title="Let go of the selection (Esc)">✕</button></div>
+              <div id="reelSel" class="pick-bar reel-sel" role="toolbar" aria-label="Selected renders" hidden><b id="reelSelCount"></b><button type="button" id="reelCompare" class="btn small primary" disabled>Compare 2</button><button type="button" id="reelSelDelete" class="btn small danger" title="Deletes them for good, here and in ComfyUI. You get 8 seconds to undo">Delete</button><button type="button" id="reelSelClear" class="btn small" title="Let go of the selection (Esc)">Clear selection</button></div>
             </div>
             <div id="reelGrip" class="reel-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to make the box taller or shorter" tabindex="0" title="Drag to make it taller or shorter"><span></span></div>
           </section>
-          <div id="stageError" class="error-card" role="alert" hidden></div>
-          <div id="resultsList" class="takes"></div>
-          <div id="resultsEmpty" class="empty">
-            <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
-            <h3>Let's make something wild.</h3>
-            <p>Pick a model, describe your shot or drop in an image, then hit <b>Generate</b>. Your Brain (the AI model on your computer that does the writing) writes the prompt in exactly the style that model wants.</p>
-            <div class="try">
-              <span>Try one:</span>
-              <div id="tryChips" class="try-chips"></div>
-            </div>
-          </div>
         </section>
       </div>
     </section>
 
     <!-- ================= HISTORY ================= -->
-    <section id="view-history" class="view" aria-label="History">
+    <section id="view-history" class="view" aria-label="Saved prompts">
       <div class="page-head">
-        <h1>History <span id="historyCount" class="count-pill"></span></h1>
-        <p>Every prompt you've made, saved automatically. Open one to keep refining it.</p>
+        <h1>Saved prompts <span id="historyCount" class="count-pill"></span></h1>
+        <p>Every prompt is saved automatically. Bookmark ideas to reuse; rate your pictures and videos in the Gallery.</p>
       </div>
       <div class="toolbar">
         <div class="search">
@@ -378,7 +386,7 @@
           <input type="search" id="historySearch" placeholder="Search themes and prompts…" aria-label="Search history">
         </div>
         <div id="historyFilters" class="filter-chips" role="group" aria-label="Filter by model"></div>
-        <button type="button" id="historyFav" class="chip-btn" aria-pressed="false">☆ Favorites</button>
+        <button type="button" id="historyFav" class="chip-btn" aria-pressed="false">Bookmarks</button>
       </div>
       <div id="historyList" class="history-grid"></div>
       <div id="historySel" class="pick-bar fixed" role="toolbar" aria-label="Selected prompts" hidden><b id="historySelCount"></b><button type="button" id="historySelDelete" class="btn small danger" title="Deletes them for good: their prompts, images and renders, here and in ComfyUI. You get 8 seconds to undo">🗑 Delete</button><button type="button" id="historySelClear" class="btn small" title="Let go of the selection (Esc)">✕</button></div>
@@ -388,7 +396,7 @@
     <section id="view-gallery" class="view" aria-label="Gallery">
       <div class="page-head">
         <h1>Gallery <span id="galleryCount" class="count-pill"></span></h1>
-        <p>Everything you've rendered, the same grid as 🎞 Your renders: drag a picture to move it, and the order stays.</p>
+        <p>Your pictures and videos, saved automatically. Rate your best work, select two to compare, or open one to use it again.</p>
       </div>
       <div id="galleryHome"></div><!-- (Your renders moves here while the Gallery shows) -->
     </section>
@@ -398,7 +406,7 @@
       <div class="page-head models-head">
         <div>
           <h1>Models</h1>
-          <p id="modelsIntro">Each model carries its own playbook: the instructions your Brain follows to write prompts for it. New model out? Add it here.</p>
+          <p id="modelsIntro">Choose what suits your idea. See what each model needs and whether it is ready to make pictures or videos.</p>
           <p id="brainsIntro" hidden>Your LM Studio models ("Brains") write the prompts. Prompt Maker learns how each one thinks, how fast it is and which jobs it does well from your own runs. New models show up here on their own.</p>
         </div>
         <div class="seg models-switch" role="tablist" aria-label="Which models">
@@ -425,8 +433,13 @@
         </details>
         <p id="brainsEmpty" class="notice" hidden></p>
       </div>
-      <div class="models-layout" id="modelsPane">
+      <section id="modelCatalog" aria-label="Choose a model">
+        <div class="catalog-toolbar"><p class="hint">Your Brain writes the prompt. These models make the picture or video.</p><button type="button" id="customizeModels" class="btn small">Customize models</button></div>
+        <div id="modelCatalogGrid" class="model-catalog-grid"></div>
+      </section>
+      <div class="models-layout" id="modelsPane" hidden>
         <aside class="models-side">
+          <button type="button" id="backToModels" class="btn small block">← Choose a model</button>
           <button type="button" id="newModelBtn" class="btn primary block">＋ New model</button>
           <div class="side-row">
             <button type="button" id="importBtn" class="btn small">⤓ Import</button>
@@ -688,10 +701,10 @@
           <p class="hint">Every workflow is checked against ComfyUI when Prompt Maker starts, whenever ComfyUI comes back and every ten minutes: a node pack that didn't load, a model file it lacks. What can't render is marked ⚠ in step ⑤, which says why.</p>
           <label class="check-row"><input type="checkbox" id="sComfyCleanup"> <span>After copying a render, delete it from ComfyUI's output folder</span></label>
           <label class="field" id="sComfyDirField"><span>ComfyUI output folder <small>only if ComfyUI was started with <code>--output-directory</code></small></span><input id="sComfyDir" placeholder="found automatically"></label>
-          <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer. Deleting from History always removes ComfyUI's copies of those renders too, so the folder matters even with this off.</p>
+          <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer. Deleting from Saved prompts always removes ComfyUI's copies of those renders too, so the folder matters even with this off.</p>
           <label class="check-row" id="sComfyRamRow"><input type="checkbox" id="sComfyRam"> <span>Keep ComfyUI's working files in memory (RAM), never on disk</span></label>
           <p class="hint" id="sComfyRamHint">When Prompt Maker starts ComfyUI (▶ Start in Services, or along with it), ComfyUI's output, input and temp folders are put in memory, so nothing it writes while it works touches the disk, and it's all gone when the computer turns off. Your renders are still copied into your data folder as usual. Takes effect the next time ComfyUI starts from here; a ComfyUI you start yourself keeps its own folders. Linux only.</p>
-          <label class="check-row"><input type="checkbox" id="sLogScrub"> <span>When I delete from History, also clean LM Studio's and ComfyUI's logs of it</span></label>
+          <label class="check-row"><input type="checkbox" id="sLogScrub"> <span>When I delete from Saved prompts, also clean LM Studio's and ComfyUI's logs of it</span></label>
           <p class="hint">On from the start: deleting is meant to leave nothing behind, and that includes the other apps' logs. LM Studio writes every request and answer to its own logs, so a deleted prompt would live on there. With this on, deleting a card replaces its words with "[deleted]" in LM Studio's server logs and in ComfyUI's log (which may name the files a node saved), on this computer. Switch it off to leave the other apps' logs alone.</p>
           <div class="grid-3">
             <label class="field"><span>ComfyUI folder <small>to start it from Services</small></span><input id="sComfyFolder" placeholder="found automatically"></label>
@@ -868,8 +881,8 @@
       <p>Everything is made on this computer and nothing leaves it. This is about what stays on it.</p>
       <div class="level-list" role="radiogroup" aria-label="Privacy level">
         <label class="level"><input type="radio" name="privacyLevel" value="normal"><span><b>Safe</b><small>Your work is kept in the data folder. Deleting a card shreds everything about it, here, in ComfyUI and in LM Studio's logs.</small></span></label>
-        <label class="level"><input type="radio" name="privacyLevel" value="private"><span><b>Safer</b><small>As Safe, and ComfyUI's working files and the app window's own files are in memory, the computer never writes memory to disk (swap and hibernation off), and the screen locks on its own after 5 minutes. May ask for your password once. Your work (History, pictures, renders) still stays in the data folder until you delete it.</small></span></label>
-        <label class="level" id="levelRam"><input type="radio" name="privacyLevel" value="ram"><span><b>Nothing stays</b><small>As Safer, and your work (History, pictures, videos, renders, the chat) lives in memory only: it's gone when Prompt Maker stops. Settings, playbooks, workflows and voices are kept. Takes a restart. For when the computer isn't only yours.</small></span></label>
+        <label class="level"><input type="radio" name="privacyLevel" value="private"><span><b>Safer</b><small>As Safe, and ComfyUI's working files and the app window's own files are in memory, the computer never writes memory to disk (swap and hibernation off), and the screen locks on its own after 5 minutes. May ask for your password once. Your work (Saved prompts, pictures, renders) still stays in the data folder until you delete it.</small></span></label>
+        <label class="level" id="levelRam"><input type="radio" name="privacyLevel" value="ram"><span><b>Nothing stays</b><small>As Safer, and your work (Saved prompts, pictures, videos, renders, the chat) lives in memory only: it's gone when Prompt Maker stops. Settings, playbooks, workflows and voices are kept. Takes a restart. For when the computer isn't only yours.</small></span></label>
       </div>
       <p class="hint" id="privacyDisk" hidden></p>
       <div class="row cloud-dialog-acts">

@@ -46,12 +46,12 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What you get
 
-- **Pictures and videos from a few words, or from your own photo.** Pick a model, say what you want to see, press Generate. Four takes at a time if you like, each deliberately different.
+- **Pictures and videos from a few words, or from your own photo.** Choose a task—make or edit a picture, keep the same person, animate a picture, or copy movement—then describe your idea. The app picks a suitable model and remembers your choices. Write up to four prompt variations, or make images and videos directly.
 - **The same person in every shot.** Drop in one picture of someone and they stay themselves in new places, new light, new scenes. See below.
 - **Clips that carry on.** Turn any still into a video, then the next scene from the next still, and join them. The film above is four of these.
 - **A voice for your character.** Describe a voice in plain words, hear it, keep it by name and have your character say a line in a video.
-- **Your best work stays findable.** Every render lands in one grid that never forgets. Rate them, put two side by side, hide the ones you don't want, search your history.
-- **A creative partner.** The ✦ Assistant looks at your renders, picks the better one and tells you why, and can run a whole batch while you're away.
+- **Your best work stays findable.** Gallery holds your artwork: rate it with stars, or choose **Select → two pictures → Compare 2**. **Saved prompts** holds the automatically saved prompts and sessions: bookmark the ones you want to reuse. **Hide from Create** tidies your workspace while keeping the artwork in Gallery.
+- **A creative partner when you need one.** Open **Ask** for an Assistant that looks at your renders, helps you choose, and can run a batch. It starts closed and remembers your preference. On small screens, **Create / Results** keeps your work one click away, including beside Ask on a laptop.
 - **Nothing leaves your computer.** No account, no cloud, no tracking.
 
 <div align="center">
@@ -59,6 +59,14 @@ You don't write the long, technical prompts these models want. You type a few wo
 <img src="docs/screenshots/gallery.jpg" alt="The Gallery: every render in one grid, to rate, put side by side, hide and find again" width="900">
 
 </div>
+
+## A clearer creative workflow in 1.37
+
+The main button tells you what comes next: **Write prompt**, **Make image**, or **Make video**, with the total output count when making several. **Review prompt first** sits beside it and remembers your choice for each model; existing auto-render preferences carry over. Progress tells you when the prompt is being written, the artwork is being made, and the result is ready.
+
+Choose **Shape** and **Variations** on the main path. Size starts automatically; exact dimensions, prompt length and adventurousness sit under **More options**. The model guide and look choices open when needed. **Models** starts with what each model makes, what it needs and its local rendering readiness; **Customize** opens the existing playbook and workflow editor.
+
+In Gallery, search stays visible on small screens, with extra choices under **Filters**, an active-filter count and **Clear filters**. The viewer links back to the original prompt. **Pin on the left** changes the comparison reference; stars rate the artwork. Secondary actions and panels are quieter so the work stands out.
 
 ## The same person, every shot
 
