@@ -43,12 +43,28 @@ open_app() {
   fi
   if [ -n "$bin" ] && [ "$bin" != default ]; then
     mkdir -p "$profile"
-    "$bin" --app="$URL" --user-data-dir="$profile" --no-first-run --no-default-browser-check --class=prompt-maker >/dev/null 2>&1 &
+    quiet_profile "$profile"
+    "$bin" --app="$URL" --user-data-dir="$profile" --no-first-run --no-default-browser-check --class=prompt-maker \
+      --disable-background-networking --disable-component-update --disable-sync --disable-domain-reliability \
+      --disable-breakpad --metrics-recording-only >/dev/null 2>&1 &
   else
     xdg-open "$URL" >/dev/null 2>&1 || true
   fi
   $old && shred_old_profiles &
   return 0
+}
+# The window's browser sends nothing home: Brave's usage analytics (P3A, whose notice also showed at every start in
+# a fresh profile) and daily usage ping, and Chromium's usage reports, are set off in the profile before it opens.
+quiet_profile() {
+  "$NODE" -e '
+    const fs = require("fs"), f = process.argv[1] + "/Local State";
+    let s = {}; try { s = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+    const at = (o, k) => (o[k] = o[k] && typeof o[k] === "object" ? o[k] : {});
+    Object.assign(at(at(s, "brave"), "p3a"), { enabled: false, notice_acknowledged: true });
+    Object.assign(at(at(s, "brave"), "stats"), { reporting_enabled: false });
+    Object.assign(at(s, "user_experience_metrics"), { reporting_enabled: false });
+    fs.writeFileSync(f, JSON.stringify(s));
+  ' "$1" >/dev/null 2>&1 || true
 }
 # Shreds the profiles moved aside, in the background and at low priority, one start at a time.
 shred_old_profiles() {
