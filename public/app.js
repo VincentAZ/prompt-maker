@@ -1436,7 +1436,7 @@ function savePrefs() {
   saved.set(prefsKey(m.id), {
     aspectRatio: own ? before.aspectRatio : $('#aspect').value,
     resolution: own ? before.resolution : $('#resolution').value,
-    duration: $('#duration').value,
+    duration: durationValue(),
     length: state.length,
     temperature: Number($('#temperature').value),
   });
@@ -1476,7 +1476,7 @@ function selectModel(id, { values } = {}) {
   fillAspect(m, v.aspectRatio);
   if (isSize(v.resolution) && !m.resolutions.includes(v.resolution) && !values) keepOwnSize(v.resolution); // typed before sizes were a list
   fillResolution(sizeChoices(m, $('#aspect').value), v.resolution);
-  fillSelect($('#duration'), m.durations, v.duration);
+  $('#duration').value = Number.parseFloat(chainSeconds(v.duration, m)); // any whole number of seconds; the model's list only gives the start
   $('#aspectField').hidden = !m.aspectRatios.length;
   $('#resolutionField').hidden = !m.resolutions.length;
   $('#durationField').hidden = m.kind !== 'video' || !m.durations.length;
@@ -1685,6 +1685,13 @@ $('#resForget').addEventListener('click', () => {
   toast(`Forgot ${size}`);
 });
 for (const id of ['#resolution', '#duration']) $(id).addEventListener('change', savePrefs);
+// Step ③'s Duration box: whole seconds, 1 to 20, sent as "12s" like the model's own durations. Empty while hidden
+// (a model without durations, like Wan Animate 2, is as long as its motion video).
+const durationValue = () => {
+  if ($('#durationField').hidden) return '';
+  const n = clampInt(Number.parseFloat($('#duration').value) || 0, 1, 20);
+  return n ? `${n}s` : '';
+};
 $('#theme').addEventListener('input', e => {
   renderRole();
   sizeTheme();
@@ -3878,7 +3885,7 @@ function formBody(m, theme, motion) {
     imageRole: effectiveRole(),
     aspectRatio: $('#aspect').value,
     resolution: $('#resolution').value,
-    duration: m.kind === 'video' ? $('#duration').value : '',
+    duration: m.kind === 'video' ? durationValue() : '',
     length: state.length,
     ...(state.look ? { look: state.look } : {}),
     ...(m.characterSheet && state.image && state.sheet.trim() ? { characterSheet: state.sheet } : {}),
@@ -4414,33 +4421,49 @@ function forgetRender(updated) {
   if (isView('history')) renderHistory();
 }
 
-// A deleted entry leaves no trace on this page either: not on the stage, among earlier runs or in a chain run, as a
-// link from the takes made from it, or in the Create form (its theme, image and motion video) when it's still what
-// the form holds.
+// A deleted entry leaves nothing of itself on this page either: not on the stage, among earlier runs or in a chain
+// run, as a link from the takes made from it, or in the Create form. What Create shows of it goes first (its picture, motion
+// video, theme and spoken line, and its takes), each step on its own, so that a redraw that fails further down
+// can't keep any of it on the page (1.33.0 to 1.34.1: Your renders threw while a render ran, and the picture and
+// theme stayed on Create).
 function forgetEntry(entry) {
-  if (state.entry?.id === entry.id) renderResults(null);
+  const step = (what, fn) => { try { fn(); } catch (err) { console.warn(`Forgetting a deleted entry: ${what}: ${err.message}`); } };
+  step('its takes', () => { if (state.entry?.id === entry.id) renderResults(null); });
+  for (const e of state.history) if (e.source?.entryId === entry.id) delete e.source;
+  step('its picture', () => {
+    const img = state.image;
+    const onlyItsImage = entry.imageFile && img?.file === entry.imageFile && !state.history.some(e => e.imageFile === img.file);
+    if (img && (onlyItsImage || img.source?.entryId === entry.id)) {
+      setImage(null);
+      // A copy made for the form (of one of its renders) that nothing else uses goes too.
+      if (img.file && !state.history.some(e => e.imageFile === img.file) && !line.orders.some(o => o.body.imageFile === img.file)) api(`/api/images/${encodeURIComponent(img.file)}`, { method: 'DELETE' }).catch(() => {});
+    }
+  });
+  step('its motion video', () => {
+    // Its motion video is deleted with it (unless another entry or a prompt in line uses it), so the form can't keep it.
+    const vid = state.video?.file;
+    if (vid && vid === entry.video?.file && !state.history.some(e => e.video?.file === vid) && !line.orders.some(o => o.body.video?.file === vid)) setVideo(null);
+  });
+  step('its theme', () => {
+    if (entry.theme && $('#theme').value.trim() === entry.theme.trim()) {
+      $('#theme').value = ''; // not replaceTheme: its undo would bring the deleted words back
+      $('#theme').dispatchEvent(new Event('input'));
+    }
+  });
+  step('its line', () => {
+    if (entry.line?.text && state.line?.text?.trim() === entry.line.text.trim()) {
+      $('#lineText').value = '';
+      setLine({ voice: state.line.voice, text: '' });
+    }
+  });
   sessionCache.delete(entry.id);
-  renderReel();
-  if (state.run?.entries.some(e => e.id === entry.id)) {
+  step('Your renders', renderReel);
+  step('the run strip', () => {
+    if (!state.run?.entries.some(e => e.id === entry.id)) return;
     state.run.entries = state.run.entries.filter(e => e.id !== entry.id);
     for (const [k, it] of state.run.picks) if (it.entry.id === entry.id) state.run.picks.delete(k);
     if (state.run.entries.length) renderRunStrip(); else closeRun();
-  }
-  for (const e of state.history) if (e.source?.entryId === entry.id) delete e.source;
-  const img = state.image;
-  const onlyItsImage = entry.imageFile && img?.file === entry.imageFile && !state.history.some(e => e.imageFile === img.file);
-  if (img && (onlyItsImage || img.source?.entryId === entry.id)) {
-    setImage(null);
-    // A copy made for the form (of one of its renders) that nothing else uses goes too.
-    if (img.file && !state.history.some(e => e.imageFile === img.file) && !line.orders.some(o => o.body.imageFile === img.file)) api(`/api/images/${encodeURIComponent(img.file)}`, { method: 'DELETE' }).catch(() => {});
-  }
-  // Its motion video is deleted with it (unless another entry or a prompt in line uses it), so the form can't keep it.
-  const vid = state.video?.file;
-  if (vid && vid === entry.video?.file && !state.history.some(e => e.video?.file === vid) && !line.orders.some(o => o.body.video?.file === vid)) setVideo(null);
-  if (entry.theme && $('#theme').value.trim() === entry.theme.trim()) {
-    $('#theme').value = ''; // not replaceTheme: its undo would bring the deleted words back
-    $('#theme').dispatchEvent(new Event('input'));
-  }
+  });
 }
 
 // The rest of what an entry was made with: its batch, and how its newest render was made (workflow,
@@ -5300,8 +5323,9 @@ function renderPrivacy(st) {
 
 const LEVEL_NAMES = { normal: 'Safe', private: 'Safer', ram: 'Nothing stays' };
 
-// "How private?": the Privacy level, asked once on first start, and from the Privacy check card. Each level is a set
-// of switches; the server applies them (and asks for the password when a fix needs it).
+// "How private?": the Privacy level, from Settings → 🔒 Privacy check → Change the level (Safe until changed; the
+// start doesn't ask). Each level is a set of switches; the server applies them (and asks for the password when a
+// fix needs it).
 async function privacyLevelDialog() {
   const dlg = $('#privacyDlg');
   const level = state.settings.privacyLevel || 'normal';
@@ -5336,8 +5360,8 @@ $('#privacyLevelBtn').addEventListener('click', privacyLevelDialog);
 
 function renderPrivacyLevel() {
   const s = state.settings;
-  const name = LEVEL_NAMES[s.privacyLevel] || 'Not chosen yet';
-  const memory = s.inMemory ? ' Your work is in memory for this session.' : s.dataRam ? ' Your work goes to memory after a restart.' : '';
+  const name = LEVEL_NAMES[s.privacyLevel] || 'Safe';
+  const memory = s.inMemory ? ' Your work is in memory for this session.' : s.dataRam ? ' Your work goes to memory after a restart.' : ' Your work stays in the data folder until you delete it.';
   $('#privacyLevelLine').textContent = `Level: ${name}.${memory}`;
 }
 
@@ -8628,7 +8652,7 @@ const TOOLS = [
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
-  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), look: E(['brain picks', ...Object.keys(LOOK_NAMES).filter(Boolean)], 'How the camera and light feel (step 2, under the theme); "brain picks" suits them to the theme'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
+  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), look: E(['brain picks', ...Object.keys(LOOK_NAMES).filter(Boolean)], 'How the camera and light feel (step 2, under the theme); "brain picks" suits them to the theme'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
   T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate', 'character'], 'animate = first frame of a video (video models only); character = the character a motion video animates (character-animation models like Wan Animate 2 only)') }, ['role']),
   T('clear_image', 'Remove the image from step 3.'),
   T('use_motion_video', 'Set the motion video in step 3 for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
@@ -8665,7 +8689,7 @@ const TOOLS = [
     model: S('The model to use it with, e.g. the video model to animate with; default: the last video model for animate, else the one on Create'),
   }, ['use']),
   T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
-    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only, e.g. "6s"'), gate: E(['pick', 'brain', 'auto'], 'pick = wait for the user to choose renders; brain = you (the Brain) pick the best render and only it goes on; auto = all go on') }, required: ['model'] } },
+    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), gate: E(['pick', 'brain', 'auto'], 'pick = wait for the user to choose renders; brain = you (the Brain) pick the best render and only it goes on; auto = all go on') }, required: ['model'] } },
   }, ['steps']),
   T('clear_chain', 'Remove every step from step 6, back to a single step.'),
   T('load_chain', 'Load a saved chain by name.', { name: S('Chain name') }, ['name']),
@@ -8918,7 +8942,7 @@ function assistantState() {
     dials: m && {
       aspect: $('#aspect').value, aspects: m.aspectRatios,
       resolution: $('#resolution').value, resolutions: m.resolutions,
-      ...(m.kind === 'video' ? { duration: $('#duration').value, durations: m.durations } : {}),
+      ...(m.kind === 'video' ? { duration: durationValue(), durations: m.durations } : {}),
       ...(state.manual ? { takes: state.manualRenders } : { length: state.length, takes: state.variations, temperature: Number($('#temperature').value) }),
     },
     comfyui: state.comfy ? (state.comfy.ok ? 'ready' : 'offline') : 'unknown',
@@ -9588,7 +9612,12 @@ const TOOL_IMPL = {
       fillResolution(sizeChoices(m, $('#aspect').value), String(args.resolution).replace(/\s*[×x]\s*/, '×'));
       done.push(`resolution ${$('#resolution').value}`);
     } else choose('resolution', '#resolution', options('#resolution'), 'resolution');
-    if (m.kind === 'video') choose('duration', '#duration', m.durations, 'duration');
+    if (m.kind === 'video' && !$('#durationField').hidden && args.duration != null && args.duration !== '') {
+      const n = clampInt(Number.parseFloat(args.duration) || 0, 1, 20);
+      if (!n) throw new Error(`Duration is whole seconds from 1 to 20, not “${args.duration}”.`);
+      $('#duration').value = n;
+      done.push(`duration ${n}s`);
+    }
     if (args.batch) {
       const want = String(args.batch).trim().toLowerCase();
       if (want === 'off' || want === 'none') setBatchPick('');
@@ -10825,7 +10854,7 @@ const PANEL_SUMMARY = {
   },
   'create-dials': () => [
     !$('#aspectField').hidden && $('#aspect').value, !$('#resolutionField').hidden && $('#resolution').value,
-    !$('#durationField').hidden && $('#duration').value,
+    durationValue(),
     ...(state.manual ? [!$('#takesField').hidden && `×${state.manualRenders}`]
       : [`${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`, `${state.variations} take${state.variations > 1 ? 's' : ''}`, adventureWord(Number($('#temperature').value))]),
   ].filter(Boolean).join(' · '),
@@ -10977,7 +11006,6 @@ async function loadModels() {
     history.replaceState(null, '', `#${VIEWS.find(v => isView(v))}`);
     requestAnimationFrame(sizeTheme);
     state.booted = true;
-    if (!state.settings.privacyLevel) privacyLevelDialog(); // the first start asks how private
   } catch (err) {
     showError(`Could not start: ${friendly(err)}`);
   }

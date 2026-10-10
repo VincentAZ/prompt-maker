@@ -480,17 +480,10 @@ esac
   await test('boot', async () => {
     await goto(`${APP}/`);
     assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'Create view is active');
-    // The first start asks how private; Safe is the default, and the answer is kept.
-    await waitFor('document.querySelector("#privacyDlg").open', 'the "How private?" question');
-    await waitFor('document.querySelector("#privacyDisk").textContent.includes("not encrypted")', 'the disk verdict');
-    assert((await text('#privacyDlg')).includes('Nothing stays'), 'the levels');
-    assert(await js('document.querySelector(\'#privacyDlg input[value="normal"]\').checked'), 'Safe is picked');
-    await click('#privacyDlg button[value="ok"]');
-    await toastText('Safe');
-    eq((await (await fetch(`${APP}/api/settings`)).json()).privacyLevel, 'normal', 'kept');
-    await goto(`${APP}/`);
+    // The start asks nothing about privacy: the level is Safe until changed in Settings → Privacy check.
     await sleep(500);
-    assert(!(await js('document.querySelector("#privacyDlg").open')), 'not asked again');
+    assert(!(await js('document.querySelector("#privacyDlg").open')), 'no "How private?" question on the first start');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).privacyLevel, '', 'no level chosen: Safe');
     eq(await count('.model-card'), 7, 'model cards');
     await waitFor('document.querySelector("#llmDot").classList.contains("ok")', 'LLM status dot to be green');
     eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
@@ -629,6 +622,8 @@ esac
     assert(await visible('#aspectNote'), '"from image" note on the video model too');
     assert(await visible('#roleBlock [data-value="animate"]'), 'animate for video model');
     assert(await visible('#durationField'), 'duration shown for video');
+    eq(await js('document.querySelector("#duration").type'), 'number', 'Duration is a number box, seconds');
+    assert(Number(await value('#duration')) >= 1, `it starts at the model's first length: ${await value('#duration')}`);
     await click('#roleBlock [data-value="animate"]');
     assert((await text('#roleHint')).includes('frame one'), 'animate hint');
     await click('#varSeg button[data-value="1"]');
@@ -1726,6 +1721,30 @@ esac
     await goto(`${APP}/#create`);
     eq(await value('#theme'), '', 'still clear after a reload');
     assert(await js('document.querySelector(".dz-preview").hidden'), 'no image after a reload');
+  });
+
+  await test('history: deleting the card open on Create takes its picture, theme and takes off Create', async () => {
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'LEAVES NOTHING a swan at dusk');
+    const own = path.join(tmp, 'own-picture.png'); // a picture no other card has (a shared one stays, as those cards still use it)
+    await fs.writeFile(own, makePng(480, 300));
+    await setFiles('#imageInput', [own]);
+    await waitFor('!document.querySelector(".dz-preview").hidden && JSON.parse(localStorage.getItem("pm.image"))', 'image stored');
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('.take'), 1, 'one take');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelector(".hcard.current")', 'the card open on Create is marked');
+    assert((await text('.hcard.current .htheme')).includes('LEAVES NOTHING'), 'it is the one just made');
+    await click('.hcard.current [data-act="delete"]');
+    await click('.hcard.current [data-act="delete"]'); // Sure?
+    await toastText('Deleting');
+    await toastText('Deleted for good', UNDO_WAIT);
+    await click('.tabs button[data-view="create"]');
+    eq(await value('#theme'), '', 'its theme is gone from Create');
+    assert(await js('document.querySelector(".dz-preview").hidden'), 'its picture is gone from Create');
+    eq(await count('.take'), 0, 'its takes are gone');
+    assert(!(await js('JSON.parse(localStorage.getItem("pm.image"))')), 'the page no longer remembers the picture');
   });
 
   await test('settings: unsaved edits survive a tab switch', async () => {

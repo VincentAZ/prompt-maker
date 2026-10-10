@@ -108,7 +108,7 @@
                 <button type="button" id="surpriseBtn" class="chip-btn" title="Fill in a random theme">🎲 Surprise me</button>
               </span>
             </header>
-            <textarea id="theme" class="theme" rows="3" aria-label="Theme"></textarea>
+            <textarea id="theme" class="theme" rows="3" aria-label="Theme" autocomplete="off"></textarea>
             <div class="looks" id="lookRow" role="radiogroup" aria-label="Look: how the camera and light feel">
               <span class="looks-label" title="How the camera and the light feel: how close, from which angle, what kind of light">🎥 <b>Look</b></span>
               <button type="button" class="chip-btn" role="radio" data-value="" title="The Brain picks the camera and light that suit your theme">✨ Brain picks</button>
@@ -167,7 +167,7 @@
                 <button type="button" id="sheetRedo" class="icon-btn" title="Write it again from the picture at the next Generate" aria-label="Write the character sheet again">↻</button>
                 </span>
               </div>
-              <textarea id="sheetText" class="sheet-text" rows="7" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you press Generate: face, eyes, hair, skin, build… Then every take keeps all of it. Edit any line to fix it."></textarea>
+              <textarea id="sheetText" class="sheet-text" rows="7" autocomplete="off" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you press Generate: face, eyes, hair, skin, build… Then every take keeps all of it. Edit any line to fix it."></textarea>
             </div>
             <div id="wfpDenoise" class="wfp-denoise" hidden></div>
             <div id="lineBlock" class="line-block" hidden>
@@ -176,7 +176,7 @@
               <p id="lineSwitch" class="hint" hidden>The picked workflow takes no spoken line. <button type="button" id="lineSwitchBtn" class="chip-btn">🎙 Use the one that does</button></p>
               <div id="lineForm" class="line-form" hidden>
                 <select id="lineVoice" aria-label="Voice"></select>
-                <input id="lineText" placeholder="What they say, word for word" maxlength="600" aria-label="The line">
+                <input id="lineText" placeholder="What they say, word for word" maxlength="600" autocomplete="off" aria-label="The line">
                 <button type="button" id="lineClear" class="icon-btn" title="No line" aria-label="Clear the line">✕</button>
               </div>
               <p id="lineHint" class="hint" hidden>At Generate the line is said in that voice, and the video follows it (it's made at least as long as the line).</p>
@@ -218,7 +218,7 @@
             <div class="dials">
               <label class="dial" id="aspectField"><span>Aspect</span><select id="aspect"></select><em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">🖼️ from image</em></label>
               <div class="dial" id="resolutionField"><span>Resolution</span><select id="resolution" aria-label="Resolution"></select><span id="resCustom" class="res-custom" hidden><input id="resW" type="text" inputmode="numeric" maxlength="4" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="text" inputmode="numeric" maxlength="4" aria-label="Height" placeholder="Height"><button type="button" id="resUse" class="btn small primary" title="Use this size and keep it in the menu">✓ Use</button><button type="button" id="resForget" class="btn small" title="Take this size out of the menu">✕ Forget</button></span></div>
-              <label class="dial" id="durationField"><span>Duration</span><select id="duration"></select></label>
+              <label class="dial" id="durationField"><span>Duration <small>seconds</small></span><input id="duration" type="number" min="1" max="20" step="1" inputmode="numeric" aria-label="Duration in seconds"></label>
             </div>
             <div class="dials two">
               <div class="dial" id="lengthField">
@@ -863,10 +863,10 @@
   <dialog id="privacyDlg" class="modal cloud-dialog privacy-dlg" aria-labelledby="privacyDlgTitle" data-not-assistant>
     <form method="dialog" class="modal-body">
       <h2 id="privacyDlgTitle">🔒 How private?</h2>
-      <p>Everything is made on this computer and nothing leaves it. This is about what stays on it. You can change it any time in Settings → 🔒 Privacy check.</p>
+      <p>Everything is made on this computer and nothing leaves it. This is about what stays on it.</p>
       <div class="level-list" role="radiogroup" aria-label="Privacy level">
         <label class="level"><input type="radio" name="privacyLevel" value="normal"><span><b>Safe</b><small>Your work is kept in the data folder. Deleting a card shreds everything about it, here, in ComfyUI and in LM Studio's logs.</small></span></label>
-        <label class="level"><input type="radio" name="privacyLevel" value="private"><span><b>Safer</b><small>As Safe, and ComfyUI works in memory, the computer never writes memory to disk (swap and hibernation off), and the screen locks on its own after 5 minutes. May ask for your password once.</small></span></label>
+        <label class="level"><input type="radio" name="privacyLevel" value="private"><span><b>Safer</b><small>As Safe, and ComfyUI's working files and the app window's own files are in memory, the computer never writes memory to disk (swap and hibernation off), and the screen locks on its own after 5 minutes. May ask for your password once. Your work (History, pictures, renders) still stays in the data folder until you delete it.</small></span></label>
         <label class="level" id="levelRam"><input type="radio" name="privacyLevel" value="ram"><span><b>Nothing stays</b><small>As Safer, and your work (History, pictures, videos, renders, the chat) lives in memory only: it's gone when Prompt Maker stops. Settings, playbooks, workflows and voices are kept. Takes a restart. For when the computer isn't only yours.</small></span></label>
       </div>
       <p class="hint" id="privacyDisk" hidden></p>

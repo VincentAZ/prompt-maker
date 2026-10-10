@@ -906,11 +906,45 @@ async function forgetInComfy(settings, { promptIds = [], texts = [], copies = []
     refs.push(...await comfy.forgetJobs(base, { promptIds, texts }).catch(err => (console.warn(`ComfyUI: ${err.message}`), [])));
   }
   const keep = new Set(rest.flatMap(uploadNames));
-  const dirs = await comfy.folders(base, { output: settings.comfyOutputDir, roots: [settings.comfyDir, settings.comfyLaunch?.dir], args: await comfyArgs(settings) });
-  await comfy.removeFiles(dirs, refs.filter(r => !(r.type === 'input' && keep.has(r.filename))), copies.length ? await notShared(copies, rest) : [])
-    .catch(err => console.warn(`Couldn't remove ComfyUI's copies: ${err.message}`));
-  if (copies.length && !dirs.output && !settings.comfyCleanup) return "ComfyUI's output folder wasn't found, so its own copies of the renders may still be there. Set the folder in Settings → ComfyUI, or delete them there.";
+  const wanted = refs.filter(r => !(r.type === 'input' && keep.has(r.filename)));
+  const twins = copies.length ? await notShared(copies, rest) : [];
+  const sets = await comfyFolders(settings);
+  for (const dirs of sets) await comfy.removeFiles(dirs, wanted, twins).catch(err => console.warn(`Couldn't remove ComfyUI's copies: ${err.message}`));
+  if (copies.length && !sets[0].output && !settings.comfyCleanup) return "ComfyUI's output folder wasn't found, so its own copies of the renders may still be there. Set the folder in Settings → ComfyUI, or delete them there.";
   return null;
+}
+
+// ComfyUI's folders, as sets to look through: the ones it runs with now (in memory at Safer and up), and the ones on
+// disk under its own folder when those differ, where its copies from before it worked in memory still sit.
+async function comfyFolders(settings) {
+  const roots = [settings.comfyDir, settings.comfyLaunch?.dir];
+  const live = await comfy.folders(settings.comfyUrl, { output: settings.comfyOutputDir, roots, args: await comfyArgs(settings) });
+  const disk = await comfy.folders(settings.comfyUrl, { output: settings.comfyOutputDir, roots, args: [] });
+  return ['output', 'input', 'temp'].every(k => live[k] === disk[k]) ? [live] : [live, disk];
+}
+
+// Uploads of Prompt Maker's (prompt-maker_…) left in ComfyUI's input folders that nothing uses anymore: from before
+// ComfyUI worked in memory (deletes looked only at its live folders before 1.34.3), or from deletes made while its
+// folders were out of reach. Run at start and when the Privacy level changes; a file under ten minutes old is left
+// (it may be a render on its way). Returns how many went.
+async function sweepComfyLeftovers() {
+  const settings = await store.getSettings();
+  const used = store.filesInUse(await store.listHistory());
+  const keep = new Set([...used.images, ...used.renders, ...used.videos, ...used.lines, ...await store.heldFiles({ form: true })]);
+  const stems = new Set([...keep].map(n => n.slice(0, 20))); // a video's 24 fps copy is named after it
+  let removed = 0;
+  for (const dirs of await comfyFolders(settings)) {
+    for (const name of dirs.input ? await fs.readdir(dirs.input).catch(() => []) : []) {
+      if (!name.startsWith('prompt-maker_')) continue;
+      const own = name.slice('prompt-maker_'.length);
+      if (keep.has(own) || (/^[a-f0-9]{20}\.\d+fps\.mp4$/.test(own) && stems.has(own.slice(0, 20)))) continue;
+      const file = path.join(dirs.input, name);
+      const st = await fs.stat(file).catch(() => null);
+      if (!st?.isFile() || st.mtimeMs > Date.now() - 6e5) continue;
+      if (await store.shredFile(file).catch(() => false)) removed++;
+    }
+  }
+  return removed;
 }
 
 // The Privacy level (the first-start question, and Settings → 🔒 Privacy check): each is a set of the switches.
@@ -927,6 +961,7 @@ async function setPrivacyLevel(level, view) {
   if (!patch) throw store.httpError(400, 'Pick a level: normal, private or ram.');
   const before = await store.getSettings();
   const settings = await store.updateSettings({ ...patch, privacyLevel: level });
+  sweepComfyLeftovers().catch(() => {}); // what ComfyUI's folders on disk still hold of deleted cards
   const left = [];
   let check = await privacy.check().catch(() => ({ supported: false }));
   if (level !== 'normal' && check.supported) {
@@ -1857,6 +1892,8 @@ if (moved.length) console.log(`Moved your data out of the app folder into ${stor
 const swept = await store.sweepOrphans().catch(err => (console.warn(`Couldn't tidy the data folder: ${err.message}`), 0));
 voice.sweepClips((await store.listHistory().catch(() => [])).map(e => e.line?.file).filter(Boolean)).catch(() => {});
 if (swept) console.log(`Removed ${swept} file${swept === 1 ? '' : 's'} no History entry uses anymore.`);
+const leftovers = await sweepComfyLeftovers().catch(err => (console.warn(`Couldn't tidy ComfyUI's input folder: ${err.message}`), 0));
+if (leftovers) console.log(`Removed ${leftovers} file${leftovers === 1 ? '' : 's'} Prompt Maker had put in ComfyUI's input folder that nothing uses anymore.`);
 await wf.initWorkflows();
 
 const server = http.createServer(async (req, res) => {

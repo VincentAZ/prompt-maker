@@ -23,6 +23,12 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.35.0 — Step ③'s Duration is a number box (whole seconds, 1–20), not a menu of the model's few lengths.
+  Deleting a card left its picture and theme on Create when the renders strip failed to redraw (1.33.0 to
+  1.34.1): Create is cleared first now, whatever else fails. Deletes also reach ComfyUI's folders on disk from before it
+  worked in memory, and its leftover uploads of Prompt Maker's go at start. Safer keeps the app window's own files in
+  memory too, and says plainly that your work stays until you delete it. The start no longer asks "How private?":
+  the level is set in Settings → Privacy check (Safe until changed), and the README says less about privacy.
 - 1.34.2 — Wan Animate 2 made about 1 s from a 60 fps phone video: renders now use a 24 fps copy of a fast
   video, and the one-piece Distilled workflow is chained to follow the whole video. Your renders no longer breaks while
   a render runs (a name clash from 1.33.0).

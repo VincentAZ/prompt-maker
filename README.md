@@ -52,7 +52,7 @@ You don't write the long, technical prompts these models want. You type a few wo
 - **A voice for your character.** Describe a voice in plain words, hear it, keep it by name and have your character say a line in a video.
 - **Your best work stays findable.** Every render lands in one grid that never forgets. Rate them, put two side by side, hide the ones you don't want, search your history.
 - **A creative partner.** The ✦ Assistant looks at your renders, picks the better one and tells you why, and can run a whole batch while you're away.
-- **Nothing leaves your computer.** No account, no cloud, no tracking. The first start asks how private you want it.
+- **Nothing leaves your computer.** No account, no cloud, no tracking.
 
 <div align="center">
 
@@ -104,13 +104,11 @@ These are short previews without sound; click one to watch the video (the first 
 
 **3. ComfyUI** (free, it makes the pictures and videos). On Linux, open **Settings → Services → ⬇ Set up ComfyUI** and Prompt Maker checks your graphics card, downloads and installs it, and starts it. On other systems install [ComfyUI](https://github.com/comfyanonymous/ComfyUI) yourself; Prompt Maker hooks into it. Without ComfyUI you still get the prompts to use anywhere.
 
+Everything runs on your own computer and talks only to your own LM Studio and ComfyUI; nothing is loaded from the internet. What stays on the computer, and for how long, is yours to set in Settings → Privacy check ([details](docs/guide.md#privacy--offline)).
+
 You need a computer with a good graphics card. Linux is where it's tested every day. On Windows the launcher is written but has **not yet been tried on a real Windows PC**; if something doesn't work there, please tell us.
 
 Seven models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **LTX 2.3**, **MiniMax H3** (and a Reference version for your person) and **Wan Animate 2**. [Add your own](docs/guide.md#adding-or-updating-a-model).
-
-## Private by design
-
-It runs on your computer and talks only to your own LM Studio and ComfyUI. No account, no cloud, no tracking, nothing loaded from the internet. The first start asks how private you want it: **Safe**, **Safer** or **Nothing stays** (your work lives in memory and is gone when you stop). Deleting something shreds it, including its traces in ComfyUI's and LM Studio's logs. [All the details](docs/guide.md#privacy--offline).
 
 ## More
 

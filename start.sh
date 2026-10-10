@@ -20,13 +20,20 @@ SETUP=(env PORT="$PORT" LMS_BIN="$LMS" "$NODE" lib/autostart.js)
 running() { curl -fs -o /dev/null "$URL/api/settings"; }
 
 # Opens the page as its own window, with its own browser profile, so Prompt Maker leaves nothing in your everyday
-# browser's history or session. The profile sits in the data folder; at the "Nothing stays" privacy level, in memory
-# with the rest of the session. A Chromium-family browser does app windows (Brave, Chromium, Chrome, Edge); without
+# browser's history or session. The profile sits in the data folder; at the Safer and "Nothing stays" privacy levels,
+# in memory (its own files keep old copies of what the page showed, which a delete can't reach). A Chromium-family browser does app windows (Brave, Chromium, Chrome, Edge); without
 # one, the page opens in whatever browser is the default. PM_BROWSER=/path forces a browser (or "default").
 DATA="${PROMPT_MAKER_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/prompt-maker}"
 open_app() {
   local bin="${PM_BROWSER:-}" profile="$DATA/browser"
-  if grep -qs '"dataRam": true' "$DATA/settings.json"; then profile="${PM_RAM_DIR:-/dev/shm}/prompt-maker-session/browser"; fi
+  if grep -qsE '"(dataRam|comfyRam)": true' "$DATA/settings.json"; then
+    profile="${PM_RAM_DIR:-/dev/shm}/prompt-maker-session/browser"
+    # A profile left on disk by a lower level goes (shredded), unless a window still runs from it.
+    if [ -d "$DATA/browser" ] && ! pgrep -f -- "--user-data-dir=$DATA/browser" >/dev/null 2>&1; then
+      if command -v shred >/dev/null 2>&1; then find "$DATA/browser" -type f -exec shred -u -n 3 {} + 2>/dev/null; fi
+      rm -rf "$DATA/browser"
+    fi
+  fi
   if [ -z "$bin" ]; then
     for c in brave-browser brave chromium chromium-browser google-chrome google-chrome-stable microsoft-edge; do
       command -v "$c" >/dev/null 2>&1 && { bin="$(command -v "$c")"; break; }
