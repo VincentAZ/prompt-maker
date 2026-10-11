@@ -23,6 +23,11 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.39.0 — Two new models with playbooks and starter workflows, each rendered for real before shipping: **Z-Image Turbo**
+  (text to image, 8 steps, text in the picture renders right) and **Qwen Image Edit** (one instruction edits your picture,
+  4 steps with the Lightning LoRA). **LTX 2.3** and **MiniMax H3** get a second starter, "video from words", that
+  needs no picture (＋ Add workflow → 🎁); their playbooks list ComfyUI's own templates too. ("MiniMax H2" was asked
+  for: no such model or template exists on this machine or in ComfyUI, so the MiniMax one is H3.)
 - 1.38.0 — Steady takes: a take's box holds the height its prompt is expected to need from the first word, its
   word-count row is there from the start, and a refine keeps the box, so nothing under a take moves while the Brain
   writes. 🎥 Looks: **🚫 No look** (the Brain adds no camera or light of its own) and **＋ Your own look…** (name it,

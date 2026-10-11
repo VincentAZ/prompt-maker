@@ -3,10 +3,10 @@
   "name": "MiniMax H3 (Hailuo 03)",
   "kind": "video",
   "task": "animate",
-  "description": "Turn a picture into a short video with sound, 4 to 15 seconds.",
+  "description": "Turn a picture into a short video with sound, 4 to 15 seconds, or make one from words alone.",
   "guide": {
     "bestFor": "Clips of 4–15 seconds with sound, including several shots with cuts, dialogue in many languages and believable action.",
-    "youNeed": "Optional: a picture to start from.",
+    "youNeed": "Optional: a picture to start from. Without one, pick the \"video from words\" workflow in step ⑤.",
     "steps": [
       "Optional: add a picture in step ③ as the first frame.",
       "In step ②, tell the little story: what happens first, then next. Put spoken words in quotes.",
@@ -81,6 +81,18 @@
     "https://www.kapwing.com/resources/how-to-prompt-minimax-h3-hailuo-3-0-a-guide-for-ai-video-creators/",
     "https://aireiter.com/blog/minimax-h3-prompt-guide",
     "https://www.piclumen.com/blog/minimax-h3-prompt-guide/"
+  ],
+  "comfyTemplates": [
+    {
+      "name": "video_minimax_h3_i2v",
+      "title": "MiniMax H3: Image to Video",
+      "note": "ComfyUI's template: your picture is the first frame, with an optional 8-step turbo LoRA."
+    },
+    {
+      "name": "video_minimax_h3_t2v",
+      "title": "MiniMax H3: Text to Video",
+      "note": "ComfyUI's template: from words alone, with an optional 8-step turbo LoRA."
+    }
   ],
   "updatedAt": "2026-09-30"
 }

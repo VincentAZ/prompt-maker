@@ -413,7 +413,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 
 ### 1. Attach a workflow to a model
 
-**Every built-in model already has one.** The first time you open Prompt Maker, each of the seven models gets the workflow that comes with it (listed below), so you can **▶ Render** right away; step ⑤ offers **⬇ Download** for any model file ComfyUI doesn't have yet. It's added once: delete it and it stays gone (**＋ Add workflow → 🎁 Comes with Prompt Maker** brings it back). A model that already has a workflow of yours doesn't get one.
+**Every built-in model already has one.** The first time you open Prompt Maker, each of the nine models gets the workflow that comes with it (listed below), so you can **▶ Render** right away; step ⑤ offers **⬇ Download** for any model file ComfyUI doesn't have yet. It's added once: delete it and it stays gone (**＋ Add workflow → 🎁 Comes with Prompt Maker** brings it back). A model that already has a workflow of yours doesn't get one.
 
 **To use your own instead**, add it as below: a workflow you add is the one the model uses from then on, and the picker in step ⑤ (or on the take) switches between them.
 
@@ -421,9 +421,11 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 |---|---|
 | **Krea 2 RAW** | Text to image: Krea 2 RAW with Krea's turbo LoRA, 12 steps, about 1.5 megapixels. |
 | **Krea 2 RAW Edit** | Image to image: the same, starting from your picture. |
+| **Z-Image Turbo** | Text to image: ComfyUI's Z-Image Turbo template, 8 steps, no guidance. |
+| **Qwen Image Edit** | ComfyUI's Qwen Image Edit 2509 template with its Lightning LoRA, 4 steps; the result keeps your picture's size. |
 | **Krea 2 Character** | Krea 2 Turbo with the Krea 2 Identity Edit LoRA, 10 steps ([more](#same-person-every-render)). Needs the comfyui-krea2edit nodes. |
-| **LTX 2.3** | ComfyUI's LTX 2.3 image-to-video template: two passes with the distilled LoRA and a 2× upscale, with sound. Its own prompt writer is taken out, so your prompt is used as written. |
-| **MiniMax H3** | ComfyUI's MiniMax H3 image-to-video template, 20 steps, with sound (its optional turbo LoRA left out), plus a Load Audio → Add Guide pair for a [🎙 spoken line](#voices); without a line those two nodes are left out. |
+| **LTX 2.3** | ComfyUI's LTX 2.3 image-to-video template: two passes with the distilled LoRA and a 2× upscale, with sound. Its own prompt writer is taken out, so your prompt is used as written. A second one, **LTX 2.3: video from words**, makes the clip from the prompt alone (**＋ Add workflow → 🎁**). |
+| **MiniMax H3** | ComfyUI's MiniMax H3 image-to-video template, 20 steps, with sound (its optional turbo LoRA left out), plus a Load Audio → Add Guide pair for a [🎙 spoken line](#voices); without a line those two nodes are left out. A second one, **MiniMax H3: video from words**, needs no picture (**＋ Add workflow → 🎁**). |
 | **MiniMax H3 Reference** | ComfyUI's MiniMax H3 reference-to-video template, 20 steps, with sound. |
 | **Wan Animate 2** | ComfyUI's Wan Animate 2 Distilled template: your person, moving like the motion video, 10 steps. |
 
@@ -625,13 +627,15 @@ Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, giv
 
 ## Target models
 
-Seven models come with ready-made playbooks, researched from their official prompting guides (September and October 2026). More are on the way, and you can [add your own](#adding-or-updating-a-model) any time:
+Nine models come with ready-made playbooks, researched from their official prompting guides (September and October 2026). More are on the way, and you can [add your own](#adding-or-updating-a-model) any time:
 
 | Model | Type | Prompt style |
 |---|---|---|
 | **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. Its example prompts each frame and light the shot differently (from high above, from the floor, through a telephoto lens, film noir), so the Brain doesn't copy one camera into every prompt. |
 | **Krea 2 RAW Edit** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. Its workflow (12 steps with Krea's turbo LoRA) comes with the app. Step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
 | **Krea 2 Character** | Image (same person) | Krea 2 with the Identity Edit LoRA: an instruction (*"Create a photo of this woman…"*), every trait of the [character sheet](#same-person-every-render), the new clothes, pose, camera and light, then "Preserve the exact facial identity and body". Its workflow comes with the app. |
+| **Z-Image Turbo** | Image | Tongyi-MAI's fast 6B model, 8 steps: one caption paragraph with the medium first, skin texture for realism, and the exact words of any sign or label in quotes, which it renders correctly in English and Chinese. |
+| **Qwen Image Edit** | Image (editing) | Qwen-Image-Edit-2509: one short instruction, not a caption: the change, then what must stay ("keep her face and the background"). The person, the product and the layout stay as they are; edited text keeps its font. Its workflow (4 steps with the Lightning LoRA) comes with the app. |
 | **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
 | **MiniMax H3 Reference** | Video + audio (same person) | MiniMax's full-reference format (`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`): your picture is `<Subject 1>`, defined once with every trait of the [character sheet](#same-person-every-render). Its workflow comes with the app. |

@@ -3,7 +3,7 @@
 # ✦ Prompt Maker
 
 **Say what you want to see, in plain words, and get pictures and videos made on your own computer.**
-Start from an idea, a photo, or both. It writes for each model the way that model likes, keeps the same person from shot to shot and gives them a voice. Keep the ones you love, compare them side by side, find them again later. Seven models are ready to go, more are on the way, and you can add your own. Nothing leaves your machine, and it's free.
+Start from an idea, a photo, or both. It writes for each model the way that model likes, keeps the same person from shot to shot and gives them a voice. Keep the ones you love, compare them side by side, find them again later. Nine models are ready to go, more are on the way, and you can add your own. Nothing leaves your machine, and it's free.
 
 ![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
@@ -116,7 +116,7 @@ Everything runs on your own computer and talks only to your own LM Studio and Co
 
 You need a computer with a good graphics card. Linux is where it's tested every day. On Windows the launcher is written but has **not yet been tried on a real Windows PC**; if something doesn't work there, please tell us.
 
-Seven models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **LTX 2.3**, **MiniMax H3** (and a Reference version for your person) and **Wan Animate 2**. [Add your own](docs/guide.md#adding-or-updating-a-model).
+Nine models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **Z-Image Turbo**, **Qwen Image Edit**, **LTX 2.3** and **MiniMax H3** (each from a picture or from words alone, and MiniMax with a Reference version for your person) and **Wan Animate 2**. [Add your own](docs/guide.md#adding-or-updating-a-model).
 
 ## More
 
@@ -130,7 +130,7 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 
 - [LM Studio](https://lmstudio.ai), for making local AI models easy.
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI), for being the best local rendering engine there is.
-- The prompting guides from **Krea**, **Lightricks (LTX)**, **MiniMax** and **Wan-AI** that the bundled playbooks are built on (sources are in each model's editor).
+- The prompting guides from **Krea**, **Tongyi-MAI (Z-Image)**, **Qwen (Alibaba)**, **Lightricks (LTX)**, **MiniMax** and **Wan-AI** that the bundled playbooks are built on (sources are in each model's editor).
 - Fonts: [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), both under the SIL Open Font License (`public/fonts/OFL.txt`).
 - The silhouette motion video behind the Wan Animate 2 clip is from [Pixabay](https://pixabay.com).
 
