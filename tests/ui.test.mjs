@@ -493,7 +493,7 @@ esac
     await waitFor('document.querySelector("#banner").hidden && document.querySelector("#llmDot").classList.contains("ok")', 'reconnected');
   };
   const lastCall = () => mock.log.at(-1);
-  const genDone = () => waitFor('!document.querySelector("#generateBtn").disabled && document.querySelector("#stopBtn").hidden', 'generation to finish', 15000);
+  const genDone = () => waitFor('!document.querySelector("#generateBtn").classList.contains("cooking") && document.querySelector("#stopBtn").hidden', 'generation to finish', 15000);
 
   console.log(`\nPrompt Maker UI tests → screenshots in ${OUT}\n`);
 
@@ -607,7 +607,7 @@ esac
     await type('#theme', 'woman at beach with soda in her hand');
     const before = mockCalls();
     await click('#generateBtn');
-    await waitFor('document.querySelector("#generateBtn").disabled', 'busy state');
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'busy state');
     eq(await text('#genLabel'), 'Writing prompt…', 'busy label');
     await waitFor('[...document.querySelectorAll(".take .prompt-view")].some(v => !v.hidden)', 'streaming text');
     await shot('02-streaming');
@@ -839,7 +839,7 @@ esac
     await toastText('Stopped');
     assert(await visible('#resultsEmpty'), 'empty state after stop');
     await click('#generateBtn');
-    await waitFor('document.querySelector("#generateBtn").disabled', 'busy again');
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'busy again');
     await press('Escape');
     await genDone();
   });
@@ -975,7 +975,7 @@ esac
   await test('Ctrl+Enter generates (and the tab title shows progress)', async () => {
     await type('#theme', 'keyboard warrior portrait');
     await press('Enter', { ctrl: true });
-    await waitFor('document.querySelector("#generateBtn").disabled', 'started by Ctrl+Enter');
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'started by Ctrl+Enter');
     await waitFor('document.title.startsWith("✍️")', 'title shows progress');
     await genDone();
     eq(await count('.take .prompt-text:not([hidden])'), 1, 'result from Ctrl+Enter');
@@ -3626,15 +3626,17 @@ esac
     await type('#theme', 'SLOWTEST first in line');
     const before = comfy.prompts.length;
     await click('#generateBtn');
-    await waitFor('document.querySelector("#generateBtn").disabled', 'cooking');
-    assert(await visible('#queueBtn'), '＋ Queue shows while it cooks');
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'cooking');
+    assert(!(await js('document.querySelector("#generateBtn").disabled')), 'the button stays live while it cooks');
+    assert((await text('#genCost')).includes('line up the next one'), 'and says it lines the next one up');
     assert(!(await visible('#lineBox')), 'nothing in line yet');
 
     // Queued with its own setup: a different LoRA strength and theme.
     await setGrain('0.9');
     await type('#theme', 'a queued harbor');
-    await click('#queueBtn');
+    await click('#generateBtn');
     await toastText('In line');
+    assert((await text('#genCost')).includes('1 waiting'), 'the button counts the line');
     eq(await count('#lineList li'), 1, 'one waiting');
     assert((await text('#lineList li')).includes('a queued harbor'), 'listed by its theme');
     assert((await text('#lineList li')).includes('Krea 2 RAW'), 'and what it is');
@@ -3686,7 +3688,7 @@ esac
     const themes = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).slice(0, 2).map(e => e.theme).join('|');
     eq(themes, 'a queued lighthouse|a queued harbor', 'each its own History entry, in order');
     await waitFor('!document.querySelector(".take .rtile.running")', 'renders done', 10000);
-    assert(!(await visible('#queueBtn')), '＋ Queue goes when nothing is cooking');
+    assert(!(await js('document.querySelector("#generateBtn").classList.contains("cooking")')) && !(await text('#genCost')).includes('line up'), 'the button is itself again when nothing is cooking');
 
     await setGrain('-0.5');
     await click('#wfpAutoRow');
@@ -4173,6 +4175,47 @@ esac
     await waitFor('!document.querySelector("#dropzone").classList.contains("is-off")', 'the picture model takes one again');
     eq(await js('document.querySelector(".task-choice[aria-pressed=true]")?.dataset.task'), 'animate', 'and animates a picture');
     if (before) await click(`.model-card[data-id="${before}"]`);
+  });
+
+  await test('takes: ＋ Add a take writes one more for the set; 🗑 deletes a take and its renders, the last one the card', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await openPanel('create-render');
+    if (await js('document.querySelector("#wfpAuto")?.checked')) await click('#wfpAutoRow');
+    await click('#varSeg button[data-value="2"]');
+    await type('#theme', 'a lighthouse for take tests');
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('#resultsList .take'), 2, 'two takes');
+    await click('#addTakeBtn');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 3 && !document.querySelector("#generateBtn").classList.contains("cooking")', 'a third take written');
+    eq(await text('#resultsList .take:nth-child(3) .take-title'), 'Take 3', 'numbered on');
+    eq(await text('#resultsList .take:nth-child(1) .take-title'), 'Take 1', 'the first is Take 1');
+    let entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    eq(entry.variations.length, 3, 'saved on the same card');
+    eq(entry.theme, 'a lighthouse for take tests', 'the same set');
+    assert((await text('#addTakeBtn')).includes('Add a take'), 'the button is back');
+    // Delete the middle take: the others keep their order, the card stays.
+    await js('localStorage.setItem("pm.deleteWarned", "true")');
+    await click('#resultsList .take:nth-child(2) .take-del');
+    assert((await text('#resultsList .take:nth-child(2) .take-del')).includes('Sure?'), 'asks once');
+    await click('#resultsList .take:nth-child(2) .take-del');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 2', 'two left');
+    entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    eq(entry.variations.length, 2, 'the card has two takes');
+    eq(await text('#resultsList .take:nth-child(2) .take-title'), 'Take 2', 'renumbered');
+    // The last take takes the card with it.
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 1', 'one take left');
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await toastText('Deleted for good');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 0', 'the stage is empty');
+    const themes = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).map(e => e.theme);
+    assert(!themes.includes('a lighthouse for take tests'), 'the card is gone from Saved prompts');
+    await js('localStorage.removeItem("pm.deleteWarned")');
+    await click('#varSeg button[data-value="1"]');
   });
 
   await test('step 3: pick any image from the Gallery', async () => {

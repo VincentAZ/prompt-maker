@@ -23,6 +23,12 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.41.0 — No waiting for the Brain: while a prompt is cooking the main button stays live and lines up the
+  next one (**＋ Click to line up the next one** under it counts the line) (as `Ctrl+Enter` did), the way ComfyUI queues renders; the separate ＋ Queue button is gone. On the stage,
+  **＋ Add a take** writes one more take for the set from everything it was made with, and **🗑** on a take deletes
+  it with its renders (shredded like a card; the last take takes the card). A take's render tiles are redrawn only
+  when they change: a redraw replayed their entrance animation and stopped the video under the mouse, so a take
+  seemed to jolt up on hover.
 - 1.40.0 — Everything that comes with the app ships attached, nothing is opt-in. Every starter workflow a model has is
   added by itself (also one that arrives with an update), not just the first. "Video from words" is its own model:
   **LTX 2.3: video from words** and **MiniMax H3: video from words** sit under **Make a video** in step ①, while

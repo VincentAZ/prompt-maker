@@ -391,12 +391,18 @@ function chainRef(c) {
 }
 
 async function generate(req, res) {
-  const body = await readBody(req);
+  let body = await readBody(req);
   const settings = await store.getSettings();
+  // ＋ Add a take: one more take for a saved set, from everything that set was made with (its words, picture,
+  // look, line, dials), different from the takes it has.
+  const set = body.entryId ? await store.getHistory(String(body.entryId)) : null;
+  if (body.entryId && !set) throw store.httpError(404, 'That set is no longer in Saved prompts.');
+  if (set?.manual) throw store.httpError(400, 'A prompt kept word for word has no Brain to write another take.');
+  if (set) body = { ...set, llmModel: body.llmModel, variations: 1, image: undefined, manual: false, chain: undefined, batch: undefined, line: set.line ? { voice: set.line.voice?.id || set.line.voice, text: set.line.text } : undefined };
   const model = await store.getModel(body.modelId || '');
   if (!model) throw store.httpError(400, 'Pick a target model first.');
   const params = pickParams(body, model, await store.listLooks());
-  if (params.line) params.line = await spokenLine(settings, params.line);
+  if (params.line) params.line = set?.line?.file ? set.line : await spokenLine(settings, params.line); // (the set's clip is kept)
 
   let imageFile = null;
   let imageDataUrl = null;
@@ -425,6 +431,7 @@ async function generate(req, res) {
   const stream = startStream(res, llm, count, seesImages);
   const texts = [];
   const keeps = []; // per take: what the check against the theme found (null: not checked)
+  const had = set ? set.variations.map(v => v.versions.at(-1).text) : []; // the set's takes: the new one differs from them
   const letGo = store.holdFiles([imageFile, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
   try {
     if (model.characterSheet && imageDataUrl && !params.characterSheet) { // first, the person's traits from the image
@@ -438,7 +445,7 @@ async function generate(req, res) {
       }
     }
     for (let index = 0; index < count; index++) {
-      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo }, imageDataUrl, { index, count, previous: texts });
+      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] });
       const t0 = Date.now();
       const warm = llm.loaded !== false;
       const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
@@ -463,7 +470,11 @@ async function generate(req, res) {
   }
 
   try {
-    if (texts.length) {
+    if (texts.length && set) {
+      const now = new Date().toISOString();
+      const entry = await store.updateHistory(set.id, e => { e.variations.push(...texts.map((text, i) => ({ versions: [{ text, instruction: null, createdAt: now, ...(keeps[i] ? { kept: keeps[i] } : {}) }] }))); });
+      stream.send({ type: 'saved', entry });
+    } else if (texts.length) {
       const now = new Date().toISOString();
       const entry = await store.addHistory({
         modelId: model.id,
@@ -1087,6 +1098,29 @@ const onThisComputer = raw => {
     return true;
   }
 };
+
+// 🗑 One take out of a set: its renders go the way a deleted render does, then the take itself; its words leave
+// ComfyUI's job history and the other apps' logs the way a deleted card's do. The last take takes the card with it.
+async function deleteOneTake(id, index) {
+  const found = await store.getHistory(id);
+  if (!found || !found.variations[index]) return { ok: true, entry: found || null };
+  if (found.variations.length === 1) return { ...(await deleteTake(id)), entry: null };
+  const settings = await store.getSettings();
+  for (const r of found.variations[index].renders || []) await deleteOneRender(id, r.id);
+  const { entry, removed, rest } = await store.deleteVariation(id, index);
+  const others = new Set(rest.flatMap(e => e.variations.flatMap(v => v.versions.map(x => x.text))));
+  const texts = [...new Set(removed.versions.map(x => x.text))].filter(t => !others.has(t));
+  const notes = [await forgetInComfy(settings, { texts, rest })];
+  if (settings.logScrub !== false && texts.length) {
+    const tails = store.phrasesOf(texts, { tails: true });
+    await scrubLogs(tails, { since: (Date.parse(found.createdAt) || 0) - 864e5 }).catch(err => (console.warn(`Couldn't scrub LM Studio's logs: ${err.message}`), notes.push("LM Studio's logs couldn't be cleaned, so its server-logs folder may still quote the prompt.")));
+    const dirs = await comfy.folders(settings.comfyUrl, { roots: [settings.comfyDir, settings.comfyLaunch?.dir], args: await comfyArgs(settings) }).catch(() => ({}));
+    await comfy.scrubLogs(dirs, tails).catch(err => console.warn(`Couldn't scrub ComfyUI's logs: ${err.message}`));
+    await store.scrubTextFile(services.comfyLog(), tails).catch(() => {});
+  }
+  const left = notes.filter(Boolean).join(' ');
+  return { ok: true, entry: await store.withPresentFiles(entry), ...(left ? { left } : {}) };
+}
 
 async function deleteOneRender(entryId, renderId) {
   const settings = await store.getSettings();
@@ -1799,6 +1833,7 @@ async function route(req, res) {
     }
     if (m === 'DELETE') return sendJson(res, 200, await deleteTake(id));
   }
+  if ((match = p.match(/^\/api\/history\/([\w-]+)\/takes\/(\d+)$/)) && m === 'DELETE') return sendJson(res, 200, await deleteOneTake(match[1], Number(match[2])));
 
   // ---- ComfyUI (optional renders) ----
   if (p === '/api/comfy/status' && m === 'GET') {

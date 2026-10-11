@@ -2693,8 +2693,10 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   head.innerHTML = `<span class="tag model">${kindIcon(entry.modelKind)} ${esc(entry.modelName)}</span>${entry.batch ? `<span class="tag batch" title="From the batch “${esc(entry.batch)}”">🎞 ${esc(entry.batch)}</span>` : ''}${entry.source ? `<button type="button" class="tag src-link" id="srcLink" title="Open the take this came from">⬑ from ${esc(takeLabel(entry.source))}</button>` : ''}${tags}
     ${entry.manual ? '<span class="via">✍️ your own prompt, word for word</span>' : via ? `<span class="via">${running ? 'rolling on' : 'written by'} ${esc(via)}${totalSecs ? ` in ${totalSecs.toFixed(1)}s` : ''}</span>` : ''}
     ${takes > 1 && (running || entry.id) && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn"${off}>🎨 Render all ${takes}</button>` : ''}
-    ${takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn"${off}>📋 Copy all ${takes} takes</button>` : ''}`;
+    ${takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn"${off}>📋 Copy all ${takes} takes</button>` : ''}
+    ${entry.id && !entry.manual && m && !entry.chain ? `<button type="button" class="btn small" id="addTakeBtn" title="One more take for this set, written from the same idea, picture and settings, different from the ones here"${off}>＋ Add a take</button>` : ''}`;
   head.hidden = false;
+  $('#addTakeBtn')?.addEventListener('click', addTake);
   $('#srcLink')?.addEventListener('click', () => openSource(entry.source));
   $('#renderAllBtn')?.addEventListener('click', () => state.cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); }));
   $('#copyAllBtn')?.addEventListener('click', e => copyText(takesText(state.cards.filter(c => !c.interrupted).map(c => $('.prompt-text', c.el).value.trim())), e.currentTarget));
@@ -3662,6 +3664,7 @@ function createTake(index, count, model) {
       <div class="take-actions">
         <button type="button" class="btn small save-edit" hidden>💾 Save edit</button>
         <button type="button" class="btn small primary copy" aria-label="Copy ${esc(name)}" disabled>Copy</button>
+        <button type="button" class="icon-btn take-del" title="Delete this take and its renders" aria-label="Delete ${esc(name)}" disabled>🗑</button>
       </div>
     </div>
     <div class="prompt-well">
@@ -3688,6 +3691,7 @@ function createTake(index, count, model) {
     $('.save-edit', el).hidden = !cardDirty(card);
   });
   $('.copy', el).addEventListener('click', e => copyText(ta.value.trim(), e.currentTarget));
+  $('.take-del', el).addEventListener('click', () => deleteTakeCard(card));
   $('.save-edit', el).addEventListener('click', () => saveEdit(card));
   $('.prev', el).addEventListener('click', () => pageVersion(card, -1));
   $('.next', el).addEventListener('click', () => pageVersion(card, 1));
@@ -3706,6 +3710,46 @@ function createTake(index, count, model) {
 }
 
 const versionsOf = card => state.entry?.variations?.[card.index]?.versions || [];
+
+// 🗑 One take out of the set, with its renders (for good, like a deleted card: see deleteWarning). The last take
+// takes the card with it. The other takes keep their numbers in order.
+async function deleteTakeCard(card) {
+  const entry = state.entry;
+  if (!entry?.id || !entry.variations?.[card.index]) return;
+  if (state.busy) return toast('Hold on, a prompt is still being written.', true);
+  if (card.running.size || rendersNow.some(j => j.historyId === entry.id && j.index === card.index)) return toast('This take is still rendering: cancel the render first (✕ on its tile, or in the top bar).', true);
+  if (card.deleting) return;
+  const renders = entry.variations[card.index].renders?.length || 0;
+  if (!saved.get('deleteWarned', false) && !(await deleteWarning())) return;
+  else if (saved.get('deleteWarned', false) && !(await confirmInline(card, renders))) return;
+  card.deleting = true;
+  if (entry.variations.length === 1) {
+    await deleteEntryNow(entry).finally(() => { card.deleting = false; });
+    renderResults(null);
+    return;
+  }
+  const { entry: fresh, left } = await api(`/api/history/${entry.id}/takes/${card.index}`, { method: 'DELETE' }).finally(() => { card.deleting = false; });
+  const i = state.history.findIndex(x => x.id === entry.id);
+  if (i >= 0 && fresh) state.history[i] = fresh;
+  if (fresh) sessionCache.set(entry.id, fresh);
+  forgetSeenImages();
+  const timings = {};
+  Object.entries(state.timings).forEach(([k, v]) => { const n = Number(k); if (n < card.index) timings[n] = v; else if (n > card.index) timings[n - 1] = v; });
+  state.timings = timings;
+  renderResults(fresh);
+  if (isView('history')) renderHistory();
+  toast(left ? `🗑️ Take deleted. ${left}` : `🗑️ Take deleted${renders ? ` with its ${renders} render${renders > 1 ? 's' : ''}` : ''}`, Boolean(left));
+}
+// Delete → Sure? on the take itself, once the warning was ticked away.
+function confirmInline(card, renders) {
+  const b = $('.take-del', card.el);
+  if (b.dataset.sure) { delete b.dataset.sure; b.textContent = '🗑'; b.classList.remove('danger'); return Promise.resolve(true); }
+  b.dataset.sure = '1';
+  b.textContent = renders ? `Sure? ${renders} render${renders > 1 ? 's' : ''} go too` : 'Sure?';
+  b.classList.add('danger');
+  setTimeout(() => { if (b.dataset.sure) { delete b.dataset.sure; b.textContent = '🗑'; b.classList.remove('danger'); } }, 4000);
+  return Promise.resolve(false);
+}
 
 // True when the textarea holds a non-empty edit that isn't saved as a version yet.
 function cardDirty(card) {
@@ -3802,6 +3846,7 @@ function showVersion(card, i) {
   setStatus(card, '');
   const canRefine = Boolean(card.model);
   $('.copy', card.el).disabled = false;
+  $('.take-del', card.el).disabled = !state.entry?.id;
   $('.save-edit', card.el).hidden = true;
   $('.refine', card.el).hidden = !canRefine;
   $('.chips', card.el).hidden = !canRefine;
@@ -3859,7 +3904,9 @@ function adoptEntry(entry, totalSecs) {
 
 function setBusy(busy) {
   state.busy = busy;
-  $('#generateBtn').disabled = busy || state.chainActive || Boolean(state.batchRun);
+  // Cooking? The button lines the next one up instead of waiting (a chain can't wait in line: it may stop and ask).
+  $('#generateBtn').disabled = running() && chainOn();
+  $('#generateBtn').classList.toggle('cooking', running());
   updateGenerateLabel();
   $('#stopBtn').hidden = !busy && !state.chainActive && !state.batchRun;
   syncNewBtn();
@@ -4101,10 +4148,8 @@ function orderLine(o) {
 function drawLine() {
   syncHolds();
   const n = line.orders.length;
-  $('#queueBtn').hidden = (!running() && !line.pumping) || chainOn();
-  $('#queueCount').hidden = !n;
-  $('#queueCount').textContent = n;
-  $('#queueBtn').setAttribute('aria-label', n ? `Queue (${n} waiting)` : 'Queue');
+  $('#generateBtn').classList.toggle('cooking', running());
+  updateGenerateLabel();
   $('#lineBox').hidden = !n;
   $('#lineBox').classList.toggle('held', line.held);
   if (!n) return;
@@ -4117,7 +4162,6 @@ function drawLine() {
   </li>`).join('');
 }
 
-$('#queueBtn').addEventListener('click', generate);
 $('#lineList').addEventListener('click', e => {
   const li = e.target.closest('.ln-del') && e.target.closest('li');
   if (li) dropOrder(Number(li.dataset.id));
@@ -4273,6 +4317,78 @@ async function runGeneration(body, m, { rendersNext = false } = {}) {
   setTitle(failed ? '⚠️ Failed' : document.hidden && savedEntry ? '✓ Done' : '');
   loadLlms(); // a run can load a model or reveal that LM Studio went away
   return savedEntry;
+}
+
+// ＋ Add a take: one more for the set on the stage, from everything it was made with (the server reads the set),
+// streamed into a new card at the end; the set's other takes stay as they are.
+async function addTake() {
+  const entry = state.entry;
+  if (!entry?.id || entry.manual) return;
+  if (running() || line.pumping) return toast('Hold on, something is still cooking. The take can be added when it\'s done.', true);
+  const m = modelById(entry.modelId);
+  if (!m) return toast('That model was deleted, so no more takes can be written for this set.', true);
+  if (state.llmOk === false) await loadLlms();
+  if (state.llmOk === false) return showError(`Can't reach LM Studio at ${state.settings.lmStudioUrl}. Its local server is off (quitting the LM Studio app turns it off too).`);
+  const llm = selectedLlm();
+  if (entry.imageFile && llm?.vision === false) return showError(`${llm.name} is text-only and can't see this set's image. Pick a vision model (👁) in the top bar.`);
+  await flushEdits();
+  showError('');
+  const index = entry.variations.length;
+  const count = index + 1;
+  const card = createTake(index, count, m);
+  state.cards.push(card);
+  $('#resultsList').append(card.el);
+  reserveWell(card);
+  renderZone(card);
+  setStatus(card, 'Warming up…', true);
+  state.cards.forEach(c => { if (c !== card) $('.take-title', c.el).innerHTML = `Take <em>${c.index + 1}</em>`; }); // "Your prompt" becomes Take 1
+  state.controller = new AbortController();
+  state.runId = null;
+  state.stopping = false;
+  setBusy(true);
+  setTitle(`✍️ Take ${count}`);
+  card.el.scrollIntoView({ block: 'nearest', behavior: scrollMode() });
+  const t0 = performance.now();
+  let savedEntry = null;
+  let failed = null;
+  try {
+    await streamApi('/api/generate', { entryId: entry.id, llmModel: llm?.id }, ev => {
+      if (ev.type === 'start') state.runId = ev.runId;
+      else if (ev.type === 'status') setStatus(card, `⏳ ${ev.text}`);
+      else if (ev.type === 'delta') showStreaming(card, ev.text, ev.thinking, ev.reasoningChars);
+      else if (ev.type === 'done') {
+        state.timings[index] = (performance.now() - t0) / 1000;
+        showStreaming(card, ev.text, false);
+        $('.caret', card.el)?.remove();
+        setStatus(card, '✓ Done', false);
+        announce(`Take ${count} done`);
+      } else if (ev.type === 'error') { failed = ev.message; if (ev.partial) card.partial = ev.partial; } else if (ev.type === 'saved') savedEntry = ev.entry;
+    }, state.controller.signal);
+  } catch (err) {
+    if (err.name !== 'AbortError') failed = friendly(err);
+  }
+  state.controller = null;
+  state.runId = null;
+  setBusy(false);
+  if (savedEntry) {
+    savedEntry.llmName = entry.llmName;
+    state.entry = savedEntry;
+    const i = state.history.findIndex(x => x.id === entry.id);
+    if (i >= 0) state.history[i] = savedEntry;
+    sessionCache.set(entry.id, savedEntry);
+    showVersion(card, 0);
+    renderStageHead(savedEntry);
+    if (isView('history')) renderHistory();
+  } else {
+    card.el.remove();
+    state.cards = state.cards.filter(c => c !== card);
+    renderStageHead(entry);
+    if (state.cards.length === 1) $('.take-title', state.cards[0].el).innerHTML = 'Your <em>prompt</em>';
+  }
+  state.stopping = false;
+  if (failed) showError(failed);
+  setTitle(failed ? '⚠️ Failed' : '');
+  loadLlms();
 }
 
 async function refineCard(card, instruction) {
@@ -7357,6 +7473,11 @@ function renderTiles(card) {
   const ar = ASPECT_CSS(state.entry?.aspectRatio);
   const video = animateTarget();
   const picking = pickStep() != null;
+  // The same tiles as last time: left as they are (a redraw replays their entrance, so they'd jump up under the
+  // mouse, and stops the video playing under it).
+  const key = JSON.stringify([items.map(it => [it.render.id, it.file.file, it.render.secs, it.render.seed]), [...card.running.keys()], card.pending && !card.running.size, ar, video?.id, picking ? [...state.run.picks] : null, picking ? items.map(it => continuedFrom(state.run, it)) : null]);
+  if (box.dataset.key === key && box.children.length) return;
+  box.dataset.key = key;
   const tiles = items.map((it, n) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -7778,11 +7899,16 @@ function updateGenerateLabel() {
   $('#genLabel').textContent = run ? (run.stopped ? 'Stopping…' : state.busy ? `${which}: writing…` : `${which}: ${run.done} of ${run.total} rendered`)
     : state.busy ? 'Writing prompt…' : state.chainActive ? 'Steps running…'
       : chained ? 'Run all steps' : list.length ? `Make ${list.reduce((n, b) => n + b.count, 0)} ${media}s` : action;
+  // While it cooks the button stays live and lines the next one up (the line under it says so, and counts the line).
+  const cooking = running() && !chained;
+  const waiting = line.orders.length;
+  $('#generateBtn kbd').textContent = cooking ? '＋ queue' : 'Ctrl ↵';
+  $('#generateBtn').title = cooking ? `Click to line up the form as it is now (Ctrl+Enter). It runs when what's cooking is done, and changing the form afterwards won't change it.` : '';
   // The Ctrl ↵ hint only fits beside the short label; a longer one gets the room.
   $('#generateBtn').classList.toggle('long-label', $('#genLabel').textContent.length > 14);
   const total = list.reduce((n, b) => n + b.count, 0);
   const chainLine = chained && !state.busy && !state.chainActive ? chainCost() : '';
-  const cost = chainLine ? `⛓ ${chainLine}`
+  const cost = cooking ? `＋ Click to line up the next one${waiting ? ` · ${waiting} waiting` : ''}` : chainLine ? `⛓ ${chainLine}`
     : list.length && !state.busy && !run ? `🎞 ${list.length > 1 ? `${list.length} batches · ${total} ${outputWord(total)}` : batchLine(list[0])}` : '';
   $('#genCost').hidden = !cost;
   $('#genCost').textContent = cost;
