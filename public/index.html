@@ -377,6 +377,24 @@
                   <button type="button" class="chip-btn rated" data-min="3" aria-pressed="false" title="Rated excellent">★★★</button>
                 </div>
                 <select id="reelModel" class="reel-model" aria-label="Filter by model"></select>
+                <div id="reelFine" class="reel-fine">
+                <div id="reelWhen" class="filter-chips" role="group" aria-label="When it was made">
+                  <button type="button" class="chip-btn" data-when="today" aria-pressed="false" title="Made today">📅 Today</button>
+                  <button type="button" class="chip-btn" data-when="week" aria-pressed="false" title="Made in the last 7 days">This week</button>
+                  <button type="button" class="chip-btn" data-when="month" aria-pressed="false" title="Made in the last 30 days">This month</button>
+                  <button type="button" class="chip-btn" data-when="older" aria-pressed="false" title="Made more than 30 days ago">Older</button>
+                </div>
+                <div id="reelShape" class="filter-chips" role="group" aria-label="Shape">
+                  <button type="button" class="chip-btn" data-shape="portrait" aria-pressed="false" title="Taller than wide">▯ Portrait</button>
+                  <button type="button" class="chip-btn" data-shape="landscape" aria-pressed="false" title="Wider than tall">▭ Landscape</button>
+                  <button type="button" class="chip-btn" data-shape="square" aria-pressed="false" title="About as wide as tall">▢ Square</button>
+                </div>
+                <button type="button" id="reelUnrated" class="chip-btn" aria-pressed="false" title="Renders you haven't rated yet">☆ Not rated yet</button>
+                <button type="button" id="reelLine" class="chip-btn" aria-pressed="false" title="Videos made with a 🎙 spoken line" hidden>🎙 Spoken line</button>
+                <select id="reelWorkflow" class="reel-model" aria-label="Filter by workflow" hidden></select>
+                <select id="reelLora" class="reel-model" aria-label="Filter by LoRA" hidden></select>
+                <select id="reelLook" class="reel-model" aria-label="Filter by look" hidden></select>
+                </div>
                 <button type="button" id="reelHidden" class="chip-btn" aria-pressed="false" title="The renders you hid. Click 👁 Show on one to bring it back." hidden>🙈 Hidden</button>
                 <button type="button" id="reelNewest" class="chip-btn" title="You've dragged cards into your own order. This puts them back newest first." hidden>↺ Newest first</button>
                 </div>

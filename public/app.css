@@ -1619,7 +1619,10 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 #backToModels { margin-bottom: 16px; }
 .reel-filter-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .reel-filters .reel-find { min-width: 140px; flex: 1 1 180px; }
-#reelFilterToggle { display: none; }
+/* The finer filters (when, shape, not rated, spoken line, workflow, LoRA, look) fold under Filters, so the bar stays
+   one row until you ask; they open on their own while one of them is on. */
+.reel-fine { display: none; flex-basis: 100%; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.filters-open .reel-fine { display: flex; }
 .reel-sel { position: sticky; bottom: 0; flex-wrap: wrap; background: var(--panel-solid); }
 .reel-grid.selecting .reel-cell::before { content: ''; pointer-events: none; position: absolute; z-index: 2; top: 8px; left: 8px; width: 22px; height: 22px; border: 2px solid white; background: rgb(0 0 0 / 60%); border-radius: 5px; }
 .reel-grid.selecting .reel-cell.picked::before { content: '✓'; background: var(--hot); color: var(--ink); display: grid; place-items: center; font-weight: 800; }
@@ -1654,7 +1657,6 @@ body.narrow #stage, body.narrow #theme { scroll-margin-top: calc(var(--topbar-h,
 @media (max-width: 760px) {
   .reel-filters { flex-wrap: wrap; overflow: visible; }
   .reel-filters .reel-find { flex: 1 1 140px; width: 140px; max-width: none; }
-  #reelFilterToggle { display: inline-flex; }
   .reel-filter-options { display: none; flex-basis: 100%; }
   .filters-open .reel-filter-options { display: flex; }
   .reel-filter-options .filter-chips { flex-wrap: wrap; }

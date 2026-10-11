@@ -66,7 +66,7 @@ The main button tells you what comes next: **Write prompt**, **Make image**, or 
 
 Choose **Shape**, **Size** and **Variations** on the main path. Size offers Small to Huge in the picked shape (HD, Full HD, 2K and 4K by name on video), starts on the model's usual size, and takes any width × height you type; prompt length and adventurousness sit under **More options**. The model guide and look choices (eleven looks, **No look**, or **your own**) open when needed. **Models** starts with what each model makes, what it needs and its local rendering readiness; **Customize** opens the existing playbook and workflow editor.
 
-In Gallery, search stays visible on small screens, with extra choices under **Filters**, an active-filter count and **Clear filters**. The viewer links back to the original prompt. **Pin on the left** changes the comparison reference; stars rate the artwork. Secondary actions and panels are quieter so the work stands out.
+In Gallery, search stays visible on small screens, with the finer choices under **Filters** (when it was made, shape, not rated yet, spoken line, workflow, LoRA, look), an active-filter count and **Clear filters**; search also finds a seed or a size. The viewer links back to the original prompt. **Pin on the left** changes the comparison reference; stars rate the artwork. Secondary actions and panels are quieter so the work stands out.
 
 ## The same person, every shot
 

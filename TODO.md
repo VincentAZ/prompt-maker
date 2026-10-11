@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.43.0 — Finer Gallery filters: 📅 Today / This week / This month / Older, shape (portrait, landscape, square),
+  ☆ Not rated yet, 🎙 Spoken line, and menus for the workflow, LoRA and look a render was made with (each shows once
+  there's a choice); search also finds a seed, a size, a look or a LoRA.
 - 1.42.0 — Every parameter of a take can be changed on the take: **⚙ This take's settings** under its render bar
   holds shape, size, duration, seed, every sampler setting and the LoRA switches and strengths, for that take's
   renders only (step ⑤ and the other takes keep theirs; ↺ Same as step ⑤ gives it all back).

@@ -2808,6 +2808,38 @@ esac
     await click('#reelFilterClear');
     eq(await value('#reelFind'), '', 'clear removes the query');
     await viewport(1440, 900);
+    // The finer filters: when, shape, not rated, and the menus of what the renders were made with.
+    const shown = await count('#reelGrid .reel-cell');
+    if (await js('document.querySelector("#reelFilterToggle").getAttribute("aria-expanded") === "true"')) await click('#reelFilterToggle');
+    assert(!(await visible('#reelWhen')), 'the finer filters wait under Filters');
+    await click('#reelFilterToggle');
+    assert(await visible('#reelWhen'), 'Filters opens them');
+    const today = await js('[...document.querySelectorAll("#reelGrid .reel-cell .rt-cap span")].filter(s => /\\d:\\d\\d/.test(s.textContent)).length'); // (a card made today shows its time, an older one its date)
+    await click('#reelWhen [data-when="today"]');
+    eq(await count('#reelGrid .reel-cell'), today, 'the ones made today');
+    await click('#reelWhen [data-when="older"]');
+    const older = await count('#reelGrid .reel-cell');
+    assert(older <= shown - today && (await js('[...document.querySelectorAll("#reelGrid .reel-cell .rt-cap span")].every(s => !/\\d:\\d\\d/.test(s.textContent))')), 'none of the older ones was made today');
+    await click('#reelWhen [data-when="older"]');
+    eq(await count('#reelGrid .reel-cell'), shown, 'a second click lets go of the filter');
+    const landscape = await js('[...document.querySelectorAll("#reelGrid .reel-cell")].filter(c => c.getBoundingClientRect().width > c.getBoundingClientRect().height * 1.05).length');
+    await click('#reelShape [data-shape="landscape"]');
+    eq(await count('#reelGrid .reel-cell'), landscape, 'only the wide ones');
+    await click('#reelUnrated');
+    assert((await text('#reelFilterToggle')).includes('2'), 'two filters on');
+    assert(await js('[...document.querySelectorAll("#reelGrid .reel-cell .rate-bar .on")].length === 0'), 'none of them rated');
+    await click('#reelRated button[data-min="1"]');
+    eq(await js('document.querySelector("#reelUnrated").getAttribute("aria-pressed")'), 'false', 'a star filter lets go of Not rated');
+    assert(await visible('#reelWorkflow') || (await count('#reelWorkflow option')) < 3, 'the workflow menu shows once there is a choice');
+    const seed = await js('document.querySelector("#reelGrid .reel-cell .rt-meta, #reelGrid .reel-cell .rt-cap")?.textContent.match(/seed (\\d+)/)?.[1] || ""');
+    await click('#reelFilterClear');
+    if (seed) {
+      await type('#reelFind', seed);
+      assert((await count('#reelGrid .reel-cell')) >= 1 && (await count('#reelGrid .reel-cell')) < shown, 'search finds a seed');
+      await click('#reelFilterClear');
+    }
+    eq(await count('#reelGrid .reel-cell'), shown, 'all back');
+    await viewport(1440, 900);
     await click('.tabs [data-view="create"]');
   });
 

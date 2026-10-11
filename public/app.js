@@ -2908,7 +2908,8 @@ function allRenders() {
 }
 
 // The filters, remembered (all but the words to find).
-const reelFilter = { kind: '', session: false, min: 0, model: '', ...saved.get('reelFilter', {}), q: '', hidden: false };
+const REEL_FILTER_NONE = { kind: '', session: false, min: 0, model: '', when: '', shape: '', unrated: false, line: false, workflow: '', lora: '', look: '' };
+const reelFilter = { ...REEL_FILTER_NONE, ...saved.get('reelFilter', {}), q: '', hidden: false };
 const REEL_PAGE = 60; // pictures drawn at a time; more as you scroll down
 let reelShown = REEL_PAGE;
 let reelItems = []; // what the box shows, in order (for the lightbox)
@@ -2955,13 +2956,31 @@ const madeOn = iso => {
   return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
 };
 
+// When a render was made, for the 📅 filter: today, this week (7 days), this month (30 days), or older.
+function madeWhen(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return '';
+  const days = (Date.now() - t) / 864e5;
+  return new Date(t).toDateString() === new Date().toDateString() ? 'today' : days < 7 ? 'week' : days < 30 ? 'month' : 'older';
+}
+const whenIn = (made, want) => want === 'older' ? made === 'older' : want === 'month' ? made !== 'older' && made !== '' : want === 'week' ? made === 'today' || made === 'week' : made === want;
+const shapeOf = ratio => (ratio > 1.05 ? 'landscape' : ratio < 0.95 ? 'portrait' : 'square');
+const reelLookOf = e => lookTagOf(e) || '';
+
 function reelMatch(it) {
   const f = reelFilter;
   if (!inGallery() && Boolean(it.render.hidden) !== f.hidden) return false;
   if (f.kind && it.file.kind !== f.kind) return false;
   if (f.session && (it.render.createdAt || '') < sinceStart()) return false;
   if (ratingOf(it.render) < f.min || (f.model && it.entry.modelId !== f.model)) return false;
-  const text = `${it.entry.theme || ''} ${it.render.text || ''} ${it.entry.modelName || ''} ${it.render.workflowName || ''}`.toLowerCase();
+  if (f.unrated && ratingOf(it.render)) return false;
+  if (f.when && !whenIn(madeWhen(it.render.createdAt), f.when)) return false;
+  if (f.shape && shapeOf(reelRatioOf(it)) !== f.shape) return false;
+  if (f.line && !it.entry.line) return false;
+  if (f.workflow && (it.render.workflowName || '') !== f.workflow) return false;
+  if (f.lora && !(it.render.loras || []).some(l => l.name === f.lora)) return false;
+  if (f.look && reelLookOf(it.entry) !== f.look) return false;
+  const text = `${it.entry.theme || ''} ${it.render.text || ''} ${it.entry.modelName || ''} ${it.render.workflowName || ''} ${it.render.seed ?? ''} ${it.render.size || ''} ${it.render.duration || ''} ${reelLookOf(it.entry)} ${(it.render.loras || []).map(l => loraShort(l.name)).join(' ')}`.toLowerCase();
   return reelWords(f.q).every(w => text.includes(w));
 }
 
@@ -2971,11 +2990,14 @@ function reelJobMatch(j) {
   if (f.hidden && !inGallery()) return false;
   const kind = modelById(j.modelId)?.kind === 'video' ? 'video' : 'image';
   if (f.min || (f.kind && kind !== f.kind) || (f.model && j.modelId !== f.model)) return false;
+  if ((f.when && f.when !== 'today') || f.line || f.lora || f.look || (f.workflow && j.workflowName !== f.workflow)) return false;
+  if (f.shape) { const m = /^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/.exec(j.aspectRatio || ''); if (!m || shapeOf(m[1] / m[2]) !== f.shape) return false; }
   const text = `${j.theme || ''} ${j.modelName || ''} ${j.workflowName || ''}`.toLowerCase();
   return reelWords(f.q).every(w => text.includes(w));
 }
 
-const reelFiltered = () => Boolean(reelFilter.kind || reelFilter.session || reelFilter.min || reelFilter.model || reelWords(reelFilter.q).length);
+const reelActive = () => Object.keys(REEL_FILTER_NONE).filter(k => reelFilter[k] !== REEL_FILTER_NONE[k]);
+const reelFiltered = () => Boolean(reelActive().length || reelWords(reelFilter.q).length);
 
 // Width / height: the picture's own once it has loaded, else the size it was rendered at, else its model's aspect.
 function reelRatioOf(it) {
@@ -3068,11 +3090,35 @@ function renderReelFilters(all) {
   }
   menu.value = f.model;
   menu.hidden = models.length < 2 && !f.model;
+  // Menus of what the renders were made with: a workflow, a LoRA, a look. Each shows once there's a choice.
+  const menuOf = (id, field, label, pairs) => {
+    const items = [...new Map(pairs.filter(([v]) => v).map(([v, name]) => [v, name])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    if (f[field] && !items.some(([v]) => v === f[field])) f[field] = '';
+    const el = $(id);
+    const opts = [['', label], ...items];
+    const k = JSON.stringify(opts);
+    if (el.dataset.key !== k) { el.dataset.key = k; el.innerHTML = opts.map(([v, name]) => `<option value="${esc(v)}">${esc(name)}</option>`).join(''); }
+    el.value = f[field];
+    el.hidden = items.length < 2 && !f[field];
+  };
+  menuOf('#reelWorkflow', 'workflow', 'Any workflow', all.map(it => [it.render.workflowName || '', it.render.workflowName || '']));
+  menuOf('#reelLora', 'lora', 'Any LoRA', all.flatMap(it => (it.render.loras || []).map(l => [l.name, loraShort(l.name)])));
+  menuOf('#reelLook', 'look', 'Any look', all.map(it => [reelLookOf(it.entry), reelLookOf(it.entry)]));
+  $('#reelLine').hidden = !f.line && !all.some(it => it.entry.line);
   $$('#reelKinds button').forEach(b => b.setAttribute('aria-pressed', b.dataset.kind === f.kind));
   $$('#reelRated button').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.min) === f.min));
+  $$('#reelWhen button').forEach(b => b.setAttribute('aria-pressed', b.dataset.when === f.when));
+  $$('#reelShape button').forEach(b => b.setAttribute('aria-pressed', b.dataset.shape === f.shape));
   $('#reelSession').setAttribute('aria-pressed', f.session);
+  $('#reelUnrated').setAttribute('aria-pressed', f.unrated);
+  $('#reelLine').setAttribute('aria-pressed', f.line);
   if ($('#reelFind') !== document.activeElement) $('#reelFind').value = f.q;
-  const count = Number(Boolean(f.kind)) + Number(Boolean(f.model)) + Number(Boolean(f.min)) + Number(Boolean(f.session)) + Number(Boolean(f.hidden)) + Number(Boolean(f.q.trim()));
+  const count = reelActive().length + Number(Boolean(f.hidden)) + Number(Boolean(f.q.trim()));
+  const fine = ['when', 'shape', 'unrated', 'line', 'workflow', 'lora', 'look'];
+  if (reelActive().some(k => fine.includes(k)) && $('#reelFilterToggle').getAttribute('aria-expanded') !== 'true') { // a finer filter is on: show it
+    $('#reelFilterToggle').setAttribute('aria-expanded', 'true');
+    $('#reelFilters').classList.add('filters-open');
+  }
   $('#reelFilterToggle').textContent = count ? `Filters (${count})` : 'Filters';
   $('#reelFilterClear').hidden = !count && !f.q;
 }
@@ -3082,7 +3128,12 @@ $('#reelFilterToggle').addEventListener('click', () => {
   $('#reelFilterToggle').setAttribute('aria-expanded', String(open));
   $('#reelFilters').classList.toggle('filters-open', open);
 });
-$('#reelFilterClear').addEventListener('click', () => setReelFilter({ kind: '', model: '', min: 0, session: false, hidden: false, q: '' }));
+$('#reelFilterClear').addEventListener('click', () => setReelFilter({ ...REEL_FILTER_NONE, hidden: false, q: '' }));
+$('#reelWhen').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ when: b.dataset.when === reelFilter.when ? '' : b.dataset.when }); });
+$('#reelShape').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ shape: b.dataset.shape === reelFilter.shape ? '' : b.dataset.shape }); });
+$('#reelUnrated').addEventListener('click', () => setReelFilter({ unrated: !reelFilter.unrated, ...(reelFilter.unrated ? {} : { min: 0 }) }));
+$('#reelLine').addEventListener('click', () => setReelFilter({ line: !reelFilter.line }));
+for (const [id, field] of [['#reelWorkflow', 'workflow'], ['#reelLora', 'lora'], ['#reelLook', 'look']]) $(id).addEventListener('change', e => setReelFilter({ [field]: e.target.value }));
 
 function setReelFilter(change) {
   Object.assign(reelFilter, change);
@@ -3631,7 +3682,7 @@ document.addEventListener('keydown', e => {
 
 $('#reelToggle').addEventListener('click', () => { saved.set('reelClosed', reelOpen()); renderReel(); pollRenders(); });
 $('#reelKinds').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ kind: b.dataset.kind }); });
-$('#reelRated').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ min: Number(b.dataset.min) === reelFilter.min ? 0 : Number(b.dataset.min) }); });
+$('#reelRated').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setReelFilter({ min: Number(b.dataset.min) === reelFilter.min ? 0 : Number(b.dataset.min), unrated: false }); });
 $('#reelSession').addEventListener('click', () => setReelFilter({ session: !reelFilter.session }));
 $('#reelHidden').addEventListener('click', () => setReelFilter({ hidden: !reelFilter.hidden }));
 $('#reelModel').addEventListener('change', e => setReelFilter({ model: e.target.value }));
@@ -3639,7 +3690,7 @@ $('#reelFind').addEventListener('input', e => setReelFilter({ q: e.target.value 
 $('#reelEmpty').addEventListener('click', e => {
   if (!e.target.closest('[data-reel="all"]')) return;
   $('#reelFind').value = '';
-  setReelFilter({ kind: '', session: false, min: 0, model: '', q: '' });
+  setReelFilter({ ...REEL_FILTER_NONE, q: '' });
 });
 
 // Opens the take a chained entry came from.
