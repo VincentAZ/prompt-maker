@@ -478,9 +478,10 @@ Step **⑤ Render it** on the Create page is your control center:
 
 Every take also has a **🎨 Render** bar:
 
-- **The workflow menu** is the same choice as step ⑤; change either one. **⚙** opens its sampler settings.
+- **The workflow menu** is the same choice as step ⑤; change either one.
+- **⚙ This take's settings** opens every knob a render of this take uses, on the take itself: **Shape**, **Size** and **Duration** (the set's unless you change them here), the **Seed** (new each render, or fixed at a number), every sampler setting the workflow has (steps, CFG, sampler, scheduler, denoise…) and the LoRAs' switches and strengths. What you set here is this take's alone: step ⑤, the other takes and the workflow keep theirs, and the line under the bar says what the take has of its own (⚙ 9:16 · 1080×1920, own sampler settings…). **↺ Same as step ⑤** gives it all back. Picking another workflow for the take clears its own sampler, seed and LoRA settings (they belonged to the other one). ＋ Add LoRA and the workflow itself stay in step ⑤.
 - **×1–×4**: render several at once, each with its own seed. It starts at **Renders per take** from step ⑤. (For more, use **Batch** in step ⑤.)
-- **🎲 New seed / 🔒 Seed**: lock the last seed to try prompt tweaks on the same composition.
+- **🎲 Random seed / 🔒 Seed**: the seed the take renders with (step ⑤'s, or the take's own from ⚙); click it to change it for this take.
 - **▶ Render**: live progress shows on the tile (queue position, node, step, %), with previews if ComfyUI was started with `--preview-method auto`. **✕** cancels.
 - **🎨 Render all** does every take in one go.
 

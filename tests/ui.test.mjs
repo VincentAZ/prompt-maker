@@ -2124,6 +2124,45 @@ esac
     await shot('23-rendered', { full: true });
   });
 
+  await test('render: ⚙ on a take sets its own size, seed, steps and LoRA strengths, for its renders only', async () => {
+    await click('.take .rb-tune');
+    await waitFor('!!document.querySelector(".take .rb-panel .rb-params")', 'the take\'s settings open');
+    assert((await text('.take .rb-panel')).includes('same as step'), 'nothing of its own yet');
+    await js('document.querySelector(".take .rb-panel .rb-size").selectedIndex = 0; document.querySelector(".take .rb-panel .rb-size").dispatchEvent(new Event("change", { bubbles: true }))');
+    const picked = await value('.take .rb-panel .rb-size');
+    await click('.take .rb-panel .rb-seedmode button[data-value="fixed"]');
+    await type('.take .rb-panel .rb-seedval', '4242');
+    await js('document.querySelector(".take .rb-panel .rb-seedval").dispatchEvent(new Event("change", { bubbles: true }))');
+    const steps = '.take .rb-panel .rb-params [data-kind="steps"] input';
+    await type(steps, '7');
+    await js(`document.querySelector(${JSON.stringify(steps)}).dispatchEvent(new Event("change", { bubbles: true }))`);
+    assert((await text('.take .rb-settings')).includes('own sampler settings') && (await text('.take .rb-settings')).includes(picked), 'the line under the bar says so');
+    assert((await text('.take .rb-seed')).includes('4242'), 'the seed chip shows the take\'s seed');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running") && !!document.querySelector(".take .rtile img")', 'rendered', 15000);
+    for (const t = Date.now(); comfy.prompts.length <= before && Date.now() - t < 5000;) await sleep(50);
+    const sent = comfy.prompts.at(-1).prompt;
+    eq(sent['3'].inputs.steps, 7, 'the take\'s steps');
+    eq(sent['3'].inputs.seed, 4242, 'the take\'s seed');
+    const [w, h] = picked.split('×').map(Number);
+    assert(Math.abs(sent['5'].inputs.width - w) <= 16 && Math.abs(sent['5'].inputs.height - h) <= 16, `the take's size (${sent['5'].inputs.width}×${sent['5'].inputs.height} for ${picked})`);
+    eq((await fetch(`${APP}/api/workflows`).then(r => r.json())).find(f => f.name === 'Mock T2I')?.settings.steps, 20, 'step ⑤\'s workflow keeps its own steps');
+    await click('.take .rb-panel .rb-same');
+    await toastText('step');
+    assert(!(await text('.take .rb-settings')).includes('own sampler'), 'back to step ⑤\'s');
+    await click('.take .rb-tune');
+    await waitFor('document.querySelector(".take .rb-panel").hidden', 'folded away');
+    // The render this made goes (newest first: the first tile), so the tests after count what they counted before.
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden && document.querySelector("#lbInfo").textContent.includes("4242")', 'the lightbox shows it');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
+    await toastText('Render deleted', UNDO_WAIT);
+    await press('Escape');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 1', 'its render gone from the take');
+  });
+
   await test('render: lightbox', async () => {
     await click('.take .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox open');
@@ -2175,7 +2214,8 @@ esac
     eq(seedOf(), 1002, 'decrement starts where increment left off');
     await waitFor('document.querySelector("#wfpSeed .seed-val").value === "1001"', 'then moves down by one');
 
-    await click('.take .rb-tune');
+    await openPanel('create-render');
+    await click('#wfpSettings');
     await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'setup open');
     eq(await value('#optSeedMode'), 'decrement', 'the setup shows the same mode');
     eq(await value('#samplerCtl .sp-field[data-key="3|seed"] input'), '1001', 'and the same next seed');
@@ -2197,7 +2237,8 @@ esac
   await test('workflow sampler settings: see them, change them, lock CFG 1', async () => {
     assert((await text('.take .rb-settings')).includes('euler · normal'), 'render bar shows the sampler');
     assert((await text('.take .rb-settings')).includes('20 steps') && (await text('.take .rb-settings')).includes('CFG 7'), 'steps and CFG shown');
-    await click('.take .rb-tune');
+    await openPanel('create-render');
+    await click('#wfpSettings');
     await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'settings open from Create');
     const field = k => `#samplerCtl .sp-field[data-key="3|${k}"]`;
     eq(await value(`${field('steps')} input`), '20', 'steps shown');

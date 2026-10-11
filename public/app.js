@@ -6208,6 +6208,7 @@ function pickWorkflow(modelId, id) {
   saved.set(`wf.${modelId}`, id);
   state.cards.forEach(c => {
     if (c.model?.id !== modelId || !c.rb) return;
+    if (c.rb.workflowId !== id) { c.rb.overrides = c.rb.loras = c.rb.seed = null; if (c.rb.panelOpen) renderTakePanel(c); } // (they belonged to the other workflow)
     c.rb.workflowId = id;
     const sel = $('.rb-wf', c.el);
     if (sel) sel.value = id;
@@ -7387,12 +7388,13 @@ function renderZone(card) {
     bar = `<div class="render-bar">
       <span class="rb-title">🎨 Render</span>
       <select class="rb-wf" aria-label="Workflow for ${esc(name)}">${flows.map(f => `<option value="${esc(f.id)}"${f.id === card.rb.workflowId ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
-      <button type="button" class="icon-btn rb-tune" title="Sampler settings for this workflow (seed, steps, CFG, sampler)" aria-label="Sampler settings">⚙</button>
+      <button type="button" class="icon-btn rb-tune" title="This take's settings: shape, size, duration, seed, steps, CFG, sampler and LoRA strengths, for its renders only" aria-label="This take's settings" aria-expanded="${card.rb.panelOpen ? 'true' : 'false'}">⚙</button>
       <div class="seg rb-count" role="radiogroup" aria-label="How many renders">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div>
       <button type="button" class="chip-btn rb-seed" aria-pressed="${card.rb.lockSeed}"></button>
       <span class="rb-status" aria-live="polite"></span>
       <button type="button" class="btn small primary rb-go">▶ Render</button>
       <div class="rb-settings" aria-label="Current sampler settings"></div>
+      <div class="rb-panel" aria-label="This take's settings"${card.rb.panelOpen ? '' : ' hidden'}></div>
     </div>`;
   } else if (model && !saved.get('hideRenderHint', false)) {
     bar = `<div class="render-hint"><span>🎨 Want the ${model.kind === 'video' ? 'video' : 'image'} too? Render it with ComfyUI on your own GPU.</span><span class="spacer"></span><button type="button" class="btn small rh-add">＋ Add a workflow</button><button type="button" class="icon-btn rh-x" aria-label="Hide this tip">✕</button></div>`;
@@ -7403,14 +7405,11 @@ function renderZone(card) {
     setActive($('.rb-count', bar$), card.rb.count);
     updateSeedChip(card);
     $('.rb-wf', bar$).addEventListener('change', e => pickWorkflow(model.id, e.target.value));
-    $('.rb-tune', bar$).addEventListener('click', () => editWorkflow(card.rb.workflowId, { focusSampler: true }));
+    $('.rb-tune', bar$).addEventListener('click', () => toggleTakePanel(card));
+    if (card.rb.panelOpen) renderTakePanel(card);
     updateSettingsLine(card);
     $('.rb-count', bar$).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { card.rb.count = Number(b.dataset.value); setActive($('.rb-count', bar$), card.rb.count); } });
-    $('.rb-seed', bar$).addEventListener('click', () => {
-      if (model.id !== state.modelId) return toast(`The seed for ${model.name} is set in step 5 when ${model.name} is the picked model.`);
-      $('#wfpSeed').scrollIntoView({ block: 'center', behavior: scrollMode() });
-      $('#wfpSeed .seed-mode button.active')?.focus();
-    });
+    $('.rb-seed', bar$).addEventListener('click', () => toggleTakePanel(card, true));
     $('.rb-go', bar$).addEventListener('click', () => startRender(card));
   }
   $('.rh-add', zone)?.addEventListener('click', () => openWorkflowDialog({ modelId: model.id }));
@@ -7438,7 +7437,10 @@ function updateSettingsLine(card) {
   const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
   if (!line || !flow) return;
   const stale = state.wfStale.has(flow.id);
-  line.innerHTML = `${stale ? '<button type="button" class="chip-btn rb-stale" title="This workflow was saved again in ComfyUI after you added it">↻ Changed in ComfyUI · Update</button>' : ''}${settingsHtml(flow)}`;
+  const ownBits = card.rb?.size ? [`${card.rb.size.aspectRatio} · ${card.rb.size.resolution}${card.rb.size.duration ? ` · ${card.rb.size.duration}` : ''}`] : [];
+  if (card.rb?.overrides) ownBits.push('own sampler settings');
+  if (card.rb?.loras) ownBits.push('own LoRA strengths');
+  line.innerHTML = `${stale ? '<button type="button" class="chip-btn rb-stale" title="This workflow was saved again in ComfyUI after you added it">↻ Changed in ComfyUI · Update</button>' : ''}${settingsHtml(flow)}${ownBits.map(b => `<span class="rb-own" title="Set with ⚙ on this take">⚙ ${esc(b)}</span>`).join('')}`;
   // The details are in step ⑤ already: on the take they live in the ⚙ button's tooltip.
   const tune = $('.rb-tune', card.el);
   if (tune) tune.title = `Sampler settings: ${[...line.querySelectorAll(':scope > span')].map(x => x.textContent).join(', ')}. Click to change.`;
@@ -7452,8 +7454,130 @@ function updateSeedChip(card) {
   const s = state.workflows.find(f => f.id === card.rb?.workflowId)?.seed;
   chip.hidden = !s?.inputs;
   if (!s?.inputs) return;
-  chip.textContent = s.mode === 'random' ? '🎲 Random seed' : `${SEED_ICON[s.mode]} Seed ${s.value}`;
-  chip.title = 'The seed is set in step 5. Click to go there';
+  const own = card.rb.seed;
+  chip.textContent = own ? (own.mode === 'fixed' ? `🔒 Seed ${own.value}` : '🎲 Random seed') : s.mode === 'random' ? '🎲 Random seed' : `${SEED_ICON[s.mode]} Seed ${s.value}`;
+  chip.title = own ? 'This take\'s own seed (⚙). Click to change it' : 'The workflow\'s seed, as set in step 5. Click to give this take its own';
+}
+
+// ---------- ⚙ this take's settings ----------
+// Every knob a render of this take uses, on the take itself: shape, size and duration (the set's unless changed
+// here), seed, every sampler setting the workflow has, and its LoRAs' switches and strengths. What's set here is
+// this take's alone: step ⑤ and the other takes keep theirs. ↺ gives it all back to step ⑤.
+const takeParamCache = new Map(); // workflow id → { at, data }
+async function workflowParams(id) {
+  const hit = takeParamCache.get(id);
+  if (hit && Date.now() - hit.at < 60_000 && !state.wfStale.has(id)) return hit.data;
+  const data = await api(`/api/workflows/${id}`);
+  takeParamCache.set(id, { at: Date.now(), data });
+  return data;
+}
+const takeHasOwn = card => Boolean(card.rb && (card.rb.size || card.rb.seed || card.rb.overrides || card.rb.loras));
+function toggleTakePanel(card, open = !card.rb.panelOpen) {
+  card.rb.panelOpen = open;
+  const panel = $('.rb-panel', card.el);
+  const tune = $('.rb-tune', card.el);
+  if (!panel) return;
+  panel.hidden = !open;
+  tune?.setAttribute('aria-expanded', String(open));
+  if (open) renderTakePanel(card);
+}
+async function renderTakePanel(card) {
+  const panel = $('.rb-panel', card.el);
+  const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
+  const entry = state.entry;
+  const m = card.model;
+  if (!panel || !flow || !entry || !m) return;
+  if (!panel.children.length) panel.innerHTML = '<p class="muted small">Reading the workflow…</p>';
+  let data;
+  try { data = await workflowParams(flow.id); } catch (err) { panel.innerHTML = `<p class="warn-line">⚠️ ${esc(friendly(err))}</p>`; return; }
+  if ($('.rb-panel', card.el) !== panel || panel.hidden) return;
+  const rb = card.rb;
+  const params = (data.candidates?.params || []).filter(p => p.kind !== 'seed');
+  const overrides = rb.overrides ?? data.overrides ?? {};
+  const size = rb.size || { aspectRatio: entry.aspectRatio, resolution: entry.resolution, duration: entry.duration };
+  const aspects = [...new Set([...(m.aspectRatios || []), size.aspectRatio].filter(Boolean))];
+  const sizes = [...new Set([...sizeChoices(m, size.aspectRatio), size.resolution].filter(Boolean))];
+  const seedInputs = Boolean(flow.seed?.inputs);
+  const seed = rb.seed || (flow.seed?.mode === 'random' || !flow.seed ? { mode: 'random', value: flow.seed?.value ?? 0 } : { mode: 'fixed', value: flow.seed.value });
+  const { own, added } = flowLoras(rb.loras ? { ...flow, loras: { ...flow.loras, ...rb.loras } } : flow);
+  const nodes = new Set(params.map(p => p.node));
+  const field = p => {
+    const key = `${p.node}|${p.input}`;
+    const current = overrides[key] ?? p.value;
+    const locked = p.kind === 'cfg' && Number(p.value) === 1 && overrides[key] === undefined;
+    const control = p.options ? `<select data-key="${esc(key)}">${p.options.map(o => `<option value="${esc(o)}"${o === String(current) ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+      : `<input type="${p.kind === 'sampler' || p.kind === 'scheduler' ? 'text' : 'number'}" data-key="${esc(key)}" value="${esc(current)}" ${p.kind === 'cfg' ? 'step="0.1" min="0"' : ['denoise', 'poseStart', 'poseEnd'].includes(p.kind) ? 'step="0.01" min="0" max="1"' : ['pose', 'identity'].includes(p.kind) ? 'step="0.05" min="0" max="10"' : p.kind === 'steps' ? 'step="1" min="1"' : 'step="1" min="0"'}${locked ? ' disabled' : ''}>`;
+    return `<label class="sp-field${String(current) !== String(p.value) ? ' edited' : ''}" data-kind="${p.kind}" data-key="${esc(key)}" title="${esc(PARAM_TIP[p.kind] || `Workflow value: ${p.value}`)}"><span>${esc(paramLabel(p))}${nodes.size > 1 ? ` <small>${esc(p.title)}</small>` : ''}${locked ? ' <button type="button" class="sp-unlock" title="CFG 1 is what distilled, turbo and lightning models need. Unlock only if you know this model takes more.">🔒</button>' : ''}</span>${control}</label>`;
+  };
+  const lora = (l, key) => `<li class="rb-lora${l.on ? '' : ' off'}" data-key="${esc(key)}">
+      <label class="switch mini" title="${l.on ? 'On' : 'Off'}"><input type="checkbox" class="lr-on"${l.on ? ' checked' : ''} aria-label="Use ${esc(loraShort(l.name))} for this take"><span class="track" aria-hidden="true"></span></label>
+      <span class="lr-name" title="${esc(l.name)}">${esc(loraShort(l.name))}</span>
+      <input type="number" class="lr-num" step="0.05" value="${Number(l.strength).toFixed(2)}" aria-label="Strength of ${esc(loraShort(l.name))} for this take"${l.on ? '' : ' disabled'}>
+    </li>`;
+  const opt = (v, label = v, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(label)}</option>`;
+  panel.innerHTML = `
+    <div class="rb-row">
+      <span class="rb-ptitle">⚙ This take's settings</span>
+      <span class="muted small">${takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as step ⑤ and the set'}</span>
+      <button type="button" class="chip-btn rb-same"${takeHasOwn(card) ? '' : ' disabled'}>↺ Same as step ⑤</button>
+    </div>
+    <div class="rb-row rb-size-row">
+      ${flow.maps?.size ? `<label>Shape<select class="rb-aspect" aria-label="Shape for this take">${aspects.map(a => opt(a, a, size.aspectRatio)).join('')}</select></label>
+      <label>Size<select class="rb-size" aria-label="Size for this take">${sizes.map(r => opt(r, sizeName(r), size.resolution)).join('')}</select></label>` : ''}
+      ${m.kind === 'video' && flow.maps?.duration ? `<label>Duration<span class="rb-dur"><input type="number" class="rb-duration" min="1" max="20" step="1" value="${Number.parseFloat(size.duration) || 5}" aria-label="Seconds for this take"> s</span></label>` : ''}
+      ${seedInputs ? `<label>Seed<span class="rb-seedwrap"><span class="seg rb-seedmode" role="radiogroup" aria-label="Seed for this take"><button type="button" role="radio" data-value="random" aria-checked="${seed.mode === 'random'}" class="${seed.mode === 'random' ? 'active' : ''}">🎲 New each render</button><button type="button" role="radio" data-value="fixed" aria-checked="${seed.mode === 'fixed'}" class="${seed.mode === 'fixed' ? 'active' : ''}">🔒 Fixed</button></span><input type="number" class="rb-seedval" min="0" step="1" value="${seed.value ?? 0}" aria-label="Seed number for this take"${seed.mode === 'fixed' ? '' : ' disabled'}></span></label>` : ''}
+    </div>
+    ${params.length ? `<div class="sp-grid rb-params">${params.map(field).join('')}</div>` : ''}
+    ${own.length || added.length ? `<ul class="rb-loras">${own.map(l => lora(l, l.key)).join('')}${added.map((l, i) => lora(l, `+${i}`)).join('')}</ul>` : ''}
+    <p class="muted small">Only this take's renders use these. ＋ Add LoRA and the workflow itself live in step ⑤.</p>`;
+  const refresh = () => { updateSettingsLine(card); updateSeedChip(card); $('.rb-same', panel).disabled = !takeHasOwn(card); $('.rb-row .muted', panel).textContent = takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as step ⑤ and the set'; };
+  const sizeNow = () => ({ aspectRatio: $('.rb-aspect', panel)?.value ?? size.aspectRatio, resolution: $('.rb-size', panel)?.value ?? size.resolution, duration: $('.rb-duration', panel) ? `${clampInt(Number($('.rb-duration', panel).value) || 1, 1, 20)}s` : size.duration });
+  $('.rb-aspect', panel)?.addEventListener('change', () => {
+    const next = sizeNow();
+    const choices = sizeChoices(m, next.aspectRatio);
+    next.resolution = resolutionFor({ ...m, resolutions: choices }, next.aspectRatio, next.resolution) ?? choices[0] ?? next.resolution; // about the same size, in the new shape
+    rb.size = next;
+    renderTakePanel(card);
+    refresh();
+  });
+  for (const sel of ['.rb-size', '.rb-duration']) $(sel, panel)?.addEventListener('change', () => { rb.size = sizeNow(); refresh(); });
+  $('.rb-seedmode', panel)?.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    setActive($('.rb-seedmode', panel), b.dataset.value);
+    $('.rb-seedval', panel).disabled = b.dataset.value !== 'fixed';
+    rb.seed = { mode: b.dataset.value, value: clampInt(Number($('.rb-seedval', panel).value) || 0, 0, 2 ** 48) };
+    refresh();
+  });
+  $('.rb-seedval', panel)?.addEventListener('change', e => { rb.seed = { mode: 'fixed', value: clampInt(Number(e.target.value) || 0, 0, 2 ** 48) }; setActive($('.rb-seedmode', panel), 'fixed'); refresh(); });
+  $('.rb-params', panel)?.addEventListener('change', e => {
+    const el = e.target.closest('[data-key]');
+    if (!el) return;
+    const p = params.find(x => `${x.node}|${x.input}` === el.dataset.key);
+    const raw = el.value;
+    const value = p.kind === 'sampler' || p.kind === 'scheduler' ? String(raw).trim() : Number(raw);
+    if (p.kind !== 'sampler' && p.kind !== 'scheduler' && !Number.isFinite(value)) { el.value = String(overrides[el.dataset.key] ?? p.value); return; }
+    const next = { ...(rb.overrides ?? data.overrides ?? {}) };
+    if (String(value) === String(p.value)) delete next[el.dataset.key]; else next[el.dataset.key] = value;
+    rb.overrides = next;
+    el.closest('.sp-field').classList.toggle('edited', String(value) !== String(p.value));
+    refresh();
+  });
+  $$('.sp-unlock', panel).forEach(b => b.addEventListener('click', () => { const f = b.closest('.sp-field'); $('input', f).disabled = false; b.remove(); $('input', f).focus(); }));
+  $('.rb-loras', panel)?.addEventListener('change', e => {
+    const li = e.target.closest('.rb-lora');
+    if (!li) return;
+    const base = rb.loras ?? { tweaks: structuredClone(flow.loras?.tweaks || {}), added: structuredClone(flow.loras?.added || []) };
+    const on = $('.lr-on', li).checked;
+    const strength = Number($('.lr-num', li).value);
+    const key = li.dataset.key;
+    if (key.startsWith('+')) { const l = base.added[Number(key.slice(1))]; if (l) Object.assign(l, { on, strength: Number.isFinite(strength) ? strength : l.strength }); } else base.tweaks[key] = { on, strength: Number.isFinite(strength) ? strength : (flow.loras.nodes.find(n => n.key === key)?.strength ?? 1) };
+    rb.loras = base;
+    li.classList.toggle('off', !on);
+    $('.lr-num', li).disabled = !on;
+    refresh();
+  });
+  $('.rb-same', panel).addEventListener('click', () => { rb.size = rb.seed = rb.overrides = rb.loras = null; renderTakePanel(card); refresh(); toast('↺ This take uses step ⑤\'s settings and the set\'s size again'); });
 }
 
 function updateRenderStatus(card) {
@@ -7541,7 +7665,9 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
   if (!setup) saved.set(`wf.${card.model.id}`, flow.id);
   const runId = crypto.randomUUID(); // the page's name for the job, so it can listen for it before the server has it
-  const body = { runId, historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : {}) };
+  // ⚙ The take's own settings (size, seed, sampler, LoRAs) go with it; a queued order's setup wins over them.
+  const ownSetup = !setup && card.rb && (card.rb.overrides || card.rb.loras) ? { loras: card.rb.loras ?? { tweaks: flow.loras?.tweaks || {}, added: flow.loras?.added || [] }, overrides: card.rb.overrides ?? flow.overrides ?? {} } : null;
+  const body = { runId, historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : ownSetup ? { setup: ownSetup } : {}), ...(card.rb?.size ? { size: card.rb.size } : {}), ...(card.rb?.seed ? { seed: card.rb.seed } : {}) };
   const start = () => api('/api/render', { method: 'POST', body }).catch(err => {
     if (err.missing) noteMissingModels(flow.id, err.missing); // step ⑤ offers to download them
     throw err;

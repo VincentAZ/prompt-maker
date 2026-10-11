@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.42.0 — Every parameter of a take can be changed on the take: **⚙ This take's settings** under its render bar
+  holds shape, size, duration, seed, every sampler setting and the LoRA switches and strengths, for that take's
+  renders only (step ⑤ and the other takes keep theirs; ↺ Same as step ⑤ gives it all back).
 - 1.41.0 — No waiting for the Brain: while a prompt is cooking the main button stays live and lines up the
   next one (**＋ Click to line up the next one** under it counts the line) (as `Ctrl+Enter` did), the way ComfyUI queues renders; the separate ＋ Queue button is gone. On the stage,
   **＋ Add a take** writes one more take for the set from everything it was made with, and **🗑** on a take deletes

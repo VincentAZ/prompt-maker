@@ -1229,6 +1229,15 @@ function comfyAnswered(settings, ok) {
   if (ok && (came || Date.now() - health.at > 10 * 60_000)) checkAllWorkflows(settings, { fresh: came }).catch(() => {});
 }
 
+// The size a render uses: the take's own (⚙ on the take), else the set's. Strings as the form sends them.
+function takeSize(size, entry, workflow) {
+  const str = (v, max) => (typeof v === 'string' && v.trim() && v.length <= max ? v.trim() : null);
+  const resolution = str(size?.resolution, 24) ?? entry.resolution;
+  const aspectRatio = str(size?.aspectRatio, 16) ?? entry.aspectRatio;
+  const duration = /^\d{1,3}s$/.test(size?.duration || '') ? size.duration : entry.duration;
+  return { resolution, aspectRatio: sizeAspect(String(resolution || ''), String(aspectRatio || '')), duration: workflow.mapping.frames || workflow.mapping.seconds ? duration : entry.duration };
+}
+
 async function renderTake(req, res) {
   const body = await readBody(req);
   const settings = await store.getSettings();
@@ -1295,7 +1304,11 @@ async function renderTake(req, res) {
   const pieces = videoFrames ? wf.loopPieces(workflow.prompt, videoFrames) : null;
   // A video in pieces: ComfyUI saves each piece and Prompt Maker joins them, which needs ffmpeg (see wf.splitPieces).
   const joinInApp = Boolean(pieces) && (await videotools.hasFfmpeg());
-  const seeds = await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
+  // ⚙ This take's own settings: a size and seed of its own (else the set's size and the workflow's seed).
+  const own = takeSize(body.size, entry, workflow);
+  const fixedSeed = body.seed && typeof body.seed === 'object' && body.seed.mode === 'fixed' && Number.isSafeInteger(Number(body.seed.value)) && Number(body.seed.value) >= 0 ? Number(body.seed.value) : null;
+  const seeds = fixedSeed != null ? Array.from({ length: count }, (_, i) => fixedSeed + i) : await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
+  if (fixedSeed != null) await wf.noteLastSeed(workflow.id, seeds.at(-1));
   const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio }, body.runId);
   stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
   // A page that named the job follows it over its one connection for all renders; else this request streams it.
@@ -1317,9 +1330,9 @@ async function renderTake(req, res) {
         videoName,
         audioName,
         minSeconds: audioName && entry.line?.seconds ? Math.ceil((entry.line.seconds + 1) * 10) / 10 : 0,
-        aspectRatio: entry.aspectRatio,
-        resolution: entry.resolution,
-        duration: entry.duration,
+        aspectRatio: own.aspectRatio,
+        resolution: own.resolution,
+        duration: own.duration,
         seed,
         videoFrames,
         joinInApp,
