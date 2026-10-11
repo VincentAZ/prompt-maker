@@ -3,12 +3,12 @@
   "name": "LTX 2.3",
   "kind": "video",
   "task": "animate",
-  "description": "Bring a picture to life with movement and sound, or make a video from words.",
+  "description": "Bring a picture to life with movement and sound.",
   "guide": {
-    "bestFor": "Short cinematic clips with sound: ambience, music, even people talking with matching lips. Can start from a picture or from words.",
-    "youNeed": "Optional: a picture to be the first frame of the clip. Without one, pick the \"video from words\" workflow in step ⑤.",
+    "bestFor": "Short cinematic clips with sound that start from your picture: ambience, music, even people talking with matching lips.",
+    "youNeed": "A picture to be the first frame of the clip. To make a video from words alone, pick LTX 2.3: video from words.",
     "steps": [
-      "Optional: add a picture in step ③; the video starts from it.",
+      "Add a picture in step ③; the video starts from it.",
       "In step ②, say what happens and what we hear. If someone speaks, put their words in quotes.",
       "Pick the length in step ④ (6 seconds is a good start).",
       "Press Generate, then render."
@@ -88,11 +88,6 @@
       "name": "video_ltx2_3_i2v",
       "title": "LTX-2.3: Image to Video",
       "note": "ComfyUI's template, with its own prompt writer (Gemma) switched on."
-    },
-    {
-      "name": "video_ltx2_3_t2v",
-      "title": "LTX-2.3: Text to Video",
-      "note": "ComfyUI's template: from words alone, with its own prompt writer switched on."
     }
   ],
   "updatedAt": "2026-09-30"

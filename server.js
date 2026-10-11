@@ -812,10 +812,12 @@ async function starterWorkflows(modelId) {
   return out;
 }
 
-// Every model with a starter workflow gets it by itself while it has no workflow, so a new person can render
-// right away. Added once: delete it and it stays gone (＋ Add workflow brings it back); add your own and yours is used.
+// Every starter workflow a model ships with is added by itself (one by one, so a starter that comes with an update
+// arrives too), so a new person can render right away. Each is added once: delete it and it stays gone (＋ Add workflow
+// brings it back). starters.json remembers the keys added per model (an older file holds one key as a string).
 const STARTERS_ADDED = path.join(store.DATA_DIR, 'starters.json');
 const startersAdded = () => fs.readFile(STARTERS_ADDED, 'utf8').then(JSON.parse).catch(() => ({}));
+const addedKeys = v => (Array.isArray(v) ? v : v ? [v] : []);
 let addingStarters = null;
 function addStarters() {
   addingStarters ??= (async () => {
@@ -823,16 +825,21 @@ function addStarters() {
     const flows = await wf.listWorkflows();
     let changed = false;
     for (const modelId of await fs.readdir(STARTERS_DIR).catch(() => [])) {
-      if (added[modelId] || flows.some(f => f.modelId === modelId) || !(await store.getModel(modelId))) continue;
-      const [starter] = await starterWorkflows(modelId);
-      if (!starter) continue;
-      try {
-        const p = await prepareWorkflow({ starter: starter.key });
-        await wf.saveWorkflow({ modelId, name: p.name, source: p.source, prompt: p.prompt, mapping: p.mapping, options: p.options, models: p.models });
-        added[modelId] = starter.key;
+      if (!(await store.getModel(modelId))) continue;
+      const have = addedKeys(added[modelId]);
+      // Before 1.40.0 only the first starter was added and recorded as "test"/its key: those models' other starters come now.
+      for (const starter of await starterWorkflows(modelId)) {
+        if (have.includes(starter.key) || flows.some(f => f.modelId === modelId && f.source === `starter:${starter.key}`)) continue;
+        try {
+          const p = await prepareWorkflow({ starter: starter.key });
+          await wf.saveWorkflow({ modelId, name: p.name, source: p.source, prompt: p.prompt, mapping: p.mapping, options: p.options, models: p.models });
+        } catch (err) {
+          console.warn(`Couldn't add the starter workflow ${starter.key}: ${err.message}`);
+          continue;
+        }
+        have.push(starter.key);
+        added[modelId] = have;
         changed = true;
-      } catch (err) {
-        console.warn(`Couldn't add the starter workflow for ${modelId}: ${err.message}`);
       }
     }
     if (changed) await fs.writeFile(STARTERS_ADDED, JSON.stringify(added, null, 2) + '\n');

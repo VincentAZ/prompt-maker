@@ -386,7 +386,8 @@ esac
   await fs.writeFile(bigModelWorkflowFile, JSON.stringify(bigModel));
   // The tests set up their own workflows: the starters count as added already (one test takes this back).
   const starterModels = await fs.readdir(path.join(ROOT, 'workflows'));
-  await fs.writeFile(path.join(dataDir, 'starters.json'), JSON.stringify(Object.fromEntries(starterModels.map(id => [id, 'test']))));
+  const starterKeys = Object.fromEntries(await Promise.all(starterModels.map(async id => [id, (await fs.readdir(path.join(ROOT, 'workflows', id))).map(f => `${id}/${f}`)])));
+  await fs.writeFile(path.join(dataDir, 'starters.json'), JSON.stringify(starterKeys));
 
   // A fake computer for the Privacy check: lsblk's tree, /proc/swaps, the power file, gsettings and pkexec (which
   // logs what it was asked to run as root and acts out the swap fix).
@@ -503,7 +504,7 @@ esac
     await sleep(500);
     assert(!(await js('document.querySelector("#privacyDlg").open')), 'no "How private?" question on the first start');
     eq((await (await fetch(`${APP}/api/settings`)).json()).privacyLevel, '', 'no level chosen: Safe');
-    eq(await count('.model-card'), 9, 'model cards');
+    eq(await count('.model-card'), 11, 'model cards');
     await waitFor('document.querySelector("#llmDot").classList.contains("ok")', 'LLM status dot to be green');
     eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
     assert(!(await visible('#banner')), 'offline banner hidden');
@@ -554,7 +555,7 @@ esac
     await click('.tabs [data-view="models"]');
     assert(await visible('#modelCatalog'), 'Models starts as a chooser');
     assert(!(await visible('#modelsPane')), 'editing is behind Customize');
-    eq(await count('[data-catalog-use]'), 9, 'every model can be chosen');
+    eq(await count('[data-catalog-use]'), 11, 'every model can be chosen');
     await click('[data-catalog-edit="krea2-raw"]');
     assert(await visible('#modelsPane'), 'Customize opens the existing editor');
     const description = await value('#mDesc');
@@ -1842,19 +1843,19 @@ esac
     eq(await count('#dDur option'), 2, 'duration defaults follow the list');
     await click('#saveModelBtn');
     await toastText('Saved');
-    eq(await count('#modelList li'), 10, 'ten models');
-    eq(await count('.model-card'), 10, 'new model on Create');
+    eq(await count('#modelList li'), 12, 'twelve models');
+    eq(await count('.model-card'), 12, 'new model on Create');
     await click('#dupModelBtn');
     eq(await value('#mName'), 'Test Wizard 9 copy', 'duplicate name');
     await click('#saveModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 11', 'eleven models');
+    await waitFor('document.querySelectorAll("#modelList li").length === 13', 'thirteen models');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 10', 'copy deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 12', 'copy deleted');
     await click('#modelList button[data-id="test-wizard-9"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 9', 'test model deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 11', 'test model deleted');
   });
 
   await test('models: import JSON', async () => {
@@ -1862,11 +1863,11 @@ esac
     await fs.writeFile(file, JSON.stringify({ name: 'Imported Model', kind: 'image', instructions: '## Hi', aspectRatios: ['1:1'] }));
     await setFiles('#importInput', [file]);
     await toastText('1 new');
-    await waitFor('document.querySelectorAll("#modelList li").length === 10', 'imported model listed');
+    await waitFor('document.querySelectorAll("#modelList li").length === 12', 'imported model listed');
     await click('#modelList button[data-id="imported-model"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 9', 'imported model deleted');
+    await waitFor('document.querySelectorAll("#modelList li").length === 11', 'imported model deleted');
   });
 
   await test('models: AI draft from docs', async () => {
@@ -1905,13 +1906,13 @@ esac
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
     await waitFor('!document.querySelector(\'#modelList button[data-id="minimax-h3"]\')', 'gone from the list');
-    eq(await count('.model-card'), 8, 'gone from Create');
+    eq(await count('.model-card'), 10, 'gone from Create');
     await waitFor('!document.querySelector("#restoreBuiltinsBtn").hidden', 'bring-back offered');
     assert((await text('#restoreBuiltinsBtn')).includes('MiniMax'), 'names it');
     await click('#restoreBuiltinsBtn');
     await toastText('Brought back');
-    eq(await count('#modelList li'), 9, 'back in the list');
-    eq(await count('.model-card'), 9, 'back on Create');
+    eq(await count('#modelList li'), 11, 'back in the list');
+    eq(await count('.model-card'), 11, 'back on Create');
     assert(!(await visible('#restoreBuiltinsBtn')), 'nothing left to bring back');
   });
 
@@ -4158,6 +4159,22 @@ esac
     assert(!(await visible('.dz-preview')) && (await value('#theme')) === '', 'and the form let go of both');
   });
 
+  await test('step 3 is off on a model that works from words alone; it sits under Make a video', async () => {
+    await click('.tabs button[data-view="create"]');
+    const before = await js('document.querySelector(".model-card.active")?.dataset.id');
+    await click('.model-card[data-id="ltx-2-3-t2v"]');
+    await waitFor('document.querySelector("#dropzone").classList.contains("is-off")', 'the dropzone is greyed out');
+    eq(await text('#imageStepTitle'), 'No image', 'step 3 says so');
+    assert(await js('document.querySelector("#dzGallery").disabled'), 'no Gallery picking either');
+    eq(await js('document.querySelector(".task-choice[aria-pressed=true]")?.dataset.task'), 'video', 'it is a Make a video model');
+    await click('.model-card[data-id="minimax-h3-t2v"]');
+    await waitFor('document.querySelector("#dropzone").classList.contains("is-off") && document.querySelector("#imageStepOpt").textContent.includes("words")', 'the MiniMax one too');
+    await click('.model-card[data-id="ltx-2-3"]');
+    await waitFor('!document.querySelector("#dropzone").classList.contains("is-off")', 'the picture model takes one again');
+    eq(await js('document.querySelector(".task-choice[aria-pressed=true]")?.dataset.task'), 'animate', 'and animates a picture');
+    if (before) await click(`.model-card[data-id="${before}"]`);
+  });
+
   await test('step 3: pick any image from the Gallery', async () => {
     await click('.tabs button[data-view="create"]');
     if (await visible('.dz-preview')) await click('#imageClear');
@@ -4781,8 +4798,8 @@ esac
     await click('#wfClose');
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
 
-    // Every built-in model comes with a workflow, added by itself; one you have already is left alone.
-    for (const id of ['krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'minimax-h3', 'minimax-h3-ref', 'wan-animate-2', 'krea-2-character', 'z-image-turbo', 'qwen-image-edit']) {
+    // Every built-in model comes with its workflows, each added by itself, next to the ones you have.
+    for (const id of ['krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'ltx-2-3-t2v', 'minimax-h3', 'minimax-h3-t2v', 'minimax-h3-ref', 'wan-animate-2', 'krea-2-character', 'z-image-turbo', 'qwen-image-edit']) {
       assert((await fs.readdir(path.join(dir, id)).catch(() => [])).length, `${id} ships with a workflow`);
     }
     const startersFile = path.join(dataDir, 'starters.json');
@@ -4792,8 +4809,10 @@ esac
     const after = await fetch(`${APP}/api/workflows`).then(r => r.json());
     for (const id of await fs.readdir(dir)) {
       const flows = after.filter(f => f.modelId === id);
-      if (mine.has(id)) eq(flows.map(f => f.id).sort().join(), before.filter(f => f.modelId === id).map(f => f.id).sort().join(), `${id} keeps the workflows it had (a starter you added yourself included), nothing new`);
-      else eq(flows.map(f => f.source.split("/")[0]).join(), `starter:${id}`, `${id} got its starter workflow`);
+      const had = before.filter(f => f.modelId === id).map(f => f.id);
+      assert(had.every(x => flows.some(f => f.id === x)), `${id} keeps the workflows it had`);
+      for (const file of await fs.readdir(path.join(dir, id))) eq(flows.filter(f => f.source === `starter:${id}/${file}`).length, 1, `${id} has the starter ${file} once (every starter ships, next to your own workflows)`);
+      if (mine.has(id)) eq(flows.length - had.length, flows.filter(f => f.source.startsWith('starter:') && !had.includes(f.id)).length, `${id} got nothing but its starters`);
     }
     const added = after.filter(f => !before.some(b => b.id === f.id));
     assert(added.length > 0, 'some starters were added');

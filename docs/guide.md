@@ -178,9 +178,9 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 
 | Step | What it does |
 |---|---|
-| **① What do you want to make?** | Choose a creative task. Its recommended model appears below; **Change model** opens the full choice and remembers your preference. **How to use this model** starts folded and offers the practical guide and example ideas when you want them. |
+| **① What do you want to make?** | Choose a creative task. Its recommended model appears below; **Change model** opens the full choice and remembers your preference. **Animate a picture** and **Make a video** are different models: the first starts from your picture (LTX 2.3, MiniMax H3), the second from your words alone (**LTX 2.3: video from words**, **MiniMax H3: video from words**). **How to use this model** starts folded and offers the practical guide and example ideas when you want them. |
 | **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. Under it, the **🎥 Look** sets how the camera and light feel: one of eleven, **No look**, or **your own** (see below). Have the exact prompt already? **✍️ Use my own prompt, word for word** (below) sends it as it is, with no Brain (the Look steps aside). |
-| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
+| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. On a model that works from words alone (the **video from words** ones) this step is greyed out and says **No image**: nothing can be dropped, and a picture you already added is set aside, not sent, until you pick a model that takes one. Otherwise:  Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
 | **④ Shape, size & variations** | Choose Portrait, Square, Landscape or Wide (with the exact ratio), the size, video duration and the number of alternatives. **Size** lists sizes in the picked shape, from Small (about half a megapixel) through Standard, Large and Extra large to Huge (about four), with HD, Full HD, 2K and 4K by name; it starts on the model's usual size and follows the shape. **✎ Type your own size…** at the bottom takes any width × height. **More options** holds prompt length and adventurousness. |
 | **⑤ Render it** | Optional, with ComfyUI. Pick the workflow that renders your takes, edit it or add one (see [Rendering](#rendering-with-comfyui-optional)). |
 | **⑥ Then…** | Optional. Chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
@@ -413,7 +413,7 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 
 ### 1. Attach a workflow to a model
 
-**Every built-in model already has one.** The first time you open Prompt Maker, each of the nine models gets the workflow that comes with it (listed below), so you can **▶ Render** right away; step ⑤ offers **⬇ Download** for any model file ComfyUI doesn't have yet. It's added once: delete it and it stays gone (**＋ Add workflow → 🎁 Comes with Prompt Maker** brings it back). A model that already has a workflow of yours doesn't get one.
+**Every built-in model already has one.** The first time you open Prompt Maker, each of the eleven models gets every workflow that comes with it (listed below), so you can **▶ Render** right away; step ⑤ offers **⬇ Download** for any model file ComfyUI doesn't have yet. A workflow that arrives with an update is added the same way, next to the ones you have. Each is added once: delete it and it stays gone (**＋ Add workflow → 🎁 Comes with Prompt Maker** brings it back).
 
 **To use your own instead**, add it as below: a workflow you add is the one the model uses from then on, and the picker in step ⑤ (or on the take) switches between them.
 
@@ -424,8 +424,10 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 | **Z-Image Turbo** | Text to image: ComfyUI's Z-Image Turbo template, 8 steps, no guidance. |
 | **Qwen Image Edit** | ComfyUI's Qwen Image Edit 2509 template with its Lightning LoRA, 4 steps; the result keeps your picture's size. |
 | **Krea 2 Character** | Krea 2 Turbo with the Krea 2 Identity Edit LoRA, 10 steps ([more](#same-person-every-render)). Needs the comfyui-krea2edit nodes. |
-| **LTX 2.3** | ComfyUI's LTX 2.3 image-to-video template: two passes with the distilled LoRA and a 2× upscale, with sound. Its own prompt writer is taken out, so your prompt is used as written. A second one, **LTX 2.3: video from words**, makes the clip from the prompt alone (**＋ Add workflow → 🎁**). |
-| **MiniMax H3** | ComfyUI's MiniMax H3 image-to-video template, 20 steps, with sound (its optional turbo LoRA left out), plus a Load Audio → Add Guide pair for a [🎙 spoken line](#voices); without a line those two nodes are left out. A second one, **MiniMax H3: video from words**, needs no picture (**＋ Add workflow → 🎁**). |
+| **LTX 2.3** | ComfyUI's LTX 2.3 image-to-video template: two passes with the distilled LoRA and a 2× upscale, with sound. Its own prompt writer is taken out, so your prompt is used as written. |
+| **LTX 2.3: video from words** | The same, from ComfyUI's text-to-video template: the clip comes from your prompt alone, no picture. |
+| **MiniMax H3** | ComfyUI's MiniMax H3 image-to-video template, 20 steps, with sound (its optional turbo LoRA left out), plus a Load Audio → Add Guide pair for a [🎙 spoken line](#voices); without a line those two nodes are left out. |
+| **MiniMax H3: video from words** | ComfyUI's MiniMax H3 text-to-video template, 20 steps, with sound and the same 🎙 pair: no picture needed. |
 | **MiniMax H3 Reference** | ComfyUI's MiniMax H3 reference-to-video template, 20 steps, with sound. |
 | **Wan Animate 2** | ComfyUI's Wan Animate 2 Distilled template: your person, moving like the motion video, 10 steps. |
 
@@ -627,7 +629,7 @@ Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, giv
 
 ## Target models
 
-Nine models come with ready-made playbooks, researched from their official prompting guides (September and October 2026). More are on the way, and you can [add your own](#adding-or-updating-a-model) any time:
+Eleven models come with ready-made playbooks, researched from their official prompting guides (September and October 2026). More are on the way, and you can [add your own](#adding-or-updating-a-model) any time:
 
 | Model | Type | Prompt style |
 |---|---|---|
@@ -636,8 +638,10 @@ Nine models come with ready-made playbooks, researched from their official promp
 | **Krea 2 Character** | Image (same person) | Krea 2 with the Identity Edit LoRA: an instruction (*"Create a photo of this woman…"*), every trait of the [character sheet](#same-person-every-render), the new clothes, pose, camera and light, then "Preserve the exact facial identity and body". Its workflow comes with the app. |
 | **Z-Image Turbo** | Image | Tongyi-MAI's fast 6B model, 8 steps: one caption paragraph with the medium first, skin texture for realism, and the exact words of any sign or label in quotes, which it renders correctly in English and Chinese. |
 | **Qwen Image Edit** | Image (editing) | Qwen-Image-Edit-2509: one short instruction, not a caption: the change, then what must stay ("keep her face and the background"). The person, the product and the layout stay as they are; edited text keeps its font. Its workflow (4 steps with the Lightning LoRA) comes with the app. |
-| **LTX 2.3** | Video + audio | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
-| **MiniMax H3 (Hailuo 03)** | Video + audio | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
+| **LTX 2.3** | Video + audio (from a picture) | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
+| **LTX 2.3: video from words** | Video + audio (from words) | The same prompt style, for a clip that starts from your words alone: step ③ takes no picture. Under **Make a video** in step ①. |
+| **MiniMax H3 (Hailuo 03)** | Video + audio (from a picture) | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
+| **MiniMax H3: video from words** | Video + audio (from words) | The same shooting-script format, for a clip from your words alone: step ③ takes no picture. Under **Make a video** in step ①. |
 | **MiniMax H3 Reference** | Video + audio (same person) | MiniMax's full-reference format (`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`): your picture is `<Subject 1>`, defined once with every trait of the [character sheet](#same-person-every-render). Its workflow comes with the app. |
 | **Wan Animate 2** | Video (character animation) | Wan-AI's official caption format: `Character appearance description:` (looks only) and `Background description:` (place, light, camera angle), plus a `Motion:` line for the pose prompt. Takes a character image and a motion video ([more](#character-animation-wan-animate-2)). |
 

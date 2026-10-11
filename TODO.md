@@ -23,6 +23,12 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.40.0 — Everything that comes with the app ships attached, nothing is opt-in. Every starter workflow a model has is
+  added by itself (also one that arrives with an update), not just the first. "Video from words" is its own model:
+  **LTX 2.3: video from words** and **MiniMax H3: video from words** sit under **Make a video** in step ①, while
+  **LTX 2.3** and **MiniMax H3** animate a picture, so the two are two choices, each with its own starter attached. A
+  model that works from words alone greys out step ③ (**No image**): nothing can be dropped there, and a picture
+  already there is set aside, not sent. ("MiniMax H2" was asked for again; still no such model exists, so it's H3.)
 - 1.39.0 — Two new models with playbooks and starter workflows, each rendered for real before shipping: **Z-Image Turbo**
   (text to image, 8 steps, text in the picture renders right) and **Qwen Image Edit** (one instruction edits your picture,
   4 steps with the Lightning LoRA). **LTX 2.3** and **MiniMax H3** get a second starter, "video from words", that

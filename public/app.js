@@ -1495,12 +1495,13 @@ const CREATIVE_TASKS = [
   { id: 'person', label: 'Keep the same person', prefer: 'krea-2-character' },
   { id: 'animate', label: 'Animate a picture', prefer: 'ltx-2-3' },
   { id: 'motion', label: 'Copy movement', prefer: 'wan-animate-2' },
-  { id: 'video', label: 'Make a video', prefer: '' },
+  { id: 'video', label: 'Make a video', prefer: 'ltx-2-3-t2v' },
 ];
 // The task a model is for: its playbook says (task), else its inputs place it.
 function modelTask(m) {
   if (CREATIVE_TASKS.some(t => t.id === m.task)) return m.task;
   if (m.motionVideo) return 'motion';
+  if (m.noImage) return m.kind === 'video' ? 'video' : 'picture';
   if (m.characterSheet || m.imageRoles?.includes('character')) return 'person';
   if (m.kind === 'video') return workflowsFor(m.id).some(f => f.maps?.image) ? 'animate' : 'video';
   return workflowsFor(m.id).some(f => f.maps?.image) ? 'edit' : 'picture';
@@ -1659,20 +1660,25 @@ function renderRole() {
   const role = effectiveRole();
   const offered = rolesFor(m);
   // How the Brain uses the image: with your own prompt it goes into the workflow as it is, so there's nothing to pick.
-  $('#roleBlock').hidden = !hasImage || offered.length < 2 || state.manual; // one way to use it: nothing to pick
-  $('#roleHint').hidden = !hasImage || state.manual;
+  $('#roleBlock').hidden = !hasImage || offered.length < 2 || state.manual || Boolean(m?.noImage); // one way to use it: nothing to pick
+  $('#roleHint').hidden = !hasImage || state.manual || Boolean(m?.noImage);
   for (const b of $$('#roleBlock .role')) b.hidden = !offered.includes(b.dataset.value);
   setActive($('#roleBlock'), role);
   // Character animation: step 3 takes the character and the motion video (also for a chain step that animates one).
   const motion = Boolean(m?.motionVideo);
   $('#motionBlock').hidden = !motion && !chainNeedsVideo();
   $('#charLabel').hidden = !motion;
-  $('#dzSub').textContent = motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
-  $('#imageStepTitle').textContent = motion ? 'Character & motion' : 'Add an image';
-  $('#imageStepOpt').textContent = motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
+  const noImage = Boolean(m?.noImage);
+  $('#dropzone').classList.toggle('is-off', noImage);
+  $('#dropzone').setAttribute('aria-disabled', String(noImage));
+  $('#dropzone').tabIndex = noImage ? -1 : 0;
+  $('#dzGallery').disabled = noImage;
+  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another model in step ①.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
+  $('#imageStepTitle').textContent = motion ? 'Character & motion' : noImage ? 'No image' : 'Add an image';
+  $('#imageStepOpt').textContent = noImage ? (hasImage ? 'this model works from words: your picture is set aside' : 'this model works from words') : motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
   $('#roleHint').textContent = m?.characterSheet ? SHEET_HINT[hasTheme ? 0 : 1] : ROLE_HINTS[role][hasTheme ? 0 : 1];
-  $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual;
+  $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual || Boolean(m?.noImage);
   try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of step 3
   $('#turnaroundBtn').hidden = m?.kind !== 'image';
   $('#themeOpt').textContent = state.manual ? 'sent word for word' : hasImage || (motion && state.video) ? 'optional' : '';
@@ -1968,6 +1974,7 @@ async function imageFromRender(file) {
 
 async function loadImageFile(file, { source = null, quiet = false } = {}) {
   if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
+  if (currentModel()?.noImage) return toast(`${currentModel().name} works from your words alone and takes no picture. Pick another model in step ① to use one.`, true);
   let dataUrl;
   let ratio;
   try {
@@ -2036,9 +2043,10 @@ function renderSourceBadge() {
 }
 
 const dz = $('#dropzone');
-dz.addEventListener('click', e => { if (!state.image && !e.target.closest('button')) $('#imageInput').click(); });
+const imageOff = () => Boolean(currentModel()?.noImage); // the model works from words alone: step ③ takes nothing
+dz.addEventListener('click', e => { if (!state.image && !imageOff() && !e.target.closest('button')) $('#imageInput').click(); });
 dz.addEventListener('keydown', e => {
-  if ((e.key === 'Enter' || e.key === ' ') && e.target === dz && !state.image) { e.preventDefault(); $('#imageInput').click(); }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target === dz && !state.image && !imageOff()) { e.preventDefault(); $('#imageInput').click(); }
 });
 $('#imageInput').addEventListener('change', e => { loadImageFile(e.target.files[0]); e.target.value = ''; });
 $('#imageReplace').addEventListener('click', () => $('#imageInput').click());
@@ -4151,7 +4159,7 @@ async function formRequest() {
   if (state.llmOk === false) await loadLlms();
   if (state.llmOk === false) return showError(`Can't reach LM Studio at ${state.settings.lmStudioUrl}. Its local server is off (quitting the LM Studio app turns it off too).`);
   const llm = selectedLlm();
-  if (state.image && llm?.vision === false) return showError(`${llm.name} is text-only and can't see images. Pick a vision model (👁) in the top bar.`);
+  if (state.image && !m.noImage && llm?.vision === false) return showError(`${llm.name} is text-only and can't see images. Pick a vision model (👁) in the top bar.`);
   await flushEdits();
   return formBody(m, theme, motion);
 }
@@ -4166,15 +4174,15 @@ function formBody(m, theme, motion) {
     duration: m.kind === 'video' ? durationValue() : '',
     length: state.length,
     ...(state.look ? { look: state.look } : {}),
-    ...(m.characterSheet && state.image && state.sheet.trim() ? { characterSheet: state.sheet } : {}),
+    ...(m.characterSheet && state.image && !m.noImage && state.sheet.trim() ? { characterSheet: state.sheet } : {}),
     temperature: Number($('#temperature').value),
     variations: state.variations,
-    ...(state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}),
-    ...(state.image?.source ? { source: state.image.source } : {}),
+    ...(m.noImage ? {} : state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}), // (a words-only model gets no picture)
+    ...(state.image?.source && !m.noImage ? { source: state.image.source } : {}),
     ...(motion ? { video: motion } : {}),
     ...(m.kind === 'video' && state.line.voice && state.line.text.trim() && activeFlow()?.maps?.audio ? { line: { voice: state.line.voice, text: state.line.text.trim() } } : {}), // 🎙 what they say
   };
-  if (state.image?.source && m.kind === 'video' && !m.motionVideo) saved.set('animateModel', m.id);
+  if (state.image?.source && m.kind === 'video' && !m.motionVideo && !m.noImage) saved.set('animateModel', m.id);
   return body;
 }
 
@@ -7614,7 +7622,7 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
 
 // The video model a still gets animated with: the one used last time, else the first video model.
 function animateTarget() {
-  const videos = state.models.filter(m => m.kind === 'video' && !m.motionVideo); // character animation has no first frame
+  const videos = state.models.filter(m => m.kind === 'video' && !m.motionVideo && !m.noImage); // character animation has no first frame; words-only models take none
   return videos.find(m => m.id === saved.get('animateModel', null)) || videos[0] || null;
 }
 
@@ -9601,7 +9609,7 @@ async function useRenderAs(it, use, model) {
   if (it.file.kind !== 'image') throw new Error('Only a still can go in step 3: that one is a video.');
   const m = model ? needModel(model) : null;
   if (use === 'animate') {
-    if (m && (m.kind !== 'video' || m.motionVideo)) throw new Error(`${m.name} can't animate a still: pick a video model.`);
+    if (m && (m.kind !== 'video' || m.motionVideo || m.noImage)) throw new Error(`${m.name} can't animate a still: pick a video model that starts from a picture.`);
     if (m) saved.set('animateModel', m.id);
     await continueFrom(it, { animate: true });
   } else if (use === 'character' && (m ? m.motionVideo : currentModel()?.motionVideo || !rolesFor(currentModel()).includes('character'))) {

@@ -359,6 +359,8 @@ body.narrow .create .scroll-floor { display: none; }
   background: rgb(0 0 0 / 18%); cursor: pointer; transition: border-color 0.15s, background 0.15s;
   overflow: hidden;
 }
+.dropzone.is-off { opacity: .55; cursor: default; border-style: dotted; }
+.dropzone.is-off:hover, .dropzone.is-off .dz-ico { border-color: var(--border, currentColor); background: none; transform: none; }
 .dropzone:hover, .dropzone.drag { border-color: var(--m); background: color-mix(in srgb, var(--m) 10%, transparent); }
 .dz-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 22px 16px; text-align: center; }
 .dz-ico { font-size: 28px; line-height: 1; margin-bottom: 4px; transition: transform 0.2s; }

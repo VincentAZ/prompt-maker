@@ -72,9 +72,9 @@ function assistantTurn(body) {
     : /noir look/.test(said) ? [{ calls: [['set_dials', { look: 'noir' }]] }, { text: results.includes('Noir look') ? 'Noir it is.' : `It didn't take: ${results}` }]
     : /no look/.test(said) ? [{ calls: [['set_dials', { look: 'no look' }]] }, { text: results.includes('no look') ? 'No look it is.' : `It didn't take: ${results}` }]
     // A model name that fits two models, then a theme: the theme must not be set once set_model failed.
-    : /ltx then krea/.test(said) ? [{ calls: [['set_model', { model: 'ltx' }], ['set_model', { model: 'krea' }], ['set_theme', { text: 'after a failure' }]] }, { text: results.includes('could be') ? 'Krea is two models: which?' : 'Done.' }]
+    : /ltx then krea/.test(said) ? [{ calls: [['set_model', { model: 'ltx 2.3' }], ['set_model', { model: 'krea' }], ['set_theme', { text: 'after a failure' }]] }, { text: results.includes('could be') ? 'Krea is two models: which?' : 'Done.' }]
     // Three videos in one go: the app asks the user first (on generate when auto-render is on, else on render).
-    : /three ltx videos/.test(said) ? [{ calls: [['set_model', { model: 'ltx' }], ['set_theme', { text: 'a slow pan' }], ['set_dials', { takes: 3 }], ['generate', {}]] }, results.includes('said no') ? { text: 'Okay, no videos.' } : { calls: [['render', {}]] }, { text: results.includes('said no') ? 'Okay, no videos.' : 'Rendered.' }]
+    : /three ltx videos/.test(said) ? [{ calls: [['set_model', { model: 'ltx 2.3' }], ['set_theme', { text: 'a slow pan' }], ['set_dials', { takes: 3 }], ['generate', {}]] }, results.includes('said no') ? { text: 'Okay, no videos.' } : { calls: [['render', {}]] }, { text: results.includes('said no') ? 'Okay, no videos.' : 'Rendered.' }]
     : /bogus/.test(said) ? [{ calls: [['set_model', { model: 'nonexistent' }]] }, { text: results.includes('"error"') ? 'There\'s no model by that name.' : 'Done.' }]
     : /fix the playbook/.test(said) ? [{ calls: [['edit_playbook', { model: 'krea 2 raw', description: 'Edited by the assistant', resolutions: ['1024×1024', '1536×1024'] }]] }, { text: results.includes('Saved the') ? 'Saved it. Say undo to put it back.' : 'That failed.' }]
     : /\bundo\b/.test(said) ? [{ calls: [['undo_playbook_edit', {}]] }, { text: results.includes('back as it was') ? 'Put it back.' : 'That failed.' }]

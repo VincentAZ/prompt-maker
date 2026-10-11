@@ -3,7 +3,7 @@
 # ✦ Prompt Maker
 
 **Say what you want to see, in plain words, and get pictures and videos made on your own computer.**
-Start from an idea, a photo, or both. It writes for each model the way that model likes, keeps the same person from shot to shot and gives them a voice. Keep the ones you love, compare them side by side, find them again later. Nine models are ready to go, more are on the way, and you can add your own. Nothing leaves your machine, and it's free.
+Start from an idea, a photo, or both. It writes for each model the way that model likes, keeps the same person from shot to shot and gives them a voice. Keep the ones you love, compare them side by side, find them again later. Eleven models are ready to go, more are on the way, and you can add your own. Nothing leaves your machine, and it's free.
 
 ![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
@@ -116,7 +116,7 @@ Everything runs on your own computer and talks only to your own LM Studio and Co
 
 You need a computer with a good graphics card. Linux is where it's tested every day. On Windows the launcher is written but has **not yet been tried on a real Windows PC**; if something doesn't work there, please tell us.
 
-Nine models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **Z-Image Turbo**, **Qwen Image Edit**, **LTX 2.3** and **MiniMax H3** (each from a picture or from words alone, and MiniMax with a Reference version for your person) and **Wan Animate 2**. [Add your own](docs/guide.md#adding-or-updating-a-model).
+Eleven models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **Z-Image Turbo**, **Qwen Image Edit**, **LTX 2.3** and **MiniMax H3** (each one model that animates your picture and one that makes the video from words alone, and MiniMax with a Reference version for your person) and **Wan Animate 2**. [Add your own](docs/guide.md#adding-or-updating-a-model).
 
 ## More
 
