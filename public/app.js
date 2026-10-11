@@ -43,6 +43,7 @@ const state = {
   batchPick: '', // what Generate runs (step ⑤ Batch): '' no batch, a saved batch's id, or '*' every batch in order
   batchRun: null, // while batches run: { list, index, name, total, done, allDone, stopped }
   workflows: [],
+  extras: [], // the other picture slots of step ③ (index 0 = the workflow's second slot): { file, dataUrl? } or null
   loraList: null, // every LoRA ComfyUI has, e.g. "krea2/film_grain.safetensors" (loaded when needed)
   loraPicker: { open: false, q: '' },
   line: { voice: '', text: '' }, // 🎙 what the person says, in which voice (step 3, video models)
@@ -116,8 +117,8 @@ function syncHolds() {
     let client = saved.get('client', null);
     if (!client) saved.set('client', client = crypto.randomUUID());
     const bodies = [...line.orders, line.running].filter(Boolean).map(o => o.body);
-    const form = [state.image?.file, state.video?.file, state.video?.sheet].filter(Boolean);
-    const inLine = bodies.flatMap(b => [b.imageFile, b.video?.file, b.video?.sheet]).filter(Boolean);
+    const form = [state.image?.file, ...state.extras.map(x => x?.file), state.video?.file, state.video?.sheet].filter(Boolean);
+    const inLine = bodies.flatMap(b => [b.imageFile, ...(b.images || []), b.video?.file, b.video?.sheet]).filter(Boolean);
     api('/api/holds', { method: 'PUT', body: { client, form, line: [...new Set(inLine)] } }).catch(() => {});
   }, 300);
 }
@@ -1681,6 +1682,7 @@ function renderRole() {
   $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual || Boolean(m?.noImage);
   try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of step 3
   $('#turnaroundBtn').hidden = m?.kind !== 'image';
+  renderExtraSlots();
   $('#themeOpt').textContent = state.manual ? 'sent word for word' : hasImage || (motion && state.video) ? 'optional' : '';
   themePlaceholder();
   renderVisionWarning();
@@ -2051,6 +2053,83 @@ dz.addEventListener('keydown', e => {
 $('#imageInput').addEventListener('change', e => { loadImageFile(e.target.files[0]); e.target.value = ''; });
 $('#imageReplace').addEventListener('click', () => $('#imageInput').click());
 $('#imageClear').addEventListener('click', () => { setImage(null); dz.focus(); });
+
+// ---------- create: step 3, the other picture slots ----------
+// A workflow with more than one Load Image node (a person and a place, more pictures to combine) gives step ③ a
+// slot per picture: the first is the big dropzone, the rest show here, each with its name from the workflow.
+const pictureSlots = () => { const m = currentModel(); return m && !m.noImage && !m.motionVideo ? activeFlow()?.imageSlots || [] : []; };
+function renderExtraSlots() {
+  const box = $('#extraSlots');
+  const slots = pictureSlots().slice(1);
+  box.hidden = !slots.length;
+  if (!slots.length) { box.innerHTML = ''; return; }
+  box.innerHTML = slots.map((sl, i) => {
+    const img = state.extras[i];
+    const name = sl.label || `Picture ${i + 2}`;
+    return `<div class="xslot${img ? ' filled' : ''}" data-slot="${i}">
+      <span class="xslot-label">🖼️ ${esc(name)}<small>${sl.optional ? 'optional' : 'needed'}</small></span>
+      ${sl.hint ? `<span class="xslot-hint">${esc(sl.hint)}</span>` : ''}
+      ${img ? `<img src="${img.dataUrl || `/images/${esc(img.file)}`}" alt="${esc(name)}">` : ''}
+      <span class="xslot-acts">${img ? `<button type="button" class="btn small" data-act="replace">Replace</button><button type="button" class="btn small" data-act="gallery">Gallery</button><button type="button" class="btn small danger" data-act="clear">Remove</button>` : `<button type="button" class="btn small primary" data-act="replace">＋ Add</button><button type="button" class="btn small" data-act="gallery">🖼️ Gallery</button>`}</span>
+      <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden>
+    </div>`;
+  }).join('');
+}
+async function loadExtraFile(i, file, { source = null } = {}) {
+  if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
+  let dataUrl;
+  try { ({ dataUrl } = await readImage(file)); } catch { return toast('Could not read that image.', true); }
+  state.extras[i] = { dataUrl, source };
+  renderExtraSlots();
+  try {
+    const { file: name } = await api('/api/images', { method: 'POST', body: { image: dataUrl } });
+    if (state.extras[i]?.dataUrl === dataUrl) state.extras[i] = { file: name, dataUrl, source };
+    saved.set('extras', state.extras.map(x => x?.file || null));
+    syncHolds();
+    renderWorkflowWarning();
+    toast(`🖼️ ${pictureSlots()[i + 1]?.label || `Picture ${i + 2}`} added`);
+  } catch (err) {
+    state.extras[i] = null;
+    renderExtraSlots();
+    toast(`Image upload failed: ${err.message}`, true);
+  }
+}
+function setExtras(files) {
+  state.extras = (files || []).map(f => (f ? { file: f } : null));
+  while (state.extras.length && !state.extras.at(-1)) state.extras.pop();
+  saved.set('extras', state.extras.map(x => x?.file || null));
+  renderExtraSlots();
+  syncHolds();
+}
+$('#extraSlots').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]');
+  const slot = e.target.closest('.xslot');
+  if (!b || !slot) return;
+  const i = Number(slot.dataset.slot);
+  if (b.dataset.act === 'replace') $('input[type="file"]', slot).click();
+  else if (b.dataset.act === 'gallery') openImagePicker('image', { slot: i + 1 });
+  else if (b.dataset.act === 'clear') { state.extras[i] = null; setExtras(state.extras.map(x => x?.file || null)); renderWorkflowWarning(); }
+});
+$('#extraSlots').addEventListener('change', e => {
+  const slot = e.target.closest('.xslot');
+  if (!slot || e.target.type !== 'file') return;
+  loadExtraFile(Number(slot.dataset.slot), e.target.files[0]);
+  e.target.value = '';
+});
+// A picture dropped on a slot lands in that slot (anywhere else on the page: the first).
+$('#extraSlots').addEventListener('dragover', e => { const slot = e.target.closest('.xslot'); if (slot && hasFiles(e)) { e.preventDefault(); slot.classList.add('drag'); } });
+$('#extraSlots').addEventListener('dragleave', e => e.target.closest('.xslot')?.classList.remove('drag'));
+$('#extraSlots').addEventListener('drop', e => {
+  const slot = e.target.closest('.xslot');
+  if (!slot || !hasFiles(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  slot.classList.remove('drag');
+  dragDepth = 0;
+  $('#dropOverlay').hidden = true;
+  const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+  if (file) loadExtraFile(Number(slot.dataset.slot), file);
+});
 
 // Drop an image anywhere on the Create page; never let the browser navigate to a dropped file.
 let dragDepth = 0;
@@ -2534,12 +2613,13 @@ $('#motionPreview').addEventListener('error', () => {
 // Any image you've rendered can be the input image: it's linked back to its render, and ComfyUI gets the original.
 
 // kind 'video' picks a motion video instead (any video you rendered).
-const picker = { model: '', items: [], kind: 'image' };
+const picker = { model: '', items: [], kind: 'image', slot: 0 };
 
-async function openImagePicker(kind = 'image') {
+async function openImagePicker(kind = 'image', { slot = 0 } = {}) {
   const all = await api('/api/history').catch(() => null);
   if (all) state.history = all;
   picker.kind = kind === 'video' ? 'video' : 'image';
+  picker.slot = slot;
   picker.items = galleryItems().filter(it => it.file.kind === picker.kind);
   $('#imgPickTitle').textContent = picker.kind === 'video' ? 'Pick a motion video from your Gallery' : 'Pick an image from your Gallery';
   renderImagePicker();
@@ -2560,17 +2640,18 @@ function renderImagePicker() {
     : `<p class="muted">${items.length ? `No ${picker.kind}s from this model yet.` : `No ${picker.kind} renders yet. Render a take with ComfyUI and it shows up here.`}</p>`;
 }
 
-async function useRenderAsImage(it) {
+async function useRenderAsImage(it, slot = picker.slot) {
   try {
     const blob = await (await fetch(`/renders/${encodeURIComponent(it.file.file)}`)).blob();
     const source = { entryId: it.entry.id, index: it.index, renderId: it.render.id, file: it.file.file, modelName: it.entry.modelName, seed: it.render.seed ?? null };
+    if (slot > 0) return loadExtraFile(slot - 1, new File([blob], it.file.name || it.file.file, { type: blob.type || 'image/png' }), { source });
     await loadImageFile(new File([blob], it.file.name || it.file.file, { type: blob.type || 'image/png' }), { source });
   } catch (err) {
     toast(`Couldn't use that image: ${err.message}`, true);
   }
 }
 
-for (const id of ['#dzGallery', '#imageGallery']) $(id).addEventListener('click', () => openImagePicker('image'));
+for (const id of ['#dzGallery', '#imageGallery']) $(id).addEventListener('click', () => openImagePicker('image', { slot: 0 }));
 for (const id of ['#mzGallery', '#videoGallery']) $(id).addEventListener('click', () => openImagePicker('video'));
 
 // A rendered video as the motion video (stored as its own copy, so deleting the render doesn't take it away).
@@ -4030,6 +4111,7 @@ async function newSession() {
   showError('');
   setThemeQuietly('');
   setImage(null);
+  setExtras([]);
   setVideo(null);
   state.timings = {};
   closeRun();
@@ -4274,6 +4356,7 @@ function formBody(m, theme, motion) {
     variations: state.variations,
     ...(m.noImage ? {} : state.image?.file ? { imageFile: state.image.file } : state.image?.dataUrl ? { image: state.image.dataUrl } : {}), // (a words-only model gets no picture)
     ...(state.image?.source && !m.noImage ? { source: state.image.source } : {}),
+    ...(pictureSlots().length > 1 && !m.noImage ? { images: pictureSlots().slice(1).map((sl, i) => state.extras[i]?.file || null), imageSlots: pictureSlots().map(({ label, hint, optional }) => ({ label, hint, optional })) } : {}),
     ...(motion ? { video: motion } : {}),
     ...(m.kind === 'video' && state.line.voice && state.line.text.trim() && activeFlow()?.maps?.audio ? { line: { voice: state.line.voice, text: state.line.text.trim() } } : {}), // 🎙 what they say
   };
@@ -4903,6 +4986,10 @@ function forgetEntry(entry) {
       if (img.file && !state.history.some(e => e.imageFile === img.file) && !line.orders.some(o => o.body.imageFile === img.file)) api(`/api/images/${encodeURIComponent(img.file)}`, { method: 'DELETE' }).catch(() => {});
     }
   });
+  step('its other pictures', () => {
+    const files = new Set((entry.images || []).filter(Boolean));
+    if (files.size && state.extras.some(x => x && files.has(x.file) && !state.history.some(e => (e.images || []).includes(x.file)))) setExtras(state.extras.map(x => (x && files.has(x.file) ? null : x?.file || null)));
+  });
   step('its motion video', () => {
     // Its motion video is deleted with it (unless another entry or a prompt in line uses it), so the form can't keep it.
     const vid = state.video?.file;
@@ -4982,6 +5069,7 @@ async function loadForm(entry) {
   }
   if (($('#theme').value || '') !== (entry.theme || '')) replaceTheme(entry.theme || '', { focus: false });
   if (entry.imageRole) state.imageRole = entry.imageRole;
+  setExtras(entry.images || []);
   if (entry.look && !lookKnown(entry.look)) {
     setLook('', { persist: false });
     toast(`Your look “${entry.lookName || 'that one'}” was deleted since, so the Brain picks the look.`);
@@ -6905,6 +6993,7 @@ function renderWorkflowPicker() {
   renderBackground(); // in step 3, so it follows the picked workflow even when there is none
   renderBatch();
   renderWorkflowWarning();
+  renderExtraSlots(); // (another workflow may have other picture slots)
   renderStaleNotice();
   renderModelNotice();
   if (flows.length) checkWorkflowModels(activeWorkflowId(m.id));
@@ -6918,6 +7007,7 @@ function renderWorkflowWarning() {
   const msg = !flow || $('#wfpBox').hidden ? ''
     : animating() && !flow.maps.image ? `“${flow.name}” has no image input, so it would ignore your first frame. Pick or add an image-to-video workflow.`
       : !state.image && flow.maps.image ? `“${flow.name}” needs ${currentModel()?.motionVideo ? 'your character image' : 'an input image'}. Add one in step 3, or pick another workflow.`
+        : (flow.imageSlots || []).some((sl, i) => i > 0 && !sl.optional && !state.extras[i - 1]) ? `“${flow.name}” also needs a picture in its “${(flow.imageSlots || []).find((sl, i) => i > 0 && !sl.optional && !state.extras[i - 1]).label || 'second'}” slot in step 3.`
         : !state.video && flow.maps.video ? `“${flow.name}” needs a motion video. Add one in step 3.`
           : state.video && currentModel()?.motionVideo && !flow.maps.video ? `“${flow.name}” has no Load Video node, so it would ignore your motion video. Pick or add a Wan Animate 2 workflow.`
             : clipNote(flow);
@@ -9427,10 +9517,14 @@ $('#wfSave').addEventListener('click', async () => {
   const data = dlg.prepared;
   const prompt = $$('#mapPrompt select').map(s => parseTarget(s.value)).filter(Boolean);
   if (!prompt.length) return wfToast('Pick where the prompt goes first.');
+  // The picture slots found in the workflow stay (names, hints, optional); the first follows the Image choice.
+  const image = parseTarget($('#mapImage').value);
+  const slots = (data.mapping?.images || []).filter(x => !image || x.node !== image.node || x.input !== image.input);
   const mapping = {
     prompt,
     motion: [parseTarget($('#mapMotion').value)].filter(Boolean),
-    image: parseTarget($('#mapImage').value),
+    image,
+    images: image ? [{ ...((data.mapping?.images || []).find(x => x.node === image.node && x.input === image.input) || {}), ...image, optional: false }, ...slots] : [],
     video: parseTarget($('#mapVideo').value),
     width: parseTarget($('#mapWidth').value),
     height: parseTarget($('#mapHeight').value),
@@ -11977,6 +12071,12 @@ async function loadModels() {
       setSheet(sheet); // (a new picture clears it: this one is the same)
     }
     else saved.set('image', null);
+    const extras = saved.get('extras', []);
+    if (Array.isArray(extras) && extras.some(Boolean)) {
+      const kept = [];
+      for (const f of extras) kept.push(f && (await api(`/api/images/${encodeURIComponent(f)}`).catch(() => ({}))).exists ? f : null);
+      setExtras(kept);
+    }
     const vid = saved.get('video', null);
     if (vid?.file && (await api(`/api/videos/${encodeURIComponent(vid.file)}`).catch(() => ({}))).exists) restoreVideo(vid);
     else saved.set('video', null);

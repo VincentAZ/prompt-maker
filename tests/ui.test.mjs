@@ -377,6 +377,9 @@ esac
   await fs.writeFile(loraWorkflowFile, JSON.stringify(withLora));
   // An image-to-video style workflow: same graph plus a Load Image node for the first frame.
   const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
+  // A workflow with two picture slots: the picture to edit and an optional "Another picture" (with a helper of its own).
+  const twoPicFile = path.join(tmp, 'mock-two-pics.json');
+  await fs.writeFile(twoPicFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'Picture to edit' } }, 12: { class_type: 'LoadImage', inputs: { image: 'example_2.png' }, _meta: { title: 'Another picture' } }, 13: { class_type: 'VAEEncode', inputs: { pixels: ['12', 0], vae: ['4', 2] }, _meta: { title: 'VAE Encode (another)' } } }));
   await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
 
   // A saved workflow whose checkpoint ComfyUI doesn't have yet, with the download link ComfyUI's templates carry.
@@ -3252,6 +3255,67 @@ esac
     eq(await text('#takesLabel'), 'Variations', 'prompt variations again');
     await click('#imageClear');
     await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('step 3: a workflow with two picture slots grows a second slot; both go to the Brain and the render, an empty optional one is left out', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await openPanel('create-render');
+    await click((await visible('#wfpAdd')) ? '#wfpAdd' : '#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [twoPicFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapImage'), '11|image', 'the first Load Image is the picture');
+    await type('#wfName', 'Mock 2 pics');
+    await click('#wfSave');
+    await toastText('is ready');
+    await waitFor('!document.querySelector("#extraSlots").hidden', 'a second slot shows');
+    eq(await count('#extraSlots .xslot'), 1, 'one extra slot');
+    assert((await text('#extraSlots .xslot-label')).includes('Another picture') && (await text('#extraSlots .xslot-label')).includes('optional'), 'named by the node, optional');
+    if (!(await visible('.dz-preview'))) { await setFiles('#imageInput', [fixture]); await waitFor('!document.querySelector(".dz-preview").hidden', 'first picture'); }
+    await setFiles('#extraSlots .xslot input[type="file"]', [fixture]);
+    await waitFor('document.querySelector("#extraSlots .xslot").classList.contains("filled")', 'the second picture is in');
+    await toastText('Another picture added');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'two pictures together');
+    await click('#generateBtn');
+    await genDone();
+    const sent = lastCall().messages.findLast(m => m.role === 'user' && Array.isArray(m.content));
+    eq(sent.content.filter(p => p.type === 'image_url').length, 2, 'the Brain got both pictures');
+    assert(sent.content.find(p => p.type === 'text').text.includes('MORE PICTURES') && sent.content.find(p => p.type === 'text').text.includes('Another picture'), 'and was told what the second is');
+    let entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    eq(entry.theme, 'two pictures together', 'saved');
+    assert(entry.images?.[0] && entry.imageSlots?.length === 2, 'with the second picture and the slots');
+    const uploads = comfy.uploads.length;
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running") && !!document.querySelector(".take .rtile img")', 'rendered', 15000);
+    for (const t = Date.now(); comfy.prompts.length <= before && Date.now() - t < 5000;) await sleep(50);
+    let p = comfy.prompts.at(-1).prompt;
+    assert(comfy.uploads.length >= uploads + 2, 'both pictures uploaded');
+    assert(p['11'].inputs.image.startsWith('prompt-maker_') && p['12'].inputs.image.startsWith('prompt-maker_') && p['13'], 'both slots filled in the workflow');
+    // The optional slot emptied: the render leaves its node, and its helper, out.
+    await click('#extraSlots .xslot [data-act="clear"]');
+    await waitFor('!document.querySelector("#extraSlots .xslot").classList.contains("filled")', 'slot empty again');
+    await click('#generateBtn');
+    await genDone();
+    entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    assert(!entry.images?.length, 'no extra picture saved');
+    const before2 = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running") && !!document.querySelector(".take .rtile img")', 'rendered again', 15000);
+    for (const t = Date.now(); comfy.prompts.length <= before2 && Date.now() - t < 5000;) await sleep(50);
+    p = comfy.prompts.at(-1).prompt;
+    assert(p['11'] && !p['12'] && !p['13'], 'the empty slot and its helper are left out');
+    // Tidy up: the workflow goes, the first picture too.
+    await click('#wfpEdit');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfDelete").hidden', 'editing it');
+    await click('#wfDelete');
+    await click('#wfDelete');
+    await waitFor('!document.querySelector("#wfDialog").open', 'deleted');
+    await waitFor('document.querySelector("#extraSlots").hidden', 'slots gone with the workflow');
+    await click('#imageClear');
   });
 
   await test('chain: animate a still (first frame at full quality, linked both ways)', async () => {

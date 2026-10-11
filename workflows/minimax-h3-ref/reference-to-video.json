@@ -1,7 +1,7 @@
 {
   "format": "prompt-maker-workflow",
   "name": "MiniMax H3 Reference: your person in a video",
-  "note": "Puts the person in step ③ into a new clip with sound. ComfyUI’s reference-to-video template, 20 steps (no turbo LoRA); only ComfyUI’s own nodes.",
+  "note": "Puts the person in step ③ into a new clip with sound. ComfyUI’s reference-to-video template, 20 steps (no turbo LoRA); only ComfyUI’s own nodes. A second slot in step ③ takes another picture of the same person (left out when empty).",
   "prompt": {
     "92": {
       "inputs": {
@@ -237,6 +237,10 @@
         "length": [
           "131",
           1
+        ],
+        "ref_images.ref_image_1": [
+          "139",
+          0
         ]
       },
       "class_type": "MiniMaxH3ReferenceToVideo",
@@ -250,7 +254,7 @@
       },
       "class_type": "LoadImage",
       "_meta": {
-        "title": "Load Image"
+        "title": "Person"
       }
     },
     "138": {
@@ -260,6 +264,15 @@
       "class_type": "PrimitiveStringMultiline",
       "_meta": {
         "title": "Input Text (Prompt)"
+      }
+    },
+    "139": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "Another picture of them"
       }
     }
   },
@@ -298,6 +311,22 @@
       {
         "node": "129",
         "input": "noise_seed"
+      }
+    ],
+    "images": [
+      {
+        "node": "137",
+        "input": "image",
+        "label": "Person",
+        "hint": "the person the clip keeps: state every trait of the character sheet",
+        "optional": false
+      },
+      {
+        "node": "139",
+        "input": "image",
+        "label": "Another picture of them",
+        "hint": "the same person from another angle or in other light, so the likeness holds; never a second person",
+        "optional": true
       }
     ]
   },

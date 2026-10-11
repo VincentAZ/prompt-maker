@@ -372,6 +372,17 @@ body.narrow .create .scroll-floor { display: none; }
 .dz-preview img { display: block; max-width: 100%; max-height: 280px; object-fit: contain; }
 .mz-preview video { display: block; max-width: 100%; max-height: 280px; object-fit: contain; }
 .zone-label { margin: 0 0 6px; font-size: 13px; }
+/* The other picture slots of a workflow that takes more than one (a person and a place, more pictures to combine). */
+.extra-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-top: 8px; }
+.xslot { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 14px; border: 2px dashed var(--line-2); background: rgb(0 0 0 / 18%); min-height: 96px; transition: border-color 0.15s, background 0.15s; }
+.xslot.filled { border-style: solid; border-color: color-mix(in srgb, var(--m) 50%, transparent); }
+.xslot.drag { border-color: var(--m); background: color-mix(in srgb, var(--m) 10%, transparent); }
+.xslot-label { font-size: 12.5px; font-weight: 750; display: flex; align-items: baseline; gap: 6px; }
+.xslot-label small { font-weight: 600; color: var(--muted); }
+.xslot-hint { font-size: 11.5px; color: var(--muted); }
+.xslot img { display: block; width: 100%; max-height: 120px; object-fit: contain; border-radius: 8px; background: #000; }
+.xslot-acts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; }
+.xslot-acts .btn { padding: 3px 9px; font-size: 12px; }
 .wf-templates { margin-bottom: 12px; }
 .wf-tpl-head { margin: 0 0 6px; }
 .wf-tpl-own { margin: 10px 0 6px; }

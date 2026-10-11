@@ -52,6 +52,7 @@ You don't write the long, technical prompts these models want. You type a few wo
 - **A voice for your character.** Describe a voice in plain words, hear it, keep it by name and have your character say a line in a video.
 - **Your best work stays findable.** Gallery holds your artwork: rate it with stars, or choose **Select → two pictures → Compare 2**. **Saved prompts** holds the automatically saved prompts and sessions: bookmark the ones you want to reuse. **Hide from Create** tidies your workspace while keeping the artwork in Gallery.
 - **A creative partner when you need one.** Open **Ask** for an Assistant that looks at your renders, helps you choose, plans a task of several steps and ticks it off, and can run a batch. It starts closed and remembers your preference. On small screens, **Create / Results** keeps your work one click away, including beside Ask on a laptop.
+- **Several pictures at once.** A workflow that takes more than one picture (a person and a place with Krea 2 Character, pictures to combine with Qwen Image Edit, two views of the same person for MiniMax H3 Reference) gives step ③ a named slot per picture.
 - **Nothing leaves your computer.** No account, no cloud, no tracking.
 
 <div align="center">
@@ -107,6 +108,7 @@ These are short previews without sound; click one to watch the video (the first 
 
 - **Ubuntu or Debian, one click:** download `prompt-maker_<version>_amd64.deb` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and double-click it. It brings its own Node.js and puts **Prompt Maker** in your app menu.
 - **Any other computer:** install [Node.js](https://nodejs.org) 20.11 or newer, then `git clone https://github.com/VincentAZ/prompt-maker.git`, go into the folder and run `npm start`. Details for each system are in the [guide](docs/guide.md#installation).
+- **Staying current:** **Settings → ⬆ Updates** checks GitHub when you ask, gets the newer version and restarts the app, for the package and for a git copy alike.
 
 **2. LM Studio** (free, it runs the Brain). Install [LM Studio](https://lmstudio.ai), download a model, and Prompt Maker finds it. A vision model (marked 👁) lets you use your own pictures.
 

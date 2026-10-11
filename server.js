@@ -332,6 +332,17 @@ async function spokenLine(settings, line) {
   return { voice: r.voice, text: line.text, file: r.file, seconds: r.seconds };
 }
 
+// The other picture slots of step ③: their stored files (checked), the slots' names and hints (from the picked
+// workflow), and the pictures as the Brain sees them. Slot 1 is the first picture (imageFile); these are 2, 3…
+async function extraPictures(body, imageFile) {
+  const files = (Array.isArray(body.images) ? body.images : []).slice(0, 6).map(f => (typeof f === 'string' && /^[a-f0-9]{20}\.(jpg|png|webp)$/.test(f) ? f : null));
+  while (files.length && files.at(-1) === null) files.pop();
+  const slots = (Array.isArray(body.imageSlots) ? body.imageSlots : []).slice(0, 7).map(x => ({ label: String(x?.label || '').trim().slice(0, 40), hint: String(x?.hint || '').trim().slice(0, 300), optional: x?.optional === true }));
+  const imageDataUrls = [];
+  for (const f of files) imageDataUrls.push(f ? await store.readImageDataUrl(f) : null);
+  return { images: files, imageSlots: files.length || slots.length > 1 ? slots : [], imageDataUrls: imageFile ? imageDataUrls : [] };
+}
+
 // ---------- generation ----------
 
 // A motion video for a character-animation model (Wan Animate 2): the stored file, the contact sheet of its frames
@@ -400,7 +411,7 @@ async function generate(req, res) {
   const set = body.entryId ? await store.getHistory(String(body.entryId)) : null;
   if (body.entryId && !set) throw store.httpError(404, 'That set is no longer in Saved prompts.');
   if (set?.manual) throw store.httpError(400, 'A prompt kept word for word has no Brain to write another take.');
-  if (set) body = { ...set, llmModel: body.llmModel, variations: 1, image: undefined, manual: false, chain: undefined, batch: undefined, line: set.line ? { voice: set.line.voice?.id || set.line.voice, text: set.line.text } : undefined };
+  if (set) body = { ...set, llmModel: body.llmModel, variations: 1, image: undefined, manual: false, chain: undefined, batch: undefined, line: set.line ? { voice: set.line.voice?.id || set.line.voice, text: set.line.text } : undefined, images: set.images || [], imageSlots: set.imageSlots || [] };
   const model = await store.getModel(body.modelId || '');
   if (!model) throw store.httpError(400, 'Pick a target model first.');
   const params = pickParams(body, model, await store.listLooks());
@@ -415,13 +426,16 @@ async function generate(req, res) {
     imageFile = body.imageFile;
     imageDataUrl = await store.readImageDataUrl(imageFile);
   }
+  // The other picture slots of step ③ (a second person, a place…): stored files, with what each slot is for.
+  const { images, imageSlots, imageDataUrls } = await extraPictures(body, imageFile);
+  if (imageSlots.length) params.imageSlots = imageSlots;
   const video = await motionVideo(body.video, model);
   const brainVideo = await videoForBrain(video);
   if (!params.theme && !imageDataUrl && !video) throw store.httpError(400, 'Enter a theme, add an image, or both.');
   const source = imageDataUrl ? await resolveSource(body.source) : null;
   const chain = chainRef(body.chain);
   const batch = typeof body.batch === 'string' ? body.batch.trim().slice(0, 60) : ''; // the saved batch this run belongs to
-  if (body.manual === true) return saveManual(res, { model, params, imageFile, video, source, chain, batch });
+  if (body.manual === true) return saveManual(res, { model, params, imageFile, images, video, source, chain, batch });
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null; // a text-only Brain goes by the theme alone
@@ -434,11 +448,13 @@ async function generate(req, res) {
   const texts = [];
   const keeps = []; // per take: what the check against the theme found (null: not checked)
   const had = set ? set.variations.map(v => v.versions.at(-1).text) : []; // the set's takes: the new one differs from them
-  const letGo = store.holdFiles([imageFile, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
+  const letGo = store.holdFiles([imageFile, ...images, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
   try {
     if (model.characterSheet && imageDataUrl && !params.characterSheet) { // first, the person's traits from the image
       stream.send({ type: 'status', text: 'Writing the character sheet from your picture…' });
-      const raw = await writeText(settings, llm, { model: llmModel, messages: buildSheetMessages(imageDataUrl), ...opts, temperature: 0.2 }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
+      // The person is the picture in the slot called so (a two-picture workflow: place + person), else the first.
+      const personAt = imageSlots.findIndex(x => /person|character|who|face/i.test(x.label || ''));
+      const raw = await writeText(settings, llm, { model: llmModel, messages: buildSheetMessages(personAt > 0 && imageDataUrls[personAt - 1] ? imageDataUrls[personAt - 1] : imageDataUrl), ...opts, temperature: 0.2 }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
       llm.loaded = true;
       const sheet = cleanSheet(raw);
       if (sheet) {
@@ -447,7 +463,7 @@ async function generate(req, res) {
       }
     }
     for (let index = 0; index < count; index++) {
-      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] });
+      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo, extraImages: imageDataUrls }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] });
       const t0 = Date.now();
       const warm = llm.loaded !== false;
       const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
@@ -460,7 +476,7 @@ async function generate(req, res) {
       if (!written) throw brainFailure('empty', EMPTY_HINT);
       await recordRun(llm, looksRefused(written) ? 'refused' : 'ok', t0, warm);
       const whole = imageDataUrl && params.characterSheet ? withSheet(written, params.characterSheet, model) : written; // no trait left out
-      const kept = await keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt: source?.text, text: whole, opts }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
+      const kept = await keepTheme(settings, llm, { model, params: { ...params, extraImages: imageDataUrls }, imageDataUrl, brainVideo, sourcePrompt: source?.text, text: whole, opts }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
       const text = kept?.text || whole;
       texts.push(text);
       keeps.push(kept?.kept || null);
@@ -487,6 +503,7 @@ async function generate(req, res) {
         ...params,
         temperature: opts.temperature,
         imageFile,
+        ...(images.length ? { images } : {}),
         ...(video ? { video } : {}),
         ...(source ? { source } : {}),
         ...(chain ? { chain } : {}),
@@ -503,11 +520,11 @@ async function generate(req, res) {
 
 // ✍️ Your own prompt: the theme is the take, word for word, and no Brain is asked. It streams like a written take,
 // so the page shows and renders it the same way.
-async function saveManual(res, { model, params, imageFile, video, source, chain, batch }) {
+async function saveManual(res, { model, params, imageFile, images = [], video, source, chain, batch }) {
   if (!params.theme) throw store.httpError(400, 'Type or paste your prompt in step 2.');
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, count: 1, llmModel: '', llmName: 'you' });
-  const letGo = store.holdFiles([imageFile, video?.file, video?.sheet]);
+  const letGo = store.holdFiles([imageFile, ...images, video?.file, video?.sheet]);
   try {
     stream.send({ type: 'done', index: 0, text: params.theme });
     const entry = await store.addHistory({
@@ -517,6 +534,7 @@ async function saveManual(res, { model, params, imageFile, video, source, chain,
       manual: true,
       ...params,
       imageFile,
+      ...(images.length ? { images } : {}),
       ...(video ? { video } : {}),
       ...(source ? { source } : {}),
       ...(chain ? { chain } : {}),
@@ -546,6 +564,8 @@ async function refine(req, res) {
   const base = variation.versions[Number.isInteger(body.baseIndex) ? body.baseIndex : -1] || variation.versions.at(-1);
   const current = typeof body.currentText === 'string' && body.currentText.trim() ? body.currentText.trim() : base.text;
   const imageDataUrl = entry.imageFile ? await store.readImageDataUrl(entry.imageFile) : null;
+  const extraImages = [];
+  for (const f of entry.images || []) extraImages.push(f ? await store.readImageDataUrl(f).catch(() => null) : null);
   const brainVideo = model.motionVideo ? await videoForBrain(entry.video) : null;
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null;
@@ -556,7 +576,7 @@ async function refine(req, res) {
 
   const stream = startStream(res, llm, 1, seesImages);
   try {
-    const messages = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo }, imageDataUrl, current, instruction);
+    const messages = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo, extraImages }, imageDataUrl, current, instruction);
     const t0 = Date.now();
     const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
       signal: stream.signal,
@@ -950,7 +970,7 @@ async function refreshWorkflow(existing, body) {
 const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
 // The names an entry's input image gets in ComfyUI's input folder (its render original, or the copy the LLM saw).
-const uploadNames = e => [e.source?.file, e.imageFile, e.video?.file, e.line?.file].filter(Boolean).map(name => `prompt-maker_${name}`);
+const uploadNames = e => [e.source?.file, e.imageFile, ...(e.images || []), e.video?.file, e.line?.file].filter(Boolean).map(name => `prompt-maker_${name}`);
 const VIDEO_MIME = Object.fromEntries(Object.entries(store.VIDEO_TYPES).map(([mime, ext]) => [ext, mime]));
 // And the names its renders got when a take was made from one of them (animating a still uploads the still).
 const renderUploads = renders => renders.flatMap(r => (r.files || []).map(f => `prompt-maker_${f.file}`));
@@ -1254,6 +1274,10 @@ async function renderTake(req, res) {
   if (workflow.mapping.image && !entry.imageFile) {
     throw store.httpError(400, `"${workflow.name}" needs an input image (it has a Load Image node), but this take has none. Add an image on the Create page, or pick a text-to-image/video workflow.`);
   }
+  const slots = workflow.mapping.images || [];
+  const slotFiles = slots.map((t, i) => (i === 0 ? entry.imageFile : entry.images?.[i - 1] || null));
+  const missing = slots.findIndex((t, i) => i > 0 && !t.optional && !slotFiles[i]);
+  if (missing > 0) throw store.httpError(400, `"${workflow.name}" needs a picture in its "${slots[missing].label || `Picture ${missing + 1}`}" slot, which this take has none for. Add it in step 3 on the Create page and Generate again.`);
   if (workflow.mapping.video && !entry.video?.file) {
     throw store.httpError(400, `"${workflow.name}" needs a motion video (it has a Load Video node), but this take has none. Add a motion video in step 3 on the Create page, then Generate again.`);
   }
@@ -1269,6 +1293,13 @@ async function renderTake(req, res) {
     const buf = await fs.readFile(useOriginal ? original : path.join(store.IMAGES_DIR, entry.imageFile));
     const ext = name.split('.').pop().toLowerCase();
     imageName = await comfy.uploadImage(base, buf, `prompt-maker_${name}`, IMAGE_MIME[ext] || 'image/png');
+  }
+  // The other picture slots: each stored picture uploaded as it is.
+  const imageNames = [imageName];
+  for (const f of slotFiles.slice(1)) {
+    if (!f) { imageNames.push(null); continue; }
+    const buf = await fs.readFile(path.join(store.IMAGES_DIR, f)).catch(() => { throw store.httpError(404, 'One of this take\'s pictures is missing from the data folder.'); });
+    imageNames.push(await comfy.uploadImage(base, buf, `prompt-maker_${f}`, IMAGE_MIME[f.split('.').pop()] || 'image/png'));
   }
   let videoName = null;
   // How many frames the motion video has: a workflow made of pieces gets as many as it needs, and one that loops over
@@ -1329,6 +1360,7 @@ async function renderTake(req, res) {
       const built = wf.buildPrompt(workflow, {
         text,
         imageName,
+        imageNames,
         videoName,
         audioName,
         minSeconds: audioName && entry.line?.seconds ? Math.ceil((entry.line.seconds + 1) * 10) / 10 : 0,

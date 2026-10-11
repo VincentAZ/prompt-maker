@@ -1,7 +1,7 @@
 {
   "format": "prompt-maker-workflow",
   "name": "Qwen Image Edit: edit your picture",
-  "note": "Changes the picture in step ③ the way your prompt says and keeps the rest. ComfyUI's Qwen Image Edit 2509 template with its Lightning LoRA (4 steps); the result keeps the picture's size; only ComfyUI's own nodes.",
+  "note": "Changes the picture in step ③ the way your prompt says and keeps the rest. ComfyUI's Qwen Image Edit 2509 template with its Lightning LoRA (4 steps); the result keeps the picture's size; only ComfyUI's own nodes. Two more slots in step ③ take pictures to bring into it (a product, a person, a style), left out when empty.",
   "prompt": {
     "78": {
       "inputs": {
@@ -9,7 +9,7 @@
       },
       "class_type": "LoadImage",
       "_meta": {
-        "title": "Load Image"
+        "title": "Picture to edit"
       }
     },
     "469": {
@@ -86,7 +86,15 @@
           "433:117",
           0
         ],
-        "prompt": ""
+        "prompt": "",
+        "image2": [
+          "118",
+          0
+        ],
+        "image3": [
+          "119",
+          0
+        ]
       },
       "class_type": "TextEncodeQwenImageEditPlus",
       "_meta": {
@@ -121,7 +129,15 @@
           "433:117",
           0
         ],
-        "prompt": ""
+        "prompt": "",
+        "image2": [
+          "118",
+          0
+        ],
+        "image3": [
+          "119",
+          0
+        ]
       },
       "class_type": "TextEncodeQwenImageEditPlus",
       "_meta": {
@@ -215,6 +231,48 @@
       "_meta": {
         "title": "KSampler"
       }
+    },
+    "79": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "Another picture"
+      }
+    },
+    "118": {
+      "class_type": "FluxKontextImageScale",
+      "inputs": {
+        "image": [
+          "79",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "FluxKontextImageScale (2)"
+      }
+    },
+    "80": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "Another picture"
+      }
+    },
+    "119": {
+      "class_type": "FluxKontextImageScale",
+      "inputs": {
+        "image": [
+          "80",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "FluxKontextImageScale (3)"
+      }
     }
   },
   "mapping": {
@@ -240,6 +298,29 @@
       {
         "node": "433:3",
         "input": "seed"
+      }
+    ],
+    "images": [
+      {
+        "node": "78",
+        "input": "image",
+        "label": "Picture to edit",
+        "hint": "the picture the result is made from: everything you do not change stays",
+        "optional": false
+      },
+      {
+        "node": "79",
+        "input": "image",
+        "label": "Another picture",
+        "hint": "something to bring into the first picture (a product, a person, a style): say what from it goes where",
+        "optional": true
+      },
+      {
+        "node": "80",
+        "input": "image",
+        "label": "One more",
+        "hint": "a third picture to bring in, the same way",
+        "optional": true
       }
     ]
   },

@@ -23,6 +23,12 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.45.0 — **Several pictures in step ③.** A workflow's Load Image nodes are its picture slots (named by the node's
+  title, needed or optional); step ③ shows a slot per picture under the first, the Brain gets them all with their
+  names, the render uploads them all and leaves an empty optional slot (and what only it fed) out of the workflow.
+  Starters: **Krea 2 Character: into your picture** (Place + Person, the Identity Edit v1.2 two-picture edit,
+  rendered for real), Qwen Image Edit with two more optional pictures, MiniMax H3 Reference with a second picture of
+  the person. Saved prompts keep and restore the extra pictures; deleting shreds them.
 - 1.44.0 — **Settings → ⬆ Updates**: Check for a newer version (GitHub, only on click), ⬆ Update in one click (git
   pull for a repo copy; the new .deb downloaded and installed behind pkexec for a package install; a folder copy
   is sent to the downloads page), then **↻ Restart Prompt Maker**. ↻ Restart on the Services row too, and

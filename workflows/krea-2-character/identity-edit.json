@@ -242,6 +242,15 @@
         "node": "53",
         "input": "seed"
       }
+    ],
+    "images": [
+      {
+        "node": "72",
+        "input": "image",
+        "label": "Person",
+        "hint": "the person to keep: state every trait of the character sheet",
+        "optional": false
+      }
     ]
   },
   "options": {
