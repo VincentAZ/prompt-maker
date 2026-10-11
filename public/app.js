@@ -16,6 +16,7 @@ const state = {
   video: null, // the motion video (character-animation models): { file, sheet, seconds, frames, width, height, ratio }
   imageRole: 'reference', // the user's choice; "animate" falls back to reference on image models
   length: 'medium',
+  looks: [], // your own looks (step ②), from /api/looks
   look: '', // the camera-and-light look under the theme; '' lets the Brain pick
   variations: 1,
   sheet: '', // 🧾 the character sheet of the image's person (models that keep a person): their traits, one per line
@@ -252,10 +253,11 @@ function dayGroup(iso) {
   return 'Earlier';
 }
 
-function autosize(ta) {
+// min: never lower than this (a take's reserved height, see reserveWell), so a box never shrinks under what's below it.
+function autosize(ta, min = 0) {
   if (!ta.offsetParent) return; // hidden: measured again when it becomes visible
   ta.style.height = 'auto';
-  ta.style.height = `${ta.scrollHeight + 2}px`;
+  ta.style.height = `${Math.max(ta.scrollHeight + 2, min)}px`;
 }
 
 function fillSelect(sel, options, value) {
@@ -324,6 +326,51 @@ const currentModel = () => modelById(state.modelId);
 function lengthTarget(model, length) {
   const r = /(\d+)\s*[–—-]\s*(\d+)/.exec(model?.lengthGuide?.[length] || '');
   return r ? [Number(r[1]), Number(r[2])] : null;
+}
+
+// How wide a character of a font is on average (a canvas, measured once per font): for a take's expected height.
+const charWidths = new Map();
+const CHAR_SAMPLE = 'A candid 35mm film photograph of a woman at a window, soft light falling from the left, fine grain and muted colors. ';
+function charWidth(cs) {
+  const font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  if (!charWidths.has(font)) {
+    let w = parseFloat(cs.fontSize) * 0.5;
+    try {
+      const ctx = document.createElement('canvas').getContext('2d');
+      ctx.font = font;
+      w = ctx.measureText(CHAR_SAMPLE).width / CHAR_SAMPLE.length || w;
+    } catch { /* no canvas: the estimate */ }
+    charWidths.set(font, w);
+  }
+  return charWidths.get(font);
+}
+const CHARS_PER_WORD = 6.4; // letters plus the space, in prose prompts
+
+// Holds a take's prompt box at the height its text is expected to need before a word arrives (from the model's length
+// target, or the user's own prompt), so nothing under the take moves while the Brain writes, when it's done, or while
+// a refine replaces the text (floor: never lower than this, the box's current height during a refine). The box only
+// grows past it when the text turns out longer; it never shrinks back (autosize keeps the reserve).
+function reserveWell(card, { floor = 0 } = {}) {
+  const well = $('.prompt-well', card.el);
+  const view = $('.prompt-view', card.el);
+  let px = 0;
+  const width = well.clientWidth - 36; // the text's own width (18px of padding each side)
+  if (width > 0) {
+    const entry = state.entry || {};
+    const target = !entry.manual && lengthTarget(card.model, entry.length || state.length);
+    const words = entry.manual ? countWords(entry.theme || '') : target ? (target[0] + target[1]) / 2 : 0;
+    if (words) {
+      const cs = getComputedStyle(view);
+      const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.7;
+      const perLine = Math.max(8, Math.floor(width / charWidth(cs)));
+      const lines = Math.ceil((words * CHARS_PER_WORD) / perLine * 1.08); // a ragged right edge wastes about 8%
+      px = Math.round(lines * lineHeight + 32);
+      const skeleton = $('.skeleton', card.el);
+      if (!skeleton.hidden) skeleton.innerHTML = '<i></i>'.repeat(Math.min(12, Math.max(3, lines)));
+    }
+  }
+  card.reserve = Math.max(px, floor, card.reserve || 0);
+  well.style.setProperty('--reserve', card.reserve ? `${card.reserve}px` : '');
 }
 
 // "16:9", "2.35:1" or "1920×1080" → width / height.
@@ -1676,14 +1723,95 @@ async function useTurnaround(entryId, sheet) {
   toast('🪪 Your turnaround is now the picture in step 3: every render reproduces this person from it');
 }
 
-// The look under the theme (step 2). Not per model: it belongs to the shot you describe.
-const LOOK_NAMES = Object.fromEntries($$('#lookRow button').map(b => [b.dataset.value, b.textContent.trim()]));
+// The look under the theme (step 2). Not per model: it belongs to the shot you describe. A built-in from the HTML
+// ('' = the Brain picks, 'none' = 🚫 No look), or one of your own (state.looks, kept on the server).
+const BUILTIN_LOOKS = Object.fromEntries($$('#lookRow button[data-value]').map(b => [b.dataset.value, b.textContent.trim()]));
+const customLook = id => state.looks.find(l => l.id === id) || null;
+const lookKnown = v => Object.hasOwn(BUILTIN_LOOKS, v) || Boolean(customLook(v));
+function lookName(v) {
+  if (Object.hasOwn(BUILTIN_LOOKS, v)) return BUILTIN_LOOKS[v];
+  const l = customLook(v);
+  return l ? `${l.emoji ? `${l.emoji} ` : ''}${l.name}` : '';
+}
+const lookWord = v => (v === 'none' ? 'no look' : `${lookName(v)} look`); // for summaries and the assistant
 function setLook(v, { persist = true } = {}) {
-  $('#chosenLook').textContent = LOOK_NAMES[v] || 'Automatic';
-  state.look = Object.hasOwn(LOOK_NAMES, v) ? v : '';
+  state.look = lookKnown(v) ? v : '';
+  $('#chosenLook').textContent = lookName(state.look) || 'Automatic';
   setActive($('#lookRow'), state.look);
+  renderLookTools();
   if (persist) saved.set('look', state.look);
 }
+// The chips of your own looks, after the built-ins. Not redrawn under the keyboard's focus.
+function renderLooks() {
+  const box = $('#lookMine');
+  const focused = box.contains(document.activeElement) ? document.activeElement.dataset.value : null;
+  box.innerHTML = state.looks.map(l => `<button type="button" class="chip-btn" role="radio" data-value="${esc(l.id)}" title="${esc(l.still)}">${esc(lookName(l.id))}</button>`).join('');
+  if (focused) $(`button[data-value="${CSS.escape(focused)}"]`, box)?.focus();
+  setActive($('#lookRow'), state.look);
+  renderLookTools();
+}
+// ✎ Edit / 🗑 Delete under the chips: there once you have a look of your own, visible when the picked one is yours.
+function renderLookTools() {
+  const t = $('#lookTools');
+  t.hidden = !state.looks.length;
+  t.classList.toggle('ghost', !customLook(state.look));
+}
+let lookSaving = Promise.resolve();
+function saveLooks(list) {
+  state.looks = list;
+  renderLooks();
+  lookSaving = lookSaving
+    .then(() => api('/api/looks', { method: 'PUT', body: list }))
+    .then(r => { if (state.looks === list) { state.looks = r; renderLooks(); } })
+    .catch(err => toast(`Couldn't keep your look: ${err.message}`, true));
+  return lookSaving;
+}
+function openLookEditor(look = null) {
+  const ed = $('#lookEditor');
+  ed.dataset.id = look?.id || '';
+  $('#lkEmoji').value = look?.emoji || '';
+  $('#lkName').value = look?.name || '';
+  $('#lkStill').value = look?.still || '';
+  $('#lkMove').value = look?.move || '';
+  ed.hidden = false;
+  $('#lkName').focus();
+}
+function keepLook() {
+  const ed = $('#lookEditor');
+  const name = $('#lkName').value.replace(/\s+/g, ' ').trim();
+  const still = $('#lkStill').value.replace(/\s+/g, ' ').trim();
+  if (!name || !still) { toast('Give the look a name and say what the camera and light do.', true); (name ? $('#lkStill') : $('#lkName')).focus(); return; }
+  const editing = customLook(ed.dataset.id);
+  const look = { id: editing?.id || `u-${Date.now().toString(36)}`, name, emoji: $('#lkEmoji').value.trim(), still, move: $('#lkMove').value.replace(/\s+/g, ' ').trim() };
+  saveLooks(editing ? state.looks.map(l => (l.id === look.id ? look : l)) : [...state.looks, look]);
+  setLook(look.id);
+  ed.hidden = true;
+  toast(editing ? '✓ Your look is updated' : `🎥 Kept “${name}”: it's your look now`);
+}
+$('#lookAdd').addEventListener('click', () => openLookEditor());
+$('#lookEdit').addEventListener('click', () => { const l = customLook(state.look); if (l) openLookEditor(l); });
+$('#lkSave').addEventListener('click', keepLook);
+$('#lkCancel').addEventListener('click', () => { $('#lookEditor').hidden = true; });
+$('#lookEditor').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.preventDefault(); $('#lookEditor').hidden = true; }
+  else if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); keepLook(); } // not the form's Generate
+});
+$('#lookDel').addEventListener('click', () => {
+  const l = customLook(state.look);
+  if (!l) return;
+  const before = state.looks;
+  const at = before.indexOf(l);
+  saveLooks(before.filter(x => x !== l));
+  setLook('');
+  $('#lookEditor').hidden = true;
+  toast(`🗑 Deleted the look “${l.name}”`, false, { label: '↶ Undo', run: () => {
+    const now = [...state.looks];
+    if (!now.some(x => x.id === l.id)) now.splice(Math.min(at, now.length), 0, l);
+    saveLooks(now);
+    setLook(l.id);
+    toast('↶ The look is back');
+  } });
+});
 
 function setVariations(n, { persist = true } = {}) {
   state.variations = n;
@@ -1749,7 +1877,7 @@ $('#lengthSeg').addEventListener('click', e => {
 });
 $('#lookRow').addEventListener('click', e => {
   const b = e.target.closest('button');
-  if (b) setLook(b.dataset.value);
+  if (b?.dataset.value !== undefined) setLook(b.dataset.value); // (＋ Your own look… has none)
 });
 $('#varSeg').addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -3533,7 +3661,7 @@ function createTake(index, count, model) {
       <div class="prompt-view" hidden></div>
       <textarea class="prompt-text" spellcheck="false" aria-label="${esc(name)} text (editable)" hidden></textarea>
     </div>
-    <div class="take-meta"><span class="meter" hidden></span><span class="time"></span><span class="change"></span></div>
+    <div class="take-meta"><span class="meter"></span><span class="time"></span><span class="change"></span></div>
     <div class="render-zone" hidden></div>
     <form class="refine"${model ? ' inert' : ' hidden'}>
       <input placeholder="Tweak it… e.g. make it golden hour, add a dog" aria-label="What should change in ${esc(name)}?">
@@ -3542,11 +3670,12 @@ function createTake(index, count, model) {
     <div class="chips"${model ? ' inert' : ' hidden'}>${chips.map(([e, c]) => `<button type="button" class="chip-btn" data-instr="${esc(c)}">${e} ${esc(c)}</button>`).join('')}</div>`;
   el.dataset.panel = 'take';
   decoratePanel(el);
-  const card = { el, index, view: 0, model, running: new Map(), rb: null };
+  const card = { el, index, view: 0, model, running: new Map(), rb: null, reserve: 0 };
   const ta = $('.prompt-text', el);
+  updateMeter(card, ''); // the word count's row has its height from the start
 
   ta.addEventListener('input', () => {
-    autosize(ta);
+    autosize(ta, card.reserve);
     updateMeter(card, ta.value);
     $('.save-edit', el).hidden = !cardDirty(card);
   });
@@ -3593,9 +3722,8 @@ async function pageVersion(card, delta) {
 function updateMeter(card, text) {
   const meter = $('.meter', card.el);
   const n = countWords(text);
-  meter.hidden = !text;
-  if (!text) return;
   const target = !state.entry?.manual && lengthTarget(card.model, state.entry?.length || state.length); // your own prompt has no target
+  if (!text) { meter.textContent = target ? `target ${target[0]}–${target[1]} words` : '… words'; meter.className = 'meter dim'; return; } // greyed, holding its place
   if (!target) { meter.textContent = `${n} words`; meter.className = 'meter'; return; }
   const [lo, hi] = target;
   const ok = n >= lo * 0.85 && n <= hi * 1.15;
@@ -3618,6 +3746,7 @@ function showStreaming(card, text, thinking, reasoningChars) {
     return;
   }
   setStatus(card, '✍️ Writing…');
+  if (!card.reserve && view.hidden) reserveWell(card); // not laid out when the run started: now it is
   $('.skeleton', card.el).hidden = true;
   $('.prompt-text', card.el).hidden = true;
   view.hidden = false;
@@ -3636,7 +3765,7 @@ function markInterrupted(card, text) {
   ta.hidden = false;
   ta.value = text;
   ta.readOnly = true;
-  requestAnimationFrame(() => autosize(ta));
+  requestAnimationFrame(() => autosize(ta, card.reserve));
   setStatus(card, '⚠️ Cut off, not saved', false);
   $('.copy', card.el).disabled = false;
   $('.refine', card.el).hidden = true;
@@ -3644,6 +3773,9 @@ function markInterrupted(card, text) {
   $('.versions', card.el).hidden = true;
   $('.render-zone', card.el).hidden = true;
 }
+
+// What the check against the theme found (kept on each version as `kept`), in plain words.
+const keptLine = k => (!k ? '' : k.fixed?.length ? `✎ Put back: ${k.fixed.join(', ')}` : k.drift?.length ? `⚠ Not as in your idea: ${k.drift.join(', ')}` : k.checked ? '✓ Checked against your idea' : '');
 
 function showVersion(card, i) {
   const versions = versionsOf(card);
@@ -3656,8 +3788,8 @@ function showVersion(card, i) {
   ta.hidden = false;
   ta.readOnly = false;
   ta.value = v.text;
-  autosize(ta); // now, so the box never has its default height in between (the take would shrink, then grow)
-  requestAnimationFrame(() => autosize(ta));
+  autosize(ta, card.reserve); // now, so the box never has its default height in between (the take would shrink, then grow)
+  requestAnimationFrame(() => autosize(ta, card.reserve));
   updateMeter(card, v.text);
   setStatus(card, '');
   const canRefine = Boolean(card.model);
@@ -3670,7 +3802,8 @@ function showVersion(card, i) {
   $('.vlabel', card.el).textContent = `v${card.view + 1}/${versions.length}`;
   $('.prev', card.el).disabled = card.view === 0;
   $('.next', card.el).disabled = card.view === versions.length - 1;
-  $('.change', card.el).textContent = !canRefine ? 'Model deleted, so refining is off' : v.instruction ? `↳ “${v.instruction}”` : '';
+  $('.change', card.el).textContent = !canRefine ? 'Model deleted, so refining is off' : [v.instruction ? `↳ “${v.instruction}”` : '', keptLine(v.kept)].filter(Boolean).join(' · ');
+  $('.change', card.el).title = $('.change', card.el).textContent; // (one line on screen; the whole of it here)
   const secs = card.view === versions.length - 1 ? state.timings[card.index] : null;
   $('.time', card.el).textContent = secs ? `⏱ ${secs.toFixed(1)}s` : '';
   renderZone(card);
@@ -4059,7 +4192,7 @@ async function runGeneration(body, m, { rendersNext = false } = {}) {
   list.innerHTML = '';
   const count = body.variations;
   state.cards = Array.from({ length: count }, (_, i) => createTake(i, count, m));
-  state.cards.forEach(c => { c.pending = rendersNext; list.append(c.el); renderZone(c); });
+  state.cards.forEach(c => { c.pending = rendersNext; list.append(c.el); reserveWell(c); renderZone(c); });
   state.cards.forEach((c, i) => setStatus(c, i === 0 ? 'Warming up…' : 'Queued', i === 0));
   renderStageHead(state.entry, { running: true });
   state.controller = new AbortController();
@@ -4094,6 +4227,7 @@ async function runGeneration(body, m, { rendersNext = false } = {}) {
         showStreaming(card, ev.text, false);
         $('.caret', card.el)?.remove();
         setStatus(card, '✓ Done', false);
+        if (ev.kept) $('.change', card.el).textContent = keptLine(ev.kept); // (showVersion draws it again once saved)
         announce(`${count > 1 ? `Take ${ev.index + 1}` : 'Prompt'} done`);
         current = ev.index + 1;
         if (state.cards[current]) {
@@ -4147,6 +4281,9 @@ async function refineCard(card, instruction) {
   state.controller = new AbortController();
   state.runId = null;
   state.stopping = false;
+  reserveWell(card, { floor: $('.prompt-well', card.el).offsetHeight }); // the box keeps at least its height while the new text streams in
+  const vs = $('.versions', card.el); // the version pager appears once the refine is saved: show it now so the head doesn't rewrap then
+  if (vs.hidden) { vs.hidden = false; $('.vlabel', card.el).textContent = `v${card.view + 1}/${versionsOf(card).length}`; }
   setBusy(true);
   setStatus(card, `🔁 ${instruction}`);
   setTitle('🔁 Refining');
@@ -4187,7 +4324,7 @@ async function refineCard(card, instruction) {
   } else {
     showVersion(card, card.view);
     ta.value = before;
-    autosize(ta);
+    autosize(ta, card.reserve);
     updateMeter(card, before);
     $('.save-edit', card.el).hidden = !cardDirty(card);
   }
@@ -4406,6 +4543,10 @@ function shapeLabel(e) {
   return w > h ? 'landscape' : w < h ? 'portrait' : a;
 }
 
+// The look a saved prompt was written with: its own copy of the name (your own look, kept even after it's deleted),
+// else the built-in's label.
+const lookTagOf = e => (!e.look || e.manual ? '' : e.lookName ? `${customLook(e.look)?.emoji ? `${customLook(e.look).emoji} ` : ''}${e.lookName}` : lookName(e.look));
+
 function renderHistory() {
   const q = $('#historySearch').value.trim().toLowerCase();
   const items = state.history.filter(e =>
@@ -4438,7 +4579,9 @@ function renderHistory() {
     const first = e.variations[0].versions.at(-1).text;
     const takes = e.variations.length;
     const edits = e.variations.reduce((n, v) => n + v.versions.length - 1, 0);
-    const bits = [shapeLabel(e), e.duration, takes > 1 ? `${takes} takes` : '', edits ? `${edits} tweak${edits > 1 ? 's' : ''}` : ''].filter(Boolean);
+    const putBack = [...new Set(e.variations.flatMap(v => v.versions.flatMap(x => x.kept?.fixed || [])))];
+    const checked = putBack.length ? `✎ put back: ${putBack.slice(0, 3).join(', ')}${putBack.length > 3 ? '…' : ''}` : e.variations.some(v => v.versions.some(x => x.kept?.checked)) ? '✓ checked against your idea' : '';
+    const bits = [shapeLabel(e), e.duration, takes > 1 ? `${takes} takes` : '', edits ? `${edits} tweak${edits > 1 ? 's' : ''}` : '', checked].filter(Boolean);
     const title = e.theme || 'No theme: built from the image';
     const allRenders = e.variations.flatMap(v => v.renders || []);
     const renderCount = allRenders.length;
@@ -4448,7 +4591,7 @@ function renderHistory() {
         <div class="hthumb hopen${cover || e.imageFile ? '' : ' textonly'}" data-act="open" aria-hidden="true">
           ${cover ? mediaTag(cover, { hover: true }) : e.imageFile ? `<img src="/images/${esc(e.imageFile)}" alt="" loading="lazy">` : kindIcon(e.modelKind)}
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${e.manual ? '🖼️ image' : { reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
-          ${LOOK_NAMES[e.look] && e.look && !e.manual ? `<span class="tag kind" title="The look picked under the theme">${esc(LOOK_NAMES[e.look])}</span>` : ''}
+          ${lookTagOf(e) ? `<span class="tag kind" title="The look picked under the theme">${esc(lookTagOf(e))}</span>` : ''}
         </div>
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Bookmark this prompt: ${esc(title)}" title="${e.favorite ? 'Remove prompt bookmark' : 'Bookmark this prompt to reuse. Rate the artwork in Gallery.'}">${bookmarkIcon}</button>
         <div class="hbody">
@@ -4664,7 +4807,10 @@ async function loadForm(entry) {
   }
   if (($('#theme').value || '') !== (entry.theme || '')) replaceTheme(entry.theme || '', { focus: false });
   if (entry.imageRole) state.imageRole = entry.imageRole;
-  setLook(entry.look || '', { persist: false });
+  if (entry.look && !lookKnown(entry.look)) {
+    setLook('', { persist: false });
+    toast(`Your look “${entry.lookName || 'that one'}” was deleted since, so the Brain picks the look.`);
+  } else setLook(entry.look || '', { persist: false });
   const src = entry.source;
   setImage(entry.imageFile ? { file: entry.imageFile, ...(src ? { source: { entryId: src.entryId, index: src.index, renderId: src.renderId, file: src.file, modelName: src.modelName, seed: src.seed } } : {}) } : null);
   if (modelById(entry.modelId)?.motionVideo) restoreVideo(entry.video);
@@ -4842,7 +4988,8 @@ function brainCard(m, fit, model, inUse, q = '') {
   const s = m.stats || {};
   const speed = brainSpeed(m);
   const fails = [s.room && `ran out of room ${s.room}×`, s.empty && `empty ${s.empty}×`, s.refused && `refused ${s.refused}×`].filter(Boolean).join(' · ');
-  const size = [m.params, m.quant, m.sizeBytes && `${(m.sizeBytes / 1e9).toFixed(1)} GB`].filter(Boolean).join(' · ');
+  const k = n => (n >= 1000 ? `${Math.round(n / 1024)}k` : String(n));
+  const size = [m.params, m.quant, m.sizeBytes && `${(m.sizeBytes / 1e9).toFixed(1)} GB`, m.contextLoaded ? `room for ${k(m.contextLoaded)} tokens` : m.context ? `up to ${k(m.context)} tokens` : ''].filter(Boolean).join(' · ');
   const record = kind => {
     const r = m.record?.[kind];
     return r?.takes ? `${r.takes} take${r.takes > 1 ? 's' : ''} · ${r.rendered} rendered${r.fav ? ` · ⭐ ${r.fav}` : ''}` : '<span class="muted">none yet</span>';
@@ -5865,6 +6012,7 @@ function renderSettings() {
   showOutputDir();
   renderComfyHealth();
   $('#sThinking').value = s.thinking;
+  $('#sCheckTheme').checked = s.checkTheme !== false;
   $('#sMaster').value = s.masterPrompt;
   $('#sAdult').checked = Boolean(s.adultContent);
   $('#sComputer').checked = Boolean(s.assistantComputer);
@@ -5909,7 +6057,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, logScrub: $('#sLogScrub').checked, comfyRam: $('#sComfyRam').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, masterPrompt: $('#sMaster').value, adultPrompt: $('#sAdultPrompt').value, adultContent: $('#sAdult').checked, assistantComputer: $('#sComputer').checked },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, logScrub: $('#sLogScrub').checked, comfyRam: $('#sComfyRam').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, checkTheme: $('#sCheckTheme').checked, masterPrompt: $('#sMaster').value, adultPrompt: $('#sAdultPrompt').value, adultContent: $('#sAdult').checked, assistantComputer: $('#sComputer').checked },
     });
     renderSettings();
     toast('💾 Settings saved');
@@ -8946,7 +9094,7 @@ $('#sComfyTest').addEventListener('click', async () => {
 // Chat with the Brain, which can look at and use the app through tools. The tools run here, through the same
 // functions the buttons use, so everything it does shows up on screen. The conversation lives in the data folder.
 
-const as = { messages: [], loaded: false, busy: false, stopped: false, controller: null, running: null, live: null, turnVideos: 0 }; // turnVideos: video renders this turn started
+const as = { messages: [], plan: null, loaded: false, busy: false, stopped: false, controller: null, running: null, live: null, turnVideos: 0 }; // plan: its to-do list for a long task; turnVideos: video renders this turn started
 
 const T = (name, description, properties = {}, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
 const S = description => ({ type: 'string', description });
@@ -8959,7 +9107,14 @@ const E = (values, description) => ({ type: 'string', enum: values, description 
 const JOB_TOOLS = new Set(['set_model', 'set_theme', 'set_dials', 'use_image', 'set_image_role', 'clear_image', 'use_motion_video', 'clear_motion_video', 'edit_motion_video', 'character_from_render', 'pick_workflow', 'add_lora', 'set_lora', 'remove_lora', 'set_seed', 'set_sampler', 'set_auto_render', 'new_session', 'generate', 'refine_take', 'render', 'animate_render', 'use_render_as_image', 'pick_best', 'judge_renders', 'set_line', 'make_voice', 'join_videos', 'build_chain', 'clear_chain', 'load_chain', 'continue_chain', 'rate_render', 'favorite_entry']);
 
 const TOOLS = [
-  T('get_state', 'What is on the Create page right now: model, theme, image, dials, workflow, LoRAs, chain, takes on screen, ComfyUI status.'),
+  T('get_state', 'A short look at the Create page (model, theme, image, takes, ComfyUI). The full state is under "The app right now" in your instructions every turn.'),
+  T('plan', 'Your to-do list for a task that takes more than about 3 tool calls. Call it first with the goal and the steps (3–12 short lines); then do the steps one at a time and tick each with done; note keeps one line later steps need (a folder, a count, a render id). The plan stays on screen for the user and in your instructions every turn, so you never re-plan or explain it again. clear ends it once everything is ticked (or the user changes their mind).', {
+    goal: S('One line: what the user asked for'),
+    steps: { type: 'array', items: { type: 'string' }, description: 'The steps in order, each a short line (replaces the old list)' },
+    done: { type: 'array', items: { type: 'integer' }, description: 'Step numbers now done (1 = the first)' },
+    note: S('One line to remember for the next steps (replaces the old note)'),
+    clear: B('true: the plan is finished or dropped'),
+  }),
   T('list_models', 'The target models (image and video) with their aspect ratios, resolutions and durations.'),
   T('list_workflows', 'The ComfyUI workflows of a model, and which one is picked.', { model: S('Model name; default: the current model') }),
   T('list_loras', 'The LoRAs available for a model (from its LoRA folder) and the ones in use on the picked workflow.', { model: S('Model name; default: the current model'), search: S('Words to filter by') }),
@@ -8968,7 +9123,7 @@ const TOOLS = [
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
   T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
-  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), look: E(['brain picks', ...Object.keys(LOOK_NAMES).filter(Boolean)], 'How the camera and light feel (step 2, under the theme); "brain picks" suits them to the theme'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
+  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), look: S('How the camera and light feel (step 2, under the theme): "brain picks" suits them to the theme, "no look" adds none of the Brain\'s own, one of Natural, Intimate, Powerful, Lonely, Suspense, Horror, Noir, Dreamy, Gritty, Epic, Luxury, or the name of a look the user made (get_state lists them)'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
   T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate', 'character'], 'animate = first frame of a video (video models only); character = the character a motion video animates (character-animation models like Wan Animate 2 only)') }, ['role']),
   T('clear_image', 'Remove the image from step 3.'),
   T('use_motion_video', 'Set the motion video in step 3 for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
@@ -9249,7 +9404,7 @@ function assistantState() {
     brain: selectedLlm()?.name || null,
     model: m && { name: m.name, kind: m.kind, ...(m.motionVideo ? { characterAnimation: true } : {}) },
     theme: $('#theme').value,
-    ...(state.manual ? {} : { look: state.look || 'brain picks' }),
+    ...(state.manual ? {} : { look: state.look === 'none' ? 'none: no camera or light of the Brain\'s own' : state.look ? lookName(state.look) : 'brain picks', ...(state.looks.length ? { own_looks: state.looks.map(l => l.name) } : {}) }),
     ...(lineOn() ? { line: state.line.text && state.line.voice ? { voice: voiceById(state.line.voice)?.name || state.line.voice, text: state.line.text } : voicesReady() ? 'none (set_line gives the person a line to say in a kept voice)' : 'voices not installed (🎙 Voices page)' } : {}),
     ...(m?.characterSheet && state.image && !state.manual ? { character_sheet: state.sheet.trim() || 'not written yet: Generate writes it from the image first (step 3, the user can edit it)' } : {}),
     ...(state.manual ? { own_prompt: 'on: the user\'s ✍️ switch in step 2. Generate sends the theme word for word as the prompt (no Brain) and renders it, and dials.takes is how many renders. Only the user switches it' } : {}),
@@ -9268,7 +9423,7 @@ function assistantState() {
     batch_runs: pickedBatches().map(b => b.name), // what Generate runs: none, one batch, or all in order
     chain: state.chain.steps.length ? state.chain.steps.map(s => ({ model: modelById(s.modelId)?.name, use: s.use, whatHappens: s.direction, gate: s.gate, takes: s.takes })) : null,
     chainRun: state.run ? { status: state.run.status, steps: state.run.entries.length } : null,
-    takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, rated: takeRenders(c).filter(r => ratingOf(r)).map(r => RATINGS[ratingOf(r)]), text: $('.prompt-text', c.el).value.slice(0, 1500) })) : [],
+    takes: state.entry?.id ? state.cards.filter(c => !c.interrupted).map(c => ({ take: c.index + 1, words: countWords($('.prompt-text', c.el).value), renders: takeRenders(c).length, rated: takeRenders(c).filter(r => ratingOf(r)).map(r => RATINGS[ratingOf(r)]), text: $('.prompt-text', c.el).value.slice(0, 500), ...($('.prompt-text', c.el).value.length > 500 ? { more: 'read_take gives the whole text' } : {}) })) : [],
     lightbox: lightboxItem() ? describeItem(lightboxItem()) : null, // what the user is looking at, full screen
     this_session: reelGroups().map(g => ({ theme: g.entry?.theme ?? g.jobs[0]?.theme, model: g.entry?.modelName || g.jobs[0]?.modelName, on_screen: g.id === state.entry?.id, renders: g.items.length, rendering: g.jobs.length, rated: g.items.filter(it => ratingOf(it.render)).length })),
     rendering_now: rendersNow.map(j => ({ theme: j.theme, model: j.modelName, take: j.index + 1, left: j.count - j.finished, stage: j.stage, pct: j.pct })),
@@ -9384,7 +9539,7 @@ function readScreen(find) {
     const line = describeControl(el);
     if (words.length && !words.some(w => `${sec} ${line}`.toLowerCase().includes(w))) continue;
     if (sec !== section) { section = sec; inSection = 0; lines.push(`## ${sec || 'Top'}`); }
-    if (++inSection > 40 || lines.join('\n').length > 6000) { left++; continue; }
+    if (++inSection > 30 || lines.join('\n').length > 4000) { left++; continue; }
     as.screen.push(el);
     lines.push(`[${as.screen.length}] ${line}`);
   }
@@ -9733,7 +9888,8 @@ const TOOL_IMPL = {
   },
   read_playbook: async ({ model }) => {
     const m = await api(`/api/models/${needModel(model).id}`);
-    return { summary: `Read the ${m.name} playbook`, name: m.name, kind: m.kind, description: m.description, instructions: m.instructions, aspect_ratios: m.aspectRatios, resolutions: m.resolutions, durations: m.durations, length_guide: m.lengthGuide, examples: m.examples };
+    const long = (m.instructions || '').length > 4000; // (it stays in the chat for every turn after: the gist is enough)
+    return { summary: `Read the ${m.name} playbook`, name: m.name, kind: m.kind, description: m.description, instructions: (m.instructions || '').slice(0, 4000), ...(long ? { instructions_more: 'cut here; edit_playbook replaces the whole text, so ask the user before rewriting it' } : {}), aspect_ratios: m.aspectRatios, resolutions: m.resolutions, durations: m.durations, length_guide: m.lengthGuide, examples: (m.examples || []).slice(0, 3).map(e => e.slice(0, 600)), examples_count: (m.examples || []).length };
   },
   edit_playbook: async ({ model, instructions, description, aspect_ratios: aspects, resolutions, durations, length_guide: lengths, add_examples: examples }) => {
     const before = await api(`/api/models/${needModel(model).id}`);
@@ -9759,7 +9915,7 @@ const TOOL_IMPL = {
   },
   list_folder: async ({ folder }) => {
     const f = await api(`/api/folder?path=${encodeURIComponent(folder || '')}`);
-    return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'}${f.videos?.length ? ` and ${f.videos.length} video${f.videos.length === 1 ? '' : 's'}` : ''} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 200).map(i => i.name), ...(f.images.length > 200 || f.more ? { more: f.images.length - 200 + f.more } : {}), ...(f.videos?.length ? { videos: f.videos } : {}), subfolders: f.folders, ...(f.others ? { others: f.others } : {}), ...(f.note ? { note: f.note } : {}) };
+    return { summary: `${f.images.length}${f.more ? '+' : ''} picture${f.images.length === 1 ? '' : 's'}${f.videos?.length ? ` and ${f.videos.length} video${f.videos.length === 1 ? '' : 's'}` : ''} in ${f.shown}`, folder: f.shown, pictures: f.images.slice(0, 60).map(i => i.name), ...(f.images.length > 60 || f.more ? { more: f.images.length - 60 + (f.more || 0), more_note: 'Only the first 60 names are listed; a job (start_job) with this folder works through all of them.' } : {}), ...(f.videos?.length ? { videos: f.videos.slice(0, 30) } : {}), subfolders: (f.folders || []).slice(0, 40), ...(f.others ? { others: f.others } : {}), ...(f.note ? { note: f.note } : {}) };
   },
   run_command: async ({ command, folder, seconds }) => {
     needComputer();
@@ -9867,7 +10023,34 @@ const TOOL_IMPL = {
     jobAction(job, action === 'retry_skipped' ? 'retry' : action);
     return { summary: `Job “${job.title}” → ${action.replace('_', ' ')}` };
   },
-  get_state: () => ({ summary: 'Looked at the Create page', ...assistantState() }),
+  get_state: () => { // (the whole state is in the instructions every turn: this one stays small, it's kept in the chat)
+    const st = assistantState();
+    return { summary: 'Looked at the Create page', page: st.page, model: st.model?.name || null, theme: String(st.theme || '').slice(0, 300), look: st.look, image: st.image, takes: st.takes?.length || 0, comfyui: st.comfyui, workflow: st.workflow?.name || null, note: 'The full state is under "The app right now" in your instructions every turn.' };
+  },
+  plan: ({ goal, steps, done, note, clear }) => {
+    if (clear === true) {
+      const had = as.plan;
+      as.plan = null;
+      renderPlan();
+      return { summary: had ? `📋 Plan done: ${had.goal || `${had.steps.length} steps`}` : 'There was no plan' };
+    }
+    if (Array.isArray(steps) && steps.length) {
+      const list = steps.slice(0, 20).map(x => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, 140)).filter(Boolean);
+      const same = as.plan && list.length === as.plan.steps.length && list.every((text, i) => text === as.plan.steps[i].text); // sent again with its ticks: keep them
+      as.plan = { goal: String(goal ?? as.plan?.goal ?? '').trim().slice(0, 200), steps: list.map((text, i) => ({ text, done: same ? as.plan.steps[i].done : false })), note: same ? as.plan.note : '' };
+    }
+    if (!as.plan) throw new Error('There is no plan yet: give the goal and the steps first.');
+    if (typeof goal === 'string' && goal.trim() && !steps) as.plan.goal = goal.trim().slice(0, 200);
+    for (const n of Array.isArray(done) ? done : []) if (as.plan.steps[Number(n) - 1]) as.plan.steps[Number(n) - 1].done = true;
+    if (typeof note === 'string') as.plan.note = note.replace(/\s+/g, ' ').trim().slice(0, 300);
+    renderPlan();
+    const next = as.plan.steps.findIndex(x => !x.done);
+    const left = as.plan.steps.filter(x => !x.done).length;
+    return {
+      summary: done?.length ? `☑ Step ${done.join(', ')} done · ${left} left` : steps?.length ? `📋 Plan: ${as.plan.steps.length} steps` : '📋 Plan noted',
+      next: next < 0 ? 'every step is ticked: say so in a line and call plan {"clear": true}' : `step ${next + 1}: ${as.plan.steps[next].text}`,
+    };
+  },
   list_models: () => ({ summary: `${state.models.length} models`, models: state.models.map(m => ({ name: m.name, kind: m.kind, description: m.description, aspects: m.aspectRatios, resolutions: m.resolutions, durations: m.durations })) }),
   list_workflows: ({ model }) => {
     const m = needModel(model);
@@ -9950,10 +10133,13 @@ const TOOL_IMPL = {
       done.push(!l.length ? 'no batch' : l.length > 1 ? `all ${l.length} batches` : `batch “${l[0].name}”`);
     }
     if (args.look != null) {
-      const look = args.look === 'brain picks' ? '' : String(args.look).toLowerCase();
-      if (!Object.hasOwn(LOOK_NAMES, look)) throw new Error(`There's no look “${args.look}”. The looks are: brain picks, ${Object.keys(LOOK_NAMES).filter(Boolean).join(', ')}.`);
+      const want = String(args.look).trim().toLowerCase().replace(/\s+look$/, '');
+      const plain = v => lookName(v).replace(/^[^\p{L}\p{N}]+\s*/u, '').toLowerCase(); // "🕵️ Noir" → "noir"
+      const ids = [...Object.keys(BUILTIN_LOOKS).filter(v => v && v !== 'none'), ...state.looks.map(l => l.id)];
+      const look = ['', 'brain picks', 'automatic', 'auto'].includes(want) ? '' : ['none', 'no', 'no look'].includes(want) ? 'none' : ids.find(v => v === want || plain(v) === want);
+      if (look === undefined) throw new Error(`There's no look “${args.look}”. The looks are: brain picks, no look, ${ids.map(plain).join(', ')}.`);
       setLook(look);
-      done.push(look ? `${LOOK_NAMES[look]} look` : 'the Brain picks the look');
+      done.push(look ? lookWord(look) : 'the Brain picks the look');
     }
     if (['short', 'medium', 'long'].includes(args.length)) { state.length = args.length; setActive($('#lengthSeg'), state.length); done.push(`${args.length} length`); }
     if (args.takes != null && state.manual) { // ✍️ own prompt: one prompt, this many renders
@@ -10443,6 +10629,69 @@ async function runTool(call) {
   }
 }
 
+// ---------- making room: a long chat folds into a progress note ----------
+// How much the Brain can take: the room it was loaded with (LM Studio), minus the answer it may write, minus what
+// the server adds every turn (instructions ≈ 1k, the state ≤ 2.3k, the tools ≈ 7k tokens). 4 characters ≈ 1 token.
+const SERVER_TOKENS = 10500;
+const IMAGE_TOKENS = 800;
+const FOLD_AT = 0.55; // of the room: fold before it's tight, not when it is
+const OVERFLOW = /context length|tokens to keep|context window|too many tokens|exceeds? the (?:model'?s? )?context/i; // LM Studio's "doesn't fit"
+function messageTokens(m) {
+  if (!Array.isArray(m.content)) return Math.ceil(JSON.stringify(m).length / 4);
+  return m.content.reduce((n, p) => n + (p.type === 'image_url' ? IMAGE_TOKENS : Math.ceil((p.text || '').length / 4)), 8);
+}
+function chatRoom() {
+  const llm = selectedLlm();
+  const ctx = llm?.cloud ? 120000 : llm?.contextLoaded || Math.min(llm?.context || 8192, 16384); // loaded size unknown: LM Studio's usual default, no more
+  const answer = Math.min(Math.max(Number(state.settings?.maxTokens) || 4096, 2048), Math.floor(ctx / 4)); // (a Max tokens above the context can't all be used)
+  return Math.max(2000, ctx - answer - SERVER_TOKENS - 1000);
+}
+const chatTokens = () => wireMessages().reduce((n, m) => n + messageTokens(m), 0);
+const foldFallback = old => `Steps taken: ${old.filter(m => m.role === 'tool').map(m => { try { return JSON.parse(m.content).summary; } catch { return ''; } }).filter(Boolean).join('; ').slice(0, 1500) || 'nothing yet'}.`;
+const noPictures = m => (Array.isArray(m.content) ? { ...m, content: m.content.map(p => (p.type === 'image_url' ? { type: 'text', text: '(a picture)' } : p)) } : m);
+
+// Makes room when the conversation outgrows what the Brain can take (or force: it just said so). First, older tool
+// results keep only their one-line summary and older pictures go (no Brain needed); then, if it's still too big and
+// brain is allowed, the oldest part becomes one progress note written by the Brain (the user's request stays in it).
+// True when something changed. The saved conversation shrinks the same way.
+async function foldChat({ force = false, brain = true } = {}) {
+  const over = () => chatTokens() > FOLD_AT * chatRoom();
+  if (!force && !over()) return false;
+  let changed = false;
+  const rounds = as.messages.map((m, i) => (m.role === 'assistant' && m.tool_calls?.length ? i : -1)).filter(i => i >= 0);
+  const keepFrom = rounds.at(force ? -1 : -3) ?? Infinity; // the last three rounds stay whole (forced: only the last)
+  as.messages.forEach((m, i) => {
+    if (i >= keepFrom) return;
+    if (m.role === 'tool' && !m.folded && String(m.content).length > 160) {
+      let r = null;
+      try { r = JSON.parse(m.content); } catch { /* not ours */ }
+      if (r?.summary) { m.content = JSON.stringify(r.error ? { summary: r.summary, error: String(r.error).slice(0, 200) } : { summary: r.summary }); m.folded = true; changed = true; }
+    } else if (m.role === 'user' && m.auto && Array.isArray(m.content) && m.content.some(p => p.type === 'image_url')) {
+      m.content = m.content.map(p => (p.type === 'image_url' ? { type: 'text', text: '(an image shown earlier)' } : p));
+      changed = true;
+    }
+  });
+  if (!brain || (!force && !over())) { if (changed) saveChat(); return changed; }
+  let cut = Math.max(0, as.messages.length - 10);
+  while (cut < as.messages.length && as.messages[cut]?.role !== 'assistant') cut++; // at a turn's start: no answer left without its call
+  // Forced (the Brain said it doesn't fit): everything before the request in hand goes into the note.
+  const request = as.messages.findLastIndex(m => m.role === 'user' && !m.auto);
+  if (force && request > cut) cut = request;
+  if (cut < 2) { if (changed) saveChat(); return changed; }
+  const old = as.messages.slice(0, cut);
+  const first = old[0];
+  const asked = first?.fold ? first.asked : first?.role === 'user' && !first.auto && typeof first.content === 'string' ? first.content.slice(0, 600) : '';
+  as.live = { text: '', thinking: false, status: '🗜 Making room: folding earlier steps into a note…' };
+  renderAssistantLog();
+  const r = await api('/api/assistant/fold', { method: 'POST', body: { messages: old.filter(m => !m.note).map(noPictures), plan: as.plan } }).catch(() => null);
+  as.live = null;
+  const note = r?.note?.trim() || foldFallback(old);
+  as.messages.splice(0, cut, { role: 'user', auto: true, fold: true, asked, content: `(Prompt Maker) Earlier in this conversation, in short:\n${asked ? `The user asked: "${asked}"\n` : ''}${note}` });
+  saveChat();
+  renderAssistantLog();
+  return true;
+}
+
 // The conversation as sent to the Brain: no display-only notes, and every tool call answered.
 function wireMessages() {
   const out = [];
@@ -10473,19 +10722,22 @@ async function askAssistant(text, pictures = []) {
   syncAssistantBusy();
   renderAssistantLog();
   try {
+    let retried = false; // once per message: the Brain said the chat doesn't fit, so it was folded and asked again
     for (let round = 0; round < 60 && !as.stopped; round++) {
+      await foldChat();
       let done = null;
       let failed = null;
       as.live = { text: '', thinking: false, status: '' };
       renderAssistantLog();
       as.controller = new AbortController();
-      await streamApi('/api/assistant', { messages: wireMessages(), state: assistantState(), tools: assistantTools() }, ev => {
+      await streamApi('/api/assistant', { messages: wireMessages(), state: assistantState(), tools: assistantTools(), plan: as.plan }, ev => {
         if (ev.type === 'delta') { as.live.text = ev.text; as.live.thinking = ev.thinking; updateLiveBubble(); }
         else if (ev.type === 'status') { as.live.status = ev.text; updateLiveBubble(); }
         else if (ev.type === 'done') done = ev;
         else if (ev.type === 'error') failed = ev.message;
       }, as.controller.signal);
       as.live = null;
+      if (failed && !retried && OVERFLOW.test(failed) && !as.stopped && (await foldChat({ force: true }))) { retried = true; round--; continue; }
       if (failed) throw new Error(failed);
       if (!done) break;
       const calls = done.toolCalls || [];
@@ -10531,7 +10783,7 @@ function saveChat() {
   saving = setTimeout(() => {
     saving = null;
     const messages = as.messages.map(m => (Array.isArray(m.content) ? { ...m, content: m.content.map(p => (p.type === 'image_url' ? { type: 'text', text: '(an image shown earlier)' } : p)) } : m));
-    api('/api/assistant/chat', { method: 'PUT', body: { messages } }).catch(() => {});
+    api('/api/assistant/chat', { method: 'PUT', body: { messages, plan: as.plan } }).catch(() => {});
   }, 300);
 }
 
@@ -10571,7 +10823,10 @@ function renderAssistantLog() {
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
   const items = [];
   for (const m of as.messages) {
-    if (m.role === 'user' && m.auto) {
+    if (m.role === 'user' && m.fold) {
+      if (m.asked) items.push(`<div class="as-msg me">${mdLite(m.asked)}</div>`);
+      items.push('<div class="as-act as-fold">🗜 Earlier steps were folded into a short note to make room</div>');
+    } else if (m.role === 'user' && m.auto) {
       const pics = Array.isArray(m.content) ? m.content.filter(p => p.type === 'image_url') : [];
       items.push(`<div class="as-act as-seen">👁 ${pics.length ? pics.map(p => `<img src="${esc(p.image_url.url)}" alt="">`).join('') : 'Looked at the pictures'}</div>`);
     } else if (m.role === 'user') {
@@ -10597,6 +10852,16 @@ function renderAssistantLog() {
   log.innerHTML = items.join('');
   updateLiveBubble();
   if (atBottom || as.busy) log.scrollTop = log.scrollHeight;
+}
+
+// The assistant's to-do list (the plan tool), above the log: redrawn in place, so the steps never move it.
+function renderPlan() {
+  const box = $('#asPlan');
+  if (!box) return;
+  const p = as.plan;
+  box.hidden = !p?.steps?.length;
+  if (box.hidden) { box.innerHTML = ''; return; }
+  box.innerHTML = `<b>📋 ${esc(p.goal || 'Plan')}</b><ol>${p.steps.map(x => `<li class="${x.done ? 'done' : ''}">${x.done ? '☑' : '☐'} ${esc(x.text)}</li>`).join('')}</ol>${p.note ? `<p class="as-plan-note">${esc(p.note)}</p>` : ''}`;
 }
 
 function updateLiveBubble() {
@@ -10626,7 +10891,11 @@ async function openAssistant(open = $('#assistant').hidden, { focus = true } = {
   syncAssistantBusy();
   if (!as.loaded) {
     as.loaded = true;
-    as.messages = (await api('/api/assistant/chat').catch(() => ({ messages: [] }))).messages;
+    const chat = await api('/api/assistant/chat').catch(() => ({ messages: [] }));
+    as.messages = chat.messages;
+    as.plan = chat.plan || null;
+    renderPlan();
+    if (!as.busy) foldChat({ brain: false }); // older steps keep their one-line summary only; the Brain's note waits for the next turn
   }
   renderAssistantLog();
   sizeAssistantInput();
@@ -10782,8 +11051,10 @@ $('#asStop').addEventListener('click', stopAssistant);
 $('#asClear').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', () => {
   if (as.busy) return;
   as.messages = [];
+  as.plan = null;
+  renderPlan();
   renderAssistantLog();
-  api('/api/assistant/chat', { method: 'PUT', body: { messages: [] } }).catch(() => {});
+  api('/api/assistant/chat', { method: 'PUT', body: { messages: [], plan: null } }).catch(() => {});
 }));
 $('#asInput').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAssistant(); }
@@ -11161,7 +11432,7 @@ const panelState = saved.get('panels', {});
 const shorten = (s, n = 90) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const PANEL_SUMMARY = {
   'create-model': () => { const m = currentModel(); return m ? `${m.kind === 'video' ? '🎬' : '📷'} ${m.name}` : ''; },
-  'create-theme': () => [`${state.manual ? '✍️ ' : ''}${shorten($('#theme').value.trim()) || 'Nothing yet'}`, !state.manual && state.look && `${LOOK_NAMES[state.look]} look`].filter(Boolean).join(' · '),
+  'create-theme': () => [`${state.manual ? '✍️ ' : ''}${shorten($('#theme').value.trim()) || 'Nothing yet'}`, !state.manual && state.look && lookWord(state.look)].filter(Boolean).join(' · '),
   'create-image': () => {
     const img = state.image ? `🖼️ Image attached${state.manual ? '' : ` · ${effectiveRole()}`}` : 'No image';
     if (!currentModel()?.motionVideo && !chainNeedsVideo()) return img;
@@ -11291,7 +11562,7 @@ async function loadModels() {
   $('#historyFav').innerHTML = `${bookmarkIcon} Bookmarks`;
   $$('[data-panel]').forEach(decoratePanel);
   try {
-    [state.settings, state.models] = await Promise.all([api('/api/settings'), api('/api/models')]);
+    [state.settings, state.models, state.looks] = await Promise.all([api('/api/settings'), api('/api/models'), api('/api/looks').catch(() => [])]);
     state.imageRole = saved.get('imageRole', 'reference');
     const line = saved.get('line', null);
     if (line && typeof line === 'object') state.line = { voice: String(line.voice || ''), text: String(line.text || '') };
@@ -11301,6 +11572,8 @@ async function loadModels() {
     selectModel(saved.get('modelId', null));
     renderModelList();
     setVariations(saved.get('variations', 1));
+    renderLooks();
+    $('#lookMemoryHint').hidden = !state.settings.inMemory;
     setLook(saved.get('look', ''), { persist: false });
     state.manualRenders = clampInt(saved.get('manualRenders', 1), 1, 4);
     setManual(saved.get('manual', false), { persist: false });

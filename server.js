@@ -19,7 +19,7 @@ import * as privacy from './lib/privacy.js';
 import * as comfySetup from './lib/comfy-setup.js';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
-import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
+import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
@@ -239,6 +239,34 @@ function outOfRoom(llm, maxTokens, reasoningChars) {
   return `The Brain hit the ${maxTokens}-token limit before writing anything (it spent them all thinking). Set Thinking to Off (in Settings, or for this Brain on Models → Brains) or raise Max tokens in Settings.`;
 }
 
+// After a take is written: a short text-only call lists the theme's facts the prompt changed, dropped or
+// contradicted; if any, one refine-style pass puts them back. Returns { text, kept }, kept being { checked: true }
+// (nothing lost), { checked: true, fixed: [facts] } (put back) or { checked: true, drift: [facts] } (lost, and the
+// fix pass failed); null when the check itself failed or was skipped (nothing is claimed on the take). Through
+// complete(), never writeText(): a check that fails doesn't count against the Brain's record.
+async function keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt, text, instruction = null, opts }, { signal, onStatus }) {
+  if (settings.checkTheme === false || !params.theme) return null;
+  try {
+    onStatus?.('Checking it against your idea…');
+    const check = buildCheckMessages({ theme: params.theme, text, role: params.imageRole, hasImage: Boolean(imageDataUrl), instruction, sheet: params.characterSheet });
+    const room = llm.thinking === 'off' ? 500 : 1500; // a thinking Brain spends some of it thinking
+    const out = await complete(settings, llm, { model: llm.id, messages: check, ...opts, temperature: 0.1, max_tokens: room }, { signal, onStatus });
+    if (!out.text) return null; // out of room or empty: no claim either way
+    const drift = parseDrift(out.text, params.theme, text);
+    if (!drift.length) return { text, kept: { checked: true } };
+    const facts = drift.map(d => d.given);
+    onStatus?.(`Putting back: ${facts.join(', ')}…`);
+    const fix = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt, video: brainVideo }, imageDataUrl, text, putBackInstruction(drift));
+    const fixed = cleanPrompt((await complete(settings, llm, { model: llm.id, messages: fix, ...opts }, { signal, onStatus })).text);
+    if (!fixed || looksRefused(fixed)) return { text, kept: { checked: true, drift: facts } };
+    return { text: imageDataUrl && params.characterSheet ? withSheet(fixed, params.characterSheet, model) : fixed, kept: { checked: true, fixed: facts } };
+  } catch (err) {
+    if (signal?.aborted) return null; // Stop keeps the take as written
+    console.warn(`[keep the theme] check skipped: ${err.message}`);
+    return null;
+  }
+}
+
 // An error that counts against the Brain in its record ('room' or 'empty').
 const brainFailure = (outcome, message) => Object.assign(store.httpError(502, message), { outcome });
 const EMPTY_HINT = 'The Brain returned an empty prompt. If it is a "thinking" model it may have used all its room thinking. Raise Max tokens in Settings or pick a non-thinking Brain.';
@@ -267,7 +295,21 @@ function sizeAspect(resolution, aspectRatio) {
   return w / g <= 64 && h / g <= 64 ? `${w / g}:${h / g}` : `${(w / h).toFixed(2)}:1`;
 }
 
-function pickParams(body, model) {
+// The look of step 2: a built-in's id, 'none' (🚫 No look), or one of the user's own (looks): its words are copied
+// onto the request, so a take keeps its look through refines and after the look is edited or deleted (the current
+// words win while it exists; a deleted look's copy on the entry is the fallback).
+function lookParams(body, looks) {
+  const look = String(body.look || '');
+  if (look === NO_LOOK || Object.hasOwn(LOOKS, look)) return { look };
+  const mine = looks.find(l => l.id === look);
+  if (mine) return { look, lookName: mine.name, lookText: mine.still, ...(mine.move ? { lookMove: mine.move } : {}) };
+  if (CUSTOM_LOOK_ID.test(look) && String(body.lookText || '').trim()) {
+    return { look, lookName: String(body.lookName || 'Your look').slice(0, 40), lookText: String(body.lookText).trim().slice(0, 500), ...(body.lookMove ? { lookMove: String(body.lookMove).slice(0, 200) } : {}) };
+  }
+  return {};
+}
+
+function pickParams(body, model, looks = []) {
   const resolution = String(body.resolution || model.defaults.resolution || '');
   return {
     theme: String(body.theme || '').trim(),
@@ -276,7 +318,7 @@ function pickParams(body, model) {
     resolution,
     duration: model.kind === 'video' ? String(body.duration || model.defaults.duration || '') : '',
     length: store.LENGTHS.includes(body.length) ? body.length : model.defaults.length,
-    ...(Object.hasOwn(LOOKS, body.look) ? { look: body.look } : {}), // the camera-and-light look picked in step 2; none: the Brain picks
+    ...lookParams(body, looks), // the camera-and-light look picked in step 2; nothing: the Brain picks
     ...(model.characterSheet && cleanSheet(body.characterSheet) ? { characterSheet: cleanSheet(body.characterSheet) } : {}), // the person's traits (step 3)
     ...(model.kind === 'video' && body.line?.voice && String(body.line.text || '').trim() ? { line: { voice: String(body.line.voice).slice(0, 80), text: String(body.line.text).replace(/\s+/g, ' ').trim().slice(0, 600) } } : {}), // what they say, in which voice (step 3)
   };
@@ -353,7 +395,7 @@ async function generate(req, res) {
   const settings = await store.getSettings();
   const model = await store.getModel(body.modelId || '');
   if (!model) throw store.httpError(400, 'Pick a target model first.');
-  const params = pickParams(body, model);
+  const params = pickParams(body, model, await store.listLooks());
   if (params.line) params.line = await spokenLine(settings, params.line);
 
   let imageFile = null;
@@ -382,6 +424,7 @@ async function generate(req, res) {
 
   const stream = startStream(res, llm, count, seesImages);
   const texts = [];
+  const keeps = []; // per take: what the check against the theme found (null: not checked)
   const letGo = store.holdFiles([imageFile, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
   try {
     if (model.characterSheet && imageDataUrl && !params.characterSheet) { // first, the person's traits from the image
@@ -407,9 +450,12 @@ async function generate(req, res) {
       const written = cleanPrompt(raw);
       if (!written) throw brainFailure('empty', EMPTY_HINT);
       await recordRun(llm, looksRefused(written) ? 'refused' : 'ok', t0, warm);
-      const text = imageDataUrl && params.characterSheet ? withSheet(written, params.characterSheet, model) : written; // no trait left out
+      const whole = imageDataUrl && params.characterSheet ? withSheet(written, params.characterSheet, model) : written; // no trait left out
+      const kept = await keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt: source?.text, text: whole, opts }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
+      const text = kept?.text || whole;
       texts.push(text);
-      stream.send({ type: 'done', index, text });
+      keeps.push(kept?.kept || null);
+      stream.send({ type: 'done', index, text, ...(kept ? { kept: kept.kept } : {}) });
     }
   } catch (err) {
     if (err.outcome) await recordRun(llm, err.outcome);
@@ -432,7 +478,7 @@ async function generate(req, res) {
         ...(source ? { source } : {}),
         ...(chain ? { chain } : {}),
         ...(batch ? { batch } : {}),
-        variations: texts.map(text => ({ versions: [{ text, instruction: null, createdAt: now }] })),
+        variations: texts.map((text, i) => ({ versions: [{ text, instruction: null, createdAt: now, ...(keeps[i] ? { kept: keeps[i] } : {}) }] })),
       });
       stream.send({ type: 'saved', entry });
     }
@@ -493,7 +539,7 @@ async function refine(req, res) {
   const seesImages = Boolean(imageDataUrl || brainVideo?.sheetDataUrl);
   const llmModel = llm.id;
   const opts = sampling(settings, body.temperature ?? entry.temperature, llm);
-  const params = pickParams(entry, model);
+  const params = pickParams(entry, model, await store.listLooks());
 
   const stream = startStream(res, llm, 1, seesImages);
   try {
@@ -507,13 +553,15 @@ async function refine(req, res) {
     const text = cleanPrompt(raw);
     if (!text) throw brainFailure('empty', EMPTY_HINT);
     await recordRun(llm, looksRefused(text) ? 'refused' : 'ok', t0, llm.loaded !== false);
+    const kept = await keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt: imageDataUrl ? entry.source?.text : '', text, instruction, opts }, { signal: stream.signal, onStatus: t => stream.send({ type: 'status', text: t }) });
+    const final = kept?.text || text;
     const now = new Date().toISOString();
     const saved = await store.updateHistory(entry.id, e => {
       const v = e.variations[body.index];
       if (current !== base.text) v.versions.push({ text: current, instruction: '(manual edit)', createdAt: now });
-      v.versions.push({ text, instruction, createdAt: now });
+      v.versions.push({ text: final, instruction, createdAt: now, ...(kept ? { kept: kept.kept } : {}) });
     });
-    stream.send({ type: 'done', index: body.index, text });
+    stream.send({ type: 'done', index: body.index, text: final, ...(kept ? { kept: kept.kept } : {}) });
     stream.send({ type: 'saved', entry: await store.withPresentFiles(saved) });
   } catch (err) {
     if (err.outcome) await recordRun(llm, err.outcome);
@@ -553,7 +601,8 @@ async function assistantChat(req, res) {
   const settings = await store.getSettings();
   const chat = assistant.cleanMessages(body.messages);
   const llm = await prepareLlm(settings, body.llmModel, assistant.hasImages(chat)); // looking at images needs a 👁 Brain
-  const system = assistant.systemPrompt(body.state, { rendersDir: folders.tidy(store.RENDERS_DIR), computer: settings.assistantComputer });
+  const plan = assistant.cleanPlan(body.plan); // its to-do list for the task in hand, pinned into the instructions
+  const system = assistant.systemPrompt(body.state, { rendersDir: folders.tidy(store.RENDERS_DIR), computer: settings.assistantComputer, plan });
   const tools = assistant.cleanTools(body.tools);
   const stream = openStream(res);
   stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
@@ -568,6 +617,8 @@ async function assistantChat(req, res) {
         : [{ role: 'system', content: system }, ...chat],
       ...(tools.length && !inWriting ? { tools, tool_choice: 'auto' } : {}),
       ...sampling(settings, 0.3, llm),
+      // With a plan to follow, a thinking Brain thinks a little per step, not a lot.
+      ...(plan?.steps.some(st => !st.done) && ['medium', 'high'].includes(llm.thinking) ? { reasoning_effort: 'low' } : {}),
       max_tokens: maxTokens,
     }, {
       signal: stream.signal,
@@ -604,6 +655,19 @@ async function assistantChat(req, res) {
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
   }
   stream.end();
+}
+
+// The earlier part of a long chat, folded into a progress note by the Brain (the page replaces those messages with
+// it). Text only, short; the page falls back to a list of the steps' summaries when this fails.
+async function assistantFold(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const chat = assistant.cleanMessages(body.messages);
+  const llm = await prepareLlm(settings, body.llmModel, false);
+  const messages = assistant.foldMessages(chat, assistant.cleanPlan(body.plan));
+  const opts = { ...sampling(settings, 0.2, llm), max_tokens: llm.thinking === 'off' ? 700 : 1800 };
+  const out = await complete(settings, llm, { model: llm.id, messages, ...opts }, {}).catch(() => ({ text: '' }));
+  sendJson(res, 200, { note: String(out.text || '').trim().slice(0, 2400) });
 }
 
 // ---------- services (Settings → Services) ----------
@@ -1482,6 +1546,8 @@ async function route(req, res) {
   // Both responses carry the defaults the Settings page needs (e.g. for "Reset to default").
   const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, defaultAdultPrompt: ADULT_CONTENT, dataDir: store.DATA_DIR, sessionDir: store.SESSION_DIR, inMemory: store.IN_MEMORY, ramDir: services.ramDir(), version: VERSION, startedAt: STARTED_AT });
   if (p === '/api/settings' && m === 'GET') return sendJson(res, 200, settingsView(await store.getSettings()));
+  if (p === '/api/looks' && m === 'GET') return sendJson(res, 200, await store.listLooks());
+  if (p === '/api/looks' && m === 'PUT') return sendJson(res, 200, await store.saveLooks(await readBody(req)));
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
     if (typeof body.lmStudioUrl === 'string') assertLocalUrl(body.lmStudioUrl.trim());
@@ -1751,10 +1817,12 @@ async function route(req, res) {
     return sendJson(res, 200, { checkedAt: health.at || null, problems: health.workflows });
   }
   if (p === '/api/assistant' && m === 'POST') return assistantChat(req, res);
+  if (p === '/api/assistant/fold' && m === 'POST') return assistantFold(req, res);
   if (p === '/api/assistant/guide' && m === 'GET') return sendJson(res, 200, await assistant.searchGuide(url.searchParams.get('q')));
   if (p === '/api/assistant/chat' && m === 'GET') return sendJson(res, 200, await store.getAssistantChat());
   if (p === '/api/assistant/chat' && m === 'PUT') {
-    await store.saveAssistantChat((await readBody(req)).messages);
+    const chat = await readBody(req);
+    await store.saveAssistantChat(chat.messages, assistant.cleanPlan(chat.plan));
     return sendJson(res, 200, { ok: true });
   }
   if (p === '/api/render-order' && m === 'GET') return sendJson(res, 200, await store.getRenderOrder());

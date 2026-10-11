@@ -23,6 +23,15 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.38.0 — Steady takes: a take's box holds the height its prompt is expected to need from the first word, its
+  word-count row is there from the start, and a refine keeps the box, so nothing under a take moves while the Brain
+  writes. 🎥 Looks: **🚫 No look** (the Brain adds no camera or light of its own) and **＋ Your own look…** (name it,
+  say what the camera and light do; edit, delete with undo; session-only at Nothing stays; a take keeps the words of
+  its look). Every detail of the idea stays: a keep-the-theme rule plus one short check per take that puts back what
+  the Brain changed (the take says ✓ Checked / ✎ Put back; a switch under How the Brain thinks). ✦ Ask: a `plan`
+  tool pinned in its instructions and shown as a checklist above the chat; a long chat folds older steps into their
+  one-line summaries, then into a Brain-written progress note, sized from the Brain's loaded context; an overflow
+  folds and retries; big tool results are trimmed at the source.
 - 1.37.2 — Size is back in step ④, next to Shape (1.37.0 had folded it under More options, where your own width ×
   height was hard to find), and it offers real choices: every size in the picked shape from Small (~0.5 MP) through
   Standard, Large, Extra large and Huge to Giant (~4 MP), with HD, Full HD, 2K and 4K by name, instead of one ~1 MP

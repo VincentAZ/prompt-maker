@@ -46,12 +46,12 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What you get
 
-- **Pictures and videos from a few words, or from your own photo.** Choose a task—make or edit a picture, keep the same person, animate a picture, or copy movement—then describe your idea. The app picks a suitable model and remembers your choices. Write up to four prompt variations, or make images and videos directly.
+- **Pictures and videos from a few words, or from your own photo.** Choose a task—make or edit a picture, keep the same person, animate a picture, or copy movement—then describe your idea. The app picks a suitable model and remembers your choices. Write up to four prompt variations, or make images and videos directly. Every detail you typed stays in the prompt: each take is checked against your idea, and what the Brain changed is put back.
 - **The same person in every shot.** Drop in one picture of someone and they stay themselves in new places, new light, new scenes. See below.
 - **Clips that carry on.** Turn any still into a video, then the next scene from the next still, and join them. The film above is four of these.
 - **A voice for your character.** Describe a voice in plain words, hear it, keep it by name and have your character say a line in a video.
 - **Your best work stays findable.** Gallery holds your artwork: rate it with stars, or choose **Select → two pictures → Compare 2**. **Saved prompts** holds the automatically saved prompts and sessions: bookmark the ones you want to reuse. **Hide from Create** tidies your workspace while keeping the artwork in Gallery.
-- **A creative partner when you need one.** Open **Ask** for an Assistant that looks at your renders, helps you choose, and can run a batch. It starts closed and remembers your preference. On small screens, **Create / Results** keeps your work one click away, including beside Ask on a laptop.
+- **A creative partner when you need one.** Open **Ask** for an Assistant that looks at your renders, helps you choose, plans a task of several steps and ticks it off, and can run a batch. It starts closed and remembers your preference. On small screens, **Create / Results** keeps your work one click away, including beside Ask on a laptop.
 - **Nothing leaves your computer.** No account, no cloud, no tracking.
 
 <div align="center">
@@ -64,7 +64,7 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 The main button tells you what comes next: **Write prompt**, **Make image**, or **Make video**, with the total output count when making several. **Review prompt first** sits beside it and remembers your choice for each model; existing auto-render preferences carry over. Progress tells you when the prompt is being written, the artwork is being made, and the result is ready.
 
-Choose **Shape**, **Size** and **Variations** on the main path. Size offers Small to Huge in the picked shape (HD, Full HD, 2K and 4K by name on video), starts on the model's usual size, and takes any width × height you type; prompt length and adventurousness sit under **More options**. The model guide and look choices open when needed. **Models** starts with what each model makes, what it needs and its local rendering readiness; **Customize** opens the existing playbook and workflow editor.
+Choose **Shape**, **Size** and **Variations** on the main path. Size offers Small to Huge in the picked shape (HD, Full HD, 2K and 4K by name on video), starts on the model's usual size, and takes any width × height you type; prompt length and adventurousness sit under **More options**. The model guide and look choices (eleven looks, **No look**, or **your own**) open when needed. **Models** starts with what each model makes, what it needs and its local rendering readiness; **Customize** opens the existing playbook and workflow editor.
 
 In Gallery, search stays visible on small screens, with extra choices under **Filters**, an active-filter count and **Clear filters**. The viewer links back to the original prompt. **Pin on the left** changes the comparison reference; stars rate the artwork. Secondary actions and panels are quieter so the work stands out.
 

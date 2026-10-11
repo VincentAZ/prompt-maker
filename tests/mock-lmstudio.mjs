@@ -4,10 +4,13 @@
 //   FAILTEST  → HTTP 500        EMPTYTEST → hits the token limit with no output
 //   SLOWTEST  → very slow stream  SLOWSECOND → only takes 2+ are slow
 //   REFUSETEST → turns the job down
+//   DRIFTTEST → the check against the theme reports "a red dress" written as "a blue gown" (once)
 import http from 'node:http';
 
 const MODELS = [
-  { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b' }] },
+  { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b', config: { context_length: 32768 } }] },
+  // Loaded with little room: ✦ Ask folds a long chat on it after a few rounds.
+  { key: 'mock/small-room', display_name: 'Mock Small Room 8B', type: 'llm', params_string: '8B', max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/small-room', config: { context_length: 12288 } }] },
   { key: 'mock/thinker', display_name: 'Mock Thinker 9B', type: 'llm', capabilities: { vision: true, reasoning: { allowed_options: ['off', 'on'], default: 'on' } }, loaded_instances: [] },
   { key: 'mock/fable', display_name: 'Mock Fable 27B', type: 'llm', capabilities: { vision: true }, loaded_instances: [] },
   { key: 'mock/text-only', display_name: 'Mock Text 7B', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
@@ -24,9 +27,10 @@ function cannedPrompt(body) {
   const last = textOf(users.at(-1).content);
   const first = textOf(users[0].content);
   const hasImage = users.some(u => Array.isArray(u.content) && u.content.some(p => p.type === 'image_url'));
-  const theme = (/THEME: (.*)/.exec(first)?.[1] || 'something').replace(/^none given.*/, 'the attached image');
   const variation = /VARIATION (\d+) OF/.exec(first)?.[1];
   const revise = /Requested change: "(.*)"/.exec(last)?.[1];
+  // A DRIFTTEST theme loses its red dress (a blue gown instead) until the check's put-back revision.
+  const theme = (/THEME: (.*)/.exec(first)?.[1] || 'something').replace(/^none given.*/, 'the attached image').replace(/red dress/, m => (/DRIFTTEST/.test(first) && !/^Put back/.test(revise || '') ? 'blue gown' : m));
   const lead = revise ? `Revised to be ${revise.toLowerCase()}: ` : variation ? `Alternate take ${variation}: ` : '';
   const img = hasImage ? ' matching the palette and light of the reference image,' : '';
   const scene = `${lead}A candid 35mm film photograph of ${theme},${img} framed at eye level with soft natural light falling from the left. Fine grain, muted true-to-life colors, shallow depth of field, and small imperfect details that make it feel real.`;
@@ -46,16 +50,27 @@ function cannedPrompt(body) {
 function assistantTurn(body) {
   const msgs = body.messages;
   // The user's last words (pictures the app sends after look_at come as user messages with image parts).
-  const at = msgs.map(m => (m.role === 'user' && !Array.isArray(m.content) ? 'said' : m.role)).lastIndexOf('said');
+  // (A "(Prompt Maker) …" user message is the app's: a folded note of earlier steps, which quotes the user's words.)
+  const at = msgs.map(m => (m.role === 'user' && !Array.isArray(m.content) && !m.content.startsWith('(Prompt Maker)') ? 'said' : m.role)).lastIndexOf('said');
   const sawPictures = msgs.slice(at + 1).some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url' && /^data:image\/jpeg;base64,/.test(p.image_url.url)));
-  const said = textOf(msgs[at].content).toLowerCase();
+  const folded = msgs.findLast(m => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('(Prompt Maker) Earlier'));
+  const said = (at >= 0 ? textOf(msgs[at].content) : /The user asked: "([^"]*)"/.exec(folded?.content || '')?.[1] || '').toLowerCase();
+  const system = body.messages[0].content;
   const round = msgs.slice(at + 1).filter(m => m.role === 'assistant').length;
   const results = msgs.slice(at + 1).filter(m => m.role === 'tool').map(m => m.content).join('\n');
-  const script = /set up/.test(said) ? [{ calls: [['set_model', { model: 'krea 2 raw' }], ['set_theme', { text: 'a surfer at golden hour' }], ['set_dials', { aspect: '9:16', takes: 2 }]] }, { text: 'All set: **Krea 2 RAW**, 9:16, 2 takes. Say *go* and I\'ll write them.' }]
+  const script = /long task/.test(said) ? (() => { // driven by the plan pinned in the instructions, so a fold in between doesn't lose its place
+    const steps = { 1: ['set_model', { model: 'krea 2 raw' }], 2: ['set_theme', { text: 'a surfer at golden hour' }], 3: ['set_dials', { aspect: '9:16', takes: 1 }], 4: ['read_playbook', {}], 5: ['generate', {}] };
+    if (!/# Your plan/.test(system)) return msgs.at(-1).role === 'tool' && msgs.at(-1).content.includes('Plan done') ? { text: 'All five steps are done.' } : { calls: [['plan', { goal: 'A 9:16 surfer shot', steps: ['Pick Krea 2 RAW', 'Set the theme', 'Set 9:16, one take', 'Read the playbook', 'Write the take'] }]] };
+    const next = Number(/Next: step (\d+)/.exec(system)?.[1]);
+    if (!next) return { calls: [['plan', { clear: true }]] };
+    return { calls: [steps[next], ['plan', { done: [next], note: `step ${next} done` }]] };
+  })()
+    : /set up/.test(said) ? [{ calls: [['set_model', { model: 'krea 2 raw' }], ['set_theme', { text: 'a surfer at golden hour' }], ['set_dials', { aspect: '9:16', takes: 2 }]] }, { text: 'All set: **Krea 2 RAW**, 9:16, 2 takes. Say *go* and I\'ll write them.' }]
     : /\bgo\b/.test(said) ? [{ calls: [['generate', {}]] }, { text: 'Your 2 takes are ready on the right.' }]
     : /\bhow\b/.test(said) ? [{ calls: [['read_guide', { topic: said }]] }, { text: results.includes('Add LoRA') ? 'In step ⑤, click **＋ Add LoRA** and pick one from your model\'s folder.' : 'I couldn\'t find that in the guide.' }]
     : /\blora\b/.test(said) ? [{ calls: [['add_lora', { name: 'detail', strength: 0.6 }]] }, { text: 'Added it at 0.6.' }]
     : /noir look/.test(said) ? [{ calls: [['set_dials', { look: 'noir' }]] }, { text: results.includes('Noir look') ? 'Noir it is.' : `It didn't take: ${results}` }]
+    : /no look/.test(said) ? [{ calls: [['set_dials', { look: 'no look' }]] }, { text: results.includes('no look') ? 'No look it is.' : `It didn't take: ${results}` }]
     // A model name that fits two models, then a theme: the theme must not be set once set_model failed.
     : /ltx then krea/.test(said) ? [{ calls: [['set_model', { model: 'ltx' }], ['set_model', { model: 'krea' }], ['set_theme', { text: 'after a failure' }]] }, { text: results.includes('could be') ? 'Krea is two models: which?' : 'Done.' }]
     // Three videos in one go: the app asks the user first (on generate when auto-render is on, else on render).
@@ -116,12 +131,13 @@ function assistantTurn(body) {
     })()
     : /tag fallback/.test(said) ? [{ text: '<tool_call>{"name": "set_theme", "arguments": {"text": "from a tag"}}</tool_call>' }, { text: 'Theme set.' }]
     : [{ text: 'I can help with that.' }];
-  return script[Math.min(round, script.length - 1)];
+  return Array.isArray(script) ? script[Math.min(round, script.length - 1)] : script;
 }
 
 export function startMock(port) {
   const log = [];
   let server;
+  let overflowed = false; // "overflow once": the chat doesn't fit, once
 
   const handler = async (req, res) => {
     const json = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
@@ -142,6 +158,10 @@ export function startMock(port) {
     if (thinkingOver) body = { ...body, messages: body.messages.slice(0, -1) };
     const allText = body.messages.map(m => textOf(m.content)).join('\n');
     if (allText.includes('FAILTEST')) return json(500, { error: { message: 'Mock failure: the model crashed' } });
+    if (body.tools && /overflow once/.test(allText) && !overflowed) {
+      overflowed = true;
+      return json(400, { error: { message: 'The number of tokens to keep from the initial prompt is greater than the context length' } });
+    }
 
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -156,6 +176,13 @@ export function startMock(port) {
       res.end(`event: error\ndata: ${JSON.stringify({ error: { message: 'Error rendering prompt with jinja template: "Cannot call something that is not a function: got UndefinedValue".' } })}\n\n`);
       return;
     }
+    // ✦ Ask folding a long chat: the progress note.
+    if (!body.tools && textOf(body.messages.at(-1).content).endsWith('Write the progress note now.')) {
+      for (const w of 'Done so far: model Krea 2 RAW, theme a surfer at golden hour, 9:16, playbook read. Left: write the take.'.split(/(?<=\s)/)) send({ choices: [{ delta: { content: w } }] });
+      send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     // The assistant's pick_best: the Brain looks at the renders and names one.
     if (!body.tools && textOf(body.messages.at(-1).content).startsWith('(Prompt Maker) Pick the best')) {
       for (const w of '2: the light is softer and the balloon reads better.'.split(/(?<=\s)/)) send({ choices: [{ delta: { content: w } }] });
@@ -168,6 +195,16 @@ export function startMock(port) {
       const n = Number(textOf(body.messages.at(-1).content).match(/these (\d+) renders/)[1]);
       const reply = Array.from({ length: n }, (_, i) => (i === 1 ? `2: 0 – warped hands` : `${i + 1}: **${i ? 2 : 3}** – the light is right`)).join('\n');
       for (const w of reply.split(/(?<=\s)/)) send({ choices: [{ delta: { content: w } }] });
+      send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
+      res.end('data: [DONE]\n\n');
+      return;
+    }
+    // The check of a take against the theme: nothing lost, unless the theme carries DRIFTTEST and the prompt isn't
+    // the put-back revision yet.
+    if (!body.tools && body.messages[0].content.includes('CHECK THE PROMPT')) {
+      const theme = /THEME:\n<<<\n([\s\S]*?)\n>>>/.exec(allText)?.[1] || '';
+      const lost = /DRIFTTEST/.test(theme) && !/Revised to be put back/.test(allText) && !/The user then asked for this change/.test(allText) ? [{ given: 'a red dress', written: 'a blue gown' }] : [];
+      send({ choices: [{ delta: { content: JSON.stringify(lost) } }] });
       send({ choices: [{ delta: {}, finish_reason: 'stop' }] });
       res.end('data: [DONE]\n\n');
       return;

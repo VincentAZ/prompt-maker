@@ -323,7 +323,7 @@ async function main() {
   const hadLegacyData = await fileExists(path.join(ROOT, 'data'));
   const shippedChains = {};
   for (const f of await fs.readdir(path.join(ROOT, 'chains'))) shippedChains[f] = await fs.readFile(path.join(ROOT, 'chains', f), 'utf8');
-  await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, comfyUrl: `http://127.0.0.1:${COMFY_PORT}`, llmModel: 'mock/vision-8b' }));
+  await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, comfyUrl: `http://127.0.0.1:${COMFY_PORT}`, llmModel: 'mock/vision-8b', checkTheme: false }));
   const lmsMarker = path.join(tmp, 'lms-called');
   const fakeLms = path.join(tmp, 'fake-lms');
   await fs.writeFile(fakeLms, `#!/bin/sh\necho "$@" > ${JSON.stringify(lmsMarker)}\n`, { mode: 0o755 });
@@ -875,6 +875,8 @@ esac
       await waitFor('document.querySelectorAll(".take").length === 3', 'three takes');
       // While they're written, each take's buttons are there already, greyed out, and so is Copy all.
       assert(await js('[...document.querySelectorAll(".take")].every(t => !t.querySelector(".refine").hidden && t.querySelector(".refine").inert && t.querySelector(".chips").inert)'), 'tweak box and chips show greyed out while writing');
+      assert(await js('[...document.querySelectorAll(".take .meter")].every(m => !m.hidden && m.textContent.includes("words"))'), 'the word meter is there, greyed, before a word arrives');
+      assert(await js('[...document.querySelectorAll(".take .prompt-well")].every(w => parseFloat(getComputedStyle(w).minHeight) > 150)'), 'each prompt box holds the height its text is expected to need');
       eq(await js('document.querySelector("#copyAllBtn")?.disabled'), true, 'Copy all shows greyed out while writing');
       await waitFor('!document.querySelector(".take:nth-child(3) .prompt-view").hidden && document.querySelector(".take:nth-child(2) .status").textContent.includes("Done")', 'take 3 being written', 15000);
       await sleep(150);
@@ -908,6 +910,51 @@ esac
     } finally {
       await openPanel('create-dials');
       await click('#varSeg button[data-value="1"]');
+    }
+  });
+
+  await test('steady takes: nothing under a take moves while it is written, finished or refined', async () => {
+    const probe = `window.__tops = []; window.__cls = [];
+      window.__po = new PerformanceObserver(l => { for (const e of l.getEntries()) if (!e.hadRecentInput) __cls.push({ v: +e.value.toFixed(4), at: Math.round(e.startTime), src: e.sources.map(s => s.node?.id || s.node?.className || s.node?.nodeName) }); });
+      __po.observe({ type: 'layout-shift' });
+      window.__samp = setInterval(() => __tops.push(['.take:nth-child(3)', '#reel', '.generate-bar'].map(s => { const el = document.querySelector(s); return el && !el.hidden ? Math.round(el.getBoundingClientRect().top) : null; })), 100); true`;
+    const stopProbe = () => js('clearInterval(__samp); __po.disconnect(); ({ tops: __tops, cls: __cls })');
+    const spread = (tops, i) => { const v = tops.map(t => t[i]).filter(x => x != null); return v.length ? Math.max(...v) - Math.min(...v) : 0; };
+    const shifts = cls => cls.reduce((n, e) => n + e.v, 0);
+    const before = new Set((await (await fetch(`${APP}/api/history`)).json()).map(e => e.id));
+    try {
+      await click('#varSeg button[data-value="3"]');
+      await type('#theme', 'SLOWSECOND steady takes');
+      await click('#generateBtn');
+      await waitFor('!document.querySelector(".take:nth-child(2) .prompt-view")?.hidden', 'take 2 being written', 15000);
+      await sleep(400); // the stage's own scroll to the top is over
+      await js(probe);
+      await waitFor('document.querySelector(".take:nth-child(2) .status").textContent.includes("Done")', 'take 2 done', 30000);
+      await sleep(300);
+      const w = await stopProbe();
+      assert(w.tops.length >= 20, `sampled while writing (${w.tops.length})`);
+      assert(spread(w.tops, 0) <= 2, `take 3 stays put while take 2 is written and finished (moved ${spread(w.tops, 0)}px)`);
+      assert(spread(w.tops, 1) <= 2, `Your renders stays put (moved ${spread(w.tops, 1)}px)`);
+      assert(spread(w.tops, 2) <= 2, `the main button stays put (moved ${spread(w.tops, 2)}px)`);
+      assert(shifts(w.cls) < 0.02, `no layout shift while writing: ${JSON.stringify(w.cls)}`);
+      await genDone();
+      // A refine: the box keeps its height while the new text replaces the old one.
+      const h = await js('document.querySelector(".take:nth-child(1) .prompt-well").offsetHeight');
+      const take1 = await js('Math.round(document.querySelector(".take:nth-child(1)").getBoundingClientRect().top)');
+      await js(probe.replace('100)', '25)'));
+      await js('document.querySelector(".take:nth-child(1) .chips button[data-instr=\\"Shorter\\"]").click()'); // (click() would scroll it into view first)
+      await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v2/2"', 'refined');
+      await sleep(200);
+      const r = await stopProbe();
+      assert(spread(r.tops, 0) <= 2, `take 3 stays put during a refine (moved ${spread(r.tops, 0)}px)`);
+      assert((await js('document.querySelector(".take:nth-child(1) .prompt-well").offsetHeight')) >= h, 'the refined take is no shorter');
+      eq(await js('Math.round(document.querySelector(".take:nth-child(1)").getBoundingClientRect().top)'), take1, 'take 1 itself stays put');
+      assert(shifts(r.cls.filter(e => e.at > 600)) < 0.02, `no layout shift during the refine: ${JSON.stringify(r.cls)}`);
+    } finally {
+      await click('#varSeg button[data-value="1"]');
+      // (Leave Saved prompts as the tests after this one expect it.)
+      for (const e of (await (await fetch(`${APP}/api/history`)).json()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+      await goto(`${APP}/#create`);
     }
   });
 
@@ -1110,6 +1157,8 @@ esac
       for (const d of ['images', 'renders', 'videos']) assert(!(await fileExists(path.join(dataDir2, d))), `no ${d} folder on disk`);
       await fetch(`${base}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ topP: 0.5 }) });
       assert(JSON.parse(await fs.readFile(path.join(dataDir2, 'settings.json'), 'utf8')).topP === 0.5, 'settings still go to the data folder on disk');
+      await fetch(`${base}/api/looks`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify([{ name: 'Mine', still: 'only candlelight' }]) });
+      assert((await fileExists(path.join(session, 'looks.json'))) && !(await fileExists(path.join(dataDir2, 'looks.json'))), 'your own looks live in memory too');
       srv.kill('SIGTERM');
       for (let i = 0; i < 50 && srv.exitCode === null; i++) await sleep(100);
       assert(srv.exitCode !== null, 'it stopped');
@@ -1122,7 +1171,7 @@ esac
   await test('services: see what runs; start and stop ComfyUI and LM Studio from Settings', async () => {
     await click('.tabs button[data-view="settings"]');
     await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'ComfyUI shown running');
-    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('1 model loaded'), 'LM Studio running, with what it has loaded');
+    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('2 models loaded'), 'LM Studio running, with what it has loaded (the mock has two loaded Brains)');
 
     // ComfyUI's folder (normally found on its own)
     const comfyDir = path.join(tmp, 'ComfyUI');
@@ -1352,6 +1401,59 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('every detail of the idea stays: the take is checked against it, and what the Brain changed is put back', async () => {
+    const sent = () => lastCall().messages[0].content;
+    const history = async () => (await (await fetch(`${APP}/api/history`)).json());
+    const before = new Set((await history()).map(e => e.id));
+    const modelBefore = await js('document.querySelector(".model-card.active")?.dataset.id'); // (the tests after this one count Krea entries)
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'a woman in a red dress on a pier');
+    await click('#generateBtn');
+    await genDone();
+    assert(sent().includes('# KEEP THE THEME') && sent().indexOf('# KEEP THE THEME') < sent().indexOf('# CAMERA AND LIGHT'), 'the keep-the-theme rules go with every prompt');
+    assert(lastCall().messages[1].content.includes('KEEP THE THEME: every fact in the THEME above stays as given'), 'and the request repeats them');
+    assert(!sent().includes('CHECK THE PROMPT'), 'no check while the switch is off (the test fixture)');
+    eq(await text('.take .change'), '', 'nothing claimed');
+    await click('.tabs button[data-view="settings"]');
+    assert(!(await js('document.querySelector("#sCheckTheme").checked')), 'off in the fixture');
+    await click('#sCheckTheme');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).checkTheme, true, 'saved');
+    await click('.tabs button[data-view="create"]');
+    await click('#generateBtn');
+    await genDone();
+    assert(sent().includes('CHECK THE PROMPT'), 'a check call follows the take');
+    assert(!JSON.stringify(lastCall().messages).includes('image_url') && lastCall().messages.at(-1).content.includes('THEME:\n<<<\na woman in a red dress on a pier\n>>>'), 'text-only, with the theme and the prompt');
+    eq(await text('.take .change'), '✓ Checked against your idea', 'the take says it was checked');
+    await type('#theme', 'DRIFTTEST a woman in a red dress on a pier');
+    await click('#generateBtn');
+    await genDone();
+    eq(await text('.take .change'), '✎ Put back: a red dress', 'the take says what was put back');
+    assert((await value('.take .prompt-text')).includes('red dress') && (await value('.take .prompt-text')).startsWith('Revised to be put back'), 'the fixed prompt is the one shown');
+    const fix = mock.log.at(-1);
+    assert(fix.messages.at(-1).content.startsWith('Revise the prompt above. Requested change: "Put back these facts of the THEME exactly as given, and change nothing else: a red dress (you wrote: a blue gown)"'), 'the fix pass is a refine with the lost facts');
+    const saved = (await history())[0];
+    assert(saved.variations[0].versions[0].kept?.fixed?.[0] === 'a red dress' && saved.variations[0].versions[0].text.includes('red dress'), 'kept on the saved version');
+    await click('.take .chips button[data-instr="Shorter"]');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined');
+    eq(await text('.take .change'), '↳ “Shorter” · ✓ Checked against your idea', 'a refine is checked too');
+    assert(mock.log.at(-1).messages.at(-1).content.includes('The user then asked for this change: "Shorter"'), 'the check knows what the refine asked for');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('!!document.querySelector(".hcard")', 'cards');
+    assert((await text('.hcard')).includes('✎ put back: a red dress'), 'Saved prompts says so');
+    // Back to the fixture's setting for the tests after this one (they count the mock's calls).
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelector("#sCheckTheme").checked', 'the switch shows on');
+    await click('#sCheckTheme');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).checkTheme, false, 'off again');
+    for (const e of (await history()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
+    if (modelBefore && modelBefore !== 'krea2-raw') await click(`.model-card[data-id="${modelBefore}"]`);
+  });
+
   await test('adult content: off by default; when on, its section goes with every prompt', async () => {
     const sent = () => lastCall().messages[0].content;
     await type('#theme', 'a quiet harbor at dawn');
@@ -1417,6 +1519,81 @@ esac
     await goto(`${APP}/#create`);
   });
 
+  await test('look: 🚫 No look, and your own looks (kept, edited, deleted with undo, remembered by each take)', async () => {
+    const request = () => lastCall().messages[1].content;
+    const system = () => lastCall().messages[0].content;
+    const history = async () => (await (await fetch(`${APP}/api/history`)).json());
+    const active = () => js('document.querySelector("#lookRow .active")?.dataset.value');
+    const before = new Set((await history()).map(e => e.id));
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'a courier in the rain');
+    await click('#lookRow button[data-value="none"]');
+    eq(await active(), 'none', 'No look lit');
+    await click('#generateBtn');
+    await genDone();
+    assert(!system().includes('Direct every shot like a cinematographer') && system().includes('The user chose No look'), 'No look: the camera-and-light rules leave the instructions');
+    assert(request().includes('No look: keep the camera and light to what the theme say, and add none of your own'), 'and the request says so');
+    eq((await history())[0].look, 'none', 'saved as none');
+    // Your own look.
+    await click('#lookAdd');
+    assert(!(await js('document.querySelector("#lookEditor").hidden')), 'the editor opens');
+    await type('#lkName', 'Rainy neon');
+    await type('#lkEmoji', '🌧');
+    await type('#lkStill', 'neon signs as the only light, wet reflections, shallow focus');
+    await type('#lkMove', 'a slow handheld drift');
+    await click('#lkSave');
+    await toastText('Rainy neon');
+    const id = await active();
+    assert(id?.startsWith('u-') && (await text('#chosenLook')).includes('Rainy neon'), `the new look is picked: ${id}`);
+    assert(await js('document.querySelector("#lookEditor").hidden'), 'the editor closes');
+    assert(!(await js('document.querySelector("#lookTools").hidden')) && !(await js('document.querySelector("#lookTools").classList.contains("ghost")')), 'edit and delete show for your own look');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes('The user picked the look "Rainy neon"') && request().includes('wet reflections') && !request().includes('camera movement:'), 'the Brain gets its words (no move on a still)');
+    assert(system().includes('Direct every shot like a cinematographer'), 'the camera-and-light rules are back');
+    const entry = (await history())[0];
+    assert(entry.look === id && entry.lookName === 'Rainy neon' && entry.lookText.includes('wet reflections') && entry.lookMove === 'a slow handheld drift', 'the look and its words are saved with the take');
+    await click('.take .chips button[data-instr="Shorter"]');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined');
+    assert(request().includes('wet reflections'), 'a refine keeps the look');
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
+    eq(await active(), id, 'remembered after a reload');
+    eq((await (await fetch(`${APP}/api/looks`)).json()).length, 1, 'kept on the server');
+    // Edit it.
+    await click('#lookEdit');
+    eq(await value('#lkName'), 'Rainy neon', 'the editor shows the look');
+    await type('#lkStill', 'neon signs as the only light, puddles like mirrors');
+    await click('#lkSave');
+    await toastText('updated');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes('puddles like mirrors'), 'the edited words reach the Brain');
+    // Delete, undo, delete.
+    await click('#lookDel');
+    await toastText('Deleted the look');
+    await click('#toast .toast-act');
+    await toastText('back');
+    eq(await count('#lookMine button'), 1, 'undo brings it back');
+    eq(await active(), id, 'and picks it again');
+    await click('#lookDel');
+    await toastText('Deleted the look');
+    eq(await count('#lookMine button'), 0, 'gone');
+    eq(await active(), '', 'back to the Brain picking');
+    assert(await js('document.querySelector("#lookTools").hidden'), 'no edit/delete row without a look of your own');
+    await click('.take .chips button[data-instr="More detailed"]');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined again');
+    assert(request().includes('puddles like mirrors'), 'the take keeps the words of its deleted look');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('!!document.querySelector(".hcard")', 'cards');
+    assert((await text('.hcard')).includes('Rainy neon'), 'the card still names the look');
+    await click('.hcard [data-act="open"]');
+    await toastText('was deleted');
+    eq(await active(), '', 'opening it falls back to the Brain picking');
+    for (const e of (await history()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
+  });
+
   await test('panels fold to a one-line summary, and stay folded after a reload', async () => {
     await click('.tabs button[data-view="create"]');
     await type('#theme', 'a lighthouse keeper making tea at dawn');
@@ -1476,7 +1653,7 @@ esac
     await type('#historySearch', '');
     eq(await count('.hcard'), total, 'search cleared');
     await click('#historyFilters button[data-id="krea2-raw"]');
-    eq(await count('.hcard'), 1, 'filter to Krea');
+    eq(await count('.hcard'), 1, `filter to Krea (${await js('[...document.querySelectorAll(".hcard .htheme")].map(e => e.textContent).join(" | ")')})`);
     await click('#historyFilters button[data-id=""]');
     await click('.hcard:nth-of-type(1) .hstar');
     await waitFor('document.querySelector(".hcard:nth-of-type(1) .hstar").classList.contains("on")', 'starred');
@@ -2801,7 +2978,7 @@ esac
     assert(/Vision \d+/.test(await text('#llmFilters [data-trait="vision"]')), 'with a count');
     await click('#llmFilters [data-trait="loaded"]');
     eq(await js('[...document.querySelectorAll("#llmFilters [aria-pressed=true]")].map(b => b.dataset.trait).join("|")'), 'vision|loaded', 'two at once');
-    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id).join("|")'), 'mock/vision-8b', 'only Brains that are both');
+    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id).join("|")'), 'mock/vision-8b|mock/small-room', 'only Brains that are both (the small-room Brain is loaded and sees too)');
     eq(await js('document.querySelector("#llmFilters").scrollWidth <= document.querySelector("#llmFilters").clientWidth'), true, 'the filters wrap instead of running off the menu');
     await click('#llmFilters [data-all]');
     eq(await js('document.querySelectorAll("#llmFilters [data-trait][aria-pressed=true]").length'), 0, 'All clears them');
@@ -3673,6 +3850,8 @@ esac
     const ask = async words => { await type('#asInput', words); await press('Enter'); await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000); };
     await ask('make it a noir look');
     eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'noir', `the assistant sets the look: ${await bot()}`);
+    await ask('use no look');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'none', `the assistant sets No look: ${await bot()}`);
     await click('#lookRow button[data-value=""]');
     eq(await js('fetch("/api/computer/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{\\"command\\":\\"echo hi\\"}" }).then(r => r.status)'), 403, 'commands are refused while it\'s off');
     await ask('run: echo hello-there');
@@ -3736,6 +3915,42 @@ esac
     eq(JSON.stringify(after.resolutions), JSON.stringify(before.resolutions), 'all of it');
     await press('Escape');
     assert(await js('document.querySelector("#assistant").hidden && document.activeElement === document.querySelector("#askBtn")'), 'Esc closes it');
+  });
+
+  await test('assistant: a long task gets a plan it ticks off; a long chat folds into a note; an overflow folds and retries', async () => {
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 40000);
+    const textOf = c => (typeof c === 'string' ? c : c.filter(p => p.type === 'text').map(p => p.text).join('\n'));
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await click('#asClear');
+    await click('#asClear');
+    await choose('#llmSelect', 'mock/small-room');
+    await type('#asInput', 'long task please');
+    await press('Enter');
+    await waitFor('!document.querySelector("#asPlan").hidden && document.querySelectorAll("#asPlan li").length === 5', 'the plan card shows its 5 steps', 20000);
+    await waitFor('document.querySelectorAll("#asPlan li.done").length >= 2', 'steps get ticked in place', 30000);
+    await idle();
+    assert((await bot()).includes('All five steps are done'), `it reports the end: ${await bot()}`);
+    assert(await js('document.querySelector("#asPlan").hidden'), 'the card goes away once cleared');
+    eq(await value('#theme'), 'a surfer at golden hour', 'the steps ran');
+    assert((await text('#asLog')).includes('folded into a short note'), 'earlier steps were folded');
+    const fold = mock.log.find(c => !c.tools && /Write the progress note now\.$/.test(textOf(c.messages.at(-1).content)));
+    assert(fold && !JSON.stringify(fold.messages).includes('image_url') && fold.messages[1].content.includes('# Your plan'), 'the fold call is text-only and carries the plan');
+    assert(!mock.log.filter(c => c.tools).at(-1).messages[0].content.includes('# Your plan'), 'the plan is gone from the instructions after clear');
+    assert(mock.log.filter(c => c.tools && /# Your plan/.test(c.messages[0].content)).length >= 4, 'the plan was pinned every turn');
+    const saved = await (await fetch(`${APP}/api/assistant/chat`)).json();
+    assert(saved.messages.some(m => m.fold && m.content.includes('Earlier in this conversation') && m.content.includes('The user asked: "long task please"')) && saved.messages.length < 14, `the saved chat shrank and keeps the request: ${saved.messages.length}`);
+    eq(saved.plan, null, 'no plan is saved once cleared');
+    // The Brain says the chat doesn't fit: it's folded and asked again, no error shown.
+    const before = mock.log.length;
+    await type('#asInput', 'long task, overflow once');
+    await press('Enter');
+    await idle();
+    assert(!(await text('#asLog')).includes('greater than the context length') && (await bot()).includes('All five steps are done'), `no error: it folded and went on (${await bot()})`);
+    assert(mock.log.slice(before).some(c => !c.tools && /progress note/.test(textOf(c.messages.at(-1).content))), 'a fold call was made');
+    await click('#asClear');
+    await click('#asClear');
+    await choose('#llmSelect', 'mock/vision-8b');
   });
 
   await test('denoise: shown for image-to-image workflows, saved on the workflow', async () => {

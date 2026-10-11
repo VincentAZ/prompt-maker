@@ -121,6 +121,7 @@
             <div class="looks" id="lookRow" role="radiogroup" aria-label="Look: how the camera and light feel">
               <span class="looks-label" title="How the camera and the light feel: how close, from which angle, what kind of light">🎥 <b>Look</b></span>
               <button type="button" class="chip-btn" role="radio" data-value="" title="The Brain picks the camera and light that suit your theme">✨ Brain picks</button>
+              <button type="button" class="chip-btn" role="radio" data-value="none" title="No camera, lens or light of the Brain's own: only what your theme or image says">🚫 No look</button>
               <button type="button" class="chip-btn" role="radio" data-value="natural" title="Like a real photo: eye level, soft window light, the background softly blurred">🪟 Natural</button>
               <button type="button" class="chip-btn" role="radio" data-value="intimate" title="Close and quiet: a tight shot, the background melting away, soft light from the side">🕯️ Intimate</button>
               <button type="button" class="chip-btn" role="radio" data-value="powerful" title="Larger than life: the camera looks up, strong light from behind outlines the subject">⚡ Powerful</button>
@@ -132,7 +133,23 @@
               <button type="button" class="chip-btn" role="radio" data-value="gritty" title="Raw and real: handheld, only the light that's there, every detail and flaw">📷 Gritty</button>
               <button type="button" class="chip-btn" role="radio" data-value="epic" title="Huge and grand: very wide, everything sharp, hazy light from behind">🏔️ Epic</button>
               <button type="button" class="chip-btn" role="radio" data-value="luxury" title="Polished ad: studio light, gleaming highlights, perfect composition">💎 Luxury</button>
+              <span id="lookMine" class="looks-mine"></span>
+              <button type="button" id="lookAdd" class="chip-btn" title="Describe your own camera and light once, and keep it as a look">＋ Your own look…</button>
             </div>
+            <div id="lookTools" class="look-tools" hidden>
+              <button type="button" id="lookEdit" class="chip-btn">✎ Edit this look</button>
+              <button type="button" id="lookDel" class="chip-btn">🗑 Delete this look</button>
+            </div>
+            <div id="lookEditor" class="look-editor" role="group" aria-label="Your own look" hidden>
+              <div class="look-editor-row">
+                <input id="lkEmoji" maxlength="16" placeholder="🌧" aria-label="An emoji for the look (optional)" autocomplete="off">
+                <input id="lkName" maxlength="40" placeholder="Name it, e.g. Rainy neon" aria-label="Name of the look" autocomplete="off">
+              </div>
+              <label>What the camera and light do <textarea id="lkStill" rows="3" maxlength="500" placeholder="e.g. a 35mm lens at eye level, neon signs as the only light, wet reflections, shallow focus"></textarea></label>
+              <label>Camera move on video <span class="muted">(optional)</span> <input id="lkMove" maxlength="200" placeholder="e.g. a slow handheld drift" autocomplete="off"></label>
+              <div class="look-editor-acts"><button type="button" id="lkSave" class="btn small primary">✓ Keep this look</button><button type="button" id="lkCancel" class="btn small">Cancel</button></div>
+            </div>
+            <p id="lookMemoryHint" class="hint" hidden>Your own looks are kept for this session only (Privacy: Nothing stays).</p>
             </details>
             <div class="manual-row">
               <label class="switch mini" title="Off: your Brain writes the prompt from your idea. On: what you type here is the prompt, sent as it is"><input type="checkbox" id="manualMode"><span class="track" aria-hidden="true"></span><span>✍️ Use my own prompt, word for word</span></label>
@@ -731,6 +748,8 @@
             <label class="field"><span>Top P</span><input id="sTopP" type="number" min="0" max="1" step="0.01"><small class="hint">Lower is more focused. Temperature is set per run on the Create page.</small></label>
             <label class="field"><span>Max tokens</span><input id="sMax" type="number" min="256" max="32768" step="256"><small class="hint">The cap on each answer. Raise it if thinking is on.</small></label>
           </div>
+          <label class="check-row"><input type="checkbox" id="sCheckTheme"> <span>✓ Check each prompt against your idea</span></label>
+          <p class="hint">On by default. After each take, one more short Brain call compares it with what you typed and puts back any detail it changed (a color, a count, a place). The take says what was put back. Off is a few seconds faster per take.</p>
         </section>
 
         <section class="card" data-panel="set-master" data-default="collapsed">
@@ -884,7 +903,7 @@
       <div class="level-list" role="radiogroup" aria-label="Privacy level">
         <label class="level"><input type="radio" name="privacyLevel" value="normal"><span><b>Safe</b><small>Your work is kept in the data folder. Deleting a card shreds everything about it, here, in ComfyUI and in LM Studio's logs.</small></span></label>
         <label class="level"><input type="radio" name="privacyLevel" value="private"><span><b>Safer</b><small>As Safe, and ComfyUI's working files and the app window's own files are in memory, the computer never writes memory to disk (swap and hibernation off), and the screen locks on its own after 5 minutes. May ask for your password once. Your work (Saved prompts, pictures, renders) still stays in the data folder until you delete it.</small></span></label>
-        <label class="level" id="levelRam"><input type="radio" name="privacyLevel" value="ram"><span><b>Nothing stays</b><small>As Safer, and your work (Saved prompts, pictures, videos, renders, the chat) lives in memory only: it's gone when Prompt Maker stops. Settings, playbooks, workflows and voices are kept. Takes a restart. For when the computer isn't only yours.</small></span></label>
+        <label class="level" id="levelRam"><input type="radio" name="privacyLevel" value="ram"><span><b>Nothing stays</b><small>As Safer, and your work (Saved prompts, pictures, videos, renders, the chat, your own looks) lives in memory only: it's gone when Prompt Maker stops. Settings, playbooks, workflows and voices are kept. Takes a restart. For when the computer isn't only yours.</small></span></label>
       </div>
       <p class="hint" id="privacyDisk" hidden></p>
       <div class="row cloud-dialog-acts">
@@ -995,6 +1014,7 @@
       <button type="button" id="asWide" class="icon-btn" title="Fill the window" aria-label="Fill the window" aria-pressed="false">⤢</button>
       <button type="button" id="asClose" class="icon-btn" title="Close (Esc)" aria-label="Close the assistant">✕</button>
     </header>
+    <div id="asPlan" class="as-plan" aria-label="The assistant's plan" hidden></div>
     <div id="asLog" class="as-log" role="log" aria-live="polite" aria-label="Conversation"></div>
     <div id="asInputGrip" class="as-input-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to make the message box taller or shorter" tabindex="0" title="Drag to make the message box taller or shorter (double-click: back to normal)"><span></span></div>
     <div id="asAttach" class="as-attach" aria-label="Pictures to send" hidden></div>
