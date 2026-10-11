@@ -17,6 +17,8 @@ import * as folders from './lib/folders.js';
 import * as computer from './lib/computer.js';
 import * as privacy from './lib/privacy.js';
 import * as comfySetup from './lib/comfy-setup.js';
+import * as update from './lib/update.js';
+import { spawn } from 'node:child_process';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
@@ -1650,6 +1652,23 @@ async function route(req, res) {
   if (p === '/api/privacy' && m === 'GET') return sendJson(res, 200, await privacy.check());
   if (p === '/api/privacy/level' && m === 'PUT') return sendJson(res, 200, await setPrivacyLevel(String((await readBody(req)).level || ''), settingsView));
   if (p === '/api/privacy/fix' && m === 'POST') return sendJson(res, 200, await privacy.fix(String((await readBody(req)).what || '')));
+  // ⬆ A newer Prompt Maker, and ↻ a restart, from Settings.
+  if (p === '/api/update' && m === 'GET') return sendJson(res, 200, await update.status());
+  if (p === '/api/update/check' && m === 'POST') return sendJson(res, 200, await update.check());
+  if (p === '/api/update/apply' && m === 'POST') {
+    const stream = openStream(res);
+    try {
+      const r = await update.apply(text => stream.send({ type: 'status', text }));
+      stream.send({ type: 'done', ...r });
+    } catch (err) {
+      stream.send({ type: 'error', message: err.message });
+    }
+    return stream.end();
+  }
+  if (p === '/api/services/app/restart' && m === 'POST') {
+    sendJson(res, 200, { ok: true, service: await services.underService() });
+    return restartApp();
+  }
   if ((match = p.match(/^\/api\/services\/(comfy|lms|app|all)\/(start|stop)$/)) && m === 'POST') {
     const [, what, action] = match;
     const settings = await store.getSettings();
@@ -2110,6 +2129,28 @@ const server = http.createServer(async (req, res) => {
 // Stopping: a session kept in memory goes with it.
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { store.endSession().finally(() => process.exit(0)); });
 
+// ↻ Restart: under its service the service restarts it; started by hand (npm start, start.sh, start.bat) a fresh
+// copy of this server is started once this one has let go of the port. The answer to the request goes out first.
+function restartApp() {
+  setTimeout(async () => {
+    if (await services.underService()) {
+      spawn(process.env.SYSTEMCTL_BIN || 'systemctl', ['--user', 'restart', 'prompt-maker.service'], { detached: true, stdio: 'ignore' }).unref();
+      return;
+    }
+    server.close();
+    server.closeAllConnections?.();
+    spawn(process.execPath, [path.join(import.meta.dirname, 'server.js')], { cwd: import.meta.dirname, env: process.env, detached: true, stdio: 'ignore' }).unref();
+    setTimeout(() => process.exit(0), 200);
+  }, 300);
+}
+
+// The port may still be the last copy's for a moment after a restart: try again for a few seconds.
+let listenTries = 0;
+server.on('error', err => {
+  if (err.code === 'EADDRINUSE' && listenTries++ < 40) return setTimeout(() => server.listen(PORT, HOST), 250);
+  console.error(err.code === 'EADDRINUSE' ? `Port ${PORT} is taken: is Prompt Maker already running?` : err.message);
+  process.exit(1);
+});
 server.listen(PORT, HOST, async () => {
   console.log(`Prompt Maker running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${store.IN_MEMORY ? ' · your work is kept in memory for this session' : ''}`);
   // "Start ComfyUI too" (Settings → Services): bring it up along with Prompt Maker, unless it's already running.

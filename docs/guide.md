@@ -97,6 +97,8 @@ Prompt Maker builds a request out of three parts and sends it to LM Studio: its 
 
 **Ubuntu / Debian, one click:** download `prompt-maker_<version>_amd64.deb` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and double-click it (or `sudo apt install ./prompt-maker_*.deb`). It brings its own Node.js, puts **Prompt Maker** in your app menu, and the first start sets up the rest and asks how private you want it. Then do step 2 below for LM Studio, and you're done; steps 1, 3 and 4 are for every other system. To build the package yourself: `packaging/deb/build.sh` (it fetches Node 22 and writes `dist/`).
 
+**Updating it:** **Settings → ⬆ Updates → Check for a newer version**, then **⬆ Update** and **↻ Restart**: no terminal, for the .deb and for a git copy alike (see [Settings](#settings)).
+
 **Removing it:** `sudo apt remove prompt-maker` (or remove it in your software app, if it lists it). Your pictures, videos, playbooks and settings stay in your data folder, and ComfyUI and LM Studio stay too. Prompt Maker's start-with-your-computer entry stays in your home folder, but it does nothing once the app is gone, and installing again brings it back as it was. To remove that too, run `prompt-maker --uninstall` first. If you then run Prompt Maker from another folder, it notices that the start-up entry points at the removed copy and moves it to itself; **Settings → Services** also says when that entry opens another copy, with a **Use this copy** button.
 
 ### 1. Install Node.js
@@ -737,12 +739,14 @@ Search the cards by name and sort them by **Best fit**, **Last used** or **Name*
 
 ## Settings
 
-Settings is a page of cards: **🖥️ Services**, **🔌 LM Studio**, **☁️ Cloud Brains**, **🎨 ComfyUI**, **🧠 How the Brain thinks**, **📜 Master instructions** and **✦ Assistant**. The technical ones start folded; click a header to open it. Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
+Settings is a page of cards: **🖥️ Services**, **⬆ Updates**, **🔌 LM Studio**, **☁️ Cloud Brains**, **🎨 ComfyUI**, **🧠 How the Brain thinks**, **📜 Master instructions** and **✦ Assistant**. The technical ones start folded; click a header to open it. Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
 
 | Setting | Default | What it does |
 |---|---|---|
 | **Start Prompt Maker with my computer** (Services) | On after the first start with the launcher | Keeps Prompt Maker running in the background and turns on LM Studio's server. See [Start it](#4-start-it). |
 | **Start ComfyUI along with it** (Services) | Off | ComfyUI comes up with Prompt Maker. |
+| **↻ Restart** (Services, on the Prompt Maker row) | — | Stops Prompt Maker and starts it again; the page waits and comes back on its own. Whatever needs a restart to take effect offers it right there: **↻ Restart now to apply** in the Privacy check card after a level change, **↻ Restart Prompt Maker** in Updates after an update. |
+| **⬆ Updates** (its own card) | — | Says which version you have and how it was installed. **Check for a newer version** asks GitHub (only when you click: nothing phones home on its own). If there's a newer one, **⬆ Update to x.y.z** gets it in one click: a copy from GitHub pulls it, a .deb install downloads the new package and installs it behind the system's own password prompt; then **↻ Restart Prompt Maker**. A copy downloaded as a folder can't update itself, so the card opens the downloads page instead. |
 | **LM Studio URL** | `http://127.0.0.1:1234` | Where LM Studio's server lives. Only this computer or local-network addresses are allowed. |
 | **ComfyUI URL** | `http://127.0.0.1:8188` | Where ComfyUI lives (optional, for rendering). Local addresses only. |
 | **Privacy level** (🔒 Privacy check card → Change the level) | Safe | Three levels, each a set of the switches below. **Safe**: deletes shred and clean the logs; your work stays in the data folder until you delete it. **Safer**: and ComfyUI's working files and the app window's own files are in memory, swap and hibernation are turned off and the screen locks on its own (it may ask for your password once); your work still stays in the data folder until you delete it. **Nothing stays**: and your work (Saved prompts, pictures, videos, renders, the assistant chat, jobs, your own looks) lives in memory for the session only, gone when Prompt Maker stops; settings, playbooks, workflows, chains, voices and what the app learned stay in the data folder. That last one takes a restart, and the card says so. The dialog also tells you whether the disk is encrypted. |

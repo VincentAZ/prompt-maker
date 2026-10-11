@@ -5858,14 +5858,16 @@ async function privacyLevelDialog() {
     state.settings = r.settings;
     renderSettings();
     if (isView('settings')) { renderPrivacy(r.check); renderPrivacyLevel(); loadServices(); }
-    const notes = [...r.left, ...(r.restart ? ['Restart Prompt Maker for it to take effect.'] : [])];
+    const notes = [...r.left, ...(r.restart ? ['Restart Prompt Maker for it to take effect: ↻ Restart now, in the Privacy check card.'] : [])];
     toast(`🔒 ${LEVEL_NAMES[picked]}${notes.length ? `. ${notes.join(' ')}` : ''}`, r.left.length > 0);
+    $('#privacyRestart').hidden = !r.restart;
   } catch (err) {
     toast(err.message, true);
   }
 }
 
 $('#privacyLevelBtn').addEventListener('click', privacyLevelDialog);
+$('#privacyRestart').addEventListener('click', restartApp);
 
 function renderPrivacyLevel() {
   const s = state.settings;
@@ -5895,6 +5897,7 @@ let servicesPoll = null;
 async function loadServices() {
   const st = await api('/api/services').catch(() => null);
   if (st) renderServices(st);
+  loadUpdateStatus();
   return st;
 }
 
@@ -5908,6 +5911,7 @@ function renderServices(st) {
     if (stop !== undefined) $(`[data-act="${name}-stop"]`, el).hidden = !stop;
   };
   row('app', { dot: 'ok', text: st.app.service ? 'Running in the background' : 'Running', stop: true });
+  $('[data-act="app-restart"]').hidden = false;
   $('#stopAllBtn').disabled = false;
   const { lms, comfy } = st;
   row('lms', lms.running
@@ -5973,9 +5977,85 @@ async function startComfyUi() {
   }
 }
 
+// ↻ Restart Prompt Maker: the server starts again and this page waits for it, then reloads itself.
+async function restartApp() {
+  showView('settings');
+  try { await api('/api/services/app/restart', { method: 'POST' }); } catch (err) { return toast(`Couldn't restart: ${friendly(err)}`, true); }
+  state.stoppedAt = Date.now();
+  Object.assign(state, { appDown: true, restarting: true });
+  renderServicesDown();
+  $('.svc[data-svc="app"] .svc-state').textContent = 'Restarting…';
+  toast('↻ Restarting Prompt Maker… this page comes back on its own');
+  const t0 = Date.now();
+  await new Promise(r => setTimeout(r, 1500));
+  while (Date.now() - t0 < 90000) {
+    const back = await fetch('/api/settings', { cache: 'no-store' }).then(r => r.ok, () => false);
+    if (back) return location.reload();
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  state.restarting = false;
+  toast('Prompt Maker didn\'t come back on its own. Start it from your app menu, then reload this page.', true);
+}
+
+// ⬆ Updates (Settings): which version this is, a check on click, the update, then a restart.
+const upd = { info: null };
+function renderUpdate(info = upd.info) {
+  upd.info = info;
+  const now = $('#updNow');
+  if (!info) return;
+  const words = { git: 'a copy from GitHub (git)', deb: 'installed from the .deb package', folder: 'a downloaded folder' };
+  now.textContent = `You have Prompt Maker ${info.current}${info.how ? `, ${words[info.how] || ''}` : ''}.${info.latest ? info.newer ? ` ${info.latest} is out.` : ' That\'s the newest version.' : ''}`;
+  $('#updGo').hidden = !(info.newer && (info.how === 'git' || (info.how === 'deb' && info.asset)));
+  $('#updGo').textContent = info.updated ? '✓ Updated' : `⬆ Update to ${info.latest || 'the newest'}`;
+  $('#updGo').disabled = Boolean(info.updated);
+  $('#updRestart').hidden = !info.updated;
+  $('#updPage').hidden = !(info.newer && !(info.how === 'git' || (info.how === 'deb' && info.asset)));
+  $('#updPage').href = info.page || info.releases || '#';
+  $('#updCheck').hidden = Boolean(info.updated);
+  $('#updNote').hidden = !info.note;
+  $('#updNote').textContent = info.note || '';
+}
+async function loadUpdateStatus() {
+  if (upd.info?.latest) return renderUpdate();
+  const st = await api('/api/update').catch(() => null);
+  if (st) renderUpdate(st);
+}
+$('#updCheck').addEventListener('click', async () => {
+  const b = $('#updCheck');
+  b.disabled = true;
+  b.textContent = 'Checking…';
+  try {
+    const info = await api('/api/update/check', { method: 'POST' });
+    renderUpdate({ ...upd.info, ...info, note: info.newer ? (info.how === 'folder' ? `Get ${info.latest} from the downloads page and replace this folder; your work lives in the data folder, not here.` : info.how === 'deb' && !info.asset ? 'The newest release has no package yet: the downloads page has it as a folder.' : `One click gets it; then Prompt Maker restarts.${info.commitsBehind ? ` (${info.commitsBehind} change${info.commitsBehind > 1 ? 's' : ''} behind)` : ''}`) : '' });
+  } catch (err) {
+    renderUpdate({ ...upd.info, note: `⚠️ ${friendly(err)}` });
+  }
+  b.disabled = false;
+  b.textContent = 'Check again';
+});
+$('#updGo').addEventListener('click', async () => {
+  const b = $('#updGo');
+  b.disabled = true;
+  $('#updNote').hidden = false;
+  let failed = null;
+  let result = null;
+  try {
+    await streamApi('/api/update/apply', {}, ev => {
+      if (ev.type === 'status') $('#updNote').textContent = `⏳ ${ev.text}`;
+      else if (ev.type === 'done') result = ev;
+      else if (ev.type === 'error') failed = ev.message;
+    });
+  } catch (err) { failed = friendly(err); }
+  if (failed || !result) { renderUpdate({ ...upd.info, note: `⚠️ ${failed || 'The update didn\'t finish.'}` }); b.disabled = false; return; }
+  renderUpdate({ ...upd.info, updated: true, current: result.version || upd.info.latest, note: `✓ Prompt Maker ${result.version || upd.info.latest} is in. Restart to use it.` });
+  toast(`✓ Updated to ${result.version || upd.info.latest}. Restart Prompt Maker to use it`, false, { label: '↻ Restart now', run: restartApp });
+});
+$('#updRestart').addEventListener('click', restartApp);
+
 async function serviceAction(btn) {
   const act = btn.dataset.act;
   if (act === 'comfy-start') return startComfyUi();
+  if (act === 'app-restart') return restartApp();
   if (act === 'comfy-setup') return openComfySetup();
   if (act === 'app-stop' || btn.id === 'stopAllBtn') {
     const all = btn.id === 'stopAllBtn';

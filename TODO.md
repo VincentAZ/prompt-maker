@@ -23,6 +23,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.44.0 — **Settings → ⬆ Updates**: Check for a newer version (GitHub, only on click), ⬆ Update in one click (git
+  pull for a repo copy; the new .deb downloaded and installed behind pkexec for a package install; a folder copy
+  is sent to the downloads page), then **↻ Restart Prompt Maker**. ↻ Restart on the Services row too, and
+  everything that said "restart Prompt Maker" offers ↻ Restart now; the page waits for the server and reloads.
 - 1.43.0 — Finer Gallery filters: 📅 Today / This week / This month / Older, shape (portrait, landscape, square),
   ☆ Not rated yet, 🎙 Spoken line, and menus for the workflow, LoRA and look a render was made with (each shows once
   there's a choice); search also finds a seed, a size, a look or a LoRA.

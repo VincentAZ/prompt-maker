@@ -757,6 +757,7 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 }
 .toast.bad { border-color: var(--danger); box-shadow: 0 16px 50px -10px rgb(0 0 0 / 90%), 0 0 0 1px var(--danger); }
 .toast.has-act { pointer-events: auto; display: flex; align-items: center; gap: 14px; padding: 7px 7px 7px 20px; }
+a.btn { text-decoration: none; }
 .toast-act { flex: none; padding: 6px 14px; border-radius: 999px; border: 0; background: var(--text); color: var(--ink); font-weight: 800; font-size: 13.5px; }
 .toast-act:hover { filter: brightness(0.9); }
 @keyframes pop { from { opacity: 0; scale: 0.85; } }

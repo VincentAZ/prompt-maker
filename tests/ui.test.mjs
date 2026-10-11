@@ -4938,6 +4938,21 @@ esac
     await goto(APP);
   });
 
+  await test('settings: ⬆ Updates says which version this is and checks on click; ↻ Restart is offered', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('/You have Prompt Maker \\d/.test(document.querySelector("#updNow").textContent)', 'the version and how it was installed');
+    assert((await text('#updNow')).includes('git'), 'a repo copy says so');
+    assert(await visible('[data-act="app-restart"]'), '↻ Restart on the Prompt Maker row');
+    assert(!(await visible('#updGo')), 'nothing to update before a check');
+    await click('#updCheck');
+    await waitFor('!document.querySelector("#updNote").hidden && document.querySelector("#updNote").textContent.length > 5', 'the check answers', 15000);
+    assert((await text('#updNote')).includes('⚠️'), 'with the fake git it says the check failed, plainly');
+    eq(await text('#updCheck'), 'Check again', 'and offers to check again');
+    const st = await fetch(`${APP}/api/update`).then(r => r.json());
+    eq(st.how, 'git', 'the server knows the kind of copy');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('voices: one-click setup, describe a voice and hear it, keep it by name, say a line, rename, delete', async () => {
     await click('.tabs button[data-view="voices"]');
     await waitFor('document.querySelector("#view-voices").classList.contains("active") && !document.querySelector("#voiceSetup").hidden', 'the Voices page, not set up yet');

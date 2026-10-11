@@ -667,7 +667,7 @@
             <li class="svc" data-svc="app">
               <span class="dot ok"></span>
               <span class="svc-text"><b>Prompt Maker</b><span class="svc-state">Running</span></span>
-              <span class="svc-acts"><button type="button" class="btn small" data-act="app-stop">■ Stop</button></span>
+              <span class="svc-acts"><button type="button" class="btn small" data-act="app-restart" title="Stops Prompt Maker and starts it again; this page comes back on its own">↻ Restart</button><button type="button" class="btn small" data-act="app-stop">■ Stop</button></span>
             </li>
             <li class="svc" data-svc="lms">
               <span class="dot"></span>
@@ -690,10 +690,22 @@
           <div class="row"><button type="button" class="btn small danger" id="stopAllBtn" title="Stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker">■ Stop everything (frees the GPU)</button></div>
         </section>
 
+        <section class="card" data-panel="set-update" id="updateCard">
+          <h2>⬆ Updates</h2>
+          <p class="hint" id="updNow">Checking which version this is…</p>
+          <div class="row">
+            <button type="button" class="btn small" id="updCheck">Check for a newer version</button>
+            <button type="button" class="btn small primary" id="updGo" hidden>⬆ Update now</button>
+            <button type="button" class="btn small primary" id="updRestart" hidden>↻ Restart Prompt Maker</button>
+            <a class="btn small" id="updPage" href="#" target="_blank" rel="noopener" hidden>Open the downloads page</a>
+          </div>
+          <p class="hint" id="updNote" hidden></p>
+        </section>
+
         <section class="card" data-panel="set-privacy" id="privacyCard">
           <h2>🔒 Privacy check</h2>
           <p class="hint">What this computer does with your files below the app. Fixes that need an administrator's password ask for it with the system's own prompt.</p>
-          <div class="row" id="privacyLevelRow"><span id="privacyLevelLine" class="muted"></span><button type="button" class="btn small" id="privacyLevelBtn">Change the level</button></div>
+          <div class="row" id="privacyLevelRow"><span id="privacyLevelLine" class="muted"></span><button type="button" class="btn small" id="privacyLevelBtn">Change the level</button><button type="button" class="btn small primary" id="privacyRestart" hidden title="The new level takes effect when Prompt Maker starts again">↻ Restart now to apply</button></div>
           <ul class="svc-list" id="privacyList">
             <li class="svc" data-check="disk"><span class="dot"></span><span class="svc-text"><b>Disk encryption</b><span class="svc-state">…</span></span><span class="svc-acts"></span></li>
             <li class="svc" data-check="swap"><span class="dot"></span><span class="svc-text"><b>Swap</b><span class="svc-state">…</span></span><span class="svc-acts"><button type="button" class="btn small primary" data-fix="swap" hidden>Turn off</button></span></li>
