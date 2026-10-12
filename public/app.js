@@ -6871,7 +6871,9 @@ $('#wfpSeed').addEventListener('keydown', e => {
 function renderDenoise() {
   const box = $('#wfpDenoise');
   const flow = activeFlow();
-  const params = flow?.maps.image && !currentModel()?.characterSheet ? flow.denoise || [] : []; // (a person to keep isn't repainted)
+  // Image models only: a video model follows your picture as its first frame (or its character) rather than repainting
+  // it, so there denoise only ever means "render less" (0: nothing, a grey clip). A person to keep isn't repainted either.
+  const params = flow?.maps.image && currentModel()?.kind === 'image' && !currentModel()?.characterSheet ? flow.denoise || [] : [];
   box.hidden = !params.length;
   $('#pictureOptions').hidden = !params.length;
   $('#pictureOptionsSum').textContent = params.length ? `change ${params.map(p => Number(p.value).toFixed(2)).join(' · ')}` : '';
@@ -6880,7 +6882,7 @@ function renderDenoise() {
   box.innerHTML = params.map(p => `
     <div class="dn-row" data-key="${esc(p.key)}">
       <span class="dn-label" title="Called “denoise” in ComfyUI">🎚️ How much to change your picture${params.length > 1 ? ` <small>${esc(p.title)}</small>` : ''}</span>
-      <input type="range" class="dn-range" min="0" max="1" step="0.01" value="${Number(p.value)}" aria-label="Denoise${params.length > 1 ? `, ${esc(p.title)}` : ''}: how much the render may change your image">
+      <input type="range" class="dn-range" min="0.05" max="1" step="0.01" value="${Number(p.value)}" aria-label="Denoise${params.length > 1 ? `, ${esc(p.title)}` : ''}: how much the render may change your image">
       <output class="dn-val">${Number(p.value).toFixed(2)}</output>
       ${Number(p.value) !== Number(p.original) ? `<button type="button" class="icon-btn dn-reset" title="Back to the workflow's ${Number(p.original).toFixed(2)}" aria-label="Reset denoise">↺</button>` : '<span></span>'}
       <small class="dn-hint">${Number(p.value) < 0.35 ? 'stays close to your image' : Number(p.value) < 0.7 ? 'keeps the layout, changes the details' : 'changes a lot'}</small>
@@ -8495,7 +8497,7 @@ function thenStep(st = {}) {
     takes: clampInt(st.takes ?? 1, 1, 4),
     renders: clampInt(st.renders ?? 1, 1, 4),
     duration: m?.kind === 'video' ? chainSeconds(st.duration, m) : '',
-    gate: GATES.includes(st.gate) ? st.gate : 'pick',
+    gate: GATES.includes(st.gate) ? st.gate : saved.get('chainBrainPicks', false) ? 'brain' : 'pick',
     open: st.open ?? true,
   };
 }
@@ -8657,7 +8659,12 @@ function renderChainEditor() {
   const canAdd = Boolean(m0) && lastKind !== 'video' && steps.length < 4;
   const problems = state.workflowsLoaded ? chainProblems() : { all: '', steps: [] };
   const recipe = state.recipes.find(r => r.id === state.chain.recipeId);
+  const brainPicks = steps.length ? steps.every(st => st.gate === 'brain') : saved.get('chainBrainPicks', false);
+  const mixed = steps.length > 1 && !brainPicks && steps.some(st => st.gate === 'brain');
   box.innerHTML = `
+    <label class="chain-ai" title="On: the AI looks at every render of a step and only the best one goes on to the next (a still becomes the first frame of the video). Off: the chain waits while you pick.">
+      <input type="checkbox" data-act="brain-all"${brainPicks ? ' checked' : ''}> <span><b>Let AI choose</b> the best picture to carry on <span class="muted">(off: you pick)</span></span>
+    </label>
     ${steps.length && problems.all ? `<p class="warn-line">⚠️ ${esc(problems.all)}</p>` : ''}
     ${steps.length ? `<ol class="chain-steps">${steps.map((st, i) => stepCardHtml(st, i, problems.steps[i])).join('')}</ol>` : ''}
     <div class="chain-bar">
@@ -8680,6 +8687,7 @@ function renderChainEditor() {
     setActive($(`.chain-card[data-i="${i}"] [data-f="takes"]`, box), st.takes);
     setActive($(`.chain-card[data-i="${i}"] [data-f="renders"]`, box), st.renders);
   });
+  $('[data-act="brain-all"]', box).indeterminate = mixed; // (some steps the AI picks, some you do)
   if (focus?.sel) $(`${focus.i != null ? `[data-i="${focus.i}"].chain-card ` : ''}${focus.sel}`, box)?.focus();
   setActive($('#wfpRenders .seg'), state.chain.renders);
   renderBatch(); // a chain turns the batch off, and hides auto-render
@@ -8687,6 +8695,18 @@ function renderChainEditor() {
 }
 
 const chainStepOf = el => state.chain.steps[Number(el.closest('[data-i]')?.dataset.i)];
+
+// ☐ Let AI choose: every step's gate at once (and the steps added later), 🧠 Brain picks or ⏸️ Let me pick.
+$('#chainBox').addEventListener('change', e => {
+  if (e.target.dataset.act !== 'brain-all') return;
+  const on = e.target.checked;
+  saved.set('chainBrainPicks', on);
+  state.chain.steps.forEach(st => { st.gate = on ? 'brain' : 'pick'; });
+  saveChainState();
+  renderChainEditor();
+  $('#chainBox [data-act="brain-all"]')?.focus();
+  toast(on ? '🧠 The AI picks the best render at each step' : '⏸️ The chain waits for you to pick');
+});
 
 $('#chainBox').addEventListener('click', async e => {
   const b = e.target.closest('button');

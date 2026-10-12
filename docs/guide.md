@@ -549,7 +549,7 @@ Step ⑤ has a **🎲 Seed** row for the picked workflow, with ComfyUI's four mo
 
 ### Denoise (image-to-image)
 
-When the picked workflow takes an image and has a **denoise** setting, step ③ shows a **🎚️ How much to change your picture** slider right under your image. (Not on Krea 2 Character or MiniMax H3 Reference: there your picture is the person to keep, not a picture to change.) Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
+When the picked workflow takes an image and has a **denoise** setting, step ③ shows a **🎚️ How much to change your picture** slider under your image, inside **Picture settings**. Only on picture models: a video model follows your picture as its first frame (or its character) rather than repainting it, so there denoise could only make it render less (at 0 nothing at all: a flat grey clip). Not on Krea 2 Character either: there your picture is the person to keep. It goes down to 0.05, never 0, and a 0 saved earlier renders at the workflow's own value instead. Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
 
 ### LoRAs
 
@@ -587,7 +587,7 @@ A chain runs several steps in a row, each one continuing from the renders of the
 
 1. Set up step 1 as usual (model, theme, dials, and a workflow in step ⑤).
 2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*; 🧍 *character* on Wan Animate 2, which also uses the motion video in step ③), **what happens** (optional; empty lets the Brain choose), its workflow, takes and renders, and for a video step its **duration** (a slider, 1 to 20 seconds).
-3. Between steps, choose **⏸️ Let me pick** (the chain waits while you pick the best renders), **🧠 Brain picks** (the Brain looks at every render and only the best one goes on, so 16 stills and a video step with 2 takes make 2 videos, not 32) or **⚡ Auto** (every render goes on). Brain picks needs a Brain that can see images (👁); if it can't pick, the chain waits for you instead.
+3. **☐ Let AI choose** at the top of the chains section is the one-click version: on, the AI picks the best render at every step (a still becomes the video's first frame) and for steps you add later; off, the chain waits for you to pick. Or, between steps, choose each on its own: **⏸️ Let me pick** (the chain waits while you pick the best renders), **🧠 Brain picks** (the Brain looks at every render and only the best one goes on, so 16 stills and a video step with 2 takes make 2 videos, not 32) or **⚡ Auto** (every render goes on). Brain picks needs a Brain that can see images (👁); if it can't pick, the chain waits for you instead.
 4. Click **Run all steps**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
 
 While a chain runs, a strip above the results shows every step. Click any thumbnail to see that step's takes.

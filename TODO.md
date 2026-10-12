@@ -23,6 +23,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.52.0 — **☐ Let AI choose** at the top of the chains section: one click makes the AI pick the best render at every
+  step (and steps added later), off waits for you. Fixed: a video came out flat grey when "How much to change your
+  picture" had been set to 0 on an image-to-video workflow; the slider now shows on picture models only, stops at
+  0.05, and a 0 saved before renders at the workflow's own value.
 - 1.51.0 — A size you type in step ④ stays in that model's Size menu for good: it's kept in the data folder (with
   your own looks), not in the browser, so it survives a reboot and shows in any browser; at *Nothing stays*, for the
   session only. Sizes typed before move there on their own.

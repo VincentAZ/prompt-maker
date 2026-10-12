@@ -3616,6 +3616,13 @@ esac
     eq(kids[0].source.renderId, root.variations[0].renders[1].id, 'the one the Brain named (number 2 of 4)');
     await click('#wfpRenders button[data-value="1"]');
     await click('.chain-gate button[data-gate="pick"]');
+    // ☐ Let AI choose sets every step's gate at once, and the default for steps added later.
+    assert(!(await js('document.querySelector(\'#chainBox [data-act="brain-all"]\').checked')), 'Let AI choose is off while you pick');
+    await click('#chainBox [data-act="brain-all"]');
+    assert(await js('[...document.querySelectorAll(".chain-gate")].every(g => g.querySelector(\'[data-gate="brain"]\').classList.contains("active"))'), 'on: the AI picks at every step');
+    eq(await js('JSON.parse(localStorage.getItem("pm.chain")).steps.every(st => st.gate === "brain")'), true, 'and it is kept with the chain');
+    await click('#chainBox [data-act="brain-all"]');
+    assert(await js('[...document.querySelectorAll(".chain-gate")].every(g => g.querySelector(\'[data-gate="pick"]\').classList.contains("active"))'), 'off: back to you picking');
   });
 
   await test('chains: auto runs straight through; save, reload, load, export, delete', async () => {
@@ -4212,13 +4219,24 @@ esac
     await choose('#llmSelect', 'mock/vision-8b');
   });
 
-  await test('denoise: shown for image-to-image workflows, saved on the workflow', async () => {
+  await test('denoise: shown for image-to-image workflows, saved on the workflow; never on a video model', async () => {
     await openPanel('create-render-adv');
     await click('.tabs button[data-view="create"]');
     await click('.model-card[data-id="krea2-raw"]');
     assert(!(await visible('#wfpDenoise')), 'no denoise for a text-to-image workflow');
     await click('.model-card[data-id="ltx-2-3"]');
+    await sleep(300);
+    assert(await js('document.querySelector("#wfpDenoise").hidden && document.querySelector("#pictureOptions").hidden'), 'not on a video model: the picture is its first frame, and 0 would render a grey clip');
+    // The same image-taking workflow on an image model (picture to picture): there the slider is right.
+    const i2v = (await fetch(`${APP}/api/workflows`).then(r => r.json())).find(w => w.modelId === 'ltx-2-3' && w.denoise?.length);
+    const full = await fetch(`${APP}/api/workflows/${i2v.id}`).then(r => r.json());
+    const made = await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: 'krea-2-raw-i2i', name: 'Mock I2I', prompt: full.prompt, mapping: full.mapping }) }).then(r => r.json());
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded with it');
+    await openPanel('create-render-adv');
+    await click('.model-card[data-id="krea-2-raw-i2i"]');
     await waitFor('!document.querySelector("#wfpDenoise").hidden', 'denoise for a workflow that takes an image');
+    eq(await js('document.querySelector("#wfpDenoise .dn-range").min'), '0.05', 'it can\'t go to 0 (that renders nothing)');
     eq(await text('#wfpDenoise .dn-val'), '1.00', 'at the workflow\'s value');
     await js('const r = document.querySelector("#wfpDenoise .dn-range"); r.value = "0.55"; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true }))');
     eq(await text('#wfpDenoise .dn-val'), '0.55', 'shows the new value');
@@ -4232,6 +4250,15 @@ esac
     await click('#wfClose');
     await click('#wfpDenoise .dn-reset');
     await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)})?.denoise[0].value === 1)`, '↺ puts it back');
+    // A 0 saved before (by an older version, or by hand) renders with the workflow's own value instead of nothing.
+    await fetch(`${APP}/api/workflows/${i2v.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overridePatch: { [i2v.denoise[0].key]: 0 } }) });
+    const built = wfLib.buildPrompt(await fetch(`${APP}/api/workflows/${i2v.id}`).then(r => r.json()), { text: 'x', imageName: 'a.png' }).prompt; // (the workflow as the server has it, built here)
+    const [node, input] = i2v.denoise[0].key.split('|');
+    eq(built[node].inputs[input], 1, 'a saved denoise of 0 renders at the workflow\'s own value');
+    await fetch(`${APP}/api/workflows/${i2v.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overridePatch: { [i2v.denoise[0].key]: null } }) });
+    await fetch(`${APP}/api/workflows/${made.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded without it');
     await click('.model-card[data-id="krea2-raw"]');
   });
 
