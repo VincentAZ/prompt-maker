@@ -7,7 +7,7 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 1. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
    then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). Latest:
-   v1.39.1 (2026-10-11).
+   v1.52.1 (2026-10-12).
 2. **Windows installer** (on hold: other work first). After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
    start sets up the rest). Consider a WebView/Electron wrapper then, so Windows gets an app window too.
 3. **App-name change** (on hold) (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
@@ -23,6 +23,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.52.1 — `scripts/launch_branch`: runs Prompt Maker from a git branch in place of what runs now (and `main` back),
+  to try a branch with your own data before it's merged.
 - 1.52.0 — **☐ Let AI choose** at the top of the chains section: one click makes the AI pick the best render at every
   step (and steps added later), off waits for you. Fixed: a video came out flat grey when "How much to change your
   picture" had been set to 0 on an image-to-video workflow; the slider now shows on picture models only, stops at

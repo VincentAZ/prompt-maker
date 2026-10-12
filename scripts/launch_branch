@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Runs Prompt Maker from a branch, in place of what's running now, so you can test it with your own data.
+#   scripts/launch_branch                 switch to the create-tabs-layout branch and restart Prompt Maker on it
+#   scripts/launch_branch main            100% roll back: main again, restarted
+#   scripts/launch_branch <any-branch>    the same for another branch
+# Your data folder is untouched either way. Reload the Prompt Maker tab you already have open when it says so.
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")/.."
+
+BRANCH="${1:-create-tabs-layout}"
+PORT="${PORT:-5317}"
+URL="http://127.0.0.1:$PORT"
+running() { curl -fs -o /dev/null "$URL/api/settings"; }
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "There are uncommitted changes in $(git branch --show-current); commit or stash them first:"
+  git status --short --untracked-files=no
+  exit 1
+fi
+git rev-parse --verify -q "$BRANCH" >/dev/null || { echo "No branch called $BRANCH. Branches:"; git branch; exit 1; }
+
+if [ "$(git branch --show-current)" != "$BRANCH" ]; then
+  git checkout -q "$BRANCH"
+fi
+echo "On $BRANCH · version $(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' package.json) · $(git log --oneline -1 | cut -c1-80)…"
+
+# The server reads its files at start: restart it so the branch's server.js runs (the page's files are read live).
+if systemctl --user is-active -q prompt-maker.service 2>/dev/null; then
+  echo "Restarting the Prompt Maker service…"
+  systemctl --user restart prompt-maker.service
+elif running; then
+  echo "Prompt Maker is running at $URL but not as the service: stop it, then run ./start.sh"
+  exit 1
+else
+  echo "Starting Prompt Maker…"
+  (./start.sh >/dev/null 2>&1 &)
+fi
+for _ in $(seq 1 60); do running && break; sleep 1; done
+if running; then
+  echo "Prompt Maker is running $BRANCH at $URL — reload the tab you have open (F5)."
+  echo "Back to the old one: scripts/launch_branch main"
+else
+  echo "Prompt Maker isn't answering yet. See: journalctl --user -u prompt-maker -n 30"
+  exit 1
+fi

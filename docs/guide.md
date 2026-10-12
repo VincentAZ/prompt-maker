@@ -989,6 +989,8 @@ prompt-maker/
 │   ├── mock-lmstudio.mjs   # fake LM Studio for tests
 │   ├── mock-comfyui.mjs    # fake ComfyUI (HTTP + WebSocket progress) for tests
 │   └── ui.test.mjs         # end-to-end suite (headless Chrome)
+├── scripts/
+│   └── launch_branch       # runs Prompt Maker from a git branch in place of what runs now (scripts/launch_branch main goes back)
 ├── start.sh                # Linux launcher
 └── start.bat               # Windows launcher (double-click)
 ```
