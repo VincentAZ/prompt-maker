@@ -2180,6 +2180,15 @@ esac
     await waitFor('!document.querySelector("#lightbox").hidden && document.querySelector("#lbInfo").textContent.includes("4242")', 'the lightbox shows it');
     await click('[data-lb="delete"]');
     await click('[data-lb="delete"]');
+    // Waiting to be deleted: greyed out, the seconds left and ↶ Undo on it, in the viewer and on the take.
+    await waitFor('document.querySelector("#lbStage").classList.contains("going") && /Deleting in \\d+ s/.test(document.querySelector("#lbStage .going-left")?.textContent || "")', 'the viewer greys it and counts down');
+    assert(await visible('#lbStage .going-over [data-undo]'), 'with ↶ Undo on it');
+    assert(await js('!!document.querySelector(".take .rcell.going .going-over [data-undo]")'), 'the take\'s tile too');
+    await click('#lbStage .going-over [data-undo]');
+    await toastText('Kept');
+    await waitFor('!document.querySelector("#lbStage").classList.contains("going") && !document.querySelector(".take .rcell.going")', 'Undo keeps it');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
     await toastText('Render deleted', UNDO_WAIT);
     await press('Escape');
     await waitFor('document.querySelectorAll(".take .rtile img").length === 1', 'its render gone from the take');
@@ -2189,6 +2198,11 @@ esac
     await click('.take .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox open');
     assert((await text('#lbInfo')).includes('Mock T2I'), 'workflow shown');
+    assert(await js('document.querySelector("#lbInfo .lb-idea-text").getBoundingClientRect().height < 3 * parseFloat(getComputedStyle(document.querySelector("#lbInfo .lb-idea-text")).lineHeight)'), 'the idea starts folded to two lines');
+    eq(await js('getComputedStyle(document.querySelector("#lbInfo .lb-idea-text")).fontWeight'), '400', 'not bold');
+    await click('#lbInfo .lb-idea-btn');
+    assert(await js('document.querySelector("#lbInfo .lb-idea").classList.contains("open")'), '▸ opens it');
+    await click('#lbInfo .lb-idea-btn');
     assert((await text('#lbInfo .lb-prompt')) === renderedText, 'prompt shown');
     assert(await visible('#lbStage img'), 'image shown');
     await shot('24-lightbox');
@@ -5656,7 +5670,7 @@ esac
     assert(await js('document.querySelector("#reelGrid .rate-bar button").getBoundingClientRect().width >= 28'), 'and big enough to hit');
     await click('#reelGrid .reel-cell .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'viewer open');
-    eq(await js('[...document.querySelector("#lbInfo").children].map(e => e.className.split(" ")[0] || e.tagName).slice(0, 3).join(" ")'), 'H3 lb-rate lb-prompt', 'title, then the stars, then the prompt');
+    eq(await js('[...document.querySelector("#lbInfo").children].map(e => e.className.split(" ")[0] || e.tagName).slice(0, 3).join(" ")'), 'lb-idea lb-rate lb-prompt', 'the idea (folded), then the stars, then the prompt');
     assert(!(await text('#lbInfo .lb-facts')).includes('—'), 'facts with nothing to say are left out');
     await click('#lbInfo [data-lb="compare"]');
     await waitFor('document.querySelector("#lbStage").classList.contains("pair") && document.querySelectorAll("#lbStage .lb-pane").length === 2', 'two side by side');

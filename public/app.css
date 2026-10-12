@@ -926,7 +926,10 @@ body.narrow .models-side { position: static; }
 .lb-prev { left: 14px; }
 .lb-next { right: 374px; }
 .lb-info { overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 14px; background: var(--panel-solid); border-left: 1px solid var(--line); }
-.lb-info h3 { font-size: 19px; }
+.lb-idea-btn { all: unset; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); }
+.lb-idea-btn:focus-visible { outline: 2px solid var(--m); outline-offset: 2px; border-radius: 4px; }
+.lb-idea-text { margin: 4px 0 0; font-size: 14px; font-weight: 400; line-height: 1.5; color: var(--text-2); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.lb-idea.open .lb-idea-text { display: block; -webkit-line-clamp: unset; line-clamp: unset; }
 .lb-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; margin: 0; }
 .lb-facts dt { color: var(--muted); }
 .lb-facts dd { margin: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
@@ -939,7 +942,11 @@ body.narrow .models-side { position: static; }
 /* =================== Gallery =================== */
 /* The render you looked at last or the entry open on Create (History): a quiet ring in its model's colour. */
 /* On its way out (Delete was clicked; ↶ Undo still works): in place, dimmed. */
-.hcard.going > :not(.hbody), .hcard.going .hbody > :not(.hactions), .reel-cell.going .rtile { opacity: 0.35; filter: grayscale(1); }
+.hcard.going > :not(.hbody), .hcard.going .hbody > :not(.hactions), .reel-cell.going .rtile, .rcell.going .rtile, .lb-stage.going > :not(.going-over) { opacity: 0.35; filter: grayscale(1); }
+.rcell.going, .lb-stage.going { position: relative; }
+.going-over { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; text-align: center; pointer-events: none; }
+.going-over > * { pointer-events: auto; }
+.going-left { font-size: 13px; font-weight: 700; color: var(--text); background: rgb(0 0 0 / 60%); padding: 4px 10px; border-radius: 999px; font-variant-numeric: tabular-nums; }
 .hgoing { margin-right: auto; align-self: center; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .hcard.current { border-color: var(--m); box-shadow: 0 0 0 2px color-mix(in srgb, var(--m) 45%, transparent); }
 .chip-btn.rated { --m: var(--star); }

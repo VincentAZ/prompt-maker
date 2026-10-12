@@ -3311,7 +3311,12 @@ function reelTile(it) {
   }
   cell.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
   cell.style.setProperty('--ar', reelRatioOf(it));
-  cell.classList.toggle('going', going.has(it.render.id) || going.has(it.entry.id));
+  const gid = goingIdOf(it);
+  cell.classList.toggle('going', Boolean(gid));
+  if ((cell.querySelector(':scope > .going-over [data-undo]')?.dataset.undo || null) !== gid) {
+    cell.querySelector(':scope > .going-over')?.remove();
+    if (gid) cell.append(goingOverlay(gid));
+  }
   cell.classList.toggle('is-hidden', Boolean(it.render.hidden)); // the Gallery still shows it, marked, with 👁 Show
   cell.classList.toggle('picked', reelPicked.has(key));
   const theme = it.entry.theme || 'From an image';
@@ -4792,6 +4797,30 @@ function deleteSoon(id, url, what, run, redraw) {
   $('#toast').dataset.going = id;
 }
 
+// On a render waiting to be deleted (its tile in Your renders, the Gallery and the take, and the full-screen view):
+// greyed out, with the seconds left and ↶ Undo on top.
+const goingIdOf = it => (going.has(it.render.id) ? it.render.id : going.has(it.entry.id) ? it.entry.id : null);
+const goingLeft = id => `🗑 Deleting in ${secondsLeft(going.get(id))} s`;
+function goingOverlay(id) {
+  const box = document.createElement('div');
+  box.className = 'going-over';
+  box.innerHTML = `<span class="going-left" role="status" data-going-left="${esc(id)}">${goingLeft(id)}</span><button type="button" class="btn small primary" data-undo="${esc(id)}">↶ Undo</button>`;
+  return box;
+}
+// Everything that shows a render waiting to be deleted, drawn again (after an Undo, or once it's gone).
+function redrawGoing() {
+  if (!$('#lightbox').hidden) lbRender();
+  renderReel();
+  state.cards.forEach(renderTiles);
+  if (isView('history')) renderHistory();
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-undo]');
+  if (!b) return;
+  e.stopPropagation();
+  undoDelete(b.dataset.undo, redrawGoing);
+}, true);
+
 // "Deleting in 8 s": the seconds left to undo, on the card and in the toast, counted down as they pass.
 const secondsLeft = item => Math.max(1, Math.ceil((item.until - Date.now()) / 1000));
 const goingText = item => `🗑 Deleting ${item.what} in ${secondsLeft(item)} s`;
@@ -4799,6 +4828,7 @@ function countDown(id) {
   const item = going.get(id);
   if (!item) return;
   for (const el of document.querySelectorAll(`.hcard[data-id="${CSS.escape(id)}"] .hgoing`)) el.textContent = goingText(item);
+  for (const el of document.querySelectorAll(`[data-going-left="${CSS.escape(id)}"]`)) el.textContent = goingLeft(id);
   const t = $('#toast');
   if (!t.hidden && t.dataset.going === id && t.firstChild?.nodeType === Node.TEXT_NODE) t.firstChild.nodeValue = goingText(item);
 }
@@ -7995,7 +8025,7 @@ function renderTiles(card) {
   const picking = pickStep() != null;
   // The same tiles as last time: left as they are (a redraw replays their entrance, so they'd jump up under the
   // mouse, and stops the video playing under it).
-  const key = JSON.stringify([items.map(it => [it.render.id, it.file.file, it.render.secs, it.render.seed]), [...card.running.keys()], card.pending && !card.running.size, ar, video?.id, picking ? [...state.run.picks] : null, picking ? items.map(it => continuedFrom(state.run, it)) : null]);
+  const key = JSON.stringify([items.map(it => [it.render.id, it.file.file, it.render.secs, it.render.seed]), [...card.running.keys()], card.pending && !card.running.size, ar, video?.id, picking ? [...state.run.picks] : null, picking ? items.map(it => continuedFrom(state.run, it)) : null, items.map(goingIdOf)]);
   if (box.dataset.key === key && box.children.length) return;
   box.dataset.key = key;
   const tiles = items.map((it, n) => {
@@ -8006,6 +8036,13 @@ function renderTiles(card) {
     b.setAttribute('aria-label', `Open render ${n + 1}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}`);
     b.innerHTML = `${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-meta">${it.render.seed != null ? `seed ${it.render.seed}` : ''}${it.render.secs ? ` · ${it.render.secs}s` : ''}</span>`;
     b.addEventListener('click', () => openLightbox(items, n));
+    const gid = goingIdOf(it);
+    if (gid) { // waiting to be deleted: greyed, with the seconds left and ↶ Undo
+      const cell = document.createElement('div');
+      cell.className = 'rcell going';
+      cell.append(b, goingOverlay(gid));
+      return cell;
+    }
     if (it.file.kind !== 'image' || (!video && !picking)) return b;
     const cell = document.createElement('div');
     cell.className = 'rcell';
@@ -9145,6 +9182,12 @@ function lbRender() {
   const onStage = !lb.fromGallery && state.entry?.id === entry.id && state.cards.some(c => c.index === it.index && c.rb);
   $('#lightbox').style.setProperty('--m', modelColor(m || { id: entry.modelId }));
   drawLbStage(it);
+  const gid = goingIdOf(it);
+  $('#lbStage').classList.toggle('going', Boolean(gid));
+  if (($('#lbStage > .going-over [data-undo]')?.dataset.undo || null) !== gid) {
+    $('#lbStage > .going-over')?.remove();
+    if (gid) $('#lbStage').append(goingOverlay(gid));
+  }
   $('#lbPrev').disabled = $('#lbNext').disabled = lb.items.length < 2;
   const facts = [
     ['Model', entry.modelName],
@@ -9168,7 +9211,7 @@ function lbRender() {
     });
   }
   $('#lbInfo').innerHTML = `
-    <h3>${esc(entry.theme || 'From an image')}</h3>
+    <div class="lb-idea${saved.get('lbIdeaOpen', false) ? ' open' : ''}"><button type="button" class="lb-idea-btn" aria-expanded="${saved.get('lbIdeaOpen', false)}">${saved.get('lbIdeaOpen', false) ? '▾' : '▸'} Your idea</button><p class="lb-idea-text">${esc(entry.theme || 'From an image')}</p></div>
     <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
     <pre class="lb-prompt">${esc(render.text)}</pre>
     <div class="lb-actions">
@@ -9194,6 +9237,14 @@ function lbRender() {
     }
     lbRender();
     $('[data-lb="compare"]', $('#lbInfo'))?.focus();
+  });
+  // The idea it was made from: two lines, ▸ opens it all (and stays open for the next ones).
+  $('.lb-idea-btn', $('#lbInfo')).addEventListener('click', e => {
+    const open = !saved.get('lbIdeaOpen', false);
+    saved.set('lbIdeaOpen', open);
+    $('.lb-idea', $('#lbInfo')).classList.toggle('open', open);
+    e.currentTarget.setAttribute('aria-expanded', open);
+    e.currentTarget.textContent = `${open ? '▾' : '▸'} Your idea`;
   });
   $('[data-lb="copy"]', $('#lbInfo')).addEventListener('click', e => copyText(render.text, e.currentTarget));
   $$('[data-lb-rate]', $('#lbInfo')).forEach(b => b.addEventListener('click', () => rateInLightbox(Number(b.dataset.lbRate))));
@@ -9228,7 +9279,7 @@ function lbRender() {
     startRender(card);
   });
   // The lightbox may show another render (or be closed) by the time a delete or its undo lands.
-  const redraw = () => { if (!$('#lightbox').hidden) lbRender(); renderReel(); };
+  const redraw = redrawGoing;
   $('[data-lb="undo"]', $('#lbInfo'))?.addEventListener('click', () => undoDelete(render.id, redraw));
   $('[data-lb="delete"]', $('#lbInfo'))?.addEventListener('click', e => confirmClick(e.currentTarget, rating ? `Sure? It's rated ${starsOf(rating)}` : 'Sure?', () => {
     deleteSoon(render.id, `/api/history/${entry.id}/renders/${render.id}`, 'this render', () => deleteRenderNow(entry, render), redraw);

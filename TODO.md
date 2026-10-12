@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.48.2 — A render waiting to be deleted is greyed out wherever it shows (the full-screen view too), with the
+  seconds left and ↶ Undo on it. The idea at the top of the full-screen view's side panel was a big bold heading: now small, plain, folded
+  to two lines under ▸ Your idea.
 - 1.48.1 — A size picked renders at that size with a workflow that only takes a shape (Krea Dual Resolution
   Selector: it made 1456×2176 for 832×1216). With a fixed seed and ×2–×4, the seed chip says which seeds (🔒 Seeds 4242–4244).
 - 1.48.0 — Spell check in every box you write in (the take's prompt had it off). A take renders at step ④'s size as
