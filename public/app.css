@@ -451,14 +451,19 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 
 .btn-generate:active:not(:disabled) { transform: translateY(0); }
 .btn-generate .gen-spark { font-size: 20px; transition: transform 0.4s; }
 .btn-generate:hover:not(:disabled) .gen-spark { transform: rotate(180deg) scale(1.2); }
-.btn-generate:disabled, .btn-generate.cooking { opacity: 1; background-image: linear-gradient(100deg, #ff4d8d, #ffb347, #a47bff, #ff4d8d); animation: slide 1.4s linear infinite; } /* cooking: the next one lines up */
-.btn-generate:disabled { cursor: progress; }
-.btn-generate:disabled .gen-spark, .btn-generate.cooking .gen-spark { animation: spin 1.2s linear infinite; }
+.btn-generate:disabled { opacity: 1; cursor: progress; background-image: linear-gradient(100deg, #ff4d8d, #ffb347, #a47bff, #ff4d8d); animation: slide 1.4s linear infinite; }
+.btn-generate:disabled .gen-spark { animation: spin 1.2s linear infinite; }
+/* Cooking: the button is a plain "line up another", so it doesn't look like the progress; that shows above it. */
+.btn-generate.cooking:not(:disabled) { background: var(--panel-3); color: var(--text); border: 1px solid rgb(255 77 141 / 55%); box-shadow: none; }
+.btn-generate.cooking:not(:disabled):hover { background: #302a45; border-color: #ff4d8d; box-shadow: none; }
+.btn-generate.cooking:not(:disabled) .gen-spark { color: #ff4d8d; }
+.outcome-hint.live { color: var(--text); font-weight: 700; }
+.outcome-hint .live-spark { display: inline-block; color: #ff4d8d; animation: spin 1.2s linear infinite; }
 .btn-stop, .btn-new { height: 58px; padding: 0 18px; border-radius: 18px; border: 1px solid var(--line-2); background: var(--panel-3); color: var(--text); font-weight: 750; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; transition: border-color 0.15s, background 0.15s, color 0.15s; }
 .btn-stop:hover { border-color: var(--danger); color: #ffb3bd; }
 .btn-stop kbd { color: var(--muted); }
 .btn-new:hover:not(:disabled) { border-color: rgb(255 255 255 / 35%); background: #302a45; }
-.btn-generate:disabled kbd, .btn-generate.long-label kbd { display: none; } /* while cooking, Ctrl+Enter queues (＋ Queue says so); a longer label needs the room */
+.btn-generate:disabled kbd, .btn-generate.long-label kbd { display: none; } /* a longer label needs the room */
 
 /* the line: Generates waiting their turn, at the top of the stage */
 .line-box { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; margin-bottom: 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line-2); min-width: 0; }

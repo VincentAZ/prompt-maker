@@ -42,7 +42,7 @@ The full manual for [Prompt Maker](../README.md): every page, setting and trick.
 - **🚫 No look, or your own.** **No look** keeps the Brain's hands off the camera and light: only what your theme or image says. **＋ Your own look…** keeps a look you describe yourself (a name, what the camera and light do, the camera move on video) next to the built-in ones.
 - **Every detail you typed stays.** The Brain is told to keep every fact of your idea (who and how many, colors, clothes, objects, place, time, weather, what happens, quoted words) and to add detail only where you said nothing. After each take, one short check puts back any detail it changed, and the take says so.
 - **Variations.** Write 1–4 prompts at once. Each take deliberately goes a different way (angle, lighting, setting, moment).
-- **⏳ Queue.** No waiting for one to finish: while a prompt is cooking, the main button stays live (the line under it says **＋ Click to line up the next one**) and, like `Ctrl+Enter`, lines up the next one, as many as you like. Each keeps the setup it was queued with, and its renders go on in ComfyUI while the next prompt is written.
+- **⏳ Queue.** No waiting for one to finish: while a prompt is cooking, the main button turns into **＋ Line up another** (what's cooking shows just above it) and, like `Ctrl+Enter`, lines up the next one, as many as you like. Each keeps the setup it was queued with, and its renders go on in ComfyUI while the next prompt is written.
 - **Refine.** Tell a take what to change ("golden hour", "add a dog", "shorter") or tap a quick chip. Every version is kept and you can page through them, and hand edits are saved as versions too.
 - **Live output.** Text streams in as it's written.
   - Word count against the model's ideal length (✓ when it's on target).
@@ -191,7 +191,7 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 
 **＋ New session** beside the main action clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in Saved prompts.
 
-**⏳ Queue: line up as many as you like.** While a prompt is cooking (or a batch is rendering), the main button stays live, with **＋ Click to line up the next one** under it (it counts what's waiting); it (or `Ctrl+Enter`) puts the form, as it is right then, in line, the way ComfyUI queues renders:
+**⏳ Queue: line up as many as you like.** While a prompt is cooking (or a batch is rendering), the main button turns into **＋ Line up another**, with what's cooking (**✦ Writing prompt…**, a batch's progress) on the line above it and how many are waiting under it; it (or `Ctrl+Enter`) puts the form, as it is right then, in line, the way ComfyUI queues renders:
 
 - **What you see when you click is what runs.** Each one in line keeps its model, theme, image and role, dials, takes, batch, and render setup (workflow, auto-render, LoRAs and sampler settings). Change the form afterwards to set up the next one; it won't touch those already waiting. (The Brain and the seed are the ones in use when its turn comes.)
 - **They run in order**, each its own run and Saved prompts entry. A take's renders go on in ComfyUI while the next prompt is written; a batch finishes its renders before the next starts.
@@ -611,7 +611,7 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - **A dragged card is never left hanging.** Let go outside the window, or switch to another program mid-drag, and the card drops where it was.
 - **In the Gallery, a hidden one is marked** (dimmed, with **👁 Show** on it), so you can tell it from the others and bring it back there too.
 - **Hide from Create** at a picture's top right tidies this grid (**↶ Undo** brings it back). Nothing is deleted; it stays in Saved prompts, Gallery and its take. **Hidden (n)** in the filters shows the ones you hid; **Show in Create** puts one back.
-- Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage.
+- Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage. To close it, click ✕, press **Esc**, or click anywhere in the dark around the picture.
 
 **Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
 

@@ -8243,19 +8243,23 @@ function updateGenerateLabel() {
     : direct ? `${state.manual ? 'Your exact prompt' : 'Writes the prompt'}, then makes ${amount} ${media}${amount > 1 ? 's' : ''}.${!state.comfy?.ok || flowTrouble(flow.id) ? ' Rendering setup needs attention in step 5.' : ''}`
       : !flow ? `${state.manual ? 'Saves your exact prompt' : 'Writes a prompt to use anywhere'}. Add a workflow in step 5 to make it here.` : `You can edit the prompt before making your ${media}.`;
   const which = run && (run.list.length > 1 ? `Batch ${run.index + 1}/${run.list.length}` : `“${cut(run.name, 22)}”`);
-  $('#genLabel').textContent = run ? (run.stopped ? 'Stopping…' : state.busy ? `${which}: writing…` : `${which}: ${run.done} of ${run.total} rendered`)
-    : state.busy ? 'Writing prompt…' : state.chainActive ? 'Steps running…'
-      : chained ? 'Run all steps' : list.length ? `Make ${list.reduce((n, b) => n + b.count, 0)} ${media}s` : action;
-  // While it cooks the button stays live and lines the next one up (the line under it says so, and counts the line).
+  const status = run ? (run.stopped ? 'Stopping…' : state.busy ? `${which}: writing…` : `${which}: ${run.done} of ${run.total} rendered`)
+    : state.busy ? 'Writing prompt…' : state.chainActive ? 'Steps running…' : '';
+  // While it cooks the button stays live and lines the next one up: it says so itself, and what's cooking moves to
+  // the line above it (a chain can't wait in line, so its button keeps the status and waits).
   const cooking = running() && !chained;
   const waiting = line.orders.length;
-  $('#generateBtn kbd').textContent = cooking ? '＋ queue' : 'Ctrl ↵';
-  $('#generateBtn').title = cooking ? `Click to line up the form as it is now (Ctrl+Enter). It runs when what's cooking is done, and changing the form afterwards won't change it.` : '';
+  $('#outcomeHint').classList.toggle('live', cooking);
+  if (cooking) $('#outcomeHint').innerHTML = `<span class="live-spark" aria-hidden="true">✦</span> ${esc(status)}`;
+  $('#genLabel').textContent = cooking ? 'Line up another' : status
+    || (chained ? 'Run all steps' : list.length ? `Make ${list.reduce((n, b) => n + b.count, 0)} ${media}s` : action);
+  $('#generateBtn .gen-spark').textContent = cooking ? '＋' : '✦';
+  $('#generateBtn').title = cooking ? `Puts the form, as it is now, in line (Ctrl+Enter). It starts when what's running is done, and changing the form afterwards won't change it.` : '';
   // The Ctrl ↵ hint only fits beside the short label; a longer one gets the room.
-  $('#generateBtn').classList.toggle('long-label', $('#genLabel').textContent.length > 14);
+  $('#generateBtn').classList.toggle('long-label', !cooking && $('#genLabel').textContent.length > 14);
   const total = list.reduce((n, b) => n + b.count, 0);
   const chainLine = chained && !state.busy && !state.chainActive ? chainCost() : '';
-  const cost = cooking ? `＋ Click to line up the next one${waiting ? ` · ${waiting} waiting` : ''}` : chainLine ? `⛓ ${chainLine}`
+  const cost = cooking ? (waiting ? `⏳ ${waiting} waiting · each starts after the one before` : 'The next one starts when this one is done.') : chainLine ? `⛓ ${chainLine}`
     : list.length && !state.busy && !run ? `🎞 ${list.length > 1 ? `${list.length} batches · ${total} ${outputWord(total)}` : batchLine(list[0])}` : '';
   $('#genCost').hidden = !cost;
   $('#genCost').textContent = cost;
@@ -9071,7 +9075,21 @@ async function deleteRenderNow(entry, render, { quiet = false } = {}) {
 $('#lbClose').addEventListener('click', closeLightbox);
 $('#lbPrev').addEventListener('click', () => stepLightbox(-1));
 $('#lbNext').addEventListener('click', () => stepLightbox(1));
-$('#lightbox').addEventListener('click', e => { if (e.target.id === 'lightbox' || e.target.id === 'lbStage') closeLightbox(); });
+// A picture or video fills the stage and is fitted inside it (object-fit: contain), so the dark bands beside or
+// above it are still the element: a click there closes the viewer like the empty stage does. A video's own
+// controls run along its bottom edge across the full width, so that strip is left to them.
+function lbOffMedia(e) {
+  const el = e.target;
+  if (!el.matches?.('#lbStage img, #lbStage video')) return false;
+  const w = el.naturalWidth || el.videoWidth, h = el.naturalHeight || el.videoHeight;
+  if (!w || !h) return false;
+  const r = el.getBoundingClientRect();
+  const k = Math.min(r.width / w, r.height / h);
+  const x0 = r.left + (r.width - w * k) / 2, y0 = r.top + (r.height - h * k) / 2;
+  if (el.tagName === 'VIDEO' && e.clientY > r.bottom - 64) return false;
+  return e.clientX < x0 || e.clientX > x0 + w * k || e.clientY < y0 || e.clientY > y0 + h * k;
+}
+$('#lightbox').addEventListener('click', e => { if (e.target.id === 'lightbox' || e.target.id === 'lbStage' || lbOffMedia(e)) closeLightbox(); });
 
 // ---------- gallery ----------
 

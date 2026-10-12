@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.45.1 — While something cooks, the main button reads **＋ Line up another** (a plain button, no longer the moving
+  gradient) and what's cooking (**✦ Writing prompt…**, a batch's progress) shows on the line above it. A click on the
+  dark beside a picture in the full-screen viewer closes it.
 - 1.45.0 — **Several pictures in step ③.** A workflow's Load Image nodes are its picture slots (named by the node's
   title, needed or optional); step ③ shows a slot per picture under the first, the Brain gets them all with their
   names, the render uploads them all and leaves an empty optional slot (and what only it fed) out of the workflow.

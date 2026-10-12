@@ -611,7 +611,8 @@ esac
     const before = mockCalls();
     await click('#generateBtn');
     await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'busy state');
-    eq(await text('#genLabel'), 'Writing prompt…', 'busy label');
+    eq(await text('#genLabel'), 'Line up another', 'while it cooks the button lines up the next one');
+    assert((await text('#outcomeHint')).includes('Writing prompt…'), 'and what is cooking shows above it');
     await waitFor('[...document.querySelectorAll(".take .prompt-view")].some(v => !v.hidden)', 'streaming text');
     await shot('02-streaming');
     await genDone();
@@ -2175,6 +2176,18 @@ esac
     await shot('24-lightbox');
     await press('Escape');
     assert(await js('document.querySelector("#lightbox").hidden'), 'Esc closes');
+    // The picture is fitted inside a stage-wide element: a click on it stays, one on the dark beside it closes.
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden && document.querySelector("#lbStage img")?.naturalWidth', 'lightbox open again');
+    const pic = await js(`(() => { const el = document.querySelector('#lbStage img'), r = el.getBoundingClientRect();
+      const k = Math.min(r.width / el.naturalWidth, r.height / el.naturalHeight), w = el.naturalWidth * k;
+      return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, side: r.left + (r.width - w) / 2 - 12 }; })()`);
+    const clickAt = async (x, y) => { for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }); };
+    await clickAt(pic.cx, pic.cy);
+    assert(!(await js('document.querySelector("#lightbox").hidden')), 'a click on the picture keeps it open');
+    assert(pic.side > 80, 'there is a dark band beside the picture');
+    await clickAt(pic.side, pic.cy);
+    await waitFor('document.querySelector("#lightbox").hidden', 'a click beside the picture closes it');
   });
 
   await test('seed: random, keep it, fixed, ×2, +1, −1, the setup and the lightbox agree', async () => {
@@ -2873,7 +2886,7 @@ esac
     await type('#theme', 'a paper boat in the rain');
     let before = comfy.prompts.length;
     await click('#generateBtn');
-    await waitFor('/Hero shots/.test(document.querySelector("#genLabel").textContent)', 'progress on the button');
+    await waitFor('/Hero shots/.test(document.querySelector("#outcomeHint").textContent)', 'progress above the button');
     await genDone();
     eq(await count('.take'), 1, 'one prompt written');
     eq(await count('.take .rtile img'), 4, 'rendered four times');
@@ -3765,7 +3778,7 @@ esac
     await click('#generateBtn');
     await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'cooking');
     assert(!(await js('document.querySelector("#generateBtn").disabled')), 'the button stays live while it cooks');
-    assert((await text('#genCost')).includes('line up the next one'), 'and says it lines the next one up');
+    eq(await text('#genLabel'), 'Line up another', 'and says it lines the next one up');
     assert(!(await visible('#lineBox')), 'nothing in line yet');
 
     // Queued with its own setup: a different LoRA strength and theme.
@@ -3825,7 +3838,7 @@ esac
     const themes = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).slice(0, 2).map(e => e.theme).join('|');
     eq(themes, 'a queued lighthouse|a queued harbor', 'each its own History entry, in order');
     await waitFor('!document.querySelector(".take .rtile.running")', 'renders done', 10000);
-    assert(!(await js('document.querySelector("#generateBtn").classList.contains("cooking")')) && !(await text('#genCost')).includes('line up'), 'the button is itself again when nothing is cooking');
+    assert(!(await js('document.querySelector("#generateBtn").classList.contains("cooking")')) && (await text('#genLabel')) !== 'Line up another', 'the button is itself again when nothing is cooking');
 
     await setGrain('-0.5');
     await click('#wfpAutoRow');
