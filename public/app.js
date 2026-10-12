@@ -694,7 +694,7 @@ $('#reelJoin').addEventListener('click', async () => {
   if (items.length < 2) return;
   const b = $('#reelJoin');
   b.disabled = true;
-  b.textContent = `🎬 Joining ${items.length} videos…`;
+  b.textContent = `Joining ${items.length} videos…`;
   try {
     const r = await joinVideos(items);
     toast(`🎬 Joined ${items.length} videos into one${r.seconds ? ` (${Math.round(r.seconds)}s)` : ''}`, false, { label: 'Show', run: () => { const it = galleryItems().find(x => x.render.id === r.render.id); if (it) openLightbox([it], 0); } });
@@ -1676,10 +1676,10 @@ function savePrefs() {
 // 📖 The plain-words how-to for the picked model: what it's for, what you need, the steps, and themes to try.
 // Open until you close it once (then it stays the way you leave it).
 function renderModelGuide(m) {
-  const g = m?.guide;
+  const g = m?.guide || { steps: [], tryThese: [] };
   const box = $('#modelGuide');
-  box.hidden = !g;
-  if (!g) return;
+  box.hidden = !m;
+  if (!m) return;
   box.open = saved.get('modelGuideOpen', false);
   $('#modelGuideBody').innerHTML = `
     ${g.bestFor ? `<p><b>Good for:</b> ${esc(g.bestFor)}</p>` : ''}
@@ -3218,12 +3218,11 @@ function renderReel() {
     reelFilter.hidden ? `${items.length} hidden` : shown && (reelFiltered() ? `${items.length} of ${shown}` : inGallery() ? '' : `${shown} render${shown > 1 ? 's' : ''}`),
     rendering && `${rendering} rendering`,
   ].filter(Boolean).join(' · ');
-  $('#tabRendersCount').textContent = shown ? String(shown) : '';
   $('#tabRenders').classList.toggle('busy', Boolean(rendering));
   $('#reelZoom').hidden = !open || none;
   const videosShown = items.filter(it => it.file.kind === 'video').length;
   $('#reelJoin').hidden = !open || videosShown < 2 || reelFilter.hidden;
-  $('#reelJoin').textContent = `🎬 Join ${videosShown} videos`;
+  $('#reelJoin').textContent = `Join ${videosShown} videos`;
   $('#reelFull').hidden = !open || (none && !full);
   $('#reelToggle').setAttribute('aria-expanded', open);
   $('#reelToggle').setAttribute('aria-label', open ? 'Hide your renders' : 'Show your renders');
@@ -3233,7 +3232,7 @@ function renderReel() {
   if (!open) return reelFullScreen(false);
   renderReelFilters(all);
   $('#reelHidden').hidden = !hiddenCount;
-  $('#reelHidden').textContent = `🙈 Hidden (${hiddenCount})`;
+  $('#reelHidden').textContent = `Hidden (${hiddenCount})`;
   $('#reelHidden').setAttribute('aria-pressed', reelFilter.hidden);
   box.classList.toggle('showing-hidden', reelFilter.hidden);
   $('#reelFilters').hidden = none;
@@ -6847,6 +6846,8 @@ function renderDenoise() {
   const flow = activeFlow();
   const params = flow?.maps.image && !currentModel()?.characterSheet ? flow.denoise || [] : []; // (a person to keep isn't repainted)
   box.hidden = !params.length;
+  $('#pictureOptions').hidden = !params.length;
+  $('#pictureOptionsSum').textContent = params.length ? `change ${params.map(p => Number(p.value).toFixed(2)).join(' · ')}` : '';
   if (!params.length) { box.innerHTML = ''; return; }
   const focus = document.activeElement?.closest?.('#wfpDenoise [data-key]')?.dataset.key;
   box.innerHTML = params.map(p => `
@@ -8564,7 +8565,6 @@ function renderCreationProgress() {
   progress.hidden = !entry && !state.busy;
   progress.textContent = state.busy ? 'Writing prompt…' : rendering ? `Making ${kind}${jobs.length > 1 ? 's' : ''}…${count ? ` ${count} ready.` : ''}` : count ? `Ready · ${count} ${kind}${count > 1 ? 's' : ''} saved` : entry ? 'Prompt ready · review it, then make your picture or video.' : '';
   $('#resultCount').textContent = count ? String(count) : '';
-  $('#tabTakesCount').textContent = state.cards.length ? String(state.cards.length) : '';
 }
 
 function stepCardHtml(st, i, warn) {
@@ -9989,7 +9989,7 @@ const TOOLS = [
   }),
   T('set_auto_render', 'Turn auto-render on or off for the current model (renders every new prompt right away), and how many renders each take gets.', { on: B('On or off'), renders_per_take: I('Renders per take, 1–4 (also where each take\'s Render bar starts)') }, ['on']),
   T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in Saved prompts.'),
-  T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 6). Waits until they are written.'),
+  T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 5, Then…). Waits until they are written.'),
   T('refine_take', 'Change a take with an instruction, e.g. "golden hour" or "shorter".', { take: I('Take number, starting at 1'), instruction: S('What to change') }, ['take', 'instruction']),
   T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–50; default 1') }),
   T('animate_render', 'Make a still render the first frame of a video: switches to the video model and attaches the still. Then use set_theme for what happens, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
@@ -10000,10 +10000,10 @@ const TOOLS = [
     render_id: S('A render\'s id from look_at, for one that isn\'t on screen (Your renders, Gallery)'),
     model: S('The model to use it with, e.g. the video model to animate with; default: the last video model for animate, else the one on Create'),
   }, ['use']),
-  T('build_chain', 'Set the steps after step 1 in step 6 (replaces any there). Each step continues from the renders of the step before.', {
+  T('build_chain', 'Set the steps after step 1 in step 5, Then… (replaces any there). Each step continues from the renders of the step before.', {
     steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), gate: E(['pick', 'brain', 'auto'], 'pick = wait for the user to choose renders; brain = you (the Brain) pick the best render and only it goes on; auto = all go on') }, required: ['model'] } },
   }, ['steps']),
-  T('clear_chain', 'Remove every step from step 6, back to a single step.'),
+  T('clear_chain', 'Remove every step from Then… in step 5, back to a single step.'),
   T('load_chain', 'Load a saved chain by name.', { name: S('Chain name') }, ['name']),
   T('continue_chain', 'In a chain run that is waiting, send renders on to the next step.', { takes: { type: 'array', items: { type: 'integer' }, description: 'Take numbers whose renders go on; leave out for all of them' } }),
   T('read_playbook', 'Read a model\'s playbook: its instructions for the Brain, description, aspect ratios, resolutions, durations, length targets and example prompts.', { model: S('Model name; default: the current model') }),
@@ -12295,6 +12295,7 @@ const PANEL_SUMMARY = {
     const l = pickedBatches();
     return !batches().length ? 'No batches yet' : l.length > 1 ? `🎞 All ${l.length} batches, in order` : l.length ? `🎞 ${l[0].name} · ${batchLine(l[0])}` : `Off · ${batches().length} saved`;
   },
+  'create-settings': () => [PANEL_SUMMARY['create-render'](), PANEL_SUMMARY['create-chain']()].filter(Boolean).join(' · '),
   'create-chain': () => [
     `${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`, adventureWord(Number($('#temperature').value)),
     state.chain?.steps?.length ? `⛓ ${state.chain.steps.length} more step${state.chain.steps.length > 1 ? 's' : ''}` : 'no more steps',

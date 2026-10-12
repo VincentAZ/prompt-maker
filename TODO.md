@@ -23,6 +23,13 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.50.0 — **A calmer Create**: flat panels, one accent color, no gradients or glow; quiet step numbers and
+  headers with more air between steps; plain words instead of emoji on the Create page's labels and the renders
+  box's filters; the model line is its name and Change, with "About this model" folded under it; the drop zones are
+  one line; the picture's denoise folds under "Picture settings"; ⑤ and ⑥ are one closed **Settings** fold holding
+  **Render** and **Writing & more steps**; the empty takes tab is one line of ideas; the renders box keeps only
+  search, Filters, Select, the size slider and a full-screen icon on its row, with every filter behind Filters.
+  Not done: a light theme (about a hundred colors are hard-coded, so it isn't a cheap switch).
 - 1.49.0 — **Results in two tabs on Create**: ✦ Prompt takes and 🎞 Your renders share the stage one at a time, so
   neither pushes the other down the page (the main button shows the takes, the first render landing shows Your
   renders unless you're typing, with a dot on the tab instead). A caption under every render: the idea's first words

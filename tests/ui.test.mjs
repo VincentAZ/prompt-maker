@@ -150,8 +150,11 @@ async function click(sel) {
     if (el.closest('#takesPane') && document.querySelector('#takesPane').hidden) return '#tabTakes';
     const fold = el.closest('details:not([open])');
     if (fold && !el.closest('summary')) return '#' + (fold.id || (fold.id = 'test-disclosure')) + ' > summary';
-    const panel = el.closest('[data-panel].collapsed');
-    if (panel && !el.closest('.panel-toggle')) return '[data-panel="' + panel.dataset.panel + '"] .collapse-btn';
+    // A folded panel hides what's inside it, except its own header; folds nest (Settings holds Render and Writing).
+    let panel = el.closest('[data-panel].collapsed');
+    while (panel && panel.querySelector(':scope > .panel-toggle')?.contains(el)) panel = panel.parentElement?.closest('[data-panel].collapsed');
+    if (panel) return '[data-panel="' + panel.dataset.panel + '"] .collapse-btn';
+    if (el.closest('#reelFilterOptions') && !el.closest('#reelFilterOptions').offsetParent) return '#reelFilterToggle';
     return '';
   })()`);
   if (reveal && reveal !== sel) await click(reveal);
@@ -289,7 +292,8 @@ const UNDO_WAIT = 14000; // a clicked delete waits 8 s for ↶ Undo before it ha
 
 const fileExists = p => fs.access(p).then(() => true, () => false);
 // Unfolds a collapsible panel (data-panel="key") if it's folded.
-const openPanel = key => js(`(() => { const el = document.querySelector('[data-panel="${key}"]'); if (el?.classList.contains('collapsed')) el._btn.click(); })()`);
+// Opens a fold, and the folds it sits in (Settings holds Render and Writing): like a person, outermost first.
+const openPanel = key => js(`(() => { const el = document.querySelector('[data-panel="${key}"]'); if (!el) return; const chain = []; for (let p = el; p; p = p.parentElement?.closest('[data-panel]')) chain.unshift(p); for (const p of chain) if (p.classList.contains('collapsed')) p._btn.click(); })()`);
 
 function assert(cond, msg) { if (!cond) throw new Error(`Assertion failed: ${msg}`); }
 function eq(actual, expected, msg) { if (actual !== expected) throw new Error(`${msg}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`); }
@@ -2893,7 +2897,8 @@ esac
     await waitFor(`${JSON.stringify(rated)}.every(k => document.querySelector(\`#reelGrid .reel-cell[data-key="\${k}"]\`)?.dataset.rating === "0")`, 'ratings taken off again');
     await viewport(390, 844, true);
     assert(await visible('#reelFind'), 'search remains visible');
-    assert(!(await visible('#reelFilterOptions')), 'extra filters start folded');
+    await js('if (document.querySelector("#reelFilterToggle").getAttribute("aria-expanded") === "true") document.querySelector("#reelFilterToggle").click()'); // (opened earlier to reach a chip)
+    assert(!(await visible('#reelFilterOptions')), 'the filters fold behind the Filters button');
     await click('#reelFilterToggle');
     assert(await visible('#reelFilterOptions'), 'Filters reveals all choices');
     await type('#reelFind', 'lighthouse');
@@ -2937,6 +2942,7 @@ esac
   });
 
   await test('batches: named, each its own count and prompts; run one or all in order; Stop; saved', async () => {
+    await openPanel('create-settings');
     await openPanel('create-render');
     await openPanel('create-render-batch');
     assert(await visible('#batchBox'), 'Batch shows once the model has a workflow');
@@ -3197,6 +3203,7 @@ esac
     const setupOpen = () => waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'workflow setup open');
     await click('.tabs button[data-view="create"]');
     await click('.model-card[data-id="krea2-raw"]');
+    await openPanel('create-render');
     assert(await visible('#wfpBox'), 'picker shown');
     eq(await count('#wfpSelect option'), 1, 'one workflow');
     eq(await picked(), 'Mock T2I', 'it is picked');
@@ -3341,7 +3348,7 @@ esac
 
     await click('.manual-row .switch');
     await toastText('Brain writes the prompts again');
-    assert(await js('!document.querySelector("#tempField").hidden') && await visible('#roleBlock') && await visible('#chainStep'), 'writing options are restored under More options, and image and chain controls return');
+    assert(await js('!document.querySelector("#tempField").hidden') && await visible('#roleBlock') && !(await js('document.querySelector("#chainStep").hidden')), 'writing options are restored under More options, and image and chain controls return');
     eq(await text('#takesLabel'), 'Variations', 'prompt variations again');
     await click('#imageClear');
     await click('#varSeg button[data-value="1"]');

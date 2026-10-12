@@ -100,9 +100,9 @@
               <summary><span id="chosenModel"></span><span class="model-change">Change model</span></summary>
             <div id="modelChips" class="model-grid" role="radiogroup" aria-label="Target model"></div>
             </details>
-            <p id="modelDesc" class="model-desc"></p>
             <details id="modelGuide" class="model-guide" hidden>
-              <summary>How to use this model</summary>
+              <summary>About this model</summary>
+              <p id="modelDesc" class="model-desc"></p>
               <div id="modelGuideBody"></div>
             </details>
           </section>
@@ -112,8 +112,8 @@
               <span class="num">2</span><h2>Describe the shot</h2><span class="opt" id="themeOpt"></span>
               <span class="head-actions">
                 <button type="button" id="themeUndo" class="chip-btn undo" hidden>↶ Undo</button>
-                <button type="button" id="themeClear" class="chip-btn" title="Empty this box (↶ Undo brings it back)" disabled>✕ Clear</button>
-                <button type="button" id="surpriseBtn" class="chip-btn" title="Fill in a random theme">🎲 Surprise me</button>
+                <button type="button" id="themeClear" class="chip-btn" title="Empty this box (↶ Undo brings it back)" disabled>Clear</button>
+                <button type="button" id="surpriseBtn" class="chip-btn" title="Fill in a random theme">Surprise me</button>
               </span>
             </header>
             <textarea id="theme" spellcheck="true" class="theme" rows="3" aria-label="Describe your idea" autocomplete="off"></textarea>
@@ -152,21 +152,20 @@
             <p id="lookMemoryHint" class="hint" hidden>Your own looks are kept for this session only (Privacy: Nothing stays).</p>
             </details>
             <div class="manual-row">
-              <label class="switch mini" title="Off: your Brain writes the prompt from your idea. On: what you type here is the prompt, sent as it is"><input type="checkbox" id="manualMode"><span class="track" aria-hidden="true"></span><span>✍️ Use my own prompt, word for word</span></label>
+              <label class="switch mini" title="Off: your Brain writes the prompt from your idea. On: what you type here is the prompt, sent as it is"><input type="checkbox" id="manualMode"><span class="track" aria-hidden="true"></span><span>Use my own prompt, word for word</span></label>
               <span id="manualHint" class="hint" hidden>No Brain: your text, image and model go straight to the render.</span>
             </div>
           </section>
 
           <section class="step" data-panel="create-image">
             <header class="step-head"><span class="num">3</span><h2 id="imageStepTitle">Add an image</h2><span class="opt" id="imageStepOpt">optional</span></header>
-            <p id="charLabel" class="zone-label" hidden>🧍 <b>Character</b> <span class="muted">who performs: a clear, full shot of one character works best</span></p>
+            <p id="charLabel" class="zone-label" hidden><b>Character</b> <span class="muted">who performs: a clear, full shot of one character works best</span></p>
             <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Add an image: drop, paste or browse">
               <input type="file" id="imageInput" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden>
               <div class="dz-empty">
-                <span class="dz-ico">🖼️</span>
                 <span class="dz-title">Drop an image, paste it, or <u>browse</u></span>
                 <span class="dz-sub" id="dzSub">JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.</span>
-                <button type="button" id="dzGallery" class="chip-btn dz-gallery">🖼️ Pick from your Gallery</button>
+                <button type="button" id="dzGallery" class="chip-btn dz-gallery">Pick from your Gallery</button>
               </div>
               <div class="dz-preview" hidden>
                 <button type="button" id="imageZoom" class="dz-zoom" title="See it full screen" aria-label="See your image full screen"><img id="imagePreview" alt="Your image"></button>
@@ -189,7 +188,7 @@
             <p id="roleHint" class="hint" hidden></p>
             <div id="sheetBlock" class="sheet-block" hidden>
               <div class="sheet-head">
-                <span class="zone-label">🧾 <b>Character sheet</b> <span class="muted">same in every render</span></span>
+                <span class="zone-label"><b>Character sheet</b> <span class="muted">same in every render</span></span>
                 <span class="sheet-acts">
                 <button type="button" id="turnaroundBtn" class="chip-btn" title="Render a turnaround of this person (front, three-quarter, side, back and a face close-up) and use it as the picture: every render after that reproduces them from it">🪪 Turnaround</button>
                 <button type="button" id="sheetRedo" class="icon-btn" title="Write it again from the picture next time you create" aria-label="Write the character sheet again">↻</button>
@@ -197,9 +196,11 @@
               </div>
               <textarea id="sheetText" spellcheck="true" class="sheet-text" rows="7" autocomplete="off" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you create: face, eyes, hair, skin, build… Then every variation keeps all of it. Edit any line to fix it."></textarea>
             </div>
-            <div id="wfpDenoise" class="wfp-denoise" hidden></div>
+            <details id="pictureOptions" class="more-options picture-options" hidden><summary>Picture settings <span id="pictureOptionsSum"></span></summary>
+              <div id="wfpDenoise" class="wfp-denoise" hidden></div>
+            </details>
             <div id="lineBlock" class="line-block" hidden>
-              <p class="zone-label">🎙 <b>Says a line</b> <span class="muted">in a voice you made</span></p>
+              <p class="zone-label"><b>Says a line</b> <span class="muted">in a voice you made</span></p>
               <p id="lineSetup" class="hint" hidden>This workflow can make the person say a line in a voice of yours. <a href="#voices">Set up 🎙 Voices</a> first (one click).</p>
               <p id="lineSwitch" class="hint" hidden>The picked workflow takes no spoken line. <button type="button" id="lineSwitchBtn" class="chip-btn">🎙 Use the one that does</button></p>
               <div id="lineForm" class="line-form" hidden>
@@ -210,14 +211,13 @@
               <p id="lineHint" class="hint" hidden>When you create, the line is said in that voice, and the video follows it (it's made at least as long as the line).</p>
             </div>
             <div id="motionBlock" hidden>
-              <p class="zone-label">🕺 <b>Motion video</b> <span class="muted">the moves your character copies</span></p>
+              <p class="zone-label"><b>Motion video</b> <span class="muted">the moves your character copies</span></p>
               <div id="motionZone" class="dropzone" tabindex="0" role="button" aria-label="Add a motion video: drop or browse">
                 <input type="file" id="videoInput" accept="video/mp4,video/webm,video/quicktime,video/x-matroska,video/x-m4v,.mp4,.webm,.mov,.mkv,.m4v" hidden>
                 <div class="dz-empty mz-empty">
-                  <span class="dz-ico">🕺</span>
                   <span class="dz-title">Drop a motion video, or <u>browse</u></span>
                   <span class="dz-sub">MP4 · WebM · MOV. Frame it like your character (full body to full body).</span>
-                  <button type="button" id="mzGallery" class="chip-btn dz-gallery">🎞️ Pick a video from your Gallery</button>
+                  <button type="button" id="mzGallery" class="chip-btn dz-gallery">Pick a video from your Gallery</button>
                 </div>
                 <div class="dz-preview mz-preview" hidden>
                   <video id="motionPreview" muted loop playsinline aria-label="Your motion video"></video>
@@ -232,10 +232,10 @@
               </div>
               <p id="motionHint" class="hint">The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.</p>
               <div id="wfpBackground" class="wfp-bg" hidden>
-                <p class="zone-label">🏞️ <b>Background</b> <span class="muted">which one the video keeps</span></p>
+                <p class="zone-label"><b>Background</b> <span class="muted">which one the video keeps</span></p>
                 <div class="seg" role="radiogroup" aria-label="Background of the video">
-                  <button type="button" role="radio" data-value="picture" title="Your picture comes to life: its character moves like the person in your video, and its background stays">🖼️ From your picture</button>
-                  <button type="button" role="radio" data-value="video" title="Your character replaces the person in your video, and the video's background stays">🎬 From your video</button>
+                  <button type="button" role="radio" data-value="picture" title="Your picture comes to life: its character moves like the person in your video, and its background stays">From your picture</button>
+                  <button type="button" role="radio" data-value="video" title="Your character replaces the person in your video, and the video's background stays">From your video</button>
                 </div>
               </div>
           </div>
@@ -260,11 +260,13 @@
               </div>
           </section>
 
-          <section class="step quiet" id="renderStep" data-panel="create-render" data-default="collapsed">
-            <header class="step-head">
-              <span class="num">5</span><h2>Render settings</h2>
+          <section class="step quiet" id="settingsStep" data-panel="create-settings" data-default="collapsed">
+            <header class="step-head"><span class="num">5</span><h2>Settings</h2></header>
+            <div class="sub-step" id="renderStep" data-panel="create-render" data-default="collapsed">
+            <div class="panel-head">
+              <b>Render</b><span class="opt">workflow, seed, LoRAs, batches</span>
               <span class="head-actions"><span id="comfyState" class="comfy-state" hidden></span></span>
-            </header>
+            </div>
             <div id="wfpEmpty" class="wfp-empty" hidden>
               <span>🎨 Turn these prompts into <span id="wfpKind">images</span> on your own GPU: add a ComfyUI workflow for this model.</span>
               <button type="button" id="wfpAddFirst" class="btn small">＋ Add workflow</button>
@@ -299,10 +301,10 @@
                 <p id="batchHint" class="hint"></p>
               </div>
             </div>
-          </section>
+          </div>
 
-          <section class="step quiet" id="chainStep" data-panel="create-chain" data-default="collapsed">
-            <header class="step-head"><span class="num">6</span><h2>More creative controls</h2></header>
+          <div class="sub-step" id="chainStep" data-panel="create-chain" data-default="collapsed">
+            <div class="panel-head"><b>Writing &amp; more steps</b><span class="opt">prompt length, how adventurous, Then…</span></div>
             <div id="writingOptions" class="writing-options">
               <div class="dial" id="lengthField"><span>Prompt length</span><div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length"><button type="button" role="radio" data-value="short">Short</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="long">Long</button></div></div>
               <div class="dial temp" id="tempField">
@@ -314,6 +316,7 @@
             <div class="panel-head chain-head"><b>Then…</b><span class="opt">add more steps, like still → video</span></div>
             <div id="chainBox" class="chain"></div>
             <input type="file" id="chainImportInput" accept=".json,application/json" hidden>
+          </div>
           </section>
           </div>
 
@@ -333,8 +336,8 @@
 
         <section class="stage" id="stage" aria-label="Results" tabindex="-1">
           <div class="stage-tabs" role="tablist" aria-label="Results">
-            <button type="button" role="tab" id="tabTakes" aria-selected="true" aria-controls="takesPane">✦ Prompt takes<span id="tabTakesCount" class="tab-count"></span></button>
-            <button type="button" role="tab" id="tabRenders" aria-selected="false" aria-controls="rendersPane" tabindex="-1">🎞 Your renders<span id="tabRendersCount" class="tab-count"></span></button>
+            <button type="button" role="tab" id="tabTakes" aria-selected="true" aria-controls="takesPane">Prompt takes</button>
+            <button type="button" role="tab" id="tabRenders" aria-selected="false" aria-controls="rendersPane" tabindex="-1">Your renders</button>
           </div>
           <div id="takesPane" class="stage-pane" role="tabpanel" aria-labelledby="tabTakes">
           <div id="lineBox" class="line-box" role="region" aria-label="Waiting in line" hidden>
@@ -350,10 +353,8 @@
           <p id="creationProgress" class="creation-progress" role="status" hidden></p>
           <div id="stageError" class="error-card" role="alert" hidden></div>
           <div id="resultsList" class="takes"></div>
-          <div id="resultsEmpty" class="empty">
-            <h3>Your next idea starts here.</h3>
-            <p>Describe what you want to see. Your <b>Brain</b> is the AI model that writes the prompt. Review it first, or make a picture when your model is ready.</p>
-            <div class="try"><span>Try an idea:</span><div id="tryChips" class="try-chips"></div></div>
+          <div id="resultsEmpty" class="empty quiet">
+            <div class="try"><span>Try an idea</span><div id="tryChips" class="try-chips"></div></div>
           </div>
           </div>
           <div id="rendersPane" class="stage-pane" role="tabpanel" aria-labelledby="tabRenders" hidden>
@@ -364,7 +365,7 @@
               <span id="reelCount" class="reel-count"></span>
               <span class="spacer"></span>
               <button type="button" id="reelSelect" class="btn small" aria-pressed="false">Select</button>
-              <label id="reelZoom" class="reel-zoom" title="Picture size">🔍<input type="range" id="reelSize" min="80" max="1000" step="10" value="160" aria-label="Picture size"></label>
+              <label id="reelZoom" class="reel-zoom" title="Picture size"><input type="range" id="reelSize" min="80" max="1000" step="10" value="160" aria-label="Picture size"></label>
               <button type="button" id="reelJoin" class="btn small" title="Join the videos shown here, in this order, into one video" hidden>🎬 Join</button>
               <button type="button" id="reelFull" class="btn small" aria-label="Full screen" title="Fill the window (Esc to go back)"><span class="ico" aria-hidden="true">⛶</span> <span class="lbl">Full screen</span></button>
             </div>
@@ -376,10 +377,10 @@
                 <div id="reelFilterOptions" class="reel-filter-options">
                 <div id="reelKinds" class="filter-chips" role="group" aria-label="Show">
                   <button type="button" class="chip-btn" data-kind="" aria-pressed="true">All</button>
-                  <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">📷 Images</button>
-                  <button type="button" class="chip-btn" data-kind="video" aria-pressed="false">🎬 Videos</button>
+                  <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">Images</button>
+                  <button type="button" class="chip-btn" data-kind="video" aria-pressed="false">Videos</button>
                 </div>
-                <button type="button" id="reelSession" class="chip-btn" aria-pressed="false" title="Only renders made since Prompt Maker last started">🕘 This session</button>
+                <button type="button" id="reelSession" class="chip-btn" aria-pressed="false" title="Only renders made since Prompt Maker last started">This session</button>
                 <div id="reelRated" class="filter-chips" role="group" aria-label="Filter by rating">
                   <button type="button" class="chip-btn rated" data-min="1" aria-pressed="false" title="Rated pretty good or better">★ &amp; up</button>
                   <button type="button" class="chip-btn rated" data-min="2" aria-pressed="false" title="Rated very good or excellent">★★ &amp; up</button>
@@ -388,7 +389,7 @@
                 <select id="reelModel" class="reel-model" aria-label="Filter by model"></select>
                 <div id="reelFine" class="reel-fine">
                 <div id="reelWhen" class="filter-chips" role="group" aria-label="When it was made">
-                  <button type="button" class="chip-btn" data-when="today" aria-pressed="false" title="Made today">📅 Today</button>
+                  <button type="button" class="chip-btn" data-when="today" aria-pressed="false" title="Made today">Today</button>
                   <button type="button" class="chip-btn" data-when="week" aria-pressed="false" title="Made in the last 7 days">This week</button>
                   <button type="button" class="chip-btn" data-when="month" aria-pressed="false" title="Made in the last 30 days">This month</button>
                   <button type="button" class="chip-btn" data-when="older" aria-pressed="false" title="Made more than 30 days ago">Older</button>
@@ -398,8 +399,8 @@
                   <button type="button" class="chip-btn" data-shape="landscape" aria-pressed="false" title="Wider than tall">▭ Landscape</button>
                   <button type="button" class="chip-btn" data-shape="square" aria-pressed="false" title="About as wide as tall">▢ Square</button>
                 </div>
-                <button type="button" id="reelUnrated" class="chip-btn" aria-pressed="false" title="Renders you haven't rated yet">☆ Not rated yet</button>
-                <button type="button" id="reelLine" class="chip-btn" aria-pressed="false" title="Videos made with a 🎙 spoken line" hidden>🎙 Spoken line</button>
+                <button type="button" id="reelUnrated" class="chip-btn" aria-pressed="false" title="Renders you haven't rated yet">Not rated yet</button>
+                <button type="button" id="reelLine" class="chip-btn" aria-pressed="false" title="Videos made with a spoken line" hidden>Spoken line</button>
                 <select id="reelWorkflow" class="reel-model" aria-label="Filter by workflow" hidden></select>
                 <select id="reelLora" class="reel-model" aria-label="Filter by LoRA" hidden></select>
                 <select id="reelLook" class="reel-model" aria-label="Filter by look" hidden></select>
