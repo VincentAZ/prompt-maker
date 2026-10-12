@@ -1249,6 +1249,7 @@ async function checkAllWorkflows(settings, { fresh = false } = {}) {
 function comfyAnswered(settings, ok) {
   const came = ok && health.comfyOk !== true;
   health.comfyOk = ok;
+  if (came) adoptRenders(settings).catch(() => {});
   if (ok && (came || Date.now() - health.at > 10 * 60_000)) checkAllWorkflows(settings, { fresh: came }).catch(() => {});
 }
 
@@ -1378,6 +1379,7 @@ async function renderTake(req, res) {
       if (applied.loras?.length) applied.loras = applied.loras.map(l => (loraFileInfo[l.name] ? { ...l, file: loraFileInfo[l.name] } : l));
       models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
       promptId = await comfy.queuePrompt(base, prompt, clientId);
+      await store.noteRendering(promptId, { historyId: entry.id, index: body.index, versionIndex, clientId, comfyUrl: base, workflowId: workflow.id, workflowName: workflow.name, seedMode: workflow.options?.seedMode || 'random', overrides: workflow.overrides || {}, count, i, applied, parts: parts || null, inputs: [imageName, videoName, audioName].filter(Boolean), queuedAt: t0 }).catch(() => {});
       if (stream.signal.aborted) { // cancelled while ComfyUI was taking it
         await comfy.cancel(base, promptId);
         break;
@@ -1397,6 +1399,27 @@ async function renderTake(req, res) {
         },
       });
       stream.signal.removeEventListener('abort', onAbort);
+      const render = await keepRender({ settings, base, entry, index: body.index, versionIndex, text, workflow: { id: workflow.id, name: workflow.name, seedMode: workflow.options?.seedMode || 'random', overrides: workflow.overrides || {} }, applied, parts, done, promptId, count, t0, stream, i, inputs: [imageName, videoName, audioName].filter(Boolean) });
+      await store.doneRendering(promptId).catch(() => {});
+      stream.send({ type: 'render', i, render });
+    } catch (err) {
+      stream.signal.removeEventListener('abort', onAbort);
+      if (promptId) await store.doneRendering(promptId).catch(() => {});
+      if (err.name === 'AbortError' || stream.signal.aborted) {
+        if (promptId) await comfy.cancel(base, promptId);
+        break;
+      }
+      stream.send({ type: 'error', i, message: err.message });
+      break;
+    }
+  }
+  stream.end();
+}
+
+// What ComfyUI made for one render: copied into the renders folder (pieces joined into one video), recorded on its
+// take, and ComfyUI's copy removed when Clean up is on. Shared by renders followed from the start and renders picked
+// up again after Prompt Maker restarted (adoptRenders). Returns the render it recorded.
+async function keepRender({ settings, base, entry, index, versionIndex, text, workflow, applied, parts, done, promptId, count, t0, stream, i, inputs }) {
       const outputs = comfy.outputFiles(done);
       if (!outputs.length) throw store.httpError(502, 'ComfyUI finished but saved no image, video or audio. Does the workflow end in a Save node?');
       const id = crypto.randomUUID();
@@ -1441,33 +1464,65 @@ async function renderTake(req, res) {
         ...(applied.loras?.length ? { loras: applied.loras } : {}),
         // The rest of the setup, so opening this from History can put it all back.
         count,
-        seedMode: workflow.options?.seedMode || 'random',
-        overrides: workflow.overrides || {},
+        seedMode: workflow.seedMode,
+        overrides: workflow.overrides,
         files,
         createdAt: new Date().toISOString(),
-        secs: Math.round((Date.now() - t0) / 100) / 10,
+        secs: t0 ? Math.round((Date.now() - t0) / 100) / 10 : null,
       };
       try {
-        await store.updateHistory(entry.id, e => { (e.variations[body.index].renders ||= []).push(render); });
+        await store.updateHistory(entry.id, e => { (e.variations[index].renders ||= []).push(render); });
       } catch (err) {
         if (err.status !== 404) throw err;
         // The take was deleted while this rendered: none of it is kept, here or in ComfyUI.
         await store.removeRenderFiles([render]);
-        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs: [imageName, videoName, audioName].filter(Boolean), rest: await store.listHistory() });
+        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs, rest: await store.listHistory() });
         throw store.httpError(404, 'That take was deleted, so its render was thrown away.');
       }
-      stream.send({ type: 'render', i, render });
-    } catch (err) {
-      stream.signal.removeEventListener('abort', onAbort);
-      if (err.name === 'AbortError' || stream.signal.aborted) {
-        if (promptId) await comfy.cancel(base, promptId);
-        break;
-      }
-      stream.send({ type: 'error', i, message: err.message });
-      break;
-    }
+  return render;
+}
+
+// Renders Prompt Maker sent to ComfyUI before it stopped (a restart, an update, a crash): each is followed again, the
+// way it would have been, and kept on its take, whether it's still running or ComfyUI finished it meanwhile. One that
+// ComfyUI no longer has (it restarted too) is let go. Renders of a ×2–×4 that hadn't been sent yet aren't sent now.
+const adopting = new Set();
+async function adoptRenders(settings) {
+  const all = await store.listRendering().catch(() => ({}));
+  for (const [promptId, rec] of Object.entries(all)) {
+    if (adopting.has(promptId)) continue;
+    adopting.add(promptId);
+    adoptRender(settings, promptId, rec).catch(err => console.warn(`Couldn't pick up a render after the restart: ${err.message}`)).finally(() => adopting.delete(promptId));
   }
-  stream.end();
+}
+async function adoptRender(settings, promptId, rec) {
+  const base = rec.comfyUrl || settings.comfyUrl;
+  const entry = await store.getHistory(rec.historyId || '');
+  const variation = entry?.variations?.[rec.index];
+  const known = (await comfy.history(base, promptId).catch(() => null)) || (await comfy.queuePosition(base, promptId).catch(() => -1)) >= 0;
+  if (!variation || !known) {
+    if (!variation && known) await forgetInComfy(settings, { promptIds: [promptId], copies: [], inputs: rec.inputs || [], rest: await store.listHistory() }).catch(() => {});
+    return store.doneRendering(promptId);
+  }
+  const versionIndex = variation.versions[rec.versionIndex] ? rec.versionIndex : variation.versions.length - 1;
+  const stream = openRenderJob({ historyId: entry.id, index: rec.index, versionIndex, count: 1, workflowId: rec.workflowId, workflowName: rec.workflowName, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio });
+  stream.send({ type: 'start', runId: stream.runId, count: 1, workflowName: rec.workflowName });
+  const onAbort = () => comfy.cancel(base, promptId);
+  stream.signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const queued = await comfy.queueItem(base, promptId).catch(() => null);
+    const graph = queued?.[2] || (await comfy.history(base, promptId).catch(() => null))?.prompt?.[2] || {};
+    stream.send({ type: 'queued', i: 0, applied: rec.applied || {} });
+    const done = await comfy.watch(base, promptId, rec.clientId, graph, { signal: stream.signal, parts: rec.parts, onEvent: ev => { if (ev.type !== 'preview') stream.send({ ...ev, i: 0 }); } });
+    stream.signal.removeEventListener('abort', onAbort);
+    const render = await keepRender({ settings, base, entry, index: rec.index, versionIndex, text: variation.versions[versionIndex].text, workflow: { id: rec.workflowId, name: rec.workflowName, seedMode: rec.seedMode || 'random', overrides: rec.overrides || {} }, applied: { ...(rec.applied || {}) }, parts: rec.parts, done, promptId, count: rec.count || 1, t0: rec.queuedAt || Date.now(), stream, i: 0, inputs: rec.inputs || [] });
+    stream.send({ type: 'render', i: 0, render });
+  } catch (err) {
+    stream.signal.removeEventListener('abort', onAbort);
+    if (err.name !== 'AbortError' && !stream.signal.aborted) stream.send({ type: 'error', i: 0, message: err.message });
+  } finally {
+    await store.doneRendering(promptId).catch(() => {});
+    stream.end();
+  }
 }
 
 // The pieces of a long video, saved one by one in ComfyUI (wf.splitPieces), downloaded and joined into one video in the
@@ -1639,6 +1694,8 @@ async function route(req, res) {
   if (p === '/api/looks' && m === 'PUT') return sendJson(res, 200, await store.saveLooks(await readBody(req)));
   if (p === '/api/sizes' && m === 'GET') return sendJson(res, 200, await store.listSizes());
   if (p === '/api/sizes' && m === 'PUT') return sendJson(res, 200, await store.saveSizes(await readBody(req)));
+  if (p === '/api/dials' && m === 'GET') return sendJson(res, 200, await store.listDials());
+  if (p === '/api/dials' && m === 'PUT') return sendJson(res, 200, await store.saveDials(await readBody(req)));
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
     if (typeof body.lmStudioUrl === 'string') assertLocalUrl(body.lmStudioUrl.trim());

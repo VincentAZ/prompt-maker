@@ -23,6 +23,11 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.53.0 — Renders survive a restart of Prompt Maker: each render sent to ComfyUI is noted (ids and settings, no prompt
+  text), and at start every one ComfyUI still has, running or finished meanwhile, is followed again and kept on its take.
+  (Two MiniMax videos were lost from view when Prompt Maker was restarted mid-render.) Fixed a leftover "step 6".
+  Step ④ as you left it (shape, size, duration, length, how adventurous) is kept per model in the data folder, not
+  the browser: the app window and a Brave tab each kept their own, so a size picked in one wasn't picked in the other.
 - 1.52.1 — `scripts/launch_branch`: runs Prompt Maker from a git branch in place of what runs now (and `main` back),
   to try a branch with your own data before it's merged.
 - 1.52.0 — **☐ Let AI choose** at the top of the chains section: one click makes the AI pick the best render at every

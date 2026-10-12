@@ -24,6 +24,7 @@ const APP = `http://127.0.0.1:${APP_PORT}`;
 const OUT = process.env.SHOTS || path.join(os.tmpdir(), 'prompt-maker-ui');
 const FILTER = process.argv[2] || '';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+let restartApp = null; // set in main(): stops the app server and starts it again on the same data folder
 
 // ---------- fixtures ----------
 
@@ -451,12 +452,25 @@ esac
   const lmsHome = path.join(tmp, 'lmstudio-home');
   await fs.mkdir(path.join(lmsHome, 'server-logs', '2026-10'), { recursive: true });
   // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
-  const app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_LSBLK_BIN: fakeLsblk, PM_PROC_SWAPS: fakeSwaps, PM_SYS_POWER_DISK: fakePowerDisk, PM_GSETTINGS_BIN: fakeGsettings, PM_PKEXEC_BIN: fakePkexec, PM_RAM_DIR: ramDir, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const appEnv = { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_LSBLK_BIN: fakeLsblk, PM_PROC_SWAPS: fakeSwaps, PM_SYS_POWER_DISK: fakePowerDisk, PM_GSETTINGS_BIN: fakeGsettings, PM_PKEXEC_BIN: fakePkexec, PM_RAM_DIR: ramDir, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none' };
+  let app = null;
   let appLog = '';
-  app.stdout.on('data', d => { appLog += d; });
-  app.stderr.on('data', d => { appLog += d; });
-  for (let i = 0; i < 50 && !appLog.includes('running at'); i++) await sleep(100);
-  if (!appLog.includes('running at')) throw new Error(`App did not start:\n${appLog}`);
+  // The app server (started again by the test of a restart mid-render; its log is kept across starts).
+  const startApp = async () => {
+    app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: appEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+    const mark = appLog.length;
+    app.stdout.on('data', d => { appLog += d; });
+    app.stderr.on('data', d => { appLog += d; });
+    for (let i = 0; i < 80 && !appLog.slice(mark).includes('running at'); i++) await sleep(100);
+    if (!appLog.slice(mark).includes('running at')) throw new Error(`App did not start:\n${appLog.slice(mark)}`);
+  };
+  restartApp = async () => {
+    const gone = new Promise(r => app.once('exit', r));
+    app.kill('SIGTERM');
+    await gone;
+    await startApp();
+  };
+  await startApp();
 
   const chrome = spawn('google-chrome', [
     '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
@@ -745,8 +759,10 @@ esac
     eq(await text('#resolution option:checked'), 'Your size: 1000×700', 'and says so');
     eq(await value('#aspect'), '10:7', 'Shape turns to the size\'s own shape');
     eq(await text('#aspect option:checked'), 'Landscape · 10:7 ✎', 'and says it is yours');
-    eq(await js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).resolution'), '1000×700', 'and remembered');
-    eq(await js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).aspectRatio'), '10:7', 'with its shape');
+    const dials = () => fetch(`${APP}/api/dials`).then(r => r.json()).then(d => d['ltx-2-3'] || {});
+    await waitFor(`fetch('/api/dials').then(r => r.json()).then(d => d['ltx-2-3']?.resolution === '1000×700')`, 'and remembered, in the data folder (every window, every restart)');
+    eq((await dials()).aspectRatio, '10:7', 'with its shape');
+    eq(await js('localStorage.getItem("pm.prefs.ltx-2-3")'), null, 'not in the browser');
     await choose('#aspect', '16:9');
     assert(await value('#resolution') !== '1000×700', 'another shape takes a size in that shape');
     assert(!(await js('[...document.querySelectorAll("#aspect option")].map(o => o.value)')).includes('10:7'), 'and the typed shape leaves the menu');
@@ -763,7 +779,7 @@ esac
     assert(!(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value)')).includes('1000×700'), 'forgotten');
     await choose('#aspect', '1:1');
     assert(!(await visible('#aspectNote')), 'note cleared after a manual change');
-    const prefs = () => js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).aspectRatio');
+    const prefs = async () => { await sleep(400); return (await dials()).aspectRatio; }; // (saved a moment after the change)
     eq(await prefs(), '1:1', 'a preset is remembered for the model');
     await choose('#aspect', '4:7');
     eq(await prefs(), '1:1', 'the image\'s own ratio is not: it belongs to the image');
@@ -2663,6 +2679,27 @@ esac
     await toastText('Render stopped');
     eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
     eq(await count('.take .rtile img'), 1, 'no render from the cancelled job');
+  });
+
+  await test('render: a restart of Prompt Maker mid-render doesn\'t lose it; it lands on its take', async () => {
+    await type('#theme', 'VERYSLOWRENDER a kite over the harbor');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="1"]');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    const entryId = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'VERYSLOWRENDER a kite over the harbor').id;
+    eq(Object.keys(await fs.readFile(path.join(dataDir, 'rendering.json'), 'utf8').then(JSON.parse)).length, 1, 'the render is noted while ComfyUI has it');
+    assert(!(await fs.readFile(path.join(dataDir, 'rendering.json'), 'utf8')).includes('kite'), 'by its ids, without the prompt\'s words');
+    await restartApp();
+    await waitFor(`fetch('/api/renders').then(r => r.json()).then(l => l.length === 1)`, 'picked up again after the restart', 10000);
+    await reloadPage();
+    await waitFor('document.documentElement.dataset.ready === "1"', 'page back');
+    await waitFor(`fetch('/api/history/${entryId}').then(r => r.json()).then(e => (e.variations[0].renders || []).length === 1)`, 'it lands on its take', 20000);
+    eq(comfy.prompts.length, before + 1, 'one job in ComfyUI, not sent again');
+    eq(JSON.stringify(JSON.parse(await fs.readFile(path.join(dataDir, 'rendering.json'), 'utf8'))), '{}', 'and its note goes');
+    await waitFor('document.querySelector("#rendersBtn").hidden', 'nothing left rendering');
   });
 
   await test('rendering now: the top bar shows every render still going; open one, cancel one', async () => {

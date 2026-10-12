@@ -40,6 +40,7 @@ const state = {
   chain: { steps: [], renders: 1, recipeId: null }, // the Then steps being built on Create (step ⑤ → Then…)
   recipes: [], // saved chains
   ownSizes: {}, // the sizes you typed in step ④, per model (from the data folder)
+  dials: {}, // step ④ as you left it, per model (from the data folder)
   run: null, // the chain run shown above the results
   chainActive: false, // a chain is running steps right now
   batchPick: '', // what Generate runs (step ⑤ Batch): '' no batch, a saved batch's id, or '*' every batch in order
@@ -1683,15 +1684,33 @@ $('#modelChips').addEventListener('keydown', e => {
 });
 
 // Per-model memory of the dials (aspect, resolution, duration, length, temperature).
-const prefsKey = id => `prefs.${id}`;
+const prefsKey = id => `prefs.${id}`; // (before 1.53: step ④ was kept in the browser under this name)
+// Step ④ as you left it, per model, kept in the data folder (see adoptBrowserDials for the browser's old copies).
+let dialsTimer = null;
+function setDials(id, value) {
+  state.dials = { ...state.dials, [id]: value };
+  clearTimeout(dialsTimer);
+  dialsTimer = setTimeout(() => api('/api/dials', { method: 'PUT', body: state.dials }).catch(() => {}), 250);
+}
+function adoptBrowserDials() {
+  let keys = [];
+  try { keys = Object.keys(localStorage).filter(k => k.startsWith('pm.prefs.')); } catch { return; }
+  if (!keys.length) return;
+  for (const key of keys) {
+    const id = key.slice('pm.prefs.'.length);
+    const v = saved.get(`prefs.${id}`, null);
+    if (v && typeof v === 'object' && !state.dials[id]) state.dials = { ...state.dials, [id]: v };
+  }
+  api('/api/dials', { method: 'PUT', body: state.dials }).then(() => { try { keys.forEach(k => localStorage.removeItem(k)); } catch { /* storage unavailable */ } }, () => {});
+}
 function savePrefs() {
   const m = currentModel();
   if (!m) return;
   state.cards?.forEach(c => { if (c.rb?.panelOpen && !c.rb.size) renderTakePanel(c); }); // their ⚙ shows step ④'s size
   const typed = state.sizeShape && $('#aspect').value === state.sizeShape; // a typed size's shape is kept with it
   const own = !m.aspectRatios.includes($('#aspect').value) && !typed; // the image's own ratio: belongs to the image, not the model
-  const before = own ? saved.get(prefsKey(m.id), {}) : null;
-  saved.set(prefsKey(m.id), {
+  const before = own ? state.dials[m.id] || {} : null;
+  setDials(m.id, {
     aspectRatio: own ? before.aspectRatio : $('#aspect').value,
     resolution: own ? before.resolution : $('#resolution').value,
     duration: durationValue(),
@@ -1732,7 +1751,7 @@ function selectModel(id, { values } = {}) {
   renderWorkflowPicker();
   renderChainEditor();
   if (!m) return;
-  const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
+  const v = { ...m.defaults, ...(values || state.dials[m.id] || {}) };
   if (isSize(v.resolution) && !m.resolutions.includes(v.resolution) && !values) keepOwnSize(v.resolution); // typed before sizes were a list
   const typedShape = ownSizes(m).includes(v.resolution) ? sizeShapeOf(m, v.resolution) : null; // a typed size comes back in its shape
   if (typedShape) v.aspectRatio = typedShape;
@@ -1959,7 +1978,7 @@ function setManual(on, { persist = true } = {}) {
   $('.look-options').hidden = state.manual;
   $('#tempField').hidden = state.manual;
   $('#chainStep').hidden = state.manual;
-  $('#manualHint').textContent = `No Brain: your text, image and model go straight to the render.${state.manual && state.chain.steps.length ? ' Your chain (step 6) waits until this is off.' : ''}`;
+  $('#manualHint').textContent = `No Brain: your text, image and model go straight to the render.${state.manual && state.chain.steps.length ? ' Your chain (step 5, Then…) waits until this is off.' : ''}`;
   renderRole();
   renderChainEditor(); // its renders-per-take dial, and the batch it turns off
   refreshPanelSummaries();
@@ -7538,7 +7557,7 @@ function autoRender(cards) {
 const BATCH_MAX = 50; // the server allows as many
 const batches = () => state.settings?.batches || [];
 const batchAvailable = () => workflowsFor(state.modelId).length > 0 && !chainOn();
-// A chain built in step 6 runs on Generate, except with ✍️ your own prompt: its Then steps are written by the Brain.
+// A chain built in step 5 (Then…) runs on Generate, except with ✍️ your own prompt: its Then steps are written by the Brain.
 const chainOn = () => state.chain.steps.length > 0 && !state.manual;
 const outputWord = (n, kind = currentModel()?.kind) => `${kind === 'video' ? 'video' : 'image'}${n === 1 ? '' : 's'}`;
 const batchLine = b => `${b.count} ${outputWord(b.count)}, ${b.mode === 'same' ? 'one prompt' : 'a different prompt each'}`;
@@ -8844,7 +8863,7 @@ function applyRecipe(r, { quiet = false } = {}) {
   const missing = r.steps.find(s => !modelById(s.modelId));
   if (missing) return toast(`“${r.name}” uses the model “${missing.modelId}”, which isn't in your Models.`, true);
   const dials = first.dials || {};
-  selectModel(first.modelId, Object.keys(dials).length ? { values: { ...saved.get(prefsKey(first.modelId), {}), ...dials } } : {});
+  selectModel(first.modelId, Object.keys(dials).length ? { values: { ...(state.dials[first.modelId] || {}), ...dials } } : {});
   setVariations(first.takes);
   const wf0 = chainWorkflow(first.modelId, first.workflow) || activeWorkflowId(first.modelId);
   if (first.workflow && wf0) pickWorkflow(first.modelId, wf0);
@@ -12453,8 +12472,9 @@ async function loadModels() {
   $('#historyFav').innerHTML = `${bookmarkIcon} Bookmarks`;
   $$('[data-panel]').forEach(decoratePanel);
   try {
-    [state.settings, state.models, state.looks, state.ownSizes] = await Promise.all([api('/api/settings'), api('/api/models'), api('/api/looks').catch(() => []), api('/api/sizes').catch(() => ({}))]);
+    [state.settings, state.models, state.looks, state.ownSizes, state.dials] = await Promise.all([api('/api/settings'), api('/api/models'), api('/api/looks').catch(() => []), api('/api/sizes').catch(() => ({})), api('/api/dials').catch(() => ({}))]);
     adoptBrowserSizes();
+    adoptBrowserDials();
     state.imageRole = saved.get('imageRole', 'reference');
     const line = saved.get('line', null);
     if (line && typeof line === 'object') state.line = { voice: String(line.voice || ''), text: String(line.text || '') };

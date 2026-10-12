@@ -1,5 +1,5 @@
 // A fake ComfyUI for UI tests: the HTTP API Prompt Maker uses plus a real WebSocket that streams
-// execution progress. Prompt text containing COMFYFAIL fails; SLOWRENDER renders slowly. With a root folder,
+// execution progress. Prompt text containing COMFYFAIL fails; SLOWRENDER renders slowly (VERYSLOWRENDER more so). With a root folder,
 // uploads land in root/input and renders in root/output, and finished jobs stay in its history until deleted.
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -177,6 +177,7 @@ export function startMockComfy(port, { png, root = null, mp4 = null }) {
     running = id;
     const text = JSON.stringify(prompt);
     const slow = text.includes('SLOWRENDER');
+    const verySlow = text.includes('VERYSLOWRENDER'); // long enough to restart Prompt Maker while it runs
     send(clientId, { type: 'execution_start', data: { prompt_id: id } });
     for (const node of ['4', '6', '5', '3']) {
       send(clientId, { type: 'executing', data: { node, prompt_id: id } });
@@ -193,7 +194,7 @@ export function startMockComfy(port, { png, root = null, mp4 = null }) {
       // message, nothing in history and nothing in the queue.
       if (v === 3 && text.includes('COMFYCRASH')) { running = null; return; }
       send(clientId, { type: 'progress', data: { value: v, max: 5, prompt_id: id, node: '3' } });
-      await sleep(slow ? 700 : 60);
+      await sleep(verySlow ? 1600 : slow ? 700 : 60);
     }
     if (text.includes('COMFYFAIL')) {
       const err = { prompt_id: id, node_id: '3', node_type: 'KSampler', exception_message: 'Mock sampler exploded' };
