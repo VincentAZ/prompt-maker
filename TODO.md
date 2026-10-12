@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.51.0 — A size you type in step ④ stays in that model's Size menu for good: it's kept in the data folder (with
+  your own looks), not in the browser, so it survives a reboot and shows in any browser; at *Nothing stays*, for the
+  session only. Sizes typed before move there on their own.
 - 1.50.0 — **A calmer Create**: flat panels, one accent color, no gradients or glow; quiet step numbers and
   headers with more air between steps; plain words instead of emoji on the Create page's labels and the renders
   box's filters; the model line is its name and Change, with "About this model" folded under it; the drop zones are

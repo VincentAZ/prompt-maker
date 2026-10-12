@@ -755,7 +755,8 @@ esac
     await choose('#resolution', await js('document.querySelector("#resolution").options[0].value'));
     assert(!(await visible('#resCustom')), 'boxes hide on a preset');
     assert((await js('[...document.querySelectorAll("#resolution option")].map(o => o.value)')).includes('1000×700'), 'your size stays in the menu');
-    eq(JSON.stringify(await js('JSON.parse(localStorage.getItem("pm.sizes.ltx-2-3"))')), '["1000×700"]', 'kept across sessions');
+    eq(JSON.stringify((await (await fetch(`${APP}/api/sizes`)).json())['ltx-2-3']), '["1000×700"]', 'kept in the data folder, so across sessions and browsers');
+    eq(await js('localStorage.getItem("pm.sizes.ltx-2-3")'), null, 'not in the browser');
     await choose('#resolution', '1000×700');
     assert(await visible('#resForget'), 'a size of yours can be forgotten');
     await click('#resForget');
@@ -2142,15 +2143,22 @@ esac
   });
 
   await test('render: ⚙ on a take sets its own size, seed, steps and LoRA strengths, for its renders only', async () => {
-    const mid = await js('JSON.parse(localStorage.getItem("pm.modelId"))');
-    await js(`localStorage.setItem("pm.sizes.${mid}", JSON.stringify(["1000×700"]))`); // a size typed in step ③
+    // A size typed in step ④ (then step ④ put back as it was).
+    const [aspect0, res0] = [await value('#aspect'), await value('#resolution')];
+    await choose('#resolution', '__custom');
+    await type('#resW', '1000'); await type('#resH', '700');
+    await click('#resUse');
+    await waitFor('document.querySelector("#resolution").value === "1000×700"', 'your size picked');
+    await choose('#aspect', aspect0); await choose('#resolution', res0);
     await click('.take .rb-tune');
     await waitFor('!!document.querySelector(".take .rb-panel .rb-params")', 'the take\'s settings open');
     assert((await text('.take .rb-panel')).includes('same as step'), 'nothing of its own yet');
     eq(await js('[...document.querySelectorAll(".take .rb-panel .rb-size option")].find(o => o.value === "1000×700")?.textContent'), 'Your size: 1000×700', 'your sizes are offered for a take too');
     await choose('.take .rb-panel .rb-size', '1000×700');
     await waitFor('document.querySelector(".take .rb-panel .rb-aspect")?.value === "10:7" && document.querySelector(".take .rb-panel .rb-size").value === "1000×700"', 'with their shape');
-    await js(`localStorage.removeItem("pm.sizes.${mid}")`);
+    await choose('#resolution', '1000×700');
+    await click('#resForget');
+    await choose('#aspect', aspect0); await choose('#resolution', res0);
     await js('document.querySelector(".take .rb-panel .rb-size").selectedIndex = 0; document.querySelector(".take .rb-panel .rb-size").dispatchEvent(new Event("change", { bubbles: true }))');
     const picked = await value('.take .rb-panel .rb-size');
     await click('.take .rb-panel .rb-seedmode button[data-value="fixed"]');

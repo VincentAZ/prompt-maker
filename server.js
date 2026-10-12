@@ -1637,6 +1637,8 @@ async function route(req, res) {
   if (p === '/api/settings' && m === 'GET') return sendJson(res, 200, settingsView(await store.getSettings()));
   if (p === '/api/looks' && m === 'GET') return sendJson(res, 200, await store.listLooks());
   if (p === '/api/looks' && m === 'PUT') return sendJson(res, 200, await store.saveLooks(await readBody(req)));
+  if (p === '/api/sizes' && m === 'GET') return sendJson(res, 200, await store.listSizes());
+  if (p === '/api/sizes' && m === 'PUT') return sendJson(res, 200, await store.saveSizes(await readBody(req)));
   if (p === '/api/settings' && m === 'PUT') {
     const body = await readBody(req);
     if (typeof body.lmStudioUrl === 'string') assertLocalUrl(body.lmStudioUrl.trim());

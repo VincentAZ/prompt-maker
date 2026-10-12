@@ -37,8 +37,9 @@ const state = {
   editId: null,
   dirty: false,
   settingsDirty: false,
-  chain: { steps: [], renders: 1, recipeId: null }, // the Then steps being built on Create (step ⑥)
+  chain: { steps: [], renders: 1, recipeId: null }, // the Then steps being built on Create (step ⑤ → Then…)
   recipes: [], // saved chains
+  ownSizes: {}, // the sizes you typed in step ④, per model (from the data folder)
   run: null, // the chain run shown above the results
   chainActive: false, // a chain is running steps right now
   batchPick: '', // what Generate runs (step ⑤ Batch): '' no batch, a saved batch's id, or '*' every batch in order
@@ -573,13 +574,39 @@ function matchImageAspect() {
 // then "✎ Type your own size…".
 const CUSTOM_RES = '__custom';
 const isSize = v => /^\d+\s*[×x]\s*\d+$/.test(String(v || ''));
-const ownSizes = (m = currentModel()) => (m ? saved.get(`sizes.${m.id}`, []) : []);
+// The sizes you typed (✎ Type your own size…), per model: kept in the data folder with your looks, so they stay in the
+// Size menu across restarts, reboots and browsers (only "Nothing stays" keeps them for the session alone).
+const ownSizes = (m = currentModel()) => (m ? state.ownSizes?.[m.id] || [] : []);
 const isOwnSize = (v, choices) => !choices.includes(v) && ownSizes().includes(v);
+let sizesSave = Promise.resolve();
+function saveOwnSizes() {
+  const map = state.ownSizes;
+  const done = sizesSave.then(() => api('/api/sizes', { method: 'PUT', body: map }));
+  sizesSave = done.catch(err => toast(`Couldn't keep your size: ${friendly(err)}`, true));
+  return done;
+}
 function keepOwnSize(size, keep = true) {
   const m = currentModel();
   if (!m) return;
   const rest = ownSizes(m).filter(s => s !== size);
-  saved.set(`sizes.${m.id}`, keep ? [...rest, size].slice(-12) : rest);
+  state.ownSizes = { ...state.ownSizes, [m.id]: keep ? [...rest, size].slice(-12) : rest };
+  if (!state.ownSizes[m.id].length) delete state.ownSizes[m.id];
+  saveOwnSizes();
+}
+// Sizes typed before 1.51 were kept in this browser only: they move to the data folder once, then leave the browser.
+// (The browser's copies go only once the data folder has them.)
+function adoptBrowserSizes() {
+  let keys = [];
+  try { keys = Object.keys(localStorage).filter(k => k.startsWith('pm.sizes.')); } catch { return; }
+  if (!keys.length) return;
+  for (const key of keys) {
+    const id = key.slice('pm.sizes.'.length);
+    const mine = saved.get(`sizes.${id}`, []);
+    if (!Array.isArray(mine) || !mine.length) continue;
+    const have = state.ownSizes[id] || [];
+    state.ownSizes = { ...state.ownSizes, [id]: [...new Set([...mine.filter(s => !have.includes(s)), ...have])].slice(-12) };
+  }
+  saveOwnSizes().then(() => { try { keys.forEach(k => localStorage.removeItem(k)); } catch { /* storage unavailable */ } }, () => {});
 }
 // A size that isn't on the list (one from another shape, or none yet) becomes the one nearest it in pixels, else
 // nearest the model's default: never just the smallest.
@@ -12406,7 +12433,8 @@ async function loadModels() {
   $('#historyFav').innerHTML = `${bookmarkIcon} Bookmarks`;
   $$('[data-panel]').forEach(decoratePanel);
   try {
-    [state.settings, state.models, state.looks] = await Promise.all([api('/api/settings'), api('/api/models'), api('/api/looks').catch(() => [])]);
+    [state.settings, state.models, state.looks, state.ownSizes] = await Promise.all([api('/api/settings'), api('/api/models'), api('/api/looks').catch(() => []), api('/api/sizes').catch(() => ({}))]);
+    adoptBrowserSizes();
     state.imageRole = saved.get('imageRole', 'reference');
     const line = saved.get('line', null);
     if (line && typeof line === 'object') state.line = { voice: String(line.voice || ''), text: String(line.text || '') };
@@ -12418,6 +12446,7 @@ async function loadModels() {
     setVariations(saved.get('variations', 1));
     renderLooks();
     $('#lookMemoryHint').hidden = !state.settings.inMemory;
+    $('#resUse').title = state.settings.inMemory ? 'Use this size and keep it in the menu for this session (Privacy: Nothing stays)' : 'Use this size and keep it in the menu for good'; 
     setLook(saved.get('look', ''), { persist: false });
     state.manualRenders = clampInt(saved.get('manualRenders', 1), 1, 4);
     setManual(saved.get('manual', false), { persist: false });
