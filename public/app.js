@@ -3158,6 +3158,7 @@ function renderReel() {
   markSeen();
   $('#reelNewest').hidden = !reelOrder.length;
   $('#reelMore').hidden = items.length <= reelShown;
+  if (items.length > reelShown) reelMoreCheck();
   // Cards of renders that are gone (deleted, moved away) are let go.
   const keys = new Set(all.map(reelKey));
   for (const k of reelCells.keys()) if (!keys.has(k)) reelCells.delete(k);
@@ -3308,7 +3309,7 @@ $('#reelGrid').addEventListener('click', async e => {
   const n = reelItems.findIndex(x => reelKey(x) === cell?.dataset.key);
   const it = reelItems[n];
   if (!it) return;
-  if (b.dataset.act === 'open') return openLightbox(reelItems, n, { fromGallery: inGallery() });
+  if (b.dataset.act === 'open') return openLightbox(reelItems, n, { fromGallery: inGallery(), filtered: true });
   if (b.dataset.act === 'hide') {
     const want = !it.render.hidden;
     try {
@@ -3348,12 +3349,19 @@ $('#reelGrid').addEventListener('error', e => {
   if (cell) cell.hidden = true;
 }, true);
 
-// More pictures as you scroll near the end.
-new IntersectionObserver(([e]) => {
+// More pictures as you scroll near the end. The observer only speaks when the end comes into reach, so after each
+// draw it's asked again: with small cards (or right after a filter changed) the end can still be in reach, and
+// the rest would never come.
+const reelMoreWatch = new IntersectionObserver(([e]) => {
   if (!e.isIntersecting || reelItems.length <= reelShown) return;
   reelShown += REEL_PAGE;
   renderReel();
-}, { root: $('#reelBody'), rootMargin: '0px 0px 800px 0px' }).observe($('#reelMore'));
+}, { root: $('#reelBody'), rootMargin: '0px 0px 800px 0px' });
+reelMoreWatch.observe($('#reelMore'));
+function reelMoreCheck() {
+  reelMoreWatch.unobserve($('#reelMore'));
+  reelMoreWatch.observe($('#reelMore'));
+}
 
 // ---------- your renders: drag to arrange ----------
 // Drag a card and the others make room; let go and it stays there (on a touch screen, hold it a moment first).
@@ -3619,6 +3627,7 @@ const reelPick = cardPicker({
     $('#reelSelCount').textContent = `${reelPickedRenders().length} selected`;
     $('#reelCompare').disabled = reelItems.filter(it => reelPick.keys.has(reelKey(it))).length !== 2;
     $('#reelSelDelete').disabled = !reelPick.keys.size;
+    $('#reelSelDownload').disabled = !reelPick.keys.size;
   },
 });
 const reelPicked = reelPick.keys;
@@ -3649,6 +3658,27 @@ $('#reelGrid').addEventListener('click', reelPick.click, true);
 $('#reelBody').addEventListener('pointerdown', e => { if (!reelDrag) reelPick.press(e); });
 
 $('#reelSelClear').addEventListener('click', clearReelPicked);
+// ⬇ Download: one picked render as it is, several as one .zip (the server streams it; a hidden frame takes the
+// answer, so the page stays put and the browser shows its own progress).
+$('#reelSelDownload').addEventListener('click', () => {
+  const files = reelItems.filter(it => reelPicked.has(reelKey(it))).map(it => it.file.file);
+  if (!files.length) return;
+  if (files.length === 1) {
+    const a = Object.assign(document.createElement('a'), { href: `/renders/${encodeURIComponent(files[0])}`, download: files[0].split('/').pop() });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    return toast('⬇ Downloading it');
+  }
+  let frame = $('#downloadFrame');
+  if (!frame) document.body.append(frame = Object.assign(document.createElement('iframe'), { id: 'downloadFrame', name: 'downloadFrame', hidden: true }));
+  const form = Object.assign(document.createElement('form'), { method: 'POST', action: '/api/renders/download', target: 'downloadFrame', hidden: true });
+  form.append(Object.assign(document.createElement('input'), { type: 'hidden', name: 'files', value: JSON.stringify(files) }));
+  document.body.append(form);
+  form.submit();
+  form.remove();
+  toast(`⬇ Downloading ${files.length} renders as one .zip`);
+});
 $('#reelSelDelete').addEventListener('click', e => {
   const list = reelPickedRenders();
   if (!list.length) return clearReelPicked();
@@ -8912,8 +8942,9 @@ async function openRun(entry) {
 // rating or redrawing the side panel doesn't start a playing video again.
 const lb = { items: [], index: 0, fromGallery: false, returnFocus: null, pin: null, shown: '' };
 
-function openLightbox(items, index, { fromGallery = false, compare = false } = {}) {
-  lb.items = items;
+function openLightbox(items, index, { fromGallery = false, compare = false, filtered = false } = {}) {
+  lb.items = [...items];
+  lb.filtered = filtered; // what Your renders' filters let through: a render rated out of them leaves
   lb.index = index;
   lb.fromGallery = fromGallery;
   lb.pin = compare ? items[0] : null;
@@ -9119,9 +9150,28 @@ function lbRender() {
 async function rateInLightbox(n) {
   const it = lb.items[lb.index];
   if (!it) return;
-  const want = n === ratingOf(it.render) ? 0 : n;
+  const was = ratingOf(it.render);
+  const want = n === was ? 0 : n;
   try {
     it.render = await rateRender(it.entry, it.render, want);
+    // Browsing ★★★ and rated ★★: it no longer fits the filters, so it leaves and the next one comes up.
+    const pinned = lb.pin && lb.pin.render.id === it.render.id;
+    if (lb.filtered && !pinned && !reelMatch(it)) {
+      const at = lb.items.indexOf(it);
+      lb.items.splice(at, 1);
+      if (lb.index >= lb.items.length) lb.index = 0;
+      if (lb.items.length) lbRender(); else closeLightbox();
+      toast(`${want ? `Rated ${RATINGS[want].toLowerCase()}` : 'Rating taken off'}: it no longer fits your filters, so it left`, false, { label: '↶ Undo', run: async () => {
+        try {
+          it.render = await rateRender(it.entry, it.render, was);
+          if ($('#lightbox').hidden) return;
+          lb.items.splice(Math.min(at, lb.items.length), 0, it);
+          lb.index = lb.items.indexOf(it);
+          lbRender();
+        } catch (err) { toast(err.message, true); }
+      } });
+      return;
+    }
     lbRender();
     $(`[data-lb-rate="${n}"]`, $('#lbInfo'))?.focus();
     announce(want ? `Rated ${RATINGS[want].toLowerCase()}` : 'Rating taken off');

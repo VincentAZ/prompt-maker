@@ -23,6 +23,11 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.47.0 — **⬇ Download** in the Gallery's selection bar: one render as it is, several as one .zip (stored as they
+  are, streamed, Zip64 past 4 GB). Fixed: the Gallery stopped at 120 cards when the end of the grid was still in
+  view after a load (small cards, or right after a filter changed). In the full-screen view, a render rated out of
+  the filters (browsing ★★★, rated ★★) leaves what you browse, with ↶ Undo. A Saved prompts card too narrow for its
+  buttons wraps them instead of cutting off **Open prompt →**.
 - 1.46.0 — **🔁 All takes**: one change typed once above the takes refines every take with it, each as its own
   version. The *Tweak it…* boxes are never locked anymore: a tweak sent while a prompt is written (or a batch or a
   chain runs) is lined up and runs as soon as that's done, before the next prompt in line (✕ Take it out cancels it).

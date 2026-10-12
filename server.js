@@ -25,6 +25,7 @@ import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cl
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
+import { planZip, writeZip } from './lib/zip.js';
 import { convertUiWorkflow, isApiWorkflow, isUiWorkflow, pruneToOutputs, ConvertError } from './lib/comfy-convert.js';
 
 const PORT = Number(process.env.PORT) || 5317;
@@ -2086,6 +2087,24 @@ async function route(req, res) {
     })));
   }
   if (p === '/api/renders/stream' && m === 'GET') return watchAllRenders(res);
+  // ⬇ Download in the Gallery's selection bar: the renders picked, as one .zip. A form posts it (files: a JSON list
+  // of render file names), so the browser saves the answer as it comes, however big.
+  if (p === '/api/renders/download' && m === 'POST') {
+    const chunks = [];
+    let size = 0;
+    for await (const c of req) {
+      if ((size += c.length) > MAX_BODY) throw store.httpError(413, 'Request too large.');
+      chunks.push(c);
+    }
+    let names;
+    try { names = JSON.parse(new URLSearchParams(Buffer.concat(chunks).toString('utf8')).get('files') || '[]'); } catch { names = null; }
+    if (!Array.isArray(names) || !names.every(n => typeof n === 'string')) return sendJson(res, 400, { error: 'Which renders?' });
+    const plan = await planZip(names.map(n => ({ path: within(store.RENDERS_DIR, n), name: path.basename(n) })).filter(f => f.path));
+    if (!plan.entries.length) return sendJson(res, 404, { error: 'Those renders are gone.' });
+    res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': plan.length, ...PRIVATE,
+      'Content-Disposition': `attachment; filename="prompt-maker-${plan.entries.length}-renders-${new Date().toISOString().slice(0, 10)}.zip"` });
+    return writeZip(plan, res).catch(() => res.destroy());
+  }
   if ((match = p.match(/^\/api\/renders\/([\w-]+)\/events$/)) && m === 'GET') {
     const job = renderJobs.get(match[1]);
     return job ? sendJson(res, 200, { events: [...job.events, ...job.previews.values()].sort((a, b) => a.n - b.n), done: job.done }) : sendJson(res, 404, { error: 'That render has finished.' });

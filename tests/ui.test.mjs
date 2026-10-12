@@ -2813,7 +2813,44 @@ esac
     assert(await js('[...document.querySelectorAll("#lbStage .lb-pane")].every(e => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })'), 'both comparison panes fit on a phone');
     await viewport(1440, 900);
     await press('Escape');
+    // ⬇ Download: the two picked come as one .zip holding both files, as they are.
+    eq(await text('#reelSelCount'), '2 selected', 'still picked after comparing');
+    await click('#reelSelDownload');
+    await toastText('Downloading 2 renders as one .zip');
+    const zip = await js(`(async () => {
+      const files = [...document.querySelectorAll("#reelGrid .reel-cell.picked")].map(c => c.dataset.file);
+      const r = await fetch("/api/renders/download", { method: "POST", body: new URLSearchParams({ files: JSON.stringify([...files, "../settings.json"]) }) });
+      const b = new Uint8Array(await r.arrayBuffer());
+      const sizes = await Promise.all(files.map(f => fetch("/renders/" + encodeURIComponent(f)).then(x => x.arrayBuffer()).then(x => x.byteLength)));
+      const text = new TextDecoder().decode(b);
+      return { status: r.status, type: r.headers.get("content-type"), named: r.headers.get("content-disposition"), magic: b[0] === 0x50 && b[1] === 0x4b && b[2] === 3 && b[3] === 4,
+        length: b.length, sizes, names: files.map(f => text.includes(f.split("/").pop())), settings: text.includes("settings.json") };
+    })()`);
+    eq(zip.status, 200, 'the zip is served');
+    eq(zip.type, 'application/zip', 'as a zip');
+    assert(/attachment; filename="prompt-maker-2-renders-/.test(zip.named), 'saved under a plain name');
+    assert(zip.magic && zip.names.every(Boolean), 'a zip with both files in it');
+    assert(zip.length > zip.sizes[0] + zip.sizes[1], 'the files whole');
+    assert(!zip.settings, 'nothing from outside the renders folder');
     await click('#reelSelect');
+    // Browsing ★★★ in the full-screen view, one rated ★★ leaves it (↶ Undo puts it back).
+    const rated = await js('[...document.querySelectorAll("#reelGrid .reel-cell:not([data-rating=\'1\']):not([data-rating=\'2\']):not([data-rating=\'3\'])")].slice(0, 2).map(c => (c.querySelector(".rate-bar [data-rate=\'3\']").click(), c.dataset.key))');
+    await waitFor(`${JSON.stringify(rated)}.every(k => document.querySelector(\`#reelGrid .reel-cell[data-key="\${k}"]\`)?.dataset.rating === "3")`, 'two rated excellent');
+    const before3 = await js('document.querySelectorAll("#reelGrid .reel-cell[data-rating=\'3\']").length');
+    await click('#reelRated button[data-min="3"]');
+    eq(await count('#reelGrid .reel-cell'), before3, 'only the excellent ones');
+    await click('#reelGrid .reel-cell:nth-child(1) .rtile');
+    assert((await text('#lbInfo')).includes(`1 of ${before3}`), 'browsing the excellent ones');
+    await press('2');
+    await toastText('it no longer fits your filters');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("1 of ${before3 - 1}")`, 'it left what is browsed');
+    await click('#toast .toast-act');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("1 of ${before3}")`, 'Undo puts it back');
+    await press('Escape');
+    eq(await count('#reelGrid .reel-cell'), before3, 'still excellent after Undo');
+    await click('#reelRated button[data-min="3"]');
+    for (const k of rated) await js(`document.querySelector('#reelGrid .reel-cell[data-key="${k}"] .rate-bar [data-rate="3"]').click()`);
+    await waitFor(`${JSON.stringify(rated)}.every(k => document.querySelector(\`#reelGrid .reel-cell[data-key="\${k}"]\`)?.dataset.rating === "0")`, 'ratings taken off again');
     await viewport(390, 844, true);
     assert(await visible('#reelFind'), 'search remains visible');
     assert(!(await visible('#reelFilterOptions')), 'extra filters start folded');
