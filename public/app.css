@@ -339,11 +339,13 @@ body.narrow .create .scroll-floor { display: none; }
 .create:has(.no-models) .try { display: none; }
 
 .theme {
-  font-size: 19px !important; font-weight: 500; line-height: 1.45 !important;
-  padding: 16px 18px !important; border-radius: 16px !important; min-height: 110px;
+  font-size: 15px !important; font-weight: 450; line-height: 1.5 !important;
+  padding: 12px 14px !important; border-radius: 14px !important; min-height: 96px;
   background: rgb(0 0 0 / 25%) !important;
 }
 /* The look under the theme: one row of chips that wraps; the picked one stays lit. */
+/* Your own prompt is a whole prompt, often long: smaller still, so more of it shows at once. */
+.director.manual .theme { font-size: 13.5px !important; line-height: 1.5 !important; }
 .sheet-block { margin-top: 12px; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .sheet-head .zone-label { margin: 0; }

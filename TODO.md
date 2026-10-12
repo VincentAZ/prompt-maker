@@ -23,6 +23,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.53.1 — The idea box's text was 19 px: it's 15 px now, and 13.5 px with your own prompt (a whole prompt, often
+  long), so much more of it shows at once.
 - 1.53.0 — Renders survive a restart of Prompt Maker: each render sent to ComfyUI is noted (ids and settings, no prompt
   text), and at start every one ComfyUI still has, running or finished meanwhile, is followed again and kept on its take.
   (Two MiniMax videos were lost from view when Prompt Maker was restarted mid-render.) Fixed a leftover "step 6".
