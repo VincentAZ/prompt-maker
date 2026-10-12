@@ -2775,8 +2775,16 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
     ${entry.manual ? '<span class="via">✍️ your own prompt, word for word</span>' : via ? `<span class="via">${running ? 'rolling on' : 'written by'} ${esc(via)}${totalSecs ? ` in ${totalSecs.toFixed(1)}s` : ''}</span>` : ''}
     ${takes > 1 && (running || entry.id) && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn"${off}>🎨 Render all ${takes}</button>` : ''}
     ${takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn"${off}>📋 Copy all ${takes} takes</button>` : ''}
-    ${entry.id && !entry.manual && m && !entry.chain ? `<button type="button" class="btn small" id="addTakeBtn" title="One more take for this set, written from the same idea, picture and settings, different from the ones here"${off}>＋ Add a take</button>` : ''}`;
+    ${entry.id && !entry.manual && m && !entry.chain ? `<button type="button" class="btn small" id="addTakeBtn" title="One more take for this set, written from the same idea, picture and settings, different from the ones here"${off}>＋ Add a take</button>` : ''}
+    ${takes > 1 && (running || entry.id) && m ? `<form class="refine refine-all" id="refineAllForm"><span class="ra-label" aria-hidden="true">🔁 All ${takes} takes</span><input placeholder="Tweak them all at once… e.g. make it golden hour" aria-label="What should change in all ${takes} takes?"><button type="submit" title="Refine every take (Enter)" aria-label="Refine all ${takes} takes">➜</button></form>` : ''}`;
   head.hidden = false;
+  $('#refineAllForm')?.addEventListener('submit', e => {
+    e.preventDefault();
+    const input = $('input', e.currentTarget);
+    const text = input.value.trim();
+    if (!text) { input.focus(); return; }
+    tweakWhenFree(e.currentTarget, () => refineAll(text).then(ok => { if (ok) input.value = ''; }));
+  });
   $('#addTakeBtn')?.addEventListener('click', addTake);
   $('#srcLink')?.addEventListener('click', () => openSource(entry.source));
   $('#renderAllBtn')?.addEventListener('click', () => state.cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); }));
@@ -3806,7 +3814,7 @@ function createTake(index, count, model) {
     </div>
     <div class="take-meta"><span class="meter"></span><span class="time"></span><span class="change"></span></div>
     <div class="render-zone" hidden></div>
-    <form class="refine"${model ? ' inert' : ' hidden'}>
+    <form class="refine${model ? ' writing' : ''}"${model ? '' : ' hidden'}>
       <input placeholder="Tweak it… e.g. make it golden hour, add a dog" aria-label="What should change in ${esc(name)}?">
       <button type="submit" title="Refine (Enter)" aria-label="Refine ${esc(name)}">➜</button>
     </form>
@@ -3832,11 +3840,14 @@ function createTake(index, count, model) {
     const input = $('input', e.currentTarget);
     const text = input.value.trim();
     if (!text) { input.focus(); return; }
-    refineCard(card, text).then(ok => { if (ok) input.value = ''; });
+    tweakWhenFree(e.currentTarget, () => refineCard(card, text).then(ok => { if (ok) input.value = ''; }));
   });
   $('.chips', el).addEventListener('click', e => {
     const b = e.target.closest('button');
-    if (b) refineCard(card, b.dataset.instr);
+    if (!b) return;
+    if (!running()) return refineCard(card, b.dataset.instr);
+    $('.refine input', el).value = b.dataset.instr; // while something cooks, the chip lines up like a typed tweak
+    $('.refine', el).requestSubmit();
   });
   return card;
 }
@@ -3982,7 +3993,8 @@ function showVersion(card, i) {
   $('.save-edit', card.el).hidden = true;
   $('.refine', card.el).hidden = !canRefine;
   $('.chips', card.el).hidden = !canRefine;
-  $('.refine', card.el).inert = $('.chips', card.el).inert = false;
+  $('.chips', card.el).inert = false;
+  $('.refine', card.el).classList.remove('writing');
   $('.versions', card.el).hidden = versions.length < 2;
   $('.vlabel', card.el).textContent = `v${card.view + 1}/${versions.length}`;
   $('.prev', card.el).disabled = card.view === 0;
@@ -4043,8 +4055,9 @@ function setBusy(busy) {
   $('#stopBtn').hidden = !busy && !state.chainActive && !state.batchRun;
   syncNewBtn();
   drawLine();
-  if (!running() && line.orders.length && !line.held && !line.pumping) setTimeout(pumpLine, 0); // queued during a refine or a chain
-  $$('.take .refine button, .take .refine input, .take .chips button, .take .save-edit, .take .versions button').forEach(el => { el.disabled = busy; });
+  if (!running() && tweaks.length) setTimeout(pumpTweaks, 0); // tweaks first, then the next prompt in line
+  else if (!running() && line.orders.length && !line.held && !line.pumping) setTimeout(pumpLine, 0); // queued during a refine or a chain
+  $$('.take .save-edit, .take .versions button').forEach(el => { el.disabled = busy; }); // tweaks stay open: sent while busy, they line up
   if (!busy) state.cards.forEach(c => { if (!c.interrupted && versionsOf(c).length) { $('.prev', c.el).disabled = c.view === 0; $('.next', c.el).disabled = c.view === versionsOf(c).length - 1; } });
   $('#draftBtn').disabled = busy;
 }
@@ -4204,7 +4217,7 @@ async function pumpLine() {
   if (line.pumping) return;
   line.pumping = true;
   try {
-    while (line.orders.length && !line.held && !running()) {
+    while (line.orders.length && !line.held && !running() && !tweaks.length) {
       const order = line.orders.shift();
       line.running = order;
       drawLine();
@@ -4525,8 +4538,53 @@ async function addTake() {
   loadLlms();
 }
 
+// A tweak sent while something cooks (a prompt being written, a batch, a chain) waits here, its words kept in its box,
+// and runs as soon as that's done, before the next prompt in line.
+const tweaks = [];
+
+function tweakWhenFree(form, run) {
+  if (!running() && !tweaks.length) return run();
+  if (form.classList.contains('lined-up')) return;
+  const t = { form, run };
+  tweaks.push(t);
+  form.classList.add('lined-up');
+  $('input', form).readOnly = true;
+  $('button', form).title = 'Lined up: it runs when what\'s cooking is done';
+  toast('⏳ Tweak lined up: it runs as soon as what\'s cooking is done', false, { label: '✕ Take it out', run: () => dropTweak(t) });
+  if (!running()) pumpTweaks();
+}
+
+function freeTweakForm(form) {
+  form.classList.remove('lined-up');
+  $('input', form).readOnly = false;
+  $('button', form).title = form.id === 'refineAllForm' ? 'Refine every take (Enter)' : 'Refine (Enter)';
+}
+
+function dropTweak(t) {
+  const i = tweaks.indexOf(t);
+  if (i < 0) return;
+  tweaks.splice(i, 1);
+  freeTweakForm(t.form);
+}
+
+async function pumpTweaks() {
+  if (tweaks.pumping) return;
+  tweaks.pumping = true;
+  try {
+    while (tweaks.length && !running()) {
+      const t = tweaks.shift();
+      freeTweakForm(t.form);
+      await t.run(); // checks itself that its take is still there (the bar above the takes is redrawn when a set is done)
+    }
+  } finally {
+    tweaks.pumping = false;
+    if (!running() && line.orders.length && !line.held && !line.pumping) pumpLine();
+  }
+}
+
 async function refineCard(card, instruction) {
   if (state.busy || !state.entry?.id || !card.model) return false;
+  if (!state.cards.includes(card) || card.interrupted || !versionsOf(card).length) return false; // a lined-up tweak whose take is gone or never finished
   showError('');
   const llm = selectedLlm();
   if (state.entry.imageFile && llm?.vision === false) {
@@ -4592,6 +4650,22 @@ async function refineCard(card, instruction) {
   if (trigger?.isConnected && !trigger.disabled) trigger.focus();
   loadLlms();
   return Boolean(savedEntry);
+}
+
+// Tweak all takes: the same change for every take on the stage, one after the other (each its own refine, so each
+// gets a new version and its own auto-render). ■ Stop or a failure ends it; takes already refined keep it.
+async function refineAll(instruction) {
+  const cards = state.cards.filter(c => c.model && !c.interrupted && versionsOf(c).length);
+  if (!cards.length) return false;
+  await flushEdits();
+  let done = 0;
+  for (const card of cards) {
+    if (!(await refineCard(card, instruction))) break;
+    done++;
+  }
+  if (done === cards.length) announce(`All ${done} takes refined: ${instruction}`);
+  else if (done) toast(`🔁 ${done} of ${cards.length} takes refined`);
+  return done === cards.length;
 }
 
 async function saveEdit(card, { quiet = false } = {}) {

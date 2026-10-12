@@ -43,7 +43,7 @@ The full manual for [Prompt Maker](../README.md): every page, setting and trick.
 - **Every detail you typed stays.** The Brain is told to keep every fact of your idea (who and how many, colors, clothes, objects, place, time, weather, what happens, quoted words) and to add detail only where you said nothing. After each take, one short check puts back any detail it changed, and the take says so.
 - **Variations.** Write 1–4 prompts at once. Each take deliberately goes a different way (angle, lighting, setting, moment).
 - **⏳ Queue.** No waiting for one to finish: while a prompt is cooking, the main button turns into **＋ Line up another** (what's cooking shows just above it) and, like `Ctrl+Enter`, lines up the next one, as many as you like. Each keeps the setup it was queued with, and its renders go on in ComfyUI while the next prompt is written.
-- **Refine.** Tell a take what to change ("golden hour", "add a dog", "shorter") or tap a quick chip. Every version is kept and you can page through them, and hand edits are saved as versions too.
+- **Refine.** Tell a take what to change ("golden hour", "add a dog", "shorter") or tap a quick chip, or type it once in **🔁 All takes** to change every take the same way. Every version is kept and you can page through them, and hand edits are saved as versions too.
 - **Live output.** Text streams in as it's written.
   - Word count against the model's ideal length (✓ when it's on target).
   - Timing for each take, plus a status while the model loads or thinks.
@@ -379,6 +379,8 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 ### Refine and versions
 
 - Type a change in **Tweak it…** and press Enter, or tap a chip like ✂️ *Shorter*, 🎞️ *More cinematic* or ⚡ *More dynamic motion*.
+- **The same change for every take:** with two or more takes, the **🔁 All 4 takes** bar above them takes one change ("give her a red umbrella") and refines each take with it, one after the other. Each take gets it as its own new version (and its own render, if auto-render is on). ■ Stop ends it; takes already done keep the change.
+- **Tweak while it's still writing.** The *Tweak it…* boxes (and 🔁 All takes) are never locked: type or paste your change while a prompt is being written, a batch renders or a chain runs, and press Enter. The tweak is *lined up* (its box gets a dashed edge) and runs as soon as what's cooking is done, before the next prompt waiting in line. **✕ Take it out** in the toast cancels it. A take still being written can get a tweak too: it runs once the take is there.
 - Every refine adds a version. Page through them with **‹ ›**.
 - You can edit a prompt by hand. Click **💾 Save edit**, or page away and it's saved automatically.
 - **＋ Add a take** (above the takes) writes one more for the set: the same idea, picture, look, line and dials, different from the takes already there. It lands at the end, numbered on, and is saved on the same card.
@@ -403,7 +405,7 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 | `Tab` (first press) | **Skip to your results**: jumps past the steps |
 | `←` `→` on the model cards | Move between models (they are one Tab stop) |
 | `Esc` | Stop the current run (when a dialog, a menu or the assistant has it, it only closes that) |
-| `Enter` (in *Tweak it…*) | Refine that take |
+| `Enter` (in *Tweak it…*) | Refine that take (in 🔁 All takes: every take); while something cooks, it lines up |
 | `Ctrl` / `⌘` + `V` | Paste an image |
 | `Ctrl` / `⌘` + `K` | Open or close the assistant |
 | `←` `→` (full-screen view) | The render before or after |

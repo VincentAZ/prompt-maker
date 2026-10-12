@@ -566,6 +566,9 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 .stage-head .tag.model { background: color-mix(in srgb, var(--m) 20%, var(--panel-3)); color: var(--text); }
 .stage-head .via { color: var(--muted); font-size: 13px; flex: 1 1 0; min-width: 0; max-width: max-content; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* "rolling on X" → "written by X in 12.3s": never a new line */
 .stage-head .btn:not(.btn ~ .btn) { margin-left: auto; }
+.stage-head .refine-all { flex: 1 1 100%; padding-block: 2px; } /* Tweak all takes: one line for every take */
+.stage-head .refine-all .ra-label { flex: none; font-size: 13px; font-weight: 700; color: var(--m); white-space: nowrap; }
+.stage-head .refine-all button { width: 34px; height: 34px; font-size: 16px; }
 .src-link { border: 1px solid color-mix(in srgb, var(--m) 45%, var(--line-2)); color: var(--text); cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
 .src-link:hover { background: color-mix(in srgb, var(--m) 22%, var(--panel-3)); }
 .takes { display: flex; flex-direction: column; gap: 16px; }
@@ -616,6 +619,10 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 .refine input { flex: 1; border: 0 !important; background: transparent !important; padding: 7px 0 !important; box-shadow: none !important; }
 .refine button { width: 38px; height: 38px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--m); color: #0a0910; font-size: 18px; font-weight: 900; flex: none; }
 .refine button:hover:not(:disabled) { filter: brightness(1.1); }
+.refine.writing:not(:focus-within) { opacity: 0.55; } /* the take is still being written: you can type a tweak already */
+.refine.lined-up { border-style: dashed; border-color: var(--m); }
+.refine.lined-up input { color: var(--muted); }
+.refine.lined-up button { animation: blink 1.6s ease-in-out infinite; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 /* While a take is written its controls show greyed out, so it keeps its size when it's done. */
 .take :is(.refine, .chips, .render-zone) { transition: opacity 0.25s; }

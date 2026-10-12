@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.46.0 — **🔁 All takes**: one change typed once above the takes refines every take with it, each as its own
+  version. The *Tweak it…* boxes are never locked anymore: a tweak sent while a prompt is written (or a batch or a
+  chain runs) is lined up and runs as soon as that's done, before the next prompt in line (✕ Take it out cancels it).
 - 1.45.1 — While something cooks, the main button reads **＋ Line up another** (a plain button, no longer the moving
   gradient) and what's cooking (**✦ Writing prompt…**, a batch's progress) shows on the line above it. A click on the
   dark beside a picture in the full-screen viewer closes it.

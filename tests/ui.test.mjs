@@ -879,7 +879,7 @@ esac
       await click('#generateBtn');
       await waitFor('document.querySelectorAll(".take").length === 3', 'three takes');
       // While they're written, each take's buttons are there already, greyed out, and so is Copy all.
-      assert(await js('[...document.querySelectorAll(".take")].every(t => !t.querySelector(".refine").hidden && t.querySelector(".refine").inert && t.querySelector(".chips").inert)'), 'tweak box and chips show greyed out while writing');
+      assert(await js('[...document.querySelectorAll(".take")].every(t => !t.querySelector(".refine").hidden && t.querySelector(".refine").classList.contains("writing") && !t.querySelector(".refine").inert && t.querySelector(".chips").inert)'), 'tweak box (dimmed, but you can type) and chips show greyed out while writing');
       assert(await js('[...document.querySelectorAll(".take .meter")].every(m => !m.hidden && m.textContent.includes("words"))'), 'the word meter is there, greyed, before a word arrives');
       assert(await js('[...document.querySelectorAll(".take .prompt-well")].every(w => parseFloat(getComputedStyle(w).minHeight) > 150)'), 'each prompt box holds the height its text is expected to need');
       eq(await js('document.querySelector("#copyAllBtn")?.disabled'), true, 'Copy all shows greyed out while writing');
@@ -4345,6 +4345,14 @@ esac
     eq(entry.variations.length, 3, 'saved on the same card');
     eq(entry.theme, 'a lighthouse for take tests', 'the same set');
     assert((await text('#addTakeBtn')).includes('Add a take'), 'the button is back');
+    // Tweak all takes: typed once, every take gets it as a new version.
+    await type('#refineAllForm input', 'make it golden hour');
+    await shot('46-refine-all');
+    await js('document.querySelector("#refineAllForm").requestSubmit()');
+    await waitFor('[...document.querySelectorAll("#resultsList .take .change")].every(c => c.textContent.includes("golden hour")) && !document.querySelector("#generateBtn").classList.contains("cooking")', 'all three refined');
+    entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    assert(entry.variations.every(v => v.versions.length === 2 && v.versions[1].instruction === 'make it golden hour'), 'each take has the change as its own version');
+    eq(await value('#refineAllForm input'), '', 'the box is emptied');
     // Delete the middle take: the others keep their order, the card stays.
     await js('localStorage.setItem("pm.deleteWarned", "true")');
     await click('#resultsList .take:nth-child(2) .take-del');
@@ -4364,6 +4372,22 @@ esac
     await waitFor('document.querySelectorAll("#resultsList .take").length === 0', 'the stage is empty');
     const themes = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).map(e => e.theme);
     assert(!themes.includes('a lighthouse for take tests'), 'the card is gone from Saved prompts');
+    // A tweak typed while a set is still being written lines up and runs as soon as the writing is done.
+    await type('#theme', 'a harbour SLOWSECOND');
+    await click('#generateBtn');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 2 && document.querySelector("#generateBtn").classList.contains("cooking")', 'a new set is cooking');
+    await type('#resultsList .take:nth-child(2) .refine input', 'add a red boat');
+    await js('document.querySelector("#resultsList .take:nth-child(2) .refine").requestSubmit()');
+    assert(await js('document.querySelector("#resultsList .take:nth-child(2) .refine").classList.contains("lined-up")'), 'the tweak is lined up while the take is written');
+    await waitFor('document.querySelector("#resultsList .take:nth-child(2) .change").textContent.includes("red boat") && !document.querySelector("#generateBtn").classList.contains("cooking")', 'then it runs on its own', 30000);
+    const harbour = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).find(e => e.theme === 'a harbour SLOWSECOND');
+    eq(harbour.variations[1].versions.at(-1).instruction, 'add a red boat', 'the take got it');
+    eq(harbour.variations[0].versions.length, 1, 'the other take did not');
+    for (const n of [2, 1]) {
+      await click(`#resultsList .take:nth-child(${n}) .take-del`);
+      await click(`#resultsList .take:nth-child(${n}) .take-del`);
+      await waitFor(`document.querySelectorAll("#resultsList .take").length === ${n - 1}`, 'take deleted');
+    }
     await js('localStorage.removeItem("pm.deleteWarned")');
     await click('#varSeg button[data-value="1"]');
   });
