@@ -13,6 +13,7 @@ const state = {
   llmError: '',
   modelId: null,
   image: null, // { file } once stored on the server; { dataUrl } while it uploads
+  sizeShape: null, // a typed size's own shape ("10:7"), offered in Shape while it's the size in use
   video: null, // the motion video (character-animation models): { file, sheet, seconds, frames, width, height, ratio }
   imageRole: 'reference', // the user's choice; "animate" falls back to reference on image models
   length: 'medium',
@@ -458,13 +459,35 @@ const shapeIcon = (m = currentModel()) => (!state.image?.ratio && m?.motionVideo
 
 function fillAspect(m, value) {
   const own = ownAspect(m, shapeRatio(m));
-  fillSelect($('#aspect'), own ? [...m.aspectRatios, own] : m.aspectRatios, value);
+  const typed = state.sizeShape && state.sizeShape !== own && !m.aspectRatios.includes(state.sizeShape) ? state.sizeShape : null;
+  fillSelect($('#aspect'), [...m.aspectRatios, ...(own ? [own] : []), ...(typed ? [typed] : [])], value);
   if (own) $(`#aspect option[value="${own}"]`).textContent = `${own} ${shapeIcon(m)}`; // the image icon, like the "from image" note
+  if (typed) $(`#aspect option[value="${typed}"]`).textContent = `${typed} ✎`; // the shape of a size you typed
   for (const option of $('#aspect').options) {
     const ratio = ratioOf(option.value);
     const label = ratio === 1 ? 'Square' : ratio > 2 ? 'Wide' : ratio > 1 ? 'Landscape' : 'Portrait';
     option.textContent = `${label} · ${option.textContent}`;
   }
+}
+
+// A typed size's own shape: the model's preset when one is the same ratio (1280×720 → 16:9), else its exact ratio
+// (1000×700 → 10:7), offered in Shape as "10:7 ✎" so the Shape always says the shape the render comes out in.
+function sizeShapeOf(m, size) {
+  const [w, h] = (/^(\d+)\s*[×x]\s*(\d+)$/.exec(String(size || '')) || []).slice(1).map(Number);
+  if (!m || !w || !h) return null;
+  return m.aspectRatios.find(a => ratioOf(a) && ratioDist(ratioOf(a), w / h) < 0.01) || ratioLabel(w / h);
+}
+// Turns Shape to a typed size's shape (left as it is when it already is that shape) and keeps the size picked.
+function useSizeShape(size) {
+  const m = currentModel();
+  const shape = sizeShapeOf(m, size);
+  const [w, h] = (size.match(/\d+/g) || []).map(Number);
+  if (shape && m.aspectRatios.length && ratioDist(ratioOf($('#aspect').value) || 1, w / h) >= 0.01) {
+    state.sizeShape = m.aspectRatios.includes(shape) ? null : shape;
+    fillAspect(m, shape);
+    $('#aspectNote').hidden = true;
+  }
+  if (m) fillResolution(sizeChoices(m, $('#aspect').value), size);
 }
 
 // Sets Aspect to the attached image's shape: its own ratio on a video model, else the model's closest option.
@@ -525,9 +548,7 @@ function applyCustomRes() {
   const w = Math.round(Number($('#resW').value)), h = Math.round(Number($('#resH').value));
   if (!(w >= 64 && h >= 64 && w <= 8192 && h <= 8192)) return toast('Width and height: 64 to 8192 each', true);
   keepOwnSize(`${w}×${h}`);
-  const best = closestAspect(currentModel(), w / h); // the size's shape: 1280×720 turns a 2:3 Aspect to 16:9
-  if (best && ratioDist(ratioOf($('#aspect').value) || 1, w / h) > 0.05) { $('#aspect').value = best; $('#aspectNote').hidden = true; }
-  fillResolution(sizeChoices(currentModel(), $('#aspect').value), `${w}×${h}`);
+  useSizeShape(`${w}×${h}`); // the size's shape: 1280×720 turns a 2:3 Shape to 16:9, 1000×700 to 10:7
   savePrefs();
 }
 
@@ -539,7 +560,8 @@ function syncResolution() {
   const aspect = $('#aspect').value;
   const choices = sizeChoices(m, aspect);
   const cur = sel.value; // its size picks the nearest new one
-  if (isOwnSize(cur, choices)) { fillResolution(choices, cur); return; } // a typed size stays as typed
+  const fits = s => ratioDist(ratioOf(aspect) || 1, s.split('×').reduce((w, h) => w / h)) < 0.01;
+  if (isOwnSize(cur, choices) && fits(cur)) { fillResolution(choices, cur); return; } // a typed size stays as typed in its own shape
   if (choices.join() !== [...sel.options].map(o => o.value).filter(v => v !== CUSTOM_RES).join()) fillResolution(choices, cur);
   const r = resolutionFor({ ...m, resolutions: choices }, aspect, cur);
   if (r) sel.value = r;
@@ -1578,7 +1600,8 @@ const prefsKey = id => `prefs.${id}`;
 function savePrefs() {
   const m = currentModel();
   if (!m) return;
-  const own = !m.aspectRatios.includes($('#aspect').value); // the image's own ratio: belongs to the image, not the model
+  const typed = state.sizeShape && $('#aspect').value === state.sizeShape; // a typed size's shape is kept with it
+  const own = !m.aspectRatios.includes($('#aspect').value) && !typed; // the image's own ratio: belongs to the image, not the model
   const before = own ? saved.get(prefsKey(m.id), {}) : null;
   saved.set(prefsKey(m.id), {
     aspectRatio: own ? before.aspectRatio : $('#aspect').value,
@@ -1622,8 +1645,11 @@ function selectModel(id, { values } = {}) {
   renderChainEditor();
   if (!m) return;
   const v = { ...m.defaults, ...(values || saved.get(prefsKey(m.id), {})) };
-  fillAspect(m, v.aspectRatio);
   if (isSize(v.resolution) && !m.resolutions.includes(v.resolution) && !values) keepOwnSize(v.resolution); // typed before sizes were a list
+  const typedShape = ownSizes(m).includes(v.resolution) ? sizeShapeOf(m, v.resolution) : null; // a typed size comes back in its shape
+  if (typedShape) v.aspectRatio = typedShape;
+  state.sizeShape = typedShape && !m.aspectRatios.includes(typedShape) ? typedShape : null;
+  fillAspect(m, v.aspectRatio);
   fillResolution(sizeChoices(m, $('#aspect').value), v.resolution);
   $('#duration').value = Number.parseFloat(chainSeconds(v.duration, m)); // any whole number of seconds; the model's list only gives the start
   $('#aspectField').hidden = !m.aspectRatios.length;
@@ -1906,12 +1932,17 @@ $('#temperature').addEventListener('input', e => setTemperature(e.target.value))
 $('#temperature').addEventListener('change', savePrefs);
 $('#aspect').addEventListener('change', () => {
   $('#aspectNote').hidden = true;
+  if (state.sizeShape && $('#aspect').value !== state.sizeShape) { state.sizeShape = null; fillAspect(currentModel(), $('#aspect').value); }
   syncResolution();
   savePrefs();
 });
 $('#resolution').addEventListener('focus', e => { if (e.target.value !== CUSTOM_RES) e.target.dataset.last = e.target.value; });
 $('#resolution').addEventListener('change', e => {
-  if (e.target.value !== CUSTOM_RES) { e.target.dataset.last = e.target.value; return showCustomRes(ownSizes().includes(e.target.value)); }
+  if (e.target.value !== CUSTOM_RES) {
+    if (ownSizes().includes(e.target.value)) useSizeShape(e.target.value); // Shape follows one of your sizes
+    e.target.dataset.last = e.target.value;
+    return showCustomRes(ownSizes().includes(e.target.value));
+  }
   e.target.value = e.target.dataset.last || e.target.options[0].value; // stays on the size in use until one is typed
   showCustomRes(true);
   $('#resW').focus();
@@ -1921,6 +1952,10 @@ for (const id of ['#resW', '#resH']) $(id).addEventListener('keydown', e => { if
 $('#resForget').addEventListener('click', () => {
   const size = $('#resolution').value;
   keepOwnSize(size, false);
+  if (state.sizeShape && $('#aspect').value === state.sizeShape) { // its shape goes with it: the closest preset
+    state.sizeShape = null;
+    fillAspect(currentModel(), closestAspect(currentModel(), ratioOf($('#aspect').value)));
+  }
   const choices = sizeChoices(currentModel(), $('#aspect').value);
   fillResolution(choices, resolutionFor({ ...currentModel(), resolutions: choices }, $('#aspect').value, size) || choices[0]);
   savePrefs();
@@ -2016,7 +2051,7 @@ function setImage(img) {
     preview.removeAttribute('src');
     $('#aspectNote').hidden = true;
     const m = currentModel();
-    if (m && !m.aspectRatios.includes($('#aspect').value)) { // the image's own ratio goes with it
+    if (m && !m.aspectRatios.includes($('#aspect').value) && $('#aspect').value !== state.sizeShape) { // the image's own ratio goes with it
       fillAspect(m, closestAspect(m, ratioOf($('#aspect').value)));
       syncResolution();
     }
@@ -2541,7 +2576,7 @@ function setVideo(v) {
   saved.set('video', v?.file ? { file: v.file, preview: v.preview, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, ratio: v.ratio, fps: v.fps, ffmpeg: v.ffmpeg, bars: v.bars || null } : null);
   if (!v && old) {
     const m = currentModel();
-    if (m?.motionVideo && !m.aspectRatios.includes($('#aspect').value)) { // the video's own ratio goes with it
+    if (m?.motionVideo && !m.aspectRatios.includes($('#aspect').value) && $('#aspect').value !== state.sizeShape) { // the video's own ratio goes with it
       fillAspect(m, closestAspect(m, ratioOf($('#aspect').value)));
       syncResolution();
     }
@@ -10735,7 +10770,7 @@ const TOOL_IMPL = {
     if (args.aspect) { $('#aspectNote').hidden = true; syncResolution(); }
     if (isSize(args.resolution) && !options('#resolution').includes(String(args.resolution).replace(/\s*x\s*/, '×'))) {
       keepOwnSize(String(args.resolution).replace(/\s*[×x]\s*/, '×'));
-      fillResolution(sizeChoices(m, $('#aspect').value), String(args.resolution).replace(/\s*[×x]\s*/, '×'));
+      useSizeShape(String(args.resolution).replace(/\s*[×x]\s*/, '×'));
       done.push(`resolution ${$('#resolution').value}`);
     } else choose('resolution', '#resolution', options('#resolution'), 'resolution');
     if (m.kind === 'video' && !$('#durationField').hidden && args.duration != null && args.duration !== '') {

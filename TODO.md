@@ -23,6 +23,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.47.2 — A size you type turns Shape to its exact shape (1000×700 → 10:7 ✎, not the nearest preset) and comes back,
+  shape and all, after a restart; picking your size from the menu brings its shape back, another Shape moves off it.
 - 1.47.1 — The tweak chips under a take no longer appear and vanish with the mouse (everything below jumped): they
   stay, dimmed on the takes you're not on. The toast sits above the full-screen view, so its ↶ Undo can be clicked
   there.

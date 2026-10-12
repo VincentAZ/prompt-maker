@@ -737,10 +737,16 @@ esac
     await click('#resUse');
     eq(await value('#resolution'), '1000×700', 'your own size is picked');
     eq(await text('#resolution option:checked'), 'Your size: 1000×700', 'and says so');
+    eq(await value('#aspect'), '10:7', 'Shape turns to the size\'s own shape');
+    eq(await text('#aspect option:checked'), 'Landscape · 10:7 ✎', 'and says it is yours');
     eq(await js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).resolution'), '1000×700', 'and remembered');
+    eq(await js('JSON.parse(localStorage.getItem("pm.prefs.ltx-2-3")).aspectRatio'), '10:7', 'with its shape');
     await choose('#aspect', '16:9');
-    eq(await value('#resolution'), '1000×700', 'an aspect change keeps a typed size');
-    await choose('#resolution', '1024×1024');
+    assert(await value('#resolution') !== '1000×700', 'another shape takes a size in that shape');
+    assert(!(await js('[...document.querySelectorAll("#aspect option")].map(o => o.value)')).includes('10:7'), 'and the typed shape leaves the menu');
+    await choose('#resolution', '1000×700');
+    eq(await value('#aspect'), '10:7', 'picking your size again brings its shape back');
+    await choose('#resolution', await js('document.querySelector("#resolution").options[0].value'));
     assert(!(await visible('#resCustom')), 'boxes hide on a preset');
     assert((await js('[...document.querySelectorAll("#resolution option")].map(o => o.value)')).includes('1000×700'), 'your size stays in the menu');
     eq(JSON.stringify(await js('JSON.parse(localStorage.getItem("pm.sizes.ltx-2-3"))')), '["1000×700"]', 'kept across sessions');
