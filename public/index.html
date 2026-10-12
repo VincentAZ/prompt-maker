@@ -116,7 +116,7 @@
                 <button type="button" id="surpriseBtn" class="chip-btn" title="Fill in a random theme">🎲 Surprise me</button>
               </span>
             </header>
-            <textarea id="theme" class="theme" rows="3" aria-label="Describe your idea" autocomplete="off"></textarea>
+            <textarea id="theme" spellcheck="true" class="theme" rows="3" aria-label="Describe your idea" autocomplete="off"></textarea>
             <details class="look-options"><summary>Choose a look <span id="chosenLook">Automatic</span></summary>
             <div class="looks" id="lookRow" role="radiogroup" aria-label="Look: how the camera and light feel">
               <span class="looks-label" title="How the camera and the light feel: how close, from which angle, what kind of light">🎥 <b>Look</b></span>
@@ -145,8 +145,8 @@
                 <input id="lkEmoji" maxlength="16" placeholder="🌧" aria-label="An emoji for the look (optional)" autocomplete="off">
                 <input id="lkName" maxlength="40" placeholder="Name it, e.g. Rainy neon" aria-label="Name of the look" autocomplete="off">
               </div>
-              <label>What the camera and light do <textarea id="lkStill" rows="3" maxlength="500" placeholder="e.g. a 35mm lens at eye level, neon signs as the only light, wet reflections, shallow focus"></textarea></label>
-              <label>Camera move on video <span class="muted">(optional)</span> <input id="lkMove" maxlength="200" placeholder="e.g. a slow handheld drift" autocomplete="off"></label>
+              <label>What the camera and light do <textarea id="lkStill" spellcheck="true" rows="3" maxlength="500" placeholder="e.g. a 35mm lens at eye level, neon signs as the only light, wet reflections, shallow focus"></textarea></label>
+              <label>Camera move on video <span class="muted">(optional)</span> <input id="lkMove" spellcheck="true" maxlength="200" placeholder="e.g. a slow handheld drift" autocomplete="off"></label>
               <div class="look-editor-acts"><button type="button" id="lkSave" class="btn small primary">✓ Keep this look</button><button type="button" id="lkCancel" class="btn small">Cancel</button></div>
             </div>
             <p id="lookMemoryHint" class="hint" hidden>Your own looks are kept for this session only (Privacy: Nothing stays).</p>
@@ -195,7 +195,7 @@
                 <button type="button" id="sheetRedo" class="icon-btn" title="Write it again from the picture next time you create" aria-label="Write the character sheet again">↻</button>
                 </span>
               </div>
-              <textarea id="sheetText" class="sheet-text" rows="7" autocomplete="off" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you create: face, eyes, hair, skin, build… Then every variation keeps all of it. Edit any line to fix it."></textarea>
+              <textarea id="sheetText" spellcheck="true" class="sheet-text" rows="7" autocomplete="off" aria-label="Character sheet: the person's traits, one per line" placeholder="Written from your picture when you create: face, eyes, hair, skin, build… Then every variation keeps all of it. Edit any line to fix it."></textarea>
             </div>
             <div id="wfpDenoise" class="wfp-denoise" hidden></div>
             <div id="lineBlock" class="line-block" hidden>
@@ -529,11 +529,11 @@
 
           <section class="sub" data-panel="model-instructions" data-default="collapsed">
             <div class="panel-head"><b>Instructions for the Brain</b><small>markdown · this is the model's playbook</small></div>
-            <textarea id="mInstr" class="mono" rows="18" spellcheck="false" aria-label="Instructions for the Brain"></textarea>
+            <textarea id="mInstr" class="mono" rows="18" spellcheck="true" aria-label="Instructions for the Brain"></textarea>
             <details class="assist" id="assist">
               <summary><span>✨ Draft the instructions from pasted docs</span><small>uses your Brain</small></summary>
               <p class="hint">Paste the model's official prompting guide, a Reddit write-up or your own notes. Nothing gets replaced until you click <b>Use this draft</b>.</p>
-              <textarea id="draftDocs" rows="6" placeholder="Paste documentation here…"></textarea>
+              <textarea id="draftDocs" spellcheck="true" rows="6" placeholder="Paste documentation here…"></textarea>
               <div class="row">
                 <button type="button" id="draftBtn" class="btn small primary">✨ Draft instructions</button>
                 <button type="button" id="draftStop" class="btn small" hidden>■ Stop</button>
@@ -627,7 +627,7 @@
         <section class="card voice-card" id="voiceNew" hidden>
           <h2>New voice</h2>
           <label class="field"><span>What does it sound like?</span>
-            <textarea id="vDesc" rows="3" placeholder="e.g. A woman in her late twenties from the Midwest: warm, light alto, friendly, smiling as she talks, relaxed pace, close to the microphone"></textarea>
+            <textarea id="vDesc" spellcheck="true" rows="3" placeholder="e.g. A woman in her late twenties from the Midwest: warm, light alto, friendly, smiling as she talks, relaxed pace, close to the microphone"></textarea>
           </label>
           <label class="field"><span>A sentence to hear it say</span>
             <input id="vText" value="Hi there. I grew up out near the lake, and honestly, mornings like this are still my favorite part of the day.">
@@ -785,13 +785,13 @@
         <section class="card" data-panel="set-master" data-default="collapsed">
           <h2>📜 Master instructions</h2>
           <p class="hint">Shared rules sent before every model's own instructions: output format, staying faithful to the theme, and so on.</p>
-          <textarea id="sMaster" class="mono" rows="16" spellcheck="false"></textarea>
+          <textarea id="sMaster" class="mono" rows="16" spellcheck="true"></textarea>
           <div class="row"><button type="button" id="sResetMaster" class="btn small">↺ Reset to default</button></div>
           <label class="check-row"><input type="checkbox" id="sAdult"> <span>🔞 Adult content: let the Brain write explicit prompts (nudity and sex between adults)</span></label>
           <p class="hint">Off by default. It works better with example prompts: none come with the app, so add your own for each model in <b>Models → a model → 🔞 Adult examples</b>. <button type="button" id="sAdultExamples" class="link-btn">Open the Models page →</button></p>
           <details class="assist" id="sAdultText">
             <summary><span>What this adds to the instructions</span><small>sent after them, while it's on</small></summary>
-            <textarea id="sAdultPrompt" class="mono" rows="16" spellcheck="false"></textarea>
+            <textarea id="sAdultPrompt" class="mono" rows="16" spellcheck="true"></textarea>
             <div class="row"><button type="button" id="sResetAdult" class="btn small">↺ Reset to default</button></div>
           </details>
         </section>
@@ -1049,7 +1049,7 @@
     <div id="asInputGrip" class="as-input-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to make the message box taller or shorter" tabindex="0" title="Drag to make the message box taller or shorter (double-click: back to normal)"><span></span></div>
     <div id="asAttach" class="as-attach" aria-label="Pictures to send" hidden></div>
     <div class="as-compose">
-      <textarea id="asInput" rows="2" placeholder="Ask anything, or tell me what to make… (paste a picture to show me)" aria-label="Message the assistant"></textarea>
+      <textarea id="asInput" spellcheck="true" rows="2" placeholder="Ask anything, or tell me what to make… (paste a picture to show me)" aria-label="Message the assistant"></textarea>
       <button type="button" id="asSend" class="btn primary small" aria-label="Send (Enter)">➜</button>
       <button type="button" id="asStop" class="btn small" hidden>■ Stop</button>
     </div>

@@ -23,6 +23,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.48.0 — Spell check in every box you write in (the take's prompt had it off). A take renders at step ④'s size as
+  it is now, not the size its prompt was written for (queued, batch and chain renders keep theirs). The take's ⚙ offers
+  your typed sizes (picking one brings its shape), and a LoRA switched in step ⑤ shows there at once: a take keeps only
+  the LoRAs you changed in it, not a copy of all of them.
 - 1.47.3 — In the full-screen view, a render rated out of the filters leaves what you browse whichever stars rate it:
   the stars under the one browsed in ⇆ Compare skipped that, and the viewer now drops anything that stops fitting.
 - 1.47.2 — A size you type turns Shape to its exact shape (1000×700 → 10:7 ✎, not the nearest preset) and comes back,

@@ -1600,6 +1600,7 @@ const prefsKey = id => `prefs.${id}`;
 function savePrefs() {
   const m = currentModel();
   if (!m) return;
+  state.cards?.forEach(c => { if (c.rb?.panelOpen && !c.rb.size) renderTakePanel(c); }); // their ⚙ shows step ④'s size
   const typed = state.sizeShape && $('#aspect').value === state.sizeShape; // a typed size's shape is kept with it
   const own = !m.aspectRatios.includes($('#aspect').value) && !typed; // the image's own ratio: belongs to the image, not the model
   const before = own ? saved.get(prefsKey(m.id), {}) : null;
@@ -2811,7 +2812,7 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
     ${takes > 1 && (running || entry.id) && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn"${off}>🎨 Render all ${takes}</button>` : ''}
     ${takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn"${off}>📋 Copy all ${takes} takes</button>` : ''}
     ${entry.id && !entry.manual && m && !entry.chain ? `<button type="button" class="btn small" id="addTakeBtn" title="One more take for this set, written from the same idea, picture and settings, different from the ones here"${off}>＋ Add a take</button>` : ''}
-    ${takes > 1 && (running || entry.id) && m ? `<form class="refine refine-all" id="refineAllForm"><span class="ra-label" aria-hidden="true">🔁 All ${takes} takes</span><input placeholder="Tweak them all at once… e.g. make it golden hour" aria-label="What should change in all ${takes} takes?"><button type="submit" title="Refine every take (Enter)" aria-label="Refine all ${takes} takes">➜</button></form>` : ''}`;
+    ${takes > 1 && (running || entry.id) && m ? `<form class="refine refine-all" id="refineAllForm"><span class="ra-label" aria-hidden="true">🔁 All ${takes} takes</span><input spellcheck="true" placeholder="Tweak them all at once… e.g. make it golden hour" aria-label="What should change in all ${takes} takes?"><button type="submit" title="Refine every take (Enter)" aria-label="Refine all ${takes} takes">➜</button></form>` : ''}`;
   head.hidden = false;
   $('#refineAllForm')?.addEventListener('submit', e => {
     e.preventDefault();
@@ -3875,12 +3876,12 @@ function createTake(index, count, model) {
     <div class="prompt-well">
       <div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="prompt-view" hidden></div>
-      <textarea class="prompt-text" spellcheck="false" aria-label="${esc(name)} text (editable)" hidden></textarea>
+      <textarea class="prompt-text" spellcheck="true" aria-label="${esc(name)} text (editable)" hidden></textarea>
     </div>
     <div class="take-meta"><span class="meter"></span><span class="time"></span><span class="change"></span></div>
     <div class="render-zone" hidden></div>
     <form class="refine${model ? ' writing' : ''}"${model ? '' : ' hidden'}>
-      <input placeholder="Tweak it… e.g. make it golden hour, add a dog" aria-label="What should change in ${esc(name)}?">
+      <input spellcheck="true" placeholder="Tweak it… e.g. make it golden hour, add a dog" aria-label="What should change in ${esc(name)}?">
       <button type="submit" title="Refine (Enter)" aria-label="Refine ${esc(name)}">➜</button>
     </form>
     <div class="chips"${model ? ' inert' : ' hidden'}>${chips.map(([e, c]) => `<button type="button" class="chip-btn" data-instr="${esc(c)}">${e} ${esc(c)}</button>`).join('')}</div>`;
@@ -5529,7 +5530,7 @@ function refreshDefaultSelects(defaults) {
 function addExample(text = '', list = '#examplesList') {
   const row = document.createElement('div');
   row.className = 'example';
-  row.innerHTML = '<textarea rows="3" aria-label="Example prompt" placeholder="A complete example prompt in this model\'s ideal style"></textarea><button type="button" class="icon-btn" title="Remove example" aria-label="Remove example">✕</button>';
+  row.innerHTML = '<textarea rows="3" spellcheck="true" aria-label="Example prompt" placeholder="A complete example prompt in this model\'s ideal style"></textarea><button type="button" class="icon-btn" title="Remove example" aria-label="Remove example">✕</button>';
   const ta = $('textarea', row);
   ta.value = text;
   $('button', row).addEventListener('click', () => { row.remove(); markDirty(); });
@@ -6769,6 +6770,8 @@ function saveDenoise(flow, key, value) {
       if (i >= 0) state.workflows[i] = { ...state.workflows[i], ...updated };
       $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
       state.cards.forEach(updateSettingsLine);
+      takeParamCache.delete(flow.id);
+      state.cards.forEach(c => { if (c.rb?.panelOpen && c.rb.workflowId === flow.id) renderTakePanel(c); }); // their ⚙ shows step ⑤'s values
     } catch (err) {
       toast(`Couldn't save it: ${err.message}`, true);
     }
@@ -7008,6 +7011,8 @@ function saveLoras(flow, { now = false } = {}) {
       if (i >= 0) state.workflows[i] = { ...state.workflows[i], ...updated };
       $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
       state.cards.forEach(updateSettingsLine);
+      takeParamCache.delete(flow.id);
+      state.cards.forEach(c => { if (c.rb?.panelOpen && c.rb.workflowId === flow.id) renderTakePanel(c); }); // their ⚙ shows step ⑤'s values
     } catch (err) {
       toast(`Couldn't save the LoRAs: ${err.message}`, true);
     }
@@ -7791,6 +7796,16 @@ function settingsHtml(flow) {
   return bits.length ? bits.map(b => `<span>${esc(b)}</span>`).join('') : '<span>workflow defaults</span>';
 }
 
+// The size a take renders at when its ⚙ has none of its own: what step ④ says now (changed after the prompt was
+// written, it still counts), for takes of the model step ④ is set for; else the size it was written for.
+function stepSize(card) {
+  const entry = state.entry;
+  if (!card?.model || card.model.id !== currentModel()?.id || $('#resolutionField').hidden) return null;
+  const resolution = $('#resolution').value;
+  if (!resolution || resolution === CUSTOM_RES) return null;
+  return { aspectRatio: $('#aspect').value || entry?.aspectRatio, resolution, duration: durationValue() || entry?.duration || '' };
+}
+
 // One line under the render bar: what this workflow will actually use.
 function updateSettingsLine(card) {
   const line = $('.rb-settings', card.el);
@@ -7831,6 +7846,15 @@ async function workflowParams(id) {
   takeParamCache.set(id, { at: Date.now(), data });
   return data;
 }
+// A take's LoRAs: step ⑤'s, with only what you changed in the take's ⚙ on top (rb.loras: { tweaks: by node key,
+// added: by file name }), so a LoRA switched in step ⑤ reaches every take that didn't change that one itself.
+function takeLoras(rb, flow) {
+  const l = flow?.loras || { tweaks: {}, added: [] };
+  const mine = rb?.loras || { tweaks: {}, added: {} };
+  const tweaks = { ...(l.tweaks || {}) };
+  for (const [k, v] of Object.entries(mine.tweaks || {})) tweaks[k] = { ...tweaks[k], ...v };
+  return { tweaks, added: (l.added || []).map(a => ({ ...a, ...mine.added?.[a.name] })) };
+}
 const takeHasOwn = card => Boolean(card.rb && (card.rb.size || card.rb.seed || card.rb.overrides || card.rb.loras));
 function toggleTakePanel(card, open = !card.rb.panelOpen) {
   card.rb.panelOpen = open;
@@ -7854,12 +7878,14 @@ async function renderTakePanel(card) {
   const rb = card.rb;
   const params = (data.candidates?.params || []).filter(p => p.kind !== 'seed');
   const overrides = rb.overrides ?? data.overrides ?? {};
-  const size = rb.size || { aspectRatio: entry.aspectRatio, resolution: entry.resolution, duration: entry.duration };
+  const size = rb.size || stepSize(card) || { aspectRatio: entry.aspectRatio, resolution: entry.resolution, duration: entry.duration };
   const aspects = [...new Set([...(m.aspectRatios || []), size.aspectRatio].filter(Boolean))];
-  const sizes = [...new Set([...sizeChoices(m, size.aspectRatio), size.resolution].filter(Boolean))];
+  const shapeSizes = sizeChoices(m, size.aspectRatio);
+  const yours = ownSizes(m).filter(r => !shapeSizes.includes(r)); // the sizes you typed in step ③, in any shape
+  const sizes = [...new Set([...shapeSizes, size.resolution, ...yours].filter(Boolean))];
   const seedInputs = Boolean(flow.seed?.inputs);
   const seed = rb.seed || (flow.seed?.mode === 'random' || !flow.seed ? { mode: 'random', value: flow.seed?.value ?? 0 } : { mode: 'fixed', value: flow.seed.value });
-  const { own, added } = flowLoras(rb.loras ? { ...flow, loras: { ...flow.loras, ...rb.loras } } : flow);
+  const { own, added } = flowLoras(rb.loras ? { ...flow, loras: { ...flow.loras, ...takeLoras(rb, flow) } } : flow);
   const nodes = new Set(params.map(p => p.node));
   const field = p => {
     const key = `${p.node}|${p.input}`;
@@ -7878,19 +7904,19 @@ async function renderTakePanel(card) {
   panel.innerHTML = `
     <div class="rb-row">
       <span class="rb-ptitle">⚙ This take's settings</span>
-      <span class="muted small">${takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as step ⑤ and the set'}</span>
+      <span class="muted small">${takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as steps ④ and ⑤'}</span>
       <button type="button" class="chip-btn rb-same"${takeHasOwn(card) ? '' : ' disabled'}>↺ Same as step ⑤</button>
     </div>
     <div class="rb-row rb-size-row">
       ${flow.maps?.size ? `<label>Shape<select class="rb-aspect" aria-label="Shape for this take">${aspects.map(a => opt(a, a, size.aspectRatio)).join('')}</select></label>
-      <label>Size<select class="rb-size" aria-label="Size for this take">${sizes.map(r => opt(r, sizeName(r), size.resolution)).join('')}</select></label>` : ''}
+      <label>Size<select class="rb-size" aria-label="Size for this take">${sizes.map(r => opt(r, yours.includes(r) ? `Your size: ${r}` : sizeName(r), size.resolution)).join('')}</select></label>` : ''}
       ${m.kind === 'video' && flow.maps?.duration ? `<label>Duration<span class="rb-dur"><input type="number" class="rb-duration" min="1" max="20" step="1" value="${Number.parseFloat(size.duration) || 5}" aria-label="Seconds for this take"> s</span></label>` : ''}
       ${seedInputs ? `<label>Seed<span class="rb-seedwrap"><span class="seg rb-seedmode" role="radiogroup" aria-label="Seed for this take"><button type="button" role="radio" data-value="random" aria-checked="${seed.mode === 'random'}" class="${seed.mode === 'random' ? 'active' : ''}">🎲 New each render</button><button type="button" role="radio" data-value="fixed" aria-checked="${seed.mode === 'fixed'}" class="${seed.mode === 'fixed' ? 'active' : ''}">🔒 Fixed</button></span><input type="number" class="rb-seedval" min="0" step="1" value="${seed.value ?? 0}" aria-label="Seed number for this take"${seed.mode === 'fixed' ? '' : ' disabled'}></span></label>` : ''}
     </div>
     ${params.length ? `<div class="sp-grid rb-params">${params.map(field).join('')}</div>` : ''}
     ${own.length || added.length ? `<ul class="rb-loras">${own.map(l => lora(l, l.key)).join('')}${added.map((l, i) => lora(l, `+${i}`)).join('')}</ul>` : ''}
     <p class="muted small">Only this take's renders use these. ＋ Add LoRA and the workflow itself live in step ⑤.</p>`;
-  const refresh = () => { updateSettingsLine(card); updateSeedChip(card); $('.rb-same', panel).disabled = !takeHasOwn(card); $('.rb-row .muted', panel).textContent = takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as step ⑤ and the set'; };
+  const refresh = () => { updateSettingsLine(card); updateSeedChip(card); $('.rb-same', panel).disabled = !takeHasOwn(card); $('.rb-row .muted', panel).textContent = takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as steps ④ and ⑤'; };
   const sizeNow = () => ({ aspectRatio: $('.rb-aspect', panel)?.value ?? size.aspectRatio, resolution: $('.rb-size', panel)?.value ?? size.resolution, duration: $('.rb-duration', panel) ? `${clampInt(Number($('.rb-duration', panel).value) || 1, 1, 20)}s` : size.duration });
   $('.rb-aspect', panel)?.addEventListener('change', () => {
     const next = sizeNow();
@@ -7900,7 +7926,12 @@ async function renderTakePanel(card) {
     renderTakePanel(card);
     refresh();
   });
-  for (const sel of ['.rb-size', '.rb-duration']) $(sel, panel)?.addEventListener('change', () => { rb.size = sizeNow(); refresh(); });
+  for (const sel of ['.rb-size', '.rb-duration']) $(sel, panel)?.addEventListener('change', () => {
+    rb.size = sizeNow();
+    const shape = yours.includes(rb.size.resolution) && sizeShapeOf(m, rb.size.resolution); // one of your sizes brings its shape
+    if (shape && shape !== rb.size.aspectRatio) { rb.size.aspectRatio = shape; renderTakePanel(card); }
+    refresh();
+  });
   $('.rb-seedmode', panel)?.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -7927,17 +7958,17 @@ async function renderTakePanel(card) {
   $('.rb-loras', panel)?.addEventListener('change', e => {
     const li = e.target.closest('.rb-lora');
     if (!li) return;
-    const base = rb.loras ?? { tweaks: structuredClone(flow.loras?.tweaks || {}), added: structuredClone(flow.loras?.added || []) };
+    const base = rb.loras ?? { tweaks: {}, added: {} }; // only what changed in this take
     const on = $('.lr-on', li).checked;
     const strength = Number($('.lr-num', li).value);
     const key = li.dataset.key;
-    if (key.startsWith('+')) { const l = base.added[Number(key.slice(1))]; if (l) Object.assign(l, { on, strength: Number.isFinite(strength) ? strength : l.strength }); } else base.tweaks[key] = { on, strength: Number.isFinite(strength) ? strength : (flow.loras.nodes.find(n => n.key === key)?.strength ?? 1) };
+    if (key.startsWith('+')) { const l = flow.loras?.added?.[Number(key.slice(1))]; if (l) base.added[l.name] = { on, strength: Number.isFinite(strength) ? strength : l.strength }; } else base.tweaks[key] = { on, strength: Number.isFinite(strength) ? strength : (flow.loras.nodes.find(n => n.key === key)?.strength ?? 1) };
     rb.loras = base;
     li.classList.toggle('off', !on);
     $('.lr-num', li).disabled = !on;
     refresh();
   });
-  $('.rb-same', panel).addEventListener('click', () => { rb.size = rb.seed = rb.overrides = rb.loras = null; renderTakePanel(card); refresh(); toast('↺ This take uses step ⑤\'s settings and the set\'s size again'); });
+  $('.rb-same', panel).addEventListener('click', () => { rb.size = rb.seed = rb.overrides = rb.loras = null; renderTakePanel(card); refresh(); toast('↺ This take uses step ④\'s size and step ⑤\'s settings again'); });
 }
 
 function updateRenderStatus(card) {
@@ -8026,8 +8057,10 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   if (!setup) saved.set(`wf.${card.model.id}`, flow.id);
   const runId = crypto.randomUUID(); // the page's name for the job, so it can listen for it before the server has it
   // ⚙ The take's own settings (size, seed, sampler, LoRAs) go with it; a queued order's setup wins over them.
-  const ownSetup = !setup && card.rb && (card.rb.overrides || card.rb.loras) ? { loras: card.rb.loras ?? { tweaks: flow.loras?.tweaks || {}, added: flow.loras?.added || [] }, overrides: card.rb.overrides ?? flow.overrides ?? {} } : null;
-  const body = { runId, historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : ownSetup ? { setup: ownSetup } : {}), ...(card.rb?.size ? { size: card.rb.size } : {}), ...(card.rb?.seed ? { seed: card.rb.seed } : {}) };
+  // (A queued order, a batch or a chain keeps the size its prompt was written for.)
+  const size = card.rb?.size || (!setup && !state.chainActive && !state.batchRun ? stepSize(card) : null);
+  const ownSetup = !setup && card.rb && (card.rb.overrides || card.rb.loras) ? { loras: takeLoras(card.rb, flow), overrides: card.rb.overrides ?? flow.overrides ?? {} } : null;
+  const body = { runId, historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : ownSetup ? { setup: ownSetup } : {}), ...(size ? { size } : {}), ...(card.rb?.seed ? { seed: card.rb.seed } : {}) };
   const start = () => api('/api/render', { method: 'POST', body }).catch(err => {
     if (err.missing) noteMissingModels(flow.id, err.missing); // step ⑤ offers to download them
     throw err;
@@ -8451,7 +8484,7 @@ function stepCardHtml(st, i, warn) {
           <label class="dial"><span>Use the image as</span><select data-f="use">${uses.map(u => `<option value="${u}"${u === st.use ? ' selected' : ''}>${USE_LABEL[u]}</option>`).join('')}</select></label>
         </div>
         <label class="dial"><span>${st.use === 'animate' ? 'What happens' : st.use === 'character' ? 'Where, and from what angle' : 'What changes'} <small class="cc-opt">optional</small></span>
-          <textarea data-f="direction" rows="2" placeholder="${st.use === 'animate' ? 'e.g. she takes a sip and laughs, slow push-in. Empty = the AI picks fitting motion' : st.use === 'character' ? 'e.g. on a rooftop at sunset, low angle. The moves come from the motion video in step 3' : 'e.g. make it night, add rain. Empty = keep it as is'}">${esc(st.direction)}</textarea></label>
+          <textarea data-f="direction" rows="2" spellcheck="true" placeholder="${st.use === 'animate' ? 'e.g. she takes a sip and laughs, slow push-in. Empty = the AI picks fitting motion' : st.use === 'character' ? 'e.g. on a rooftop at sunset, low angle. The moves come from the motion video in step 3' : 'e.g. make it night, add rain. Empty = keep it as is'}">${esc(st.direction)}</textarea></label>
         <div class="dial"><span>Workflow</span>
           <div class="cc-wf">
             <select data-f="workflowId" aria-label="Workflow for this step"><option value="">— pick a workflow —</option>${flows.map(f => `<option value="${esc(f.id)}"${f.id === st.workflowId ? ' selected' : ''}${f.maps.image ? '' : ' disabled'}>${esc(f.name)}${f.maps.image ? '' : ' (no image input)'}</option>`).join('')}</select>

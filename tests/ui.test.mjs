@@ -2135,9 +2135,15 @@ esac
   });
 
   await test('render: ⚙ on a take sets its own size, seed, steps and LoRA strengths, for its renders only', async () => {
+    const mid = await js('JSON.parse(localStorage.getItem("pm.modelId"))');
+    await js(`localStorage.setItem("pm.sizes.${mid}", JSON.stringify(["1000×700"]))`); // a size typed in step ③
     await click('.take .rb-tune');
     await waitFor('!!document.querySelector(".take .rb-panel .rb-params")', 'the take\'s settings open');
     assert((await text('.take .rb-panel')).includes('same as step'), 'nothing of its own yet');
+    eq(await js('[...document.querySelectorAll(".take .rb-panel .rb-size option")].find(o => o.value === "1000×700")?.textContent'), 'Your size: 1000×700', 'your sizes are offered for a take too');
+    await choose('.take .rb-panel .rb-size', '1000×700');
+    await waitFor('document.querySelector(".take .rb-panel .rb-aspect")?.value === "10:7" && document.querySelector(".take .rb-panel .rb-size").value === "1000×700"', 'with their shape');
+    await js(`localStorage.removeItem("pm.sizes.${mid}")`);
     await js('document.querySelector(".take .rb-panel .rb-size").selectedIndex = 0; document.querySelector(".take .rb-panel .rb-size").dispatchEvent(new Event("change", { bubbles: true }))');
     const picked = await value('.take .rb-panel .rb-size');
     await click('.take .rb-panel .rb-seedmode button[data-value="fixed"]');
@@ -2161,6 +2167,12 @@ esac
     await click('.take .rb-panel .rb-same');
     await toastText('step');
     assert(!(await text('.take .rb-settings')).includes('own sampler'), 'back to step ⑤\'s');
+    // Step ④'s size, changed after the prompt was written, is what the take renders at (its ⚙ shows it).
+    const stepWas = await value('#resolution');
+    const other = await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).find(v => v !== document.querySelector("#resolution").value && v !== "__custom")');
+    await choose('#resolution', other);
+    await waitFor(`document.querySelector(".take .rb-panel .rb-size")?.value === ${JSON.stringify(other)}`, 'the take follows step ④\'s size');
+    await choose('#resolution', stepWas);
     await click('.take .rb-tune');
     await waitFor('document.querySelector(".take .rb-panel").hidden', 'folded away');
     // The render this made goes (newest first: the first tile), so the tests after count what they counted before.
@@ -3757,6 +3769,20 @@ esac
       await click('.take .rb-go');
       await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
       eq(comfy.prompts.at(-1).prompt['20'].inputs.lora_name, 'krea2/baked_in_v3.safetensors', 'the render loads the new file');
+      // A LoRA switched in step ⑤ shows in an open take's ⚙ at once; one the take changed itself stays as the take has it.
+      await click('.take .rb-tune');
+      await waitFor('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"]:not(.off)\')', 'the take shows it on');
+      await click(lora('[data-key="20"] .switch'));
+      await waitFor('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"].off\')', 'switched off in step ⑤: off in the take too');
+      await click(lora('[data-key="20"] .switch'));
+      await waitFor('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"]:not(.off)\')', 'and on again');
+      await click('.take .rb-panel .rb-lora[data-key="20"] .switch');
+      await click(lora('[data-key="20"] .switch'));
+      await click(lora('[data-key="20"] .switch'));
+      await sleep(500);
+      assert(await js('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"].off\')'), 'the take\'s own choice stays');
+      await click('.take .rb-panel .rb-same');
+      await click('.take .rb-tune');
 
       // The render remembers the file it used; replaced under the same name, the lightbox says so.
       const made = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
