@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.47.1 — The tweak chips under a take no longer appear and vanish with the mouse (everything below jumped): they
+  stay, dimmed on the takes you're not on. The toast sits above the full-screen view, so its ↶ Undo can be clicked
+  there.
 - 1.47.0 — **⬇ Download** in the Gallery's selection bar: one render as it is, several as one .zip (stored as they
   are, streamed, Zip64 past 4 GB). Fixed: the Gallery stopped at 120 cards when the end of the grid was still in
   view after a load (small cards, or right after a filter changed). In the full-screen view, a render rated out of

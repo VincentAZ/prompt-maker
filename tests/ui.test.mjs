@@ -2376,9 +2376,10 @@ esac
     await click('#galleryHome .reel-cell .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await click('[data-lb-rate="3"]');
-    await waitFor('document.querySelector(\'[data-lb-rate="3"]\').getAttribute("aria-pressed") === "false"', 'rating taken off');
+    // Rated out of ★★ & up, the only one shown leaves what's browsed, so the viewer closes.
+    await waitFor('document.querySelector("#lightbox").hidden', 'rating taken off: it left, and the viewer closed');
+    await toastText('it no longer fits your filters');
     eq((await rated()).length, 0, 'no rating left');
-    await press('Escape');
     await click('#reelRated button[data-min="2"]');
     await click('#reelKinds button[data-kind=""]');
     await click('#reelGrid .reel-cell:nth-of-type(2) .rtile');

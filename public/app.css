@@ -773,7 +773,7 @@ details.assist[open] { display: flex; flex-direction: column; gap: 10px; }
 
 /* ---------- overlays ---------- */
 .toast {
-  position: fixed; right: 24px; bottom: 24px; z-index: 60; pointer-events: none;
+  position: fixed; right: 24px; bottom: 24px; z-index: 80; pointer-events: none;
   padding: 11px 20px; border-radius: 999px; max-width: calc(100vw - 32px);
   background: var(--panel-solid); border: 1px solid var(--line-2); color: var(--text); font-weight: 650;
   box-shadow: 0 16px 50px -10px rgb(0 0 0 / 90%), 0 0 0 1px rgb(255 77 141 / 25%);
@@ -1359,9 +1359,10 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 /* On a take, the sampler details live in the ⚙ tooltip (step ⑤ shows them). */
 .rb-settings > span { display: none; }
 .rb-settings:not(:has(.rb-stale)) { display: none; }
-/* Tweak chips show on the take you're working on. */
+/* Tweak chips are lit on the take you're working on and dimmed on the others, never taken away: the take below
+   would jump up and down with the mouse. */
 @media (hover: hover) {
-  .take:not(:hover):not(:focus-within) .chips { display: none; }
+  .take:not(:hover):not(:focus-within) .chips:not([inert]) { opacity: 0.45; }
 }
 
 /* Brain filters (menu and Models → Brains): trait chips, then provider checkboxes; both wrap */
