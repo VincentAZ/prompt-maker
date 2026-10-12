@@ -2853,6 +2853,18 @@ esac
     await waitFor(`document.querySelector("#lbInfo").textContent.includes("1 of ${before3 - 1}")`, 'it left what is browsed');
     await click('#toast .toast-act');
     await waitFor(`document.querySelector("#lbInfo").textContent.includes("1 of ${before3}")`, 'Undo puts it back');
+    // Browsed on first, rated with the side panel's stars: it leaves too.
+    await press('ArrowRight');
+    await click('[data-lb-rate="2"]');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("of ${before3 - 1}")`, 'browsed to and rated out: it left');
+    await click('#toast .toast-act');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("2 of ${before3}")`, 'Undo puts it back where it was');
+    // In ⇆ Compare, the one browsed beside the pinned one leaves when its stars rate it out; the pinned one stays.
+    await click('[data-lb="compare"]');
+    await click('#lbStage [data-side="right"] [data-rate="1"]');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("of ${before3 - 1}")`, 'rated out in Compare: it left');
+    await click('#toast .toast-act');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("of ${before3}")`, 'Undo puts it back');
     await press('Escape');
     eq(await count('#reelGrid .reel-cell'), before3, 'still excellent after Undo');
     await click('#reelRated button[data-min="3"]');

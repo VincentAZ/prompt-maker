@@ -617,7 +617,7 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 
 **Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
 
-- Click the stars on a render in **Your renders** (hover a render to see them), or the buttons at the top of the lightbox's side panel, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**). Browsing with a rating filter on (say **★★★**) and you rate one lower: it leaves what you browse and the next one comes up, with **↶ Undo** in case.
+- Click the stars on a render in **Your renders** (hover a render to see them), or the buttons at the top of the lightbox's side panel, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**). Browsing with a rating filter on (say **★★★**) and you rate one lower, however you rate it (the side panel, the keys, or the stars under the one you browse in **⇆ Compare**): it leaves what you browse and the next one comes up, with **↶ Undo** in case. The one pinned on the left in Compare stays.
 - Renders you marked ♥ favorite before ratings count as ★★★ Excellent.
 
 Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Gallery and it's moved on Create too). The Gallery always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its Saved prompts card.

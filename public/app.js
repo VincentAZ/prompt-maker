@@ -9065,7 +9065,10 @@ $('#lbStage').addEventListener('click', async e => {
   if (!side || !lb.pin) return;
   const item = side === 'left' ? lb.items.find(x => x.render.id === lb.pin.render.id && x.file.file === lb.pin.file.file) : lb.items[lb.index];
   const star = e.target.closest('[data-rate]');
-  if (star && item) {
+  if (star && item && side === 'right') {
+    e.stopPropagation();
+    rateInLightbox(Number(star.dataset.rate)); // rated out of the filters, it leaves like from the side panel
+  } else if (star && item) {
     e.stopPropagation();
     const n = Number(star.dataset.rate);
     try {
@@ -9082,7 +9085,20 @@ $('#lbStage').addEventListener('click', async e => {
   }
 });
 
+// What the filters no longer let through (rated or changed while the viewer is open) leaves what you browse;
+// the one pinned in ⇆ Compare stays.
+function lbPrune() {
+  if (!lb.filtered) return;
+  const keep = x => (lb.pin && x.render.id === lb.pin.render.id) || reelMatch(x);
+  if (lb.items.every(keep)) return;
+  const cur = lb.items[lb.index];
+  const before = lb.items.slice(0, lb.index).filter(keep).length;
+  lb.items = lb.items.filter(keep);
+  lb.index = cur && keep(cur) ? lb.items.indexOf(cur) : before < lb.items.length ? before : 0;
+}
+
 function lbRender() {
+  lbPrune();
   const it = lb.items[lb.index];
   if (!it) return closeLightbox();
   const { entry, render, file } = it;
