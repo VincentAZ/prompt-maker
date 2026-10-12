@@ -244,7 +244,7 @@
           <section class="step" data-panel="create-dials">
             <header class="step-head"><span class="num">4</span><h2>Shape, size &amp; variations</h2></header>
             <div class="dials">
-              <label class="dial" id="aspectField"><span>Shape</span><select id="aspect" aria-label="Shape"></select><em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">from image</em></label>
+              <div class="dial shape-dial" id="aspectField"><span>Shape<em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">from image</em></span><select id="aspect" class="sr-only" tabindex="-1" aria-hidden="true"></select><div id="aspectTiles" class="shape-tiles" role="radiogroup" aria-label="Shape"></div></div>
               <label class="dial" id="resolutionField"><span>Size</span><select id="resolution" aria-label="Size"></select></label>
               <label class="dial" id="durationField"><span>Duration <small>seconds</small></span><input id="duration" type="number" min="1" max="20" step="1" inputmode="numeric" aria-label="Duration in seconds"></label>
               <span id="resCustom" class="res-custom" hidden><input id="resW" type="text" inputmode="numeric" maxlength="4" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="text" inputmode="numeric" maxlength="4" aria-label="Height" placeholder="Height"><button type="button" id="resUse" class="btn small primary" title="Use this size and keep it in the menu">✓ Use</button><button type="button" id="resForget" class="btn small" title="Take this size out of the menu">✕ Forget</button></span>
@@ -258,19 +258,11 @@
                   <button type="button" role="radio" data-value="4">4</button>
                 </div>
               </div>
-            <details id="writingOptions" class="more-options"><summary>More options <span>prompt writing</span></summary>
-              <div class="dial" id="lengthField"><span>Prompt length</span><div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length"><button type="button" role="radio" data-value="short">Short</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="long">Long</button></div></div>
-            <div class="dial temp" id="tempField">
-              <span title="How freely the Brain strays from the obvious (its “temperature”)">How adventurous <small id="tempWord" class="temp-word"></small> <output id="tempOut" class="temp-val" title="Temperature"></output></span>
-              <input type="range" id="temperature" min="0" max="2" step="0.05" aria-label="How adventurous the writing is (temperature)">
-              <div class="range-labels"><span>🎯 precise</span><span>🌶️ wild</span></div>
-            </div>
-            </details>
           </section>
 
-          <section class="step" id="renderStep" data-panel="create-render" data-default="collapsed">
+          <section class="step quiet" id="renderStep" data-panel="create-render" data-default="collapsed">
             <header class="step-head">
-              <span class="num">5</span><h2>Render it</h2><span class="opt">optional</span>
+              <span class="num">5</span><h2>Render settings</h2>
               <span class="head-actions"><span id="comfyState" class="comfy-state" hidden></span></span>
             </header>
             <div id="wfpEmpty" class="wfp-empty" hidden>
@@ -309,8 +301,17 @@
             </div>
           </section>
 
-          <section class="step" id="chainStep" data-panel="create-chain">
-            <header class="step-head"><span class="num">6</span><h2>Then…</h2><span class="opt">optional · add more steps</span></header>
+          <section class="step quiet" id="chainStep" data-panel="create-chain" data-default="collapsed">
+            <header class="step-head"><span class="num">6</span><h2>More creative controls</h2></header>
+            <div id="writingOptions" class="writing-options">
+              <div class="dial" id="lengthField"><span>Prompt length</span><div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length"><button type="button" role="radio" data-value="short">Short</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="long">Long</button></div></div>
+              <div class="dial temp" id="tempField">
+                <span title="How freely the Brain strays from the obvious (its “temperature”)">How adventurous <small id="tempWord" class="temp-word"></small> <output id="tempOut" class="temp-val" title="Temperature"></output></span>
+                <input type="range" id="temperature" min="0" max="2" step="0.05" aria-label="How adventurous the writing is (temperature)">
+                <div class="range-labels"><span>🎯 precise</span><span>🌶️ wild</span></div>
+              </div>
+            </div>
+            <div class="panel-head chain-head"><b>Then…</b><span class="opt">add more steps, like still → video</span></div>
             <div id="chainBox" class="chain"></div>
             <input type="file" id="chainImportInput" accept=".json,application/json" hidden>
           </section>
@@ -331,6 +332,11 @@
         </form>
 
         <section class="stage" id="stage" aria-label="Results" tabindex="-1">
+          <div class="stage-tabs" role="tablist" aria-label="Results">
+            <button type="button" role="tab" id="tabTakes" aria-selected="true" aria-controls="takesPane">✦ Prompt takes<span id="tabTakesCount" class="tab-count"></span></button>
+            <button type="button" role="tab" id="tabRenders" aria-selected="false" aria-controls="rendersPane" tabindex="-1">🎞 Your renders<span id="tabRendersCount" class="tab-count"></span></button>
+          </div>
+          <div id="takesPane" class="stage-pane" role="tabpanel" aria-labelledby="tabTakes">
           <div id="lineBox" class="line-box" role="region" aria-label="Waiting in line" hidden>
             <div class="line-head">
               <b id="lineHead"></b>
@@ -349,6 +355,8 @@
             <p>Describe what you want to see. Your <b>Brain</b> is the AI model that writes the prompt. Review it first, or make a picture when your model is ready.</p>
             <div class="try"><span>Try an idea:</span><div id="tryChips" class="try-chips"></div></div>
           </div>
+          </div>
+          <div id="rendersPane" class="stage-pane" role="tabpanel" aria-labelledby="tabRenders" hidden>
           <section id="reel" class="reel" aria-labelledby="reelTitle" hidden>
             <div class="reel-head">
               <button type="button" id="reelToggle" class="icon-btn reel-toggle" aria-controls="reelBody" aria-expanded="true">▾</button>
@@ -407,6 +415,7 @@
             </div>
             <div id="reelGrip" class="reel-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to make the box taller or shorter" tabindex="0" title="Drag to make it taller or shorter"><span></span></div>
           </section>
+          </div>
         </section>
       </div>
     </section>

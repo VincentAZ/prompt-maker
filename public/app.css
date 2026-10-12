@@ -278,6 +278,11 @@ main { padding: 24px; max-width: 2560px; margin: 0 auto; }
     margin-right: -14px; padding-right: 14px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
   }
   body:not(.narrow) .create > .stage > * { flex-shrink: 0; }
+  /* Your renders fills what's left of the stage: one scrolling grid, no box to size. */
+  body:not(.narrow) .create > .stage > #rendersPane { flex: 1 1 auto; min-height: 0; }
+  body:not(.narrow) #rendersPane .reel { flex: 1 1 auto; min-height: 0; }
+  body:not(.narrow) #rendersPane .reel-body { flex: 1 1 auto; height: auto; min-height: 0; }
+  body:not(.narrow) #rendersPane .reel-grip { display: none; }
 }
 /* Keeps a scroller as long as what's on screen (see holdFloor in app.js). */
 .scroll-floor { position: absolute; top: 0; left: 0; width: 1px; visibility: hidden; pointer-events: none; }
@@ -291,6 +296,11 @@ body.narrow .create .scroll-floor { display: none; }
 .step-head .opt { color: var(--muted); font-size: 13px; }
 .head-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .chip-btn.undo { border-color: var(--m); color: var(--text); }
+.step.quiet .step-head h2 { font-size: 15px; font-weight: 700; color: var(--text-2); }
+.step.quiet .num { width: 22px; height: 22px; font-size: 12px; color: var(--text-2); background: var(--panel-3); }
+.writing-options { display: grid; gap: 14px; }
+.chain-head { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-top: 4px; }
+.chain-head .opt { color: var(--muted); font-size: 12.5px; }
 .num { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 13px; font-weight: 800; color: #1d0a14; background: var(--grad); flex: none; }
 
 .model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; }
@@ -420,6 +430,15 @@ body.narrow .create .scroll-floor { display: none; }
 #resCustom input#resW, #resCustom input#resH { width: 0; flex: 1 1 40%; min-width: 0; padding: 10px 2px; text-align: center; font-variant-numeric: tabular-nums; }
 .res-custom button { flex: 1 1 auto; }
 .res-custom b { color: var(--muted); }
+.shape-dial { grid-column: 1 / -1; }
+.shape-tiles { display: flex; flex-wrap: wrap; gap: 6px; }
+.shape-tiles [role="radio"] { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 66px; padding: 8px 6px 6px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--panel-2); color: var(--text-2); font-size: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
+.shape-tiles [role="radio"]:hover { color: var(--text); border-color: rgb(255 255 255 / 35%); }
+.shape-tiles [role="radio"][aria-checked="true"] { border-color: var(--hot); background: rgb(255 77 141 / 12%); color: var(--text); }
+.shape-tiles b { font-size: 12px; font-weight: 700; }
+.shape-tiles small { font-size: 11px; color: var(--muted); }
+.shape-ico { display: grid; place-items: center; width: 24px; height: 24px; }
+.shape-ico::before { content: ''; display: block; width: calc(22px * min(1, var(--r))); height: calc(22px / max(1, var(--r))); border: 2px solid currentColor; border-radius: 3px; }
 .dial-note { font-style: normal; font-size: 12px; font-weight: 700; color: var(--m); margin-top: -2px; white-space: nowrap; }
 .seg { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line-2); }
 .seg button { flex: 1; padding: 7px 4px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font-weight: 650; font-size: 14px; transition: all 0.15s; }
@@ -562,6 +581,18 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 
 /* ---------- stage (results) ---------- */
 .stage { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.stage-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--line-2); align-self: flex-start; max-width: 100%; }
+.stage-tabs [role="tab"] { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px; border: 0; border-radius: 11px; background: transparent; color: var(--text-2); font-weight: 700; font-size: 14px; white-space: nowrap; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.stage-tabs [role="tab"]:hover { color: var(--text); background: rgb(255 255 255 / 5%); }
+.stage-tabs [role="tab"][aria-selected="true"] { background: var(--panel-solid); color: var(--text); box-shadow: 0 2px 10px -4px #000; }
+.stage-tabs .tab-count { min-width: 20px; padding: 1px 7px; border-radius: 999px; background: var(--panel-3); font: 700 12px var(--mono); color: var(--text-2); }
+.stage-tabs .tab-count:empty { display: none; }
+.stage-tabs [role="tab"].fresh::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--hot); } /* a render landed while you typed */
+.stage-tabs [role="tab"].busy .tab-count { color: var(--hot); }
+.stage-pane { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.stage-pane[hidden] { display: none; }
+#rendersPane #reelTitle, #rendersPane .reel-toggle { display: none; } /* the tab is the title; the box never folds there */
+#rendersPane .reel-head { padding-left: 12px; }
 .stage-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .stage-head .tag.model { background: color-mix(in srgb, var(--m) 20%, var(--panel-3)); color: var(--text); }
 .stage-head .via { color: var(--muted); font-size: 13px; flex: 1 1 0; min-width: 0; max-width: max-content; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* "rolling on X" → "written by X in 12.3s": never a new line */
@@ -1418,9 +1449,18 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .reel-empty { margin: 12px 0 0; font-size: 13.5px; color: var(--text-2); }
 .reel-empty .btn { margin-left: 6px; }
 .reel-grid { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px; }
-.reel-grid > .rtile, .reel-cell { --ar: 1; flex: 0 0 auto; width: min(100%, calc(var(--tile-h) * var(--ar))); aspect-ratio: var(--ar); }
-.reel-cell { position: relative; }
-.reel-cell > .rtile { display: block; width: 100%; height: 100%; }
+.reel-grid > .rtile, .reel-cell { --ar: 1; flex: 0 0 auto; width: min(100%, calc(var(--tile-h) * var(--ar))); }
+.reel-grid > .rtile { aspect-ratio: var(--ar); }
+.reel-cell { --cap-h: 0px; position: relative; display: flex; flex-direction: column; }
+.reel-cell > .rtile { --ar: inherit; display: block; width: 100%; height: auto; } /* (the cell's shape, not the tile's own --ar: 1) */
+/* Under every picture: the first words of its idea and the model, so it can be told apart and found again.
+   (Hover for the rest: take, seed, date.) Small tiles have no room for it. */
+.rt-under { display: none; height: var(--cap-h); flex-direction: column; justify-content: center; gap: 1px; padding: 0 4px; overflow: hidden; }
+.reel.captions .reel-cell { --cap-h: 36px; }
+.reel.captions .rt-under { display: flex; }
+.rt-under b { font-size: 12.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rt-under span { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reel-ghost .rt-under { display: none; }
 .reel-cell .rt-cap { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 1px; padding: 22px 76px 7px 9px; text-align: left; color: #fff; background: linear-gradient(to top, rgb(0 0 0 / 80%), transparent); opacity: 0; transition: opacity 0.15s; pointer-events: none; }
 .reel-cell .rt-cap b { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reel-cell .rt-cap span { font: 600 10.5px var(--mono); color: rgb(255 255 255 / 75%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1446,7 +1486,7 @@ h2.panel-toggle, legend.panel-toggle { display: flex; align-items: center; gap: 
 .reel.full .reel-body { flex: 1; height: auto; min-height: 0; }
 body.reel-full { overflow: hidden; }
 body.reel-full .view { animation: none; } /* (an animated parent would hold the box in place of the window) */
-.rate-slot { position: absolute; right: 6px; bottom: 6px; z-index: 1; }
+.rate-slot { position: absolute; right: 6px; bottom: calc(6px + var(--cap-h, 0px)); z-index: 1; }
 .rate-bar { display: flex; padding: 2px 4px; border-radius: 999px; background: rgb(10 9 16 / 72%); backdrop-filter: blur(6px); }
 .rate-bar button { width: 28px; height: 28px; padding: 0; border: 0; background: none; color: rgb(255 255 255 / 45%); font-size: 17px; line-height: 1; cursor: pointer; transition: color 0.1s, transform 0.1s; }
 .rate-bar button.on { color: var(--star); }

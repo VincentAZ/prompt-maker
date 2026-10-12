@@ -146,6 +146,8 @@ async function click(sel) {
     if (el.closest('#modelsPane') && document.querySelector('#modelsPane').hidden) return '#customizeModels';
     if (el.closest('.director') && getComputedStyle(document.querySelector('.director')).display === 'none') return '#showCreate';
     if (el.closest('.stage') && getComputedStyle(document.querySelector('.stage')).display === 'none') return '#showResults';
+    if (el.closest('#rendersPane') && document.querySelector('#rendersPane').hidden) return '#tabRenders';
+    if (el.closest('#takesPane') && document.querySelector('#takesPane').hidden) return '#tabTakes';
     const fold = el.closest('details:not([open])');
     if (fold && !el.closest('summary')) return '#' + (fold.id || (fold.id = 'test-disclosure')) + ' > summary';
     const panel = el.closest('[data-panel].collapsed');
@@ -1612,7 +1614,8 @@ esac
     assert(!(await visible('#theme')), 'step 2 folded');
     eq(await text('[data-panel="create-theme"] .panel-summary'), 'a lighthouse keeper making tea at dawn', 'shows what it holds');
     await click('[data-panel="create-dials"] .step-head h2'); // the header itself folds too
-    assert(/locked-in|balanced|creative|spicy|unhinged/.test(await text('[data-panel="create-dials"] .panel-summary')), 'dials summary says how adventurous, in a word');
+    assert(/\d take/.test(await text('[data-panel="create-dials"] .panel-summary')), 'dials summary says how many takes');
+    assert(/locked-in|balanced|creative|spicy|unhinged/.test(await text('[data-panel="create-chain"] .panel-summary')), 'step 6 (folded to start) says how adventurous, in a word');
     await goto(`${APP}/#create`);
     await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
     assert(await js('document.querySelector(\'[data-panel="create-theme"]\').classList.contains("collapsed")'), 'remembered after a reload');
@@ -2444,7 +2447,8 @@ esac
     const boat = 'document.querySelector(\'#reel .reel-cell[data-file="earlier-run_0.png"]\')';
     await waitFor(`!!${boat}`, 'a render from before start-up is in Your renders');
     assert(await js('document.querySelectorAll("#reel .reel-cell").length === document.querySelectorAll("#reelGrid > .reel-cell").length'), 'one grid, not a row per run');
-    await waitFor(`Math.abs(${boat}.getBoundingClientRect().width / ${boat}.getBoundingClientRect().height - 0.75) < 0.02`, 'its card has the picture\'s shape');
+    await waitFor(`Math.abs(${boat}.querySelector('.rtile').getBoundingClientRect().width / ${boat}.querySelector('.rtile').getBoundingClientRect().height - 0.75) < 0.02`, 'its card has the picture\'s shape');
+    assert(/paper boat/.test(await text('#reel .reel-cell[data-file="earlier-run_0.png"] .rt-under b')) && /Krea 2 RAW/.test(await text('#reel .reel-cell[data-file="earlier-run_0.png"] .rt-under span')), 'a caption under it: the idea\'s first words and the model');
     await click('#reelSession');
     await waitFor(`!${boat} && document.querySelectorAll("#reel .reel-cell").length > 0`, '🕘 This session leaves it out');
     await click('#reelSession');
@@ -2531,20 +2535,10 @@ esac
     await toastText('2 renders deleted', UNDO_WAIT);
     await waitFor(`document.querySelectorAll("#reelGrid > .reel-cell").length === ${total - 2}`, 'two fewer, after the 8 s');
 
-    // Its height stays put (renders scroll inside it); drag the bottom edge, or ↑ ↓ on it, to change it.
-    const bodyH = () => js('document.querySelector("#reelBody").offsetHeight');
-    const h0 = await bodyH();
-    await js('document.querySelector("#reelGrip").scrollIntoView({ block: "center" })');
-    const grip = await js('(() => { const r = document.querySelector("#reelGrip").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()');
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: grip.x, y: grip.y, button: 'left', buttons: 1, clickCount: 1 });
-    for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grip.x, y: grip.y + (120 * k) / 6, button: 'left', buttons: 1 });
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: grip.x, y: grip.y + 120, button: 'left', buttons: 0, clickCount: 1 });
-    await sleep(100);
-    eq(await bodyH(), h0 + 120, 'dragged 120 px taller');
-    await js('document.querySelector("#reelGrip").focus()');
-    await press('ArrowUp');
-    eq(await bodyH(), h0 + 80, '↑ makes it shorter');
-    eq(await js('Number(localStorage.getItem("pm.reelHeight"))'), h0 + 80, 'and that height is remembered');
+    // On a wide window the grid fills the stage beside the steps (renders scroll inside it): no bottom edge to drag.
+    assert(!(await visible('#reelGrip')), 'no grip on a wide window: the box fills the stage');
+    assert(await js('(() => { const b = document.querySelector("#reelBody").getBoundingClientRect(); const s = document.querySelector("#stage").getBoundingClientRect(); return Math.abs(b.bottom - s.bottom) < 24 && b.height > 200; })()'), 'the grid reaches the bottom of the stage');
+    assert(!(await visible('#reelTitle')) && (await text('#tabRenders')).includes('Your renders'), 'the tab is its title');
 
     // ⛶ Full screen fills the window; 🔍 makes pictures as big as the box. The lightbox opens over it; Esc goes back.
     await click('#reelFull');

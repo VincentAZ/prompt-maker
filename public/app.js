@@ -74,6 +74,7 @@ function setCreateWorkspace(which, { focus = false } = {}) {
   $('#view-create').classList.toggle('show-results', createWorkspace === 'results');
   $('#showCreate').setAttribute('aria-pressed', String(createWorkspace === 'create'));
   $('#showResults').setAttribute('aria-pressed', String(createWorkspace === 'results'));
+  if (createWorkspace === 'results' && state.booted) renderReel(); // (sized now that it shows, not at the next poll)
   if (focus) {
     const el = createWorkspace === 'results' ? $('#stage') : $('#theme');
     el.focus({ preventScroll: true });
@@ -82,6 +83,37 @@ function setCreateWorkspace(which, { focus = false } = {}) {
 }
 $('#showCreate').addEventListener('click', () => setCreateWorkspace('create', { focus: true }));
 $('#showResults').addEventListener('click', () => setCreateWorkspace('results', { focus: true }));
+
+// ---------- results tabs ----------
+// The takes and 🎞 Your renders share the stage, one at a time, so neither ever pushes the other down the page.
+// Writing a prompt (or opening a saved one) shows the takes; the first render of a run landing shows Your renders,
+// unless you're typing in a take (then the tab gets a dot instead).
+let stageTab = 'takes';
+const inStage = () => $('#reel').parentElement?.id === 'rendersPane';
+const typingInTakes = () => !$('#takesPane').hidden && Boolean(document.activeElement?.closest?.('#takesPane textarea, #takesPane input'));
+function showStageTab(which, { focus = false } = {}) {
+  const tab = which === 'renders' ? 'renders' : 'takes';
+  const changed = tab !== stageTab;
+  stageTab = tab;
+  $('#takesPane').hidden = tab !== 'takes';
+  $('#rendersPane').hidden = tab !== 'renders';
+  for (const [id, on] of [['#tabTakes', tab === 'takes'], ['#tabRenders', tab === 'renders']]) {
+    $(id).setAttribute('aria-selected', String(on));
+    $(id).tabIndex = on ? 0 : -1;
+  }
+  if (tab === 'renders') {
+    $('#tabRenders').classList.remove('fresh');
+    if (changed && state.booted) { renderReel(); pollRenders(); } // (sized now that it shows)
+  }
+  if (focus) $(tab === 'renders' ? '#tabRenders' : '#tabTakes').focus();
+}
+$('#tabTakes').addEventListener('click', () => showStageTab('takes'));
+$('#tabRenders').addEventListener('click', () => showStageTab('renders'));
+$('.stage-tabs').addEventListener('keydown', e => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  e.preventDefault();
+  showStageTab(e.key === 'Home' ? 'takes' : e.key === 'End' ? 'renders' : stageTab === 'takes' ? 'renders' : 'takes', { focus: true });
+});
 
 const bookmarkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>';
 const utilityIcon = name => `<svg class="utility-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${({
@@ -468,7 +500,34 @@ function fillAspect(m, value) {
     const label = ratio === 1 ? 'Square' : ratio > 2 ? 'Wide' : ratio > 1 ? 'Landscape' : 'Portrait';
     option.textContent = `${label} · ${option.textContent}`;
   }
+  renderAspectTiles();
 }
+
+// Shape as tiles: one per choice, a little frame in its proportions, the word and the ratio. The (hidden) Shape
+// menu keeps the value everything else reads; a click here sets it and says so, like picking from the menu.
+function renderAspectTiles() {
+  const sel = $('#aspect');
+  const box = $('#aspectTiles');
+  box.innerHTML = [...sel.options].map(o => {
+    const [word, rest] = o.textContent.split(' · ');
+    return `<button type="button" role="radio" aria-checked="${o.value === sel.value}" tabindex="${o.value === sel.value ? 0 : -1}" data-value="${esc(o.value)}" title="${esc(o.textContent)}"><i class="shape-ico" style="--r:${ratioOf(o.value) || 1}"></i><b>${esc(word)}</b><small>${esc(rest || o.value)}</small></button>`;
+  }).join('');
+}
+function pickAspectTile(value) {
+  const sel = $('#aspect');
+  if (!value || sel.value === value) return;
+  sel.value = value;
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  $(`#aspectTiles [data-value="${CSS.escape(value)}"]`)?.focus();
+}
+$('#aspectTiles').addEventListener('click', e => pickAspectTile(e.target.closest('[data-value]')?.dataset.value));
+$('#aspectTiles').addEventListener('keydown', e => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+  e.preventDefault();
+  const values = [...$('#aspect').options].map(o => o.value);
+  const i = values.indexOf($('#aspect').value);
+  pickAspectTile(values[(i + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : values.length - 1)) % values.length]);
+});
 
 // A typed size's own shape: the model's preset when one is the same ratio (1280×720 → 16:9), else its exact ratio
 // (1000×700 → 10:7), offered in Shape as "10:7 ✎" so the Shape always says the shape the render comes out in.
@@ -500,6 +559,7 @@ function matchImageAspect() {
   const best = own || closestAspect(m, r);
   if (!best) return null;
   $('#aspect').value = best;
+  renderAspectTiles();
   syncResolution();
   $('#aspectNote').hidden = false;
   const fromVideo = shapeIcon(m) === '🕺';
@@ -1933,6 +1993,7 @@ $('#temperature').addEventListener('input', e => setTemperature(e.target.value))
 $('#temperature').addEventListener('change', savePrefs);
 $('#aspect').addEventListener('change', () => {
   $('#aspectNote').hidden = true;
+  renderAspectTiles();
   if (state.sizeShape && $('#aspect').value !== state.sizeShape) { state.sizeShape = null; fillAspect(currentModel(), $('#aspect').value); }
   syncResolution();
   savePrefs();
@@ -2776,7 +2837,7 @@ function errorTitle(msg) {
 function showError(msg) {
   const card = $('#stageError');
   if (!msg) { card.hidden = true; card.innerHTML = ''; return; }
-  if (isView('create')) setCreateWorkspace('results');
+  if (isView('create')) { setCreateWorkspace('results'); showStageTab('takes'); }
   const [ico, title] = errorTitle(msg);
   const canStart = /reach LM Studio|stopped responding/i.test(msg);
   // ComfyUI's own words (which step, the raw error) go under Details; what to do about it comes first.
@@ -2988,7 +3049,7 @@ async function refreshSessionEntry(id) {
   forgetRender(fresh);
 }
 
-const reelOpen = () => inGallery() || !saved.get('reelClosed', false);
+const reelOpen = () => inGallery() || inStage() || !saved.get('reelClosed', false);
 const reelLive = () => (isView('create') || isView('gallery')) && !$('#reel').hidden && reelOpen();
 
 // The Gallery is Your renders, all of it: the same box (same cards, filters, order and drag) moves there while the
@@ -3138,7 +3199,7 @@ function renderReel() {
   const box = $('#reel');
   if (!box) return;
   const all = allRenders();
-  box.hidden = !all.length && !rendersNow.length && !inGallery();
+  box.hidden = !all.length && !rendersNow.length && !inGallery() && !inStage();
   if (box.hidden) return reelFullScreen(false);
   const open = reelOpen();
   const full = box.classList.contains('full');
@@ -3157,6 +3218,8 @@ function renderReel() {
     reelFilter.hidden ? `${items.length} hidden` : shown && (reelFiltered() ? `${items.length} of ${shown}` : inGallery() ? '' : `${shown} render${shown > 1 ? 's' : ''}`),
     rendering && `${rendering} rendering`,
   ].filter(Boolean).join(' · ');
+  $('#tabRendersCount').textContent = shown ? String(shown) : '';
+  $('#tabRenders').classList.toggle('busy', Boolean(rendering));
   $('#reelZoom').hidden = !open || none;
   const videosShown = items.filter(it => it.file.kind === 'video').length;
   $('#reelJoin').hidden = !open || videosShown < 2 || reelFilter.hidden;
@@ -3306,7 +3369,7 @@ function reelTile(it) {
     cell.className = 'reel-cell';
     cell.dataset.key = key;
     cell.dataset.file = it.file.file;
-    cell.innerHTML = `<button type="button" class="rtile${it.file.kind === 'audio' ? ' audio' : ''}" data-act="open" title="Click to see it big, drag to move it">${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-cap"><b></b><span></span></span></button><button type="button" class="rt-hide" data-act="hide"></button><div class="rate-slot"></div>`;
+    cell.innerHTML = `<button type="button" class="rtile${it.file.kind === 'audio' ? ' audio' : ''}" data-act="open" title="Click to see it big, drag to move it">${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-cap"><b></b><span></span></span></button><button type="button" class="rt-hide" data-act="hide"></button><div class="rate-slot"></div><div class="rt-under"><b></b><span></span></div>`;
     reelCells.set(key, cell);
   }
   cell.style.setProperty('--m', modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId }));
@@ -3322,6 +3385,8 @@ function reelTile(it) {
   const theme = it.entry.theme || 'From an image';
   const rating = ratingOf(it.render);
   $('.rt-cap b', cell).textContent = theme;
+  $('.rt-under b', cell).textContent = theme;
+  $('.rt-under span', cell).textContent = it.entry.modelName || '';
   $('.rt-cap span', cell).textContent = [it.entry.modelName, `take ${it.index + 1}`, it.render.seed != null && `seed ${it.render.seed}`, it.render.createdAt && madeOn(it.render.createdAt)].filter(Boolean).join(' · ');
   $('.rtile', cell).setAttribute('aria-label', `Open render: ${theme.slice(0, 80)}${rating ? `, rated ${RATINGS[rating].toLowerCase()}` : ''}. Shift and an arrow key move it.`);
   const hide = $('.rt-hide', cell);
@@ -3758,6 +3823,8 @@ document.addEventListener('keydown', e => {
 const REEL_MIN_H = 160;
 const reelMaxH = () => Math.max(REEL_MIN_H, innerHeight - 90);
 
+const CAPTION_H = 36; // the line under a tile: the idea's first words and the model
+const CAPTION_MIN_H = 120;
 function sizeReel() {
   const box = $('#reel');
   if (box.hidden) return;
@@ -3774,7 +3841,9 @@ function sizeReel() {
   const slider = $('#reelSize');
   // (One range everywhere, so the knob stands in the same place for the same size; pictures stop growing at what fits.)
   slider.value = saved.get('reelSize', 160);
-  box.style.setProperty('--tile-h', `${Math.min(Number(slider.value), room)}px`);
+  const captions = Math.min(Number(slider.value), room) >= CAPTION_MIN_H; // (small tiles: the caption is on hover only)
+  box.classList.toggle('captions', captions);
+  box.style.setProperty('--tile-h', `${Math.min(Number(slider.value), room - (captions ? CAPTION_H : 0))}px`);
   const grip = $('#reelGrip');
   grip.setAttribute('aria-valuemin', REEL_MIN_H);
   grip.setAttribute('aria-valuemax', reelMaxH());
@@ -4089,6 +4158,7 @@ function renderResults(entry, { totalSecs } = {}) {
   $('.stage').scrollTop = 0; // other takes: from the top (on wide screens the takes scroll on their own)
   state.cards = [];
   $('#resultsEmpty').hidden = Boolean(entry);
+  if (state.booted) showStageTab('takes');
   renderStageHead(entry, { totalSecs });
   syncNewBtn();
   if (!entry) return;
@@ -4754,11 +4824,12 @@ async function saveEdit(card, { quiet = false } = {}) {
   }
 }
 
-$('#createForm').addEventListener('submit', e => { e.preventDefault(); generate(); });
+$('#createForm').addEventListener('submit', e => { e.preventDefault(); showStageTab('takes'); generate(); });
 $('#stopBtn').addEventListener('click', stop);
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && isView('create') && !e.target.closest?.('.take, #assistant')) {
     e.preventDefault();
+    showStageTab('takes');
     generate();
   }
   if (!$('#lightbox').hidden) {
@@ -6612,6 +6683,7 @@ async function loadWorkflows() {
   renderModelList();
   renderWorkflowPicker();
   renderChainEditor();
+  refreshPanelSummaries(); // (a folded step ⑤ said "No workflow yet" until something was clicked)
   if (isView('models')) renderWorkflowList();
   state.cards.forEach(c => { if (!c.interrupted && state.entry?.id) renderZone(c); });
   checkWorkflowUpdates();
@@ -8262,6 +8334,7 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
         renderTiles(card);
         noteSession(entry);
         announce(`Render ${i + 1} of ${count} done`);
+        if (done.size === 1 && isView('create')) { if (typingInTakes()) $('#tabRenders').classList.add('fresh'); else showStageTab('renders'); }
         if (state.batchRun) {
           state.batchRun.done++;
           state.batchRun.allDone++;
@@ -8491,6 +8564,7 @@ function renderCreationProgress() {
   progress.hidden = !entry && !state.busy;
   progress.textContent = state.busy ? 'Writing prompt…' : rendering ? `Making ${kind}${jobs.length > 1 ? 's' : ''}…${count ? ` ${count} ready.` : ''}` : count ? `Ready · ${count} ${kind}${count > 1 ? 's' : ''} saved` : entry ? 'Prompt ready · review it, then make your picture or video.' : '';
   $('#resultCount').textContent = count ? String(count) : '';
+  $('#tabTakesCount').textContent = state.cards.length ? String(state.cards.length) : '';
 }
 
 function stepCardHtml(st, i, warn) {
@@ -12209,8 +12283,7 @@ const PANEL_SUMMARY = {
   'create-dials': () => [
     !$('#aspectField').hidden && $('#aspect').value, !$('#resolutionField').hidden && $('#resolution').value,
     durationValue(),
-    ...(state.manual ? [!$('#takesField').hidden && `×${state.manualRenders}`]
-      : [`${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`, `${state.variations} take${state.variations > 1 ? 's' : ''}`, adventureWord(Number($('#temperature').value))]),
+    ...(state.manual ? [!$('#takesField').hidden && `×${state.manualRenders}`] : [`${state.variations} take${state.variations > 1 ? 's' : ''}`]),
   ].filter(Boolean).join(' · '),
   'create-render': () => (workflowsFor(state.modelId).length ? `${activeFlow()?.name || ''}${$('#wfpAuto').checked && !state.manual ? ` · ⚡ auto-render${state.chain.renders > 1 ? ` ×${state.chain.renders}` : ''}` : ''}` : 'No workflow yet'),
   'create-render-adv': () => [
@@ -12222,7 +12295,10 @@ const PANEL_SUMMARY = {
     const l = pickedBatches();
     return !batches().length ? 'No batches yet' : l.length > 1 ? `🎞 All ${l.length} batches, in order` : l.length ? `🎞 ${l[0].name} · ${batchLine(l[0])}` : `Off · ${batches().length} saved`;
   },
-  'create-chain': () => (state.chain?.steps?.length ? `⛓ ${state.chain.steps.length} more step${state.chain.steps.length > 1 ? 's' : ''}` : 'No more steps'),
+  'create-chain': () => [
+    `${$('#lengthSeg .active')?.textContent.toLowerCase() || ''} length`, adventureWord(Number($('#temperature').value)),
+    state.chain?.steps?.length ? `⛓ ${state.chain.steps.length} more step${state.chain.steps.length > 1 ? 's' : ''}` : 'no more steps',
+  ].filter(Boolean).join(' · '),
   take: el => shorten(($('.prompt-text', el)?.value || '').replace(/\s+/g, ' ').trim(), 140),
   'set-services': () => state.services ? `LM Studio ${state.services.lms.running ? 'on' : 'off'} · ComfyUI ${state.services.comfy.running ? 'on' : 'off'}` : '',
   'set-lmstudio': () => $('#sUrl').value,
@@ -12372,12 +12448,14 @@ async function loadModels() {
   } catch (err) {
     showError(`Could not start: ${friendly(err)}`);
   }
-  api('/api/history').then(h => { state.history = h; sessionFromHistory(h); $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
+  const historyLoad = api('/api/history').then(h => { state.history = h; sessionFromHistory(h); $('#historyBadge').textContent = h.length; $('#historyBadge').hidden = !h.length; }).catch(() => {});
   loadAutostart();
   loadProviders();
   await Promise.all([loadLlms(), loadWorkflows(), refreshHiddenBuiltins(), loadRecipes()]);
   if (state.workflows.length) await loadComfyStatus();
   await resumeAfterReload();
+  await historyLoad;
+  showStageTab(state.entry ? 'takes' : allRenders().length ? 'renders' : 'takes');
   pollRenders();
   pollDownloads(); // model downloads keep going through a reload
   loadJobs();

@@ -23,6 +23,12 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.49.0 — **Results in two tabs on Create**: ✦ Prompt takes and 🎞 Your renders share the stage one at a time, so
+  neither pushes the other down the page (the main button shows the takes, the first render landing shows Your
+  renders unless you're typing, with a dot on the tab instead). A caption under every render: the idea's first words
+  and the model. Shape is a row of tiles with the shape drawn. Steps ⑤ **Render settings** and ⑥ **More creative
+  controls** (prompt length, how adventurous, Then…) are quiet folds, closed to start; a folded ⑤ no longer says
+  "No workflow yet" while a workflow is picked.
 - 1.48.2 — A render waiting to be deleted is greyed out wherever it shows (the full-screen view too), with the
   seconds left and ↶ Undo on it. The idea at the top of the full-screen view's side panel was a big bold heading: now small, plain, folded
   to two lines under ▸ Your idea.

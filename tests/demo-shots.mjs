@@ -24,6 +24,7 @@ const comfy = startMockComfy(COMFY, { png: await fs.readFile(path.join(ROOT, 'do
 const demo = path.join(BASE, 'demo');
 await fs.writeFile(path.join(demo, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK}`, comfyUrl: `http://127.0.0.1:${COMFY}`, llmModel: 'mock/vision-8b', checkTheme: false }));
 const pics = ['mountain-lake', 'lighthouse-storm', 'hands-dough', 'street-musician', 'surfer-sunset', 'old-man-dog', 'woman-cafe', 'woman-bicycle-rain', 'fisherman-dock'];
+const titles = ['Mountain lake', 'Lighthouse in a storm', 'Hands kneading dough', 'Street musician', 'Surfer at sunset', 'Old man and his dog', 'Woman in a café', 'Bicycle in the rain', 'Fisherman on the dock']; // plain titles, not prompts: they caption the tiles
 const history = [];
 let t = Date.now() - 3600e3 * 20;
 for (const [i, name] of pics.entries()) {
@@ -31,7 +32,7 @@ for (const [i, name] of pics.entries()) {
   const file = `${randomUUID()}_0.webp`;
   await fs.copyFile(path.join(ROOT, 'docs/renders', `${name}.webp`), path.join(demo, 'renders', file));
   const createdAt = new Date(t += 3600e3).toISOString();
-  history.unshift({ id, createdAt, favorite: false, modelId: 'krea2-raw', modelName: 'Krea 2 RAW', modelKind: 'image', theme: '', variations: [{ versions: [{ text: '', instruction: null, createdAt }], renders: [{ id: randomUUID(), seed: 0, files: [{ file, kind: 'image', name: file }], rating: [3, 2, 3, 1, 2, 3, 2, 1, 3][i], count: 1, seedMode: 'random', overrides: {}, createdAt }] }] });
+  history.unshift({ id, createdAt, favorite: false, modelId: 'krea2-raw', modelName: 'Krea 2 RAW', modelKind: 'image', theme: titles[i], variations: [{ versions: [{ text: '', instruction: null, createdAt }], renders: [{ id: randomUUID(), seed: 0, files: [{ file, kind: 'image', name: file }], rating: [3, 2, 3, 1, 2, 3, 2, 1, 3][i], count: 1, seedMode: 'random', overrides: {}, createdAt }] }] });
 }
 await fs.writeFile(path.join(demo, 'history.json'), JSON.stringify(history, null, 2));
 
