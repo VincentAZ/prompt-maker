@@ -2226,6 +2226,7 @@ esac
     await waitFor(`document.querySelector("#wfpSeed .seed-val")?.value === "${last}"`, 'kept: fixed at the last seed');
     eq(await text('.take .rb-seed'), `🔒 Seed ${last}`, 'the take shows it');
     await click('.take .rb-count button[data-value="2"]');
+    eq(await text('.take .rb-seed'), `🔒 Seeds ${last}–${last + 1}`, 'with ×2 the take says which seeds');
     await renderOnce(2);
     eq(seedOf(-2), last, 'first render uses the fixed seed');
     eq(seedOf(-1), last + 1, '×2 in one go: the second steps by one');
@@ -4621,6 +4622,25 @@ esac
     if (await visible('.dz-preview')) await click('#imageClear');
     await click('.model-card[data-id="krea2-raw"]');
     assert(await js('document.querySelector("#motionBlock").hidden'), 'other models don\'t ask for a motion video');
+  });
+
+  await test('workflows: a size picked goes past a node that only takes a shape (Krea Dual Resolution Selector) into what it fed', async () => {
+    const w = {
+      prompt: {
+        1: { class_type: 'KreaDualResolutionSelector', inputs: { aspect_ratio: '2:3', base_megapixels: 2, final_megapixels: 3, multiple: 16 } },
+        2: { class_type: 'EmptyLatentImage', inputs: { batch_size: 1, width: ['1', 0], height: ['1', 1] } },
+        3: { class_type: 'KreaTwoStageSampler', inputs: { seed: 0, latent_image: ['2', 0], final_width: ['1', 2], final_height: ['1', 3] } },
+        4: { class_type: 'CLIPTextEncode', inputs: { text: '' } },
+      },
+      mapping: { prompt: [{ node: '4', input: 'text' }], motion: [], image: null, images: [], video: null, audio: null, width: null, height: null, aspect: { node: '1', input: 'aspect_ratio' }, frames: null, seconds: null, fps: null, seed: [{ node: '3', input: 'seed' }] },
+      options: { snap: 16, frameRule: 'exact', fps: 24 },
+    };
+    const { prompt, applied } = wfLib.buildPrompt(w, { text: 'a robot', resolution: '832×1216', aspectRatio: '13:19', seed: 5 });
+    eq(`${prompt['2'].inputs.width}×${prompt['2'].inputs.height}`, '832×1216', 'the latent gets the size');
+    eq(`${prompt['3'].inputs.final_width}×${prompt['3'].inputs.final_height}`, '832×1216', 'and the sampler\'s final size');
+    eq(applied.size, '832×1216', 'and it says so');
+    const plain = wfLib.buildPrompt(w, { text: 'a robot', resolution: '720p', aspectRatio: '16:9', seed: 5 }).prompt;
+    eq(JSON.stringify(plain['2'].inputs.width), '["1",0]', 'a size that is no width × height leaves the node to do it');
   });
 
   await test('workflows: a video made in pieces gets the same prompt and size in each; extra saves are left out; a model in a subfolder is found', async () => {

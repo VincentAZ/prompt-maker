@@ -7773,7 +7773,7 @@ function renderZone(card) {
     $('.rb-tune', bar$).addEventListener('click', () => toggleTakePanel(card));
     if (card.rb.panelOpen) renderTakePanel(card);
     updateSettingsLine(card);
-    $('.rb-count', bar$).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { card.rb.count = Number(b.dataset.value); setActive($('.rb-count', bar$), card.rb.count); } });
+    $('.rb-count', bar$).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { card.rb.count = Number(b.dataset.value); setActive($('.rb-count', bar$), card.rb.count); updateSeedChip(card); } });
     $('.rb-seed', bar$).addEventListener('click', () => toggleTakePanel(card, true));
     $('.rb-go', bar$).addEventListener('click', () => startRender(card));
   }
@@ -7830,8 +7830,13 @@ function updateSeedChip(card) {
   chip.hidden = !s?.inputs;
   if (!s?.inputs) return;
   const own = card.rb.seed;
-  chip.textContent = own ? (own.mode === 'fixed' ? `🔒 Seed ${own.value}` : '🎲 Random seed') : s.mode === 'random' ? '🎲 Random seed' : `${SEED_ICON[s.mode]} Seed ${s.value}`;
-  chip.title = own ? 'This take\'s own seed (⚙). Click to change it' : 'The workflow\'s seed, as set in step 5. Click to give this take its own';
+  // A fixed seed with ×2–×4: the renders after the first take the next seeds (4242, 4243…), and the chip says so.
+  const fixed = own ? (own.mode === 'fixed' ? Number(own.value) : null) : s.mode === 'fixed' ? Number(s.value) : null;
+  const n = card.rb.count || 1;
+  const seeds = fixed != null && n > 1 ? `Seeds ${fixed}–${fixed + n - 1}` : null;
+  chip.textContent = own ? (own.mode === 'fixed' ? `🔒 ${seeds || `Seed ${own.value}`}` : '🎲 Random seed') : s.mode === 'random' ? '🎲 Random seed' : `${SEED_ICON[s.mode]} ${s.mode === 'fixed' && seeds ? seeds : `Seed ${s.value}`}`;
+  chip.title = `${own ? 'This take\'s own seed (⚙). Click to change it' : 'The workflow\'s seed, as set in step 5. Click to give this take its own'}${seeds ? `. With ×${n}, the first render uses seed ${fixed} and each next one the seed after it, so they differ` : ''}`;
+  $$('.rb-count button', card.el).forEach(b => { b.title = fixed != null && Number(b.dataset.value) > 1 ? `${b.dataset.value} renders: seed ${fixed}, then ${fixed + 1}…` : ''; });
 }
 
 // ---------- ⚙ this take's settings ----------
