@@ -2991,7 +2991,7 @@ function renderImagePicker() {
     : '';
   const shown = items.filter(it => !picker.model || it.entry.modelId === picker.model);
   $('#imgPickGrid').innerHTML = shown.length
-    ? shown.map(it => `<div class="ip-cell"><button type="button" class="ip-tile" data-n="${items.indexOf(it)}" style="--m:${modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId })}" aria-label="Use ${esc(it.entry.theme || `this ${picker.kind}`)} (${esc(it.entry.modelName)}${it.render.seed != null ? `, seed ${it.render.seed}` : ''})">${picker.kind === 'video' ? `<video src="/renders/${encodeURIComponent(it.file.file)}#t=0.1" muted preload="metadata" playsinline></video>` : `<img src="/renders/${encodeURIComponent(it.file.file)}" alt="" loading="lazy">`}<span class="ip-cap">${esc(it.entry.theme || 'From an image')}</span></button>${picker.kind === 'video' ? '' : `<button type="button" class="ip-zoom" data-n="${items.indexOf(it)}" title="Look closer" aria-label="Look closer at ${esc(it.entry.theme || 'this image')}">🔍</button>`}</div>`).join('')
+    ? shown.map(it => `<div class="ip-cell"><button type="button" class="ip-tile" data-n="${items.indexOf(it)}" style="--m:${modelColor(modelById(it.entry.modelId) || { id: it.entry.modelId })}" aria-label="Use ${esc(it.entry.theme || `this ${picker.kind}`)} (${esc(it.entry.modelName)}${it.render.seed != null ? `, seed ${it.render.seed}` : ''})">${picker.kind === 'video' ? `<video src="/renders/${encodeURIComponent(it.file.file)}#t=0.1" muted preload="metadata" playsinline></video>` : `<img src="/renders/${encodeURIComponent(it.file.file)}" alt="" loading="lazy">`}<span class="ip-cap">${esc(it.entry.theme || 'From an image')}</span>${ratingOf(it.render) ? `<span class="ip-stars" aria-label="${esc(RATINGS[ratingOf(it.render)])}">${starsOf(ratingOf(it.render))}</span>` : ''}</button>${picker.kind === 'video' ? '' : `<button type="button" class="ip-zoom" data-n="${items.indexOf(it)}" title="Look closer" aria-label="Look closer at ${esc(it.entry.theme || 'this image')}">🔍</button>`}</div>`).join('')
     : `<p class="muted">${items.length ? `No ${picker.kind}s from this model yet.` : `No ${picker.kind} renders yet. Render a take with ComfyUI and it shows up here.`}</p>`;
 }
 
@@ -3508,7 +3508,7 @@ function renderReel() {
   for (const k of reelPicked) if (!showing.has(k) || going.has(k.split('/')[0])) reelPicked.delete(k);
   drawReelPicked();
   // Only cards that changed place move (a card put back in the page plays its arrival again).
-  const cards = [...jobs.map(reelJobTile), ...items.slice(0, reelShown).map(reelTile)];
+  const cards = [...jobs.flatMap(reelJobTiles), ...items.slice(0, reelShown).map(reelTile)];
   const grid = $('#reelGrid');
   cards.forEach((c, i) => { if (grid.children[i] !== c) grid.insertBefore(c, grid.children[i] || null); });
   while (grid.children.length > cards.length) grid.lastElementChild.remove();
@@ -3519,7 +3519,7 @@ function renderReel() {
   // Cards of renders that are gone (deleted, moved away) are let go.
   const keys = new Set(all.map(reelKey));
   for (const k of reelCells.keys()) if (!keys.has(k)) reelCells.delete(k);
-  for (const id of reelJobs.keys()) if (!rendersNow.some(j => j.runId === id)) reelJobs.delete(id);
+  for (const id of reelJobs.keys()) if (!rendersNow.some(j => j.runId === id.split(':')[0])) reelJobs.delete(id);
   sizeReel();
 }
 
@@ -3617,6 +3617,27 @@ function reelJobTile(j) {
     if (img.getAttribute('src') !== j.preview) img.src = j.preview;
   }
   return t;
+}
+
+// A run's place in the grid: its live tile, then one waiting tile per render still to come, so a render that lands
+// fills the last of them and nothing else moves (the same as on the take).
+function reelJobTiles(j) {
+  const out = [reelJobTile(j)];
+  for (let k = 1; k < Math.max(1, j.count - j.finished); k++) {
+    const id = `${j.runId}:${k}`;
+    let t = reelJobs.get(id);
+    if (!t) {
+      t = document.createElement('div');
+      t.className = 'reel-job rtile running waiting';
+      t.innerHTML = '<div class="rt-shimmer"></div><div class="rt-live"><span class="rt-pct">⏳</span><span class="rt-stage">Waiting its turn</span></div>';
+      reelJobs.set(id, t);
+    }
+    t.style.setProperty('--m', modelColor(modelById(j.modelId) || { id: j.modelId }));
+    const m = /^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/.exec(j.aspectRatio || '');
+    t.style.setProperty('--ar', m ? m[1] / m[2] : 1);
+    out.push(t);
+  }
+  return out;
 }
 
 function reelTile(it) {
@@ -5360,6 +5381,7 @@ function renderHistory() {
     const allRenders = e.variations.flatMap(v => v.renders || []);
     const renderCount = allRenders.length;
     const cover = allRenders.length ? allRenders.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)).files[0] : null;
+    const videoPrompt = cover?.kind === 'video' || (e.modelKind || m?.kind) === 'video';
     return `${heading}
       <article class="hcard${e.id === state.entry?.id ? ' current' : ''}${going.has(e.id) ? ' going' : ''}${historyPick.keys.has(e.id) ? ' picked' : ''}" data-id="${esc(e.id)}" data-key="${esc(e.id)}" style="--m:${color}"${e.id === state.entry?.id ? ' aria-current="true" title="Open on Create"' : ''}>
         <div class="hthumb hopen${cover || e.imageFile ? '' : ' textonly'}" data-act="open" aria-hidden="true">
@@ -8456,7 +8478,13 @@ function renderTiles(card) {
     cell.append(b, go);
     return cell;
   });
-  box.replaceChildren(...card.running.values(), ...(card.pending && !card.running.size ? [card.waitTile ??= pendingTile()] : []), ...tiles);
+  // The run's tiles stay where they started: a render that lands takes the place of its own running tile, so the
+  // others don't move (×4: four tiles, each filled in as its render comes). Older renders follow, newest first.
+  const slots = card.slots || [];
+  const slotOf = card.slotOf || new Map();
+  const inRun = slots.map(k => card.running.get(k) || items.flatMap((it, n) => (slotOf.get(it.render.id) === k ? [tiles[n]] : [])));
+  const rest = tiles.filter((t, n) => !slots.includes(slotOf.get(items[n].render.id)));
+  box.replaceChildren(...inRun.flat(), ...(card.pending && !card.running.size ? [card.waitTile ??= pendingTile()] : []), ...rest);
   box.hidden = !box.children.length;
 }
 
@@ -8591,6 +8619,7 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
   const keys = Array.from({ length: count }, () => `run-${++runTileSeq}`); // (a time would repeat when several start at once)
   const tiles = keys.map(() => runningTile(card));
   keys.forEach((k, i) => card.running.set(k, tiles[i]));
+  card.slots = keys; // the run's tiles in order: a render that lands takes its own tile's place (see renderTiles)
   card.pending = false;
   // Newest first: the tile for render 1 goes first.
   renderTiles(card);
@@ -8646,12 +8675,15 @@ async function followRender(card, entry, { count, flowName, quiet = false, runId
       } else if (ev.type === 'render') {
         done.add(i);
         card.running.delete(keys[i]);
+        (card.slotOf ??= new Map()).set(ev.render.id, keys[i]);
+        const job = rendersNow.find(j => j.runId === run.runId); // Your renders fills the tile right now, not at the next poll
+        if (job) job.finished = Math.max(job.finished, done.size);
         const v = entry.variations?.[card.index];
         if (v && !(v.renders || []).some(r => r.id === ev.render.id)) (v.renders ||= []).push(ev.render); // (replayed when picked up again)
         renderTiles(card);
         noteSession(entry);
         announce(`Render ${i + 1} of ${count} done`);
-        if (done.size === 1 && isView('create')) { if (typingInTakes()) $('#tabRenders').classList.add('fresh'); else showStageTab('renders'); }
+        if (done.size === 1 && isView('create') && stageTab !== 'renders') $('#tabRenders').classList.add('fresh'); // (never switches the tab by itself: the dot says a render landed)
         if (state.batchRun) {
           state.batchRun.done++;
           state.batchRun.allDone++;

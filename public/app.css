@@ -1368,6 +1368,7 @@ dialog.img-pick { width: min(980px, calc(100vw - 32px)); }
 .ip-cell { position: relative; }
 .ip-zoom { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: rgb(0 0 0 / 60%); cursor: zoom-in; opacity: 0; transition: opacity 0.15s; }
 .ip-cell:hover .ip-zoom, .ip-zoom:focus-visible { opacity: 1; }
+.ip-stars { position: absolute; left: 6px; top: 6px; padding: 2px 7px; border-radius: 999px; background: rgb(0 0 0 / 60%); color: var(--warn, #f0b45b); font-size: 12px; letter-spacing: 1px; pointer-events: none; }
 @media (hover: none) { .ip-zoom { opacity: 1; } }
 .img-pick .modal-body > .ip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--ip-size, 140px), 100%), 1fr)); gap: 10px; padding: 12px 22px 22px; max-height: 70vh; overflow-y: auto; }
 .ip-tile { position: relative; display: block; width: 100%; aspect-ratio: 1; padding: 0; overflow: hidden; border-radius: 12px; border: 2px solid transparent; background: #07060b; }

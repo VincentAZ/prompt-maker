@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.57.2 — A render landing never switches Create to Your renders by itself (the tab gets a dot); a render that
+  lands takes the place of its own running tile, on the take and in Your renders (×4: four tiles from the start),
+  so nothing slides over mid-run. Pick from your Library shows each picture's stars.
 - 1.57.1 — At the Safer and Nothing-stays levels (ComfyUI in memory), a kept render's copy stayed in ComfyUI's
   output folder, whole job inside: keep-time cleanup looked only at the install folder's output (or the one set),
   never at the one ComfyUI was started with. It looks there first now, as deletes already did.

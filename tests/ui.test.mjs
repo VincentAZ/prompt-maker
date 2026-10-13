@@ -2771,6 +2771,26 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('render: a render that lands takes its own tile\'s place (take and Your renders) and never switches the tab', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'SLOWRENDER two lanterns on a jetty');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile.running").length === 2', 'two running tiles, in order');
+    const order = () => js('(() => { const r = document.querySelector(".take .rtile.running"); const box = r?.parentElement; return box ? [...box.children].map(c => c.classList.contains("running") ? "run" : "done").join(",") : "none"; })()');
+    await waitFor('(() => { const r = document.querySelector(".take .rtile.running"); const box = r?.parentElement; return box && box.children.length === 2 && !box.children[0].classList.contains("running") && box.children[1].classList.contains("running"); })()', 'the first render landed in the first tile, the second still runs in the second', 15000).catch(async e => { throw new Error(`${e.message} (tiles: ${await order()})`); });
+    assert(await js('document.querySelector("#rendersPane").hidden'), 'the takes stay on screen: no switch to Your renders');
+    assert(await js('document.querySelector("#tabRenders").classList.contains("fresh")'), 'the Your renders tab gets a dot instead');
+    const grid = await js('[...document.querySelector("#reelGrid").children].slice(0, 3).map(c => c.classList.contains("reel-job") ? (c.classList.contains("waiting") ? "wait" : "live") : "card").join(",")');
+    assert(/^live,card/.test(grid), `Your renders: the run keeps its first tile, the landed render fills the second: ${grid}`);
+    await waitFor('!document.querySelector(".take .rtile.running")', 'both done', 20000);
+    eq(await order(), 'none', '(no running tiles left)');
+    eq(await count('.take .rtile'), 2, 'two renders on the take');
+  });
+
   await test('render: delete from the lightbox', async () => {
     const before = await count('.take .rtile img');
     await click('.take .rtile');
@@ -4751,6 +4771,11 @@ esac
     await click('#dzGallery');
     await waitFor('document.querySelector("#imgPick").open && document.querySelectorAll("#imgPickGrid .ip-tile").length > 0', 'the picker shows your image renders');
     const all = await count('#imgPickGrid .ip-tile');
+    // Each picture's stars, so you can pick a good one: as many tiles with stars as there are rated pictures.
+    const ratedPics = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => (r.files || []).filter(f => f.kind === 'image' && (r.rating || (r.favorite ? 3 : 0)) > 0).map(f => (r.rating || 3))))).sort();
+    if ((await count('#imgPickModels button')) <= 1 || (await js(`document.querySelector(${q('#imgPickModels button[data-id=""]')})?.getAttribute("aria-pressed")`)) === 'true') {
+      eq(JSON.stringify((await js('[...document.querySelectorAll("#imgPickGrid .ip-stars")].map(s => s.textContent.length).sort()'))), JSON.stringify(ratedPics), 'the stars of every rated picture show on its tile');
+    }
     if ((await count('#imgPickModels button')) > 1) {
       await click('#imgPickModels button[data-id="ltx-2-3"]');
       assert((await count('#imgPickGrid .ip-tile')) < all, 'filter by model');
