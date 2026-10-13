@@ -48,6 +48,7 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 - **Pictures and videos from a few words, or from your own photo.** Choose a task—make or edit a picture, keep the same person, animate a picture, or copy movement—then describe your idea. The app picks a suitable model and remembers your choices. Write up to four prompt variations, or make images and videos directly. Every detail you typed stays in the prompt: each take is checked against your idea, and what the Brain changed is put back.
 - **The same person in every shot.** Drop in one picture of someone and they stay themselves in new places, new light, new scenes. See below.
+- **Make it again from a file.** Drop in a picture or video made with ComfyUI, A1111, Forge or Civitai and **📜 Recipe inside** puts its prompt, model, LoRAs, seed and size back in one click.
 - **Clips that carry on.** Turn any still into a video, then the next scene from the next still, and join them. The film above is four of these.
 - **A voice for your character.** Describe a voice in plain words, hear it, keep it by name and have your character say a line in a video.
 - **Your best work stays findable.** Library holds your artwork: rate it with stars, choose **Select → two pictures → Compare 2**, or pick any number and **⬇ Download** them in one .zip. **Saved prompts** holds the automatically saved prompts and sessions: bookmark the ones you want to reuse. **Hide from Create** tidies your workspace while keeping the artwork in Library.

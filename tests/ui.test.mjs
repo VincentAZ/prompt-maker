@@ -381,6 +381,13 @@ esac
     p.on('close', code => resolve(code === 0 ? fs.readFile(clipFile).catch(() => null) : null));
   });
   const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot, mp4: await clip });
+  // The clip with a recipe in its metadata, the way ComfyUI's Save Video keeps it.
+  const recipeClip = !(await clip) ? null : await new Promise(resolve => {
+    const out = path.join(tmp, 'with-recipe.mp4');
+    const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-i', clipFile, '-c', 'copy', '-movflags', 'use_metadata_tags', '-metadata', `prompt=${JSON.stringify({ 3: { class_type: 'KSampler', inputs: { seed: 7, steps: 20, cfg: 1, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['6', 0], latent_image: ['5', 0] } }, 4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'mock_model.safetensors' } }, 5: { class_type: 'EmptyLatentImage', inputs: { width: 160, height: 96, batch_size: 1 } }, 6: { class_type: 'CLIPTextEncode', inputs: { text: 'waves rolling in, video recipe', clip: ['4', 1] } }, 9: { class_type: 'SaveVideo', inputs: { video: ['3', 0] } } })}`, out], { stdio: 'ignore' });
+    p.on('error', () => resolve(null));
+    p.on('close', code => resolve(code === 0 ? fs.readFile(out) : null));
+  });
   await comfy.start();
   const apiWorkflowFile = path.join(tmp, 'mock-api.json');
   const turbo = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
@@ -392,6 +399,32 @@ esac
   withLora['20'] = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'krea2/baked_in.safetensors', strength_model: 0.5, model: ['4', 0] }, _meta: { title: 'Baked-in LoRA' } };
   withLora['3'].inputs.model = ['20', 0];
   await fs.writeFile(loraWorkflowFile, JSON.stringify(withLora));
+  // A picture and a video that keep their recipe (ComfyUI's graph, as it ran), made with a workflow of their own: its
+  // LoRA at another strength, one LoRA added and one ComfyUI doesn't have, a seed, steps and a size. And A1111's text.
+  const recipeFlow = structuredClone(withLora);
+  recipeFlow['21'] = { ...recipeFlow['20'], _meta: { title: 'Its own LoRA' } };
+  delete recipeFlow['20'];
+  recipeFlow['3'].inputs.model = ['21', 0];
+  const recipeGraph = structuredClone(recipeFlow);
+  recipeGraph['21'].inputs.strength_model = 0.3;
+  recipeGraph.pm_lora_1 = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'krea2/film_grain.safetensors', strength_model: 0.6, model: ['4', 0] } };
+  recipeGraph.pm_lora_2 = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'krea2/gone.safetensors', strength_model: 1, model: ['pm_lora_1', 0] } };
+  recipeGraph['21'].inputs.model = ['pm_lora_2', 0];
+  Object.assign(recipeGraph['3'].inputs, { seed: 4242, steps: 33 });
+  Object.assign(recipeGraph['5'].inputs, { width: 640, height: 960 });
+  recipeGraph['6'].inputs.text = 'a lighthouse at dusk, recipe test';
+  const recipePng = path.join(tmp, 'with-recipe.png');
+  const plainPng = makePng(64, 96);
+  await fs.writeFile(recipePng, Buffer.concat([plainPng.subarray(0, -12), pngChunk('tEXt', Buffer.from(`prompt\0${JSON.stringify(recipeGraph)}`)), plainPng.subarray(-12)]));
+  const a1111Text = 'a red kite over the dunes, <lora:krea2/film_grain:0.7>\nNegative prompt: blurry\nSteps: 28, Sampler: DPM++ 2M, Schedule type: Karras, CFG scale: 6, Seed: 99, Size: 832x1216, Model: sd_xl_base_1.0';
+  // EXIF as A1111 writes it in a JPEG: UserComment, "UNICODE" then UTF-16 big-endian, in the Exif IFD.
+  const comment = Buffer.concat([Buffer.from('UNICODE\0'), Buffer.from(a1111Text, 'utf16le').swap16()]);
+  const tiff = Buffer.alloc(44);
+  tiff.write('II*\0', 0, 'latin1'); tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(1, 8); tiff.writeUInt16LE(0x8769, 10); tiff.writeUInt16LE(4, 12); tiff.writeUInt32LE(1, 14); tiff.writeUInt32LE(26, 18);
+  tiff.writeUInt16LE(1, 26); tiff.writeUInt16LE(0x9286, 28); tiff.writeUInt16LE(7, 30); tiff.writeUInt32LE(comment.length, 32); tiff.writeUInt32LE(44, 36);
+  const exif = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff, comment]);
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 255]), exif]);
   // An image-to-video style workflow: same graph plus a Load Image node for the first frame.
   const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
   // A workflow with two picture slots: the picture to edit and an optional "Another picture" (with a helper of its own).
@@ -5906,6 +5939,103 @@ esac
     await click('.model-card[data-id="krea2-raw"]');
     assert(!(await visible('#sheetBlock')), 'other models have no sheet');
     await click('#imageClear');
+  });
+
+  await test('recipe: a picture or video that keeps how it was made puts its model, workflow, LoRAs, seed, settings, prompt and size back', async () => {
+    if (await visible('#lightbox')) await press('Escape');
+    await click('.tabs button[data-view="create"]');
+    if (await js('document.querySelector("#manualMode").checked')) await click('.manual-row .switch');
+    // (Set up the way Add workflow does it: read the file, then save it on Krea 2 RAW.)
+    await js(`(async () => {
+      const prep = await fetch('/api/workflows/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ json: ${JSON.stringify(recipeFlow)}, name: 'Recipe flow' }) }).then(r => r.json());
+      await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...prep, modelId: 'krea2-raw' }) });
+    })()`);
+    await reloadPage();
+    await click('.model-card[data-id="ltx-2-3"]'); // somewhere else: the recipe brings you back
+
+    // A ComfyUI picture, picked with browse: it comes in as a picture, with "Recipe inside" on it.
+    await setFiles('#imageInput', [recipePng]);
+    await waitFor('!document.querySelector("#dzRecipe").hidden', 'Recipe inside');
+    await js('document.querySelector("#dropzone").scrollIntoView({ block: "center" })');
+    await shot('recipe-inside');
+    await click('#dzRecipe');
+    await waitFor('document.querySelector("#recipeDlg").open', 'How this was made');
+    const said = await text('#recipeList');
+    for (const part of ['Krea 2 RAW', 'Recipe flow', 'the one it was made with', 'baked_in ×0.3', 'film_grain ×0.6', 'gone ×1 (not in your ComfyUI: left out)', '4242', '640×960', '33 steps', '6 words']) assert(said.includes(part), `the dialog says "${part}": ${said}`);
+    assert(!(await visible('#recipeMotion')), 'a picture is never offered as a motion video');
+    await shot('recipe-dialog');
+    await click('#recipeUse');
+    await toastText('Recipe in');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Recipe flow', 'its model and workflow are picked');
+    eq(await count('#wfpLoras .lora-row'), 2, 'its own LoRA and the added one, not the missing one');
+    eq(await value('#wfpLoras [data-key="21"] .lr-num'), '0.30', 'the workflow\'s LoRA at the recipe\'s strength');
+    assert((await text('#wfpLoras [data-key="+0"]')).includes('film_grain'), 'the added LoRA is film_grain');
+    eq(await value('#wfpLoras [data-key="+0"] .lr-num'), '0.60', 'at its strength');
+    const flow = await js('fetch("/api/workflows").then(r => r.json()).then(l => l.find(w => w.name === "Recipe flow"))');
+    eq(`${flow.seed.mode}|${flow.seed.value}`, 'fixed|4242', 'its seed, kept fixed');
+    eq(flow.overrides['3|steps'], 33, 'its steps');
+    assert(await js('document.querySelector("#manualMode").checked'), 'its prompt goes in word for word');
+    eq(await value('#theme'), 'a lighthouse at dusk, recipe test', 'its prompt');
+    eq(await value('#resolution'), '640×960', 'its size');
+    assert(!(await visible('.dz-preview')), 'the picture only carried the recipe: it is taken out');
+
+    // A1111's JPEG, dropped on the page: no workflow of yours loads its model, so only the prompt and size come in.
+    await click('.manual-row .switch');
+    await js(`(async () => {
+      const c = Object.assign(document.createElement('canvas'), { width: 64, height: 96 });
+      c.getContext('2d').fillRect(0, 0, 64, 96);
+      const jpg = new Uint8Array(await (await new Promise(r => c.toBlob(r, 'image/jpeg'))).arrayBuffer());
+      const app1 = Uint8Array.from(atob(${q(app1.toString('base64'))}), ch => ch.charCodeAt(0));
+      const file = new File([jpg.subarray(0, 2), app1, jpg.subarray(2)], 'kite.jpg', { type: 'image/jpeg' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    })()`);
+    await waitFor('!document.querySelector("#dzRecipe").hidden', 'Recipe inside the JPEG');
+    await click('#dzRecipe');
+    await waitFor('document.querySelector("#recipeDlg").open', 'its dialog');
+    const kite = await text('#recipeList');
+    assert(kite.includes('sd_xl_base_1.0 isn\'t loaded by any of your workflows'), `says its model isn't yours: ${kite}`);
+    assert(kite.includes('832×1216') && kite.includes('6 words'), `its size and prompt: ${kite}`);
+    assert((await text('#recipeIntro')).includes('A1111'), 'says what made it');
+    await click('#recipeUse');
+    await toastText('Recipe in');
+    eq(await value('#theme'), 'a red kite over the dunes', 'its prompt, the LoRA tag taken out');
+    eq(await value('#resolution'), '832×1216', 'its size');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Recipe flow', 'the workflow stays');
+    eq(await count('#wfpLoras .lora-row'), 2, 'its LoRA isn\'t put on a model it wasn\'t made for');
+
+    // A video with its recipe, dropped alone: you choose, nothing switches to the motion-video model by itself.
+    if (recipeClip) {
+      await js(`(() => {
+        const file = new File([Uint8Array.from(atob(${q(recipeClip.toString('base64'))}), ch => ch.charCodeAt(0))], 'waves.mp4', { type: 'video/mp4' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      })()`);
+      await waitFor('document.querySelector("#recipeDlg").open', 'the video\'s recipe');
+      assert((await text('#recipeIntro')).includes('This video'), 'says it is a video');
+      assert(await visible('#recipeMotion'), 'or use it as a motion video');
+      assert((await text('#recipeList')).includes('5 words'), 'its prompt');
+      await click('#recipeDlg button[value="no"]');
+      await waitFor('!document.querySelector("#recipeDlg").open', 'closed');
+      eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'still on Krea 2 RAW');
+    }
+
+    // It began from a picture of yours still in the data folder: that picture comes back; another one's name doesn't.
+    const back = await js(`(async () => {
+      const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+      const c = Object.assign(document.createElement('canvas'), { width: 8, height: 8 });
+      const { file } = await post('/api/images', { image: c.toDataURL('image/png') });
+      const graph = name => ({ ...${JSON.stringify(recipeGraph)}, 11: { class_type: 'LoadImage', inputs: { image: name }, _meta: { title: 'First frame' } } });
+      const mine = await post('/api/recipe', { prompt: graph('prompt-maker_' + file) });
+      const theirs = await post('/api/recipe', { prompt: graph('prompt-maker_../settings.json') });
+      // A render that names only its model (how Prompt Maker's own renders leave): no recipe.
+      const named = await fetch('/api/recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: { 4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'mock_model.safetensors' } } } }) });
+      return [mine.picture === file, mine.takesPicture, String(theirs.picture), named.status].join();
+    })()`);
+    eq(back, 'true,true,null,422', 'its own picture back, nothing from outside the images folder; a model\'s name alone isn\'t a recipe');
+    await click('.manual-row .switch');
   });
 
   await test('no console errors', async () => {

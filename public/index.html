@@ -126,6 +126,7 @@
               <div class="dz-preview" hidden>
                 <button type="button" id="imageZoom" class="dz-zoom" title="See it full screen" aria-label="See your image full screen"><img id="imagePreview" alt="Your image"></button>
                 <span id="dzSource" class="dz-source" hidden></span>
+                <button type="button" id="dzRecipe" class="btn small glass dz-recipe" title="This picture keeps how it was made: its prompt, model, LoRAs and settings" hidden>📜 Recipe inside</button>
                 <div class="dz-actions">
                   <button type="button" id="imageGallery" class="btn small glass" title="Pick another image from your Library">Library</button>
                   <button type="button" id="imageReplace" class="btn small glass">Replace</button>
@@ -976,6 +977,18 @@
       <div class="row cloud-dialog-acts">
         <button value="no" class="btn">Keep it</button>
         <button value="ok" class="btn danger">Delete it</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="recipeDlg" class="modal cloud-dialog recipe-dlg" aria-labelledby="recipeDlgTitle">
+    <form method="dialog" class="modal-body">
+      <h2 id="recipeDlgTitle">📜 How this was made</h2>
+      <p id="recipeIntro" class="muted"></p>
+      <ul id="recipeList" class="recipe-list"></ul>
+      <div class="row cloud-dialog-acts">
+        <button value="no" class="btn">Not now</button>
+        <button value="motion" id="recipeMotion" class="btn" hidden>Use as a motion video</button>
+        <button value="ok" id="recipeUse" class="btn primary">Use this recipe</button>
       </div>
     </form>
   </dialog>

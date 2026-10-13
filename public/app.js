@@ -1,10 +1,12 @@
 // Prompt Maker front end. Plain ES module, no dependencies, talks only to the local server.
+import { readRecipe } from './recipe.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 // Smooth scrolling, unless the user asked their system for reduced motion.
 const scrollMode = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
+let recipeOffer = null; // a dropped picture's recipe: { recipe, dataUrl } (see "a dropped file's recipe")
 const state = {
   models: [],
   settings: null,
@@ -2194,7 +2196,11 @@ async function imageFromRender(file) {
 
 async function loadImageFile(file, { source = null, quiet = false } = {}) {
   if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
-  if (currentModel()?.noImage) return toast(`${currentModel().name} works from your words alone and takes no picture. Pick another target model to use one.`, true);
+  if (currentModel()?.noImage) {
+    const recipe = !source && !quiet && await recipeOf(file); // a picture that keeps its recipe still comes in that way
+    if (recipe) return askRecipe(recipe);
+    return toast(`${currentModel().name} works from your words alone and takes no picture. Pick another target model to use one.`, true);
+  }
   let dataUrl;
   let ratio;
   try {
@@ -2203,6 +2209,7 @@ async function loadImageFile(file, { source = null, quiet = false } = {}) {
     return toast('Could not read that image.', true);
   }
   setImage({ dataUrl, ratio, source });
+  if (!quiet && !source) offerRecipe(file, dataUrl);
   const aspect = matchImageAspect();
   // Store it right away: survives reloads and never has to be re-sent.
   try {
@@ -2222,6 +2229,7 @@ async function loadImageFile(file, { source = null, quiet = false } = {}) {
 function setImage(img) {
   if (img !== state.image && !(img && state.image && ((img.file && img.file === state.image.file) || (img.dataUrl && img.dataUrl === state.image.dataUrl)))) setSheet(''); // another person
   state.image = img;
+  if (recipeOffer && img?.dataUrl !== recipeOffer.dataUrl) { recipeOffer = null; $('#dzRecipe').hidden = true; }
   const preview = $('#imagePreview');
   if (img) {
     preview.onload = () => {
@@ -2372,14 +2380,143 @@ document.addEventListener('drop', e => {
   const files = [...e.dataTransfer.files];
   const file = files.find(f => f.type.startsWith('image/'));
   const video = files.find(isVideoFile);
-  if (video) loadVideoFile(video); // a motion video (character animation)
+  if (video) takeVideo(video, { alone: !file });
   if (file) loadImageFile(file); else if (!video) toast('🤔 That file isn\'t an image.', true);
 });
+// A dropped video: a motion video (character animation), unless it keeps its recipe and comes alone: then you choose.
+async function takeVideo(video, { alone }) {
+  const recipe = alone && await recipeOf(video);
+  if (!recipe) return loadVideoFile(video);
+  if (await askRecipe(recipe, { video: true }) === 'motion') loadVideoFile(video);
+}
 document.addEventListener('paste', e => {
   if (!isView('create') || e.target.closest?.('#assistant')) return; // (the assistant takes its own)
   const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'));
   if (file) { e.preventDefault(); loadImageFile(file); }
 });
+
+// ---------- create: a dropped file's recipe ----------
+// A picture or video made with ComfyUI (or A1111, Forge, Civitai) keeps how it was made inside the file: its prompt,
+// model, LoRAs, seed, size and sampler settings. Dropped in, its picture shows "📜 Recipe inside"; one click puts it
+// all back: the model and workflow that load the same model file, the prompt word for word, the LoRAs at their
+// strengths, the seed fixed, the size and length. A video with a recipe asks first (it may be a motion video instead).
+
+
+// The recipe in a file, matched to your workflows (null: it has none).
+async function recipeOf(file) {
+  const raw = await readRecipe(file).catch(() => null);
+  if (!raw) return null;
+  try {
+    return await api('/api/recipe', { method: 'POST', body: { ...raw, current: activeFlow()?.id || null } });
+  } catch (err) {
+    if (err.status !== 422) toast(`Couldn't read how it was made: ${err.message}`, true);
+    return null;
+  }
+}
+
+// The picture just added: its chip when it has a recipe.
+async function offerRecipe(file, dataUrl) {
+  const recipe = await recipeOf(file);
+  if (!recipe || state.image?.dataUrl !== dataUrl) return; // (another picture since)
+  recipeOffer = { recipe, dataUrl };
+  $('#dzRecipe').hidden = false;
+}
+$('#dzRecipe').addEventListener('click', e => {
+  e.stopPropagation();
+  if (recipeOffer) askRecipe(recipeOffer.recipe, { picture: recipeOffer.dataUrl });
+});
+
+const loraLabel = l => `${l.name.split('/').pop().replace(/\.(safetensors|ckpt|pt|pth|bin)$/i, '')} ×${l.strength}`;
+
+// "How this was made": what the file says, what of it comes in. Resolves to "ok", "motion" or "no".
+async function askRecipe(r, { picture = null, video = false } = {}) {
+  const dlg = $('#recipeDlg');
+  if (dlg.open) return 'no'; // (one at a time: a second drop while it's open waits for you)
+  const rows = [];
+  const row = (label, html) => rows.push(`<li><b>${label}</b><span>${html}</span></li>`);
+  const made = r.from === 'a1111' ? 'A1111, Forge or Civitai' : 'ComfyUI';
+  $('#recipeIntro').textContent = `This ${video ? 'video' : 'picture'} was made with ${made} and keeps how: use it to make it again, or to start from there.`;
+  if (r.match) row('Model', `${esc(r.match.modelName)} <span class="muted">· workflow ${esc(r.match.workflowName)}${r.match.same ? ', the one it was made with' : ''}</span>`);
+  else row('Model', `<span class="warn">⚠️ ${esc(r.model || 'Its model')} isn't loaded by any of your workflows. Its prompt and size still come in; its LoRAs and settings need that model, so they stay out.</span>`);
+  if (r.prompt) {
+    const words = r.prompt.trim().split(/\s+/).length;
+    row('Prompt', `<details><summary>${words} words, used word for word</summary><p>${esc(r.prompt)}</p></details>`);
+  }
+  if (r.loras.length) {
+    const html = r.loras.map(l => (l.have === false ? `<span class="warn">${esc(loraLabel(l))} (not in your ComfyUI: left out)</span>` : esc(loraLabel(l)))).join(', ');
+    row('LoRAs', r.match ? html : `<span class="muted">${html}</span>`);
+  } else if (r.match) row('LoRAs', '<span class="muted">None</span>');
+  if (r.seed != null && r.match) row('Seed', `${r.seed} <span class="muted">· kept, so it comes out the same</span>`);
+  if (r.size) row('Size', `${r.size.width}×${r.size.height}`);
+  else if (r.aspect) row('Shape', esc(r.aspect));
+  if (r.seconds && r.video) row('Duration', `${Math.round(r.seconds)} s`);
+  if (r.match) {
+    const o = Object.values(r.match.overrides);
+    const s = r.settings;
+    const said = [s.steps != null && `${s.steps} steps`, s.cfg != null && `CFG ${s.cfg}`, s.sampler, s.scheduler].filter(Boolean).join(' · ');
+    if (said) row('Settings', `${esc(said)}${o.length ? '' : ' <span class="muted">· as your workflow has them</span>'}`);
+  }
+  if (r.picture) row('Picture', `<img class="recipe-pic" src="/images/${encodeURIComponent(r.picture)}" alt="The picture it began from"> <span class="muted">the one it began from</span>`);
+  else if (r.takesPicture) row('Picture', '<span class="muted">It began from a picture the file doesn\'t hold: add that one in step ① if you have it.</span>');
+  $('#recipeList').innerHTML = rows.join('');
+  $('#recipeMotion').hidden = !(video && state.models.some(m => m.motionVideo));
+  dlg.returnValue = '';
+  dlg.showModal();
+  $('#recipeUse').focus();
+  await new Promise(resolve => dlg.addEventListener('close', resolve, { once: true }));
+  if (dlg.returnValue === 'ok') await useRecipe(r, { picture });
+  return dlg.returnValue || 'no';
+}
+
+// Puts a recipe on Create: model and workflow, LoRAs, seed, sampler settings, the prompt, size and length.
+async function useRecipe(r, { picture = null } = {}) {
+  if (state.busy || state.chainActive || state.batchRun) return toast('Hold on, something is still cooking. Stop it or wait.', true);
+  showView('create');
+  const m = r.match;
+  if (m) {
+    if (state.modelId !== m.modelId) selectModel(m.modelId);
+    pickWorkflow(m.modelId, m.workflowId);
+    const flow = state.workflows.find(f => f.id === m.workflowId);
+    if (flow?.loras) await useLoras(flow, r.loras.filter(l => l.have !== false)); // (saved before the settings, which save the same workflow)
+    const patch = { ...(m.same ? Object.fromEntries(Object.keys(flow?.overrides || {}).map(k => [k, null])) : {}), ...m.overrides };
+    if (flow && Object.keys(patch).length) {
+      await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: { overridePatch: patch } }).catch(err => toast(`Couldn't set its sampler settings: ${err.message}`, true));
+      await loadWorkflows();
+    }
+    const fresh = state.workflows.find(f => f.id === m.workflowId);
+    if (fresh && r.seed != null && fresh.seed?.inputs) await setSeed(fresh, { mode: 'fixed', value: r.seed });
+    renderWorkflowPicker();
+  }
+  const model = currentModel();
+  if (model && r.size) {
+    const size = `${r.size.width}×${r.size.height}`;
+    if (!sizeChoices(model, sizeShapeOf(model, size) || $('#aspect').value).includes(size)) keepOwnSize(size);
+    useSizeShape(size);
+  } else if (model && r.aspect && model.aspectRatios.includes(r.aspect) && $('#aspect').value !== r.aspect) {
+    $('#aspect').value = r.aspect;
+    $('#aspect').dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (r.seconds && r.video && !$('#durationField').hidden) {
+    $('#duration').value = clampInt(Math.round(r.seconds), 1, 20);
+    $('#duration').dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  savePrefs();
+  // The dropped picture only carried the recipe: it isn't the picture to start from.
+  if (picture && state.image?.dataUrl === picture) setImage(null);
+  if (r.picture && !currentModel()?.noImage) setImage({ file: r.picture }); // the one it began from, from your data folder
+  recipeOffer = null;
+  $('#dzRecipe').hidden = true;
+  if (r.prompt) {
+    if (!state.manual) setManual(true);
+    replaceTheme(r.prompt, { focus: false });
+  }
+  const loras = m ? r.loras.filter(l => l.have !== false).length : 0;
+  const left = m ? r.loras.filter(l => l.have === false).length : 0;
+  const said = [m ? m.modelName : null, loras ? `${loras} LoRA${loras > 1 ? 's' : ''}` : null, m && r.seed != null ? `seed ${r.seed}` : null, r.prompt ? 'its prompt' : null].filter(Boolean).join(', ');
+  const msg = `📜 Recipe in: ${said}.${left ? ` ${left} LoRA${left > 1 ? 's' : ''} not in your ComfyUI left out.` : ''}${m ? '' : ' Its model isn\'t one of yours, so it uses the one picked.'}`;
+  toast(msg, Boolean(left || !m));
+  announce(msg);
+}
 
 // ---------- create: your inputs, the motion video (character animation) ----------
 // For models like Wan Animate 2: the character in the image performs the moves of this video. ComfyUI gets the file
@@ -5396,6 +5533,25 @@ function forgetEntry(entry) {
   });
 }
 
+// Turns a workflow's LoRAs to exactly these ([{ name, strength, key?, added? }]): its own on at their strength or off,
+// the ones it doesn't have added. (Reopening a saved prompt, using a dropped file's recipe.) Resolves once saved.
+function useLoras(flow, list) {
+  const used = list.map(x => ({ ...x }));
+  const take = fits => { const i = used.findIndex(fits); return i >= 0 ? used.splice(i, 1)[0] : null; };
+  const l = flow.loras;
+  for (const n of l.nodes) {
+    // The workflow's own LoRA by its node (it may have loaded another file in its place), else by its file.
+    const u = take(x => x.key === n.key) || take(x => !x.added && !x.key && x.name === n.name);
+    const next = { on: Boolean(u), strength: u ? u.strength : n.strength, ...(u && u.name !== n.name ? { name: u.name } : {}) };
+    if (next.on === n.on && next.strength === n.strength && !next.name) delete l.tweaks[n.key]; else l.tweaks[n.key] = next;
+  }
+  for (const a of l.added) { const u = take(x => x.name === a.name); a.on = Boolean(u); if (u) a.strength = u.strength; }
+  for (const u of used) l.added.push({ name: u.name, strength: u.strength, on: true });
+  saveLoras(flow, { now: true });
+  renderLoraPanel();
+  return loraSaving;
+}
+
 // The rest of what an entry was made with: its batch, and how its newest render was made (workflow,
 // renders per take, seed, LoRAs, sampler settings), so the next Generate or Render works the same way.
 async function restoreSetup(entry) {
@@ -5414,19 +5570,7 @@ async function restoreSetup(entry) {
   const first = take.slice(-count).find(x => x.workflowId === flow.id) || r;
   if (first.seed != null && flow.seed?.inputs) await setSeed(flow, { mode: r.seedMode || flow.seed.mode, value: first.seed });
   if (flow.loras) {
-    const used = (r.loras || []).map(x => ({ ...x }));
-    const take = fits => { const i = used.findIndex(fits); return i >= 0 ? used.splice(i, 1)[0] : null; };
-    const l = flow.loras;
-    for (const n of l.nodes) {
-      // The workflow's own LoRA by its node (it may have loaded another file in its place), else by its file.
-      const u = take(x => x.key === n.key) || take(x => !x.added && !x.key && x.name === n.name);
-      const next = { on: Boolean(u), strength: u ? u.strength : n.strength, ...(u && u.name !== n.name ? { name: u.name } : {}) };
-      if (next.on === n.on && next.strength === n.strength && !next.name) delete l.tweaks[n.key]; else l.tweaks[n.key] = next;
-    }
-    for (const a of l.added) { const u = take(x => x.name === a.name); a.on = Boolean(u); if (u) a.strength = u.strength; }
-    for (const u of used) l.added.push({ name: u.name, strength: u.strength, on: true });
-    saveLoras(flow, { now: true });
-    renderLoraPanel();
+    useLoras(flow, r.loras || []);
     loraFilesChanged(r.loras).then(names => { if (names.length) toast(`⚠️ ${loraChangedNote(names)}`, true); });
   }
   if (r.overrides && JSON.stringify(r.overrides) !== JSON.stringify(flow.overrides || {})) {

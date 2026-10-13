@@ -25,6 +25,7 @@ import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cl
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
+import * as recipe from './lib/recipe.js';
 import { planZip, writeZip } from './lib/zip.js';
 import { convertUiWorkflow, isApiWorkflow, isUiWorkflow, pruneToOutputs, ConvertError } from './lib/comfy-convert.js';
 
@@ -952,6 +953,56 @@ async function prepareWorkflow(body) {
     warnings: [...fixed, ...analysis.warnings, ...(missing.length ? [models.describeMissing(missing).replace('in step ⑤', 'in step ⑤ once this is saved')] : [])],
     producesVideo: analysis.producesVideo,
     nodes: Object.keys(prompt).length,
+  };
+}
+
+// A dropped picture's or video's recipe (read from the file in the browser, see lib/recipe.js), with the workflow of
+// yours it matches and whether ComfyUI has each LoRA. current: the workflow in use now (it wins a tie).
+async function readRecipe(body) {
+  const settings = await store.getSettings();
+  const info = await comfy.objectInfo(settings.comfyUrl).catch(() => null);
+  let graph = body.prompt && isApiWorkflow(body.prompt) ? body.prompt : null;
+  if (!graph && body.workflow && isUiWorkflow(body.workflow)) {
+    if (!info) throw store.httpError(400, 'This file keeps its recipe as a ComfyUI workflow, which ComfyUI needs to be running to read. Start ComfyUI and drop it again.');
+    try { graph = pruneToOutputs(convertUiWorkflow(body.workflow, info), info); } catch { graph = null; }
+  }
+  const r = graph ? recipe.fromGraph(graph, info) : typeof body.parameters === 'string' && body.parameters.trim() ? recipe.fromParameters(body.parameters) : null;
+  // (Only the model's name, as Prompt Maker's own renders keep it, isn't a recipe: nothing to make it again with.)
+  if (!r || (!r.prompt.trim() && !r.loras.length)) throw store.httpError(422, 'There\'s no recipe in this file that Prompt Maker can read.');
+  const all = (await Promise.all((await wf.listWorkflows()).map(w => wf.getWorkflow(w.id)))).filter(Boolean);
+  const match = recipe.matchWorkflow(r, all, typeof body.current === 'string' ? body.current : null);
+  const model = match && await store.getModel(match.workflow.modelId).catch(() => null);
+  const have = info ? await comfy.loraList(settings.comfyUrl).catch(() => null) : null;
+  const loras = r.loras.map(l => {
+    const found = recipe.findLora(l.name, have);
+    return { name: found || l.name, strength: l.strength, ...(match?.same && l.key ? { key: l.key } : {}), have: found === undefined ? null : Boolean(found) };
+  });
+  return {
+    from: r.from,
+    prompt: r.prompt,
+    model: r.model ? r.model.split('/').pop() : null,
+    loras,
+    seed: r.seed,
+    size: r.size,
+    aspect: r.aspect,
+    seconds: r.seconds,
+    settings: r.settings,
+    takesPicture: r.takesPicture,
+    // The picture it started from, when it was one of yours and is still in the data folder.
+    picture: await (async () => {
+      const own = r.pictures[0]?.startsWith('prompt-maker_') ? r.pictures[0].slice('prompt-maker_'.length) : null;
+      if (!own || !/^[\w-]+(\.[\w-]+)*$/.test(own)) return null;
+      return fs.access(path.join(store.IMAGES_DIR, own)).then(() => own, () => null);
+    })(),
+    video: r.video,
+    match: match && model ? {
+      workflowId: match.workflow.id,
+      workflowName: match.workflow.name,
+      modelId: model.id,
+      modelName: model.name,
+      same: match.same,
+      overrides: recipe.settingsFor(r, match.workflow, match.same),
+    } : null,
   };
 }
 
@@ -2073,6 +2124,7 @@ async function route(req, res) {
     const settings = await store.getSettings();
     return sendJson(res, 200, await comfy.savedWorkflows(settings.comfyUrl));
   }
+  if (p === '/api/recipe' && m === 'POST') return sendJson(res, 200, await readRecipe(await readBody(req)));
   if (p === '/api/workflows' && m === 'GET') {
     await addStarters();
     return sendJson(res, 200, await wf.listWorkflows());

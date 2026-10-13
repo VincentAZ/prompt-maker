@@ -23,6 +23,11 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.56.0 — **Make it again from a file**: a picture or video made with ComfyUI, A1111, Forge or Civitai keeps how
+  it was made; dropped (or browsed) in, **📜 Recipe inside** puts back its model and workflow (the one loading the
+  same model file), prompt word for word, LoRAs at their strengths (missing ones named, left out), fixed seed, size,
+  length, sampler settings, and the picture it began from when it's still in the data folder. A video asks first
+  (recipe or motion video). Read in the browser (public/recipe.js), matched on the server (lib/recipe.js).
 - 1.53.1 — The idea box's text was 19 px: it's 15 px now, and 13.5 px with your own prompt (a whole prompt, often
   long), so much more of it shows at once.
 - 1.53.0 — Renders survive a restart of Prompt Maker: each render sent to ComfyUI is noted (ids and settings, no prompt
