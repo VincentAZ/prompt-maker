@@ -648,7 +648,7 @@ While a chain runs, the **Pipeline** tab on Create shows every step. Click any t
 
 Every render also appears in the **Library** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Library and it's moved on Create too). The Library always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its Saved prompts card.
 
-- After you close the lightbox, the Library rings the render you looked at last, so you don't lose your place.
+- After you close the lightbox, the Library rings the render you looked at last (a glowing ring around its tile), so you don't lose your place.
 - **Select → choose two → Compare 2** opens those exact pictures or videos side by side. **Select → choose any → ⬇ Download** saves them all at once (several as one .zip). **Pin on the left** changes the comparison reference; stars rate the work. **Open original prompt** returns to its saved prompt on Create.
 - Search stays visible on narrow screens. **Filters** opens the remaining choices and counts active filters; **Clear filters** resets them and the search together.
 - Video tiles show a still of their first frame and play while you hover them. Closing the viewer leaves the tile you opened it from still, even with the pointer on it, until you move to another one: a video you closed or paused doesn't seem to play on.

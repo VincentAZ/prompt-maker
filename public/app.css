@@ -1628,7 +1628,8 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 /* Hidden from Your renders, still in the Gallery: marked, with 👁 Show to bring it back. */
 .reel.in-gallery .reel-cell.is-hidden .rt-hide { display: block; opacity: 1; }
 .reel.in-gallery .reel-cell.is-hidden .rtile > img, .reel.in-gallery .reel-cell.is-hidden .rtile > video { opacity: 0.45; }
-.reel-cell.seen > .rtile { box-shadow: 0 0 0 2px var(--m); }
+/* The render you looked at last in the viewer: a ring with a glow, so it stands out among many small tiles. */
+.reel-cell.seen > .rtile { box-shadow: 0 0 0 2px var(--panel, #fff), 0 0 0 5px var(--m), 0 0 18px 4px color-mix(in srgb, var(--m) 55%, transparent); }
 .reel-ghost { rotate: 0deg; transition: none; }
 .reel-cell[hidden] { display: none; }
 /* Several picked (Ctrl-click, Shift-click, or a box dragged across them): Your renders, the Gallery, History */

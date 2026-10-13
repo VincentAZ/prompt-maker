@@ -26,6 +26,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 - 1.57.2 — A render landing never switches Create to Your renders by itself (the tab gets a dot); a render that
   lands takes the place of its own running tile, on the take and in Your renders (×4: four tiles from the start),
   so nothing slides over mid-run. Pick from your Library shows each picture's stars.
+- 1.57.5 — The Library's ring around the render you looked at last was a 2 px line, lost among a few hundred small
+  tiles: it's a wider ring with a glow now.
 - 1.57.4 — Studio polish (ChatGPT): a draggable divider between Create's form and results, a resizable prompt box
   in the render viewer (both remembered in the browser), Saved-prompts cards with a ▶ Video badge and a two-column
   action row. Three UI tests still expect the old viewer and Settings layout (the stars before the prompt box, the
