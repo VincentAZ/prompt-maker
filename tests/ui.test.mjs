@@ -4469,6 +4469,11 @@ esac
     const f = entry.variations[0].renders[0].files[0];
     assert(await fileExists(path.join(dataDir, 'renders', f.file)), 'the copy is in the data folder');
     assert(/^krea-2-raw_a-red-fox-in-fresh-snow_\d+_[0-9a-f]{6}\.png$/.test(f.name), `the copy has its own name: ${f.name}`);
+    const kept = await fs.readFile(path.join(dataDir, 'renders', f.file));
+    assert(!kept.includes('MOCK JOB WORDS') && !kept.includes('CLIPTextEncode'), 'the copy keeps none of ComfyUI\'s job');
+    assert(kept.includes('workflow\0{"extra":{"airs":["urn:air:krea2:checkpoint:civitai:2726029@3147780"]}}'), 'only the model that made it, as Civitai reads it');
+    assert(kept.includes('prompt\0{"1":{"inputs":{"unet_name":"krea2_raw_fp8_scaled.safetensors","weight_dtype":"default"},"class_type":"UNETLoader","_meta":{"title":"Load Diffusion Model"}}}'), 'and the node that loads it');
+    assert(f.tagsCleaned && f.original?.sha1, 'ComfyUI\'s checksum is noted');
     await fs.writeFile(path.join(comfyRoot, 'output', 'not-ours.png'), 'keep me');
     await click('.tabs button[data-view="settings"]');
     await click('#sComfyCleanup');

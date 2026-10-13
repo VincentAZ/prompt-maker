@@ -20,6 +20,7 @@ import * as comfySetup from './lib/comfy-setup.js';
 import * as update from './lib/update.js';
 import { spawn } from 'node:child_process';
 import * as videotools from './lib/videotools.js';
+import * as rendermeta from './lib/rendermeta.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
@@ -1027,14 +1028,57 @@ const VIDEO_MIME = Object.fromEntries(Object.entries(store.VIDEO_TYPES).map(([mi
 // And the names its renders got when a take was made from one of them (animating a still uploads the still).
 const renderUploads = renders => renders.flatMap(r => (r.files || []).map(f => `prompt-maker_${f.file}`));
 
-// Size and checksum of each of these renders' files, read before they're deleted, to find ComfyUI's own copies.
+// Size and checksum of each of these renders' files as ComfyUI saved them, to find ComfyUI's own copies: noted when
+// the render was kept (Prompt Maker's copy then lost ComfyUI's job, see cleanedTags), else read before it's deleted.
+async function fingerprint(f) {
+  if (f.original) return f.original;
+  const buf = await fs.readFile(path.join(store.RENDERS_DIR, f.file)).catch(() => null);
+  return buf && comfy.fingerprint(buf);
+}
 async function fingerprints(renders) {
   const out = [];
   for (const f of renders.flatMap(r => r.files || [])) {
-    const buf = await fs.readFile(path.join(store.RENDERS_DIR, f.file)).catch(() => null);
-    if (buf) out.push(comfy.fingerprint(buf));
+    const fp = await fingerprint(f);
+    if (fp) out.push(fp);
   }
   return out;
+}
+
+// A render file keeps only the name of the model that made it: ComfyUI writes its whole job, prompt and all, into
+// what it saves (see lib/rendermeta.js). { tagsCleaned: true } for the file's record once that's done.
+async function cleanedTags(file, model) {
+  try {
+    return (await rendermeta.cleanRender(path.join(store.RENDERS_DIR, file), model)) ? { tagsCleaned: true } : {};
+  } catch (err) {
+    console.warn(`Couldn't take ComfyUI's job out of ${file}: ${err.message}`);
+    return {};
+  }
+}
+
+// Renders kept before that (and any it couldn't do then, say before ffmpeg was installed): done once, at start-up,
+// in the background. ComfyUI's checksum of each is noted first, so deleting one still finds ComfyUI's copy.
+async function cleanOldRenders() {
+  let done = 0;
+  for (const entry of await store.listHistory()) {
+    const todo = entry.variations.flatMap((v, vi) => (v.renders || []).flatMap(r => (r.files || []).filter(f => !f.tagsCleaned).map(f => ({ vi, id: r.id, f }))));
+    if (!todo.length) continue;
+    const marks = [];
+    for (const { vi, id, f } of todo) {
+      const original = await fingerprint(f);
+      if (!original) continue; // the file is gone or elsewhere
+      const tags = await cleanedTags(f.file, entry.modelName);
+      if (tags.tagsCleaned) marks.push({ vi, id, file: f.file, original });
+    }
+    if (!marks.length) continue;
+    await store.updateHistory(entry.id, e => {
+      for (const m of marks) {
+        const f = e.variations[m.vi]?.renders?.find(r => r.id === m.id)?.files?.find(x => x.file === m.file);
+        if (f) Object.assign(f, { original: f.original || m.original, tagsCleaned: true });
+      }
+    }).catch(() => {});
+    done += marks.length;
+  }
+  return done;
 }
 
 // Drops copies with the same content as a render an entry still has (the same seed and prompt rendered twice):
@@ -1043,6 +1087,10 @@ async function notShared(copies, rest) {
   const sizes = new Set(copies.map(c => c.size));
   const shared = new Set();
   for (const f of rest.flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files || [])))) {
+    if (f.original) {
+      if (sizes.has(f.original.size)) shared.add(f.original.sha1);
+      continue;
+    }
     const file = path.join(store.RENDERS_DIR, f.file);
     if (!sizes.has((await fs.stat(file).catch(() => null))?.size)) continue;
     const buf = await fs.readFile(file).catch(() => null);
@@ -1481,15 +1529,16 @@ async function keepRender({ settings, base, entry, index, versionIndex, text, wo
       if (parts) {
         stream.send({ type: 'node', i, title: 'Joining the pieces into one video…' });
         const file = await joinPieces(base, settings, parts, outputs, `${id}_0`, entry.video?.file ? store.videoPath(entry.video.file) : null, copies);
-        files.push({ file, kind: 'video', name: `${named}${path.extname(file)}` });
+        files.push({ file, kind: 'video', name: `${named}${path.extname(file)}`, ...(await cleanedTags(file, entry.modelName)) });
       }
       for (const [n, out] of (parts ? [] : outputs).entries()) {
         const ext = (path.extname(out.filename).toLowerCase() || '.bin').replace(/[^.\w]/g, '');
         const file = `${id}_${n}${ext}`;
         const buf = await comfy.download(base, out);
         await fs.writeFile(path.join(store.RENDERS_DIR, file), buf);
-        copies.push(comfy.fingerprint(buf));
-        files.push({ file, kind: out.kind, name: `${named}${outputs.length > 1 ? `-${n + 1}` : ''}${ext}` });
+        const original = comfy.fingerprint(buf);
+        copies.push(original);
+        files.push({ file, kind: out.kind, name: `${named}${outputs.length > 1 ? `-${n + 1}` : ''}${ext}`, original, ...(await cleanedTags(file, entry.modelName)) });
         if (settings.comfyCleanup) {
           await comfy.removeOutput(base, out, buf.length, settings.comfyOutputDir).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
         }
@@ -2276,6 +2325,7 @@ if (swept) console.log(`Removed ${swept} file${swept === 1 ? '' : 's'} no Histor
 const leftovers = await sweepComfyLeftovers().catch(err => (console.warn(`Couldn't tidy ComfyUI's input folder: ${err.message}`), 0));
 if (leftovers) console.log(`Removed ${leftovers} file${leftovers === 1 ? '' : 's'} Prompt Maker had put in ComfyUI's input folder that nothing uses anymore.`);
 await wf.initWorkflows();
+cleanOldRenders().then(n => n && console.log(`Took ComfyUI's job (your prompt, file names, settings) out of ${n} render${n === 1 ? '' : 's'}: each says only which model made it now.`), err => console.warn(`Couldn't clean the older renders: ${err.message}`));
 
 const server = http.createServer(async (req, res) => {
   try {

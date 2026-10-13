@@ -23,6 +23,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.57.0 — The studio redesign and the render-file tags (1.55.0, 1.55.1) are one branch again: videos and
+  pictures made from here on say which model made them, the way Civitai reads it, and nothing else.
 - 1.56.1 — Closing the viewer on a video no longer looks like the video playing on: the tile it was opened from
   (Library, takes) started its silent hover preview the moment the viewer went, with the pointer still on it; it now
   keeps its still until you move to another tile. The viewer's video is also stopped and unloaded before it goes.
@@ -31,6 +33,11 @@ and what "done" looks like; done items move to the bottom with the version that 
   same model file), prompt word for word, LoRAs at their strengths (missing ones named, left out), fixed seed, size,
   length, sampler settings, and the picture it began from when it's still in the data folder. A video asks first
   (recipe or motion video). Read in the browser (public/recipe.js), matched on the server (lib/recipe.js).
+- 1.55.1 — The model a render says is written the way Civitai reads it (its AIR in `workflow`, the loader node in
+  `prompt`), for every built-in model but Wan Animate 2.
+- 1.55.0 — A render file says which model made it and nothing else: ComfyUI wrote its whole job (the prompt word for
+  word, file names, seed) into every PNG and video, and Prompt Maker's copy kept it. Older renders are cleaned once at
+  start-up. Saved prompts cards show their whole picture, smaller, and a title starts where look-alike prompts differ.
 - 1.53.1 — The idea box's text was 19 px: it's 15 px now, and 13.5 px with your own prompt (a whole prompt, often
   long), so much more of it shows at once.
 - 1.53.0 — Renders survive a restart of Prompt Maker: each render sent to ComfyUI is noted (ids and settings, no prompt
