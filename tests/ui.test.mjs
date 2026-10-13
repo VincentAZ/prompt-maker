@@ -2732,6 +2732,45 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('viewer: a closed video stops; the tile it was opened from keeps its still until you move to another', async () => {
+    const mp4 = path.join(dataDir, 'renders', 'still-test_0.mp4');
+    const made = await new Promise(resolve => {
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=12', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '3', '-pix_fmt', 'yuv420p', '-shortest', mp4], { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', code => resolve(code === 0));
+    });
+    if (!made) return console.log('      (skipped: ffmpeg not installed)');
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8').catch(() => '[]'));
+    const stamp = new Date().toISOString();
+    all.unshift({ id: 'still-test', createdAt: stamp, favorite: false, modelId: 'ltx-2-3', modelName: 'LTX 2.3', modelKind: 'video', theme: 'a still pattern', variations: [{ versions: [{ text: 'a still pattern', createdAt: stamp }], renders: [{ id: 'still-r', versionIndex: 0, text: 'a still pattern', workflowName: 'Mock', files: [{ file: 'still-test_0.mp4', kind: 'video', name: 'still.mp4' }], createdAt: stamp }] }] });
+    await fs.writeFile(file, JSON.stringify(all));
+    await click('.tabs button[data-view="gallery"]');
+    const tile = '#reelGrid video[src*="still-test_0.mp4"]';
+    await waitFor(`!!document.querySelector('${tile}')`, 'the tile', 15000);
+    const lbVid = '#lbStage video[src*="still-test_0.mp4"]';
+    await click(`#reelGrid .reel-cell:has(video[src*="still-test_0.mp4"]) .rtile`); // (the pointer stays on the tile)
+    await waitFor(`document.querySelector('${lbVid}')?.paused === false`, 'the viewer plays it', 10000);
+    await js(`window.__closed = document.querySelector('${lbVid}')`);
+    await press('Escape');
+    await sleep(500);
+    eq(await js('window.__closed.paused && !window.__closed.isConnected && !window.__closed.getAttribute("src")'), true, 'the closed video is stopped and let go');
+    eq(await js(`document.querySelector('${tile}').paused`), true, 'the tile under the pointer stays still');
+    const r = await js(`(r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2, out: r.bottom + 40 }))(document.querySelector('${tile}').getBoundingClientRect())`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x + 3, y: r.y + 3 }); // a nudge on the same tile
+    await sleep(300);
+    eq(await js(`document.querySelector('${tile}').paused`), true, 'and still after a nudge');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.out });
+    await sleep(100);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y });
+    await waitFor(`document.querySelector('${tile}').paused === false`, 'back on the tile, it plays as hovering does', 3000);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.out });
+    await js('delete window.__closed');
+    await fs.writeFile(file, JSON.stringify(all.slice(1)));
+    await fs.rm(mp4);
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('render: delete from the lightbox', async () => {
     const before = await count('.take .rtile img');
     await click('.take .rtile');

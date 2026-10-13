@@ -8130,12 +8130,30 @@ new MutationObserver(list => list.forEach(m => m.addedNodes.forEach(n => {
 }))).observe(document.body, { childList: true, subtree: true });
 
 // Hovering a video tile plays it; leaving goes back to its still (load() shows the poster again and frees the player).
-document.addEventListener('mouseover', e => { const v = e.target.closest?.('[data-hover]') || e.target.closest?.('.rtile, .gtile, .hthumb')?.querySelector('video[data-hover]'); if (v) v.play().catch(() => {}); });
+// hoverHold: a tile whose preview waits until you leave it. The viewer closes over the tile you opened it from, with
+// the pointer still on it, and the preview starting by itself right then looked like the video you'd just closed
+// (or paused) playing on. The pointer's place is kept for that (elementFromPoint once the viewer is gone).
+let hoverHold = null;
+const pointer = { x: -1, y: -1 };
+for (const type of ['mousemove', 'mousedown']) document.addEventListener(type, e => { pointer.x = e.clientX; pointer.y = e.clientY; }, { passive: true });
+document.addEventListener('mouseover', e => {
+  const v = e.target.closest?.('[data-hover]') || e.target.closest?.('.rtile, .gtile, .hthumb')?.querySelector('video[data-hover]');
+  if (v && hoverHold?.contains(v)) return;
+  hoverHold = null;
+  if (v) v.play().catch(() => {});
+});
 document.addEventListener('mouseout', e => {
   const host = e.target.closest?.('.rtile, .gtile, .hthumb');
   const v = host?.querySelector('video[data-hover]');
-  if (v && !host.contains(e.relatedTarget)) { v.pause(); if (v.poster) v.load(); }
+  if (v && !host.contains(e.relatedTarget)) { v.pause(); if (v.poster) v.load(); if (host === hoverHold) hoverHold = null; }
 });
+// The tile under the pointer keeps its still until you move to another one (see hoverHold).
+function holdHoverUnderPointer() {
+  const host = document.elementFromPoint(pointer.x, pointer.y)?.closest?.('.rtile, .gtile, .hthumb') || null;
+  const v = host?.querySelector('video[data-hover]');
+  if (v) { v.pause(); if (v.poster) v.load(); }
+  hoverHold = host;
+}
 
 function renderZone(card) {
   const zone = $('.render-zone', card.el);
@@ -9466,8 +9484,11 @@ function openLightbox(items, index, { fromGallery = false, compare = false, filt
 }
 
 function closeLightbox() {
+  // Stopped and unloaded before it goes, so no browser keeps a player going out of sight, and the file is let go.
+  for (const m of $$('video, audio', $('#lbStage'))) { m.pause(); m.removeAttribute('src'); m.load(); }
   $('#lightbox').hidden = true;
   $('#lbStage').innerHTML = '';
+  holdHoverUnderPointer();
   lb.shown = '';
   lb.pin = null;
   document.body.style.overflow = '';

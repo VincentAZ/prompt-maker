@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.56.1 — Closing the viewer on a video no longer looks like the video playing on: the tile it was opened from
+  (Library, takes) started its silent hover preview the moment the viewer went, with the pointer still on it; it now
+  keeps its still until you move to another tile. The viewer's video is also stopped and unloaded before it goes.
 - 1.56.0 — **Make it again from a file**: a picture or video made with ComfyUI, A1111, Forge or Civitai keeps how
   it was made; dropped (or browsed) in, **📜 Recipe inside** puts back its model and workflow (the one loading the
   same model file), prompt word for word, LoRAs at their strengths (missing ones named, left out), fixed seed, size,
