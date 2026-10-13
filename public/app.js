@@ -1882,7 +1882,7 @@ function renderRole() {
   $('#dropzone').setAttribute('aria-disabled', String(noImage));
   $('#dropzone').tabIndex = noImage ? -1 : 0;
   $('#dzGallery').disabled = noImage;
-  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another target model.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
+  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another target model.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it. A picture or video you made brings its recipe.';
   $('#imageStepTitle').textContent = motion ? 'Character & motion' : noImage ? 'No image' : 'Add an image';
   $('#imageStepOpt').textContent = noImage ? (hasImage ? 'this model works from words: your picture is set aside' : 'this model works from words') : motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
@@ -2276,7 +2276,8 @@ dz.addEventListener('click', e => { if (!state.image && !imageOff() && !e.target
 dz.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target === dz && !state.image && !imageOff()) { e.preventDefault(); $('#imageInput').click(); }
 });
-$('#imageInput').addEventListener('change', e => { loadImageFile(e.target.files[0]); e.target.value = ''; });
+// Browse takes a video too: one you made, for its recipe (or as a motion video); it's never a picture.
+$('#imageInput').addEventListener('change', e => { const f = e.target.files[0]; if (isVideoFile(f)) takeVideo(f, { alone: true }); else loadImageFile(f); e.target.value = ''; });
 $('#imageReplace').addEventListener('click', () => $('#imageInput').click());
 $('#imageClear').addEventListener('click', () => { setImage(null); dz.focus(); });
 

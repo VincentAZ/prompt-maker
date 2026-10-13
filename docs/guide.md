@@ -394,7 +394,7 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 
 ### Make it again from a picture or video
 
-Most pictures and videos made with ComfyUI keep how they were made inside the file, and so do A1111's, Forge's and many on Civitai: the prompt, the model, the LoRAs and their strengths, the seed, the size and the sampler settings. Drop one on Create (or **browse** for it in Add an image) and Prompt Maker reads it, on your computer, before anything else:
+Most pictures and videos made with ComfyUI keep how they were made inside the file, and so do A1111's, Forge's and many on Civitai: the prompt, the model, the LoRAs and their strengths, the seed, the size and the sampler settings. Drop one on Create (or **browse** for it in Add an image, whose file dialog lists videos too) and Prompt Maker reads it, on your computer, before anything else:
 
 - **A picture** comes in as usual, with **📜 Recipe inside** on it. Click it to see what the file says, then **Use this recipe**.
 - **A video** asks first: **Use this recipe**, **Use as a motion video** (for character animation), or **Not now**.

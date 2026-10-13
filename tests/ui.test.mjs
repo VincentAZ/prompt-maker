@@ -6117,6 +6117,20 @@ esac
       await click('#recipeDlg button[value="no"]');
       await waitFor('!document.querySelector("#recipeDlg").open', 'closed');
       eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'still on Krea 2 RAW');
+      // Browsed for in Add an image (the picture box's own file dialog), the same: it's a recipe, not a picture.
+      await js(`(() => {
+        const file = new File([Uint8Array.from(atob(${q(recipeClip.toString('base64'))}), ch => ch.charCodeAt(0))], 'waves.mp4', { type: 'video/mp4' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const input = document.querySelector('#imageInput');
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+      await waitFor('document.querySelector("#recipeDlg").open', 'the browsed video\'s recipe');
+      assert((await text('#recipeIntro')).includes('This video'), 'browsed: says it is a video');
+      await click('#recipeDlg button[value="no"]');
+      await waitFor('!document.querySelector("#recipeDlg").open', 'closed again');
+      assert(!(await text('body')).includes('isn\'t an image'), 'a browsed video is never "not an image"');
     }
 
     // It began from a picture of yours still in the data folder: that picture comes back; another one's name doesn't.
