@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.55.0 — A render file says which model made it and nothing else: ComfyUI wrote its whole job (the prompt word for
+  word, file names, seed) into every PNG and video, and Prompt Maker's copy kept it. Older renders are cleaned once at
+  start-up. Saved prompts cards show their whole picture, smaller, and a title starts where look-alike prompts differ.
 - 1.53.1 — The idea box's text was 19 px: it's 15 px now, and 13.5 px with your own prompt (a whole prompt, often
   long), so much more of it shows at once.
 - 1.53.0 — Renders survive a restart of Prompt Maker: each render sent to ComfyUI is noted (ids and settings, no prompt

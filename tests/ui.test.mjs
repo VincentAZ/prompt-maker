@@ -4319,6 +4319,10 @@ esac
     const f = entry.variations[0].renders[0].files[0];
     assert(await fileExists(path.join(dataDir, 'renders', f.file)), 'the copy is in the data folder');
     assert(/^krea-2-raw_a-red-fox-in-fresh-snow_\d+_[0-9a-f]{6}\.png$/.test(f.name), `the copy has its own name: ${f.name}`);
+    const kept = await fs.readFile(path.join(dataDir, 'renders', f.file));
+    assert(!kept.includes('MOCK JOB WORDS') && !kept.includes('prompt\0'), 'the copy keeps none of ComfyUI\'s job');
+    assert(kept.includes('Model\0Krea 2 RAW'), 'only the model that made it');
+    assert(f.tagsCleaned && f.original?.sha1, 'ComfyUI\'s checksum is noted');
     await fs.writeFile(path.join(comfyRoot, 'output', 'not-ours.png'), 'keep me');
     await click('.tabs button[data-view="settings"]');
     await click('#sComfyCleanup');

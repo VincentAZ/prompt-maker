@@ -5091,6 +5091,21 @@ function shapeLabel(e) {
 // else the built-in's label.
 const lookTagOf = e => (!e.look || e.manual ? '' : e.lookName ? `${customLook(e.look)?.emoji ? `${customLook(e.look).emoji} ` : ''}${e.lookName}` : lookName(e.look));
 
+// Where a card's title starts telling it apart: prompts pasted with the same opening ("integrated_multimodal_description
+// [Shot 1] Live-action, cinematic, …") all looked alike on their cards, so a title sharing its first 24+ characters
+// with another one starts at the word where they part, after an "…". The same title saved twice stays whole.
+function distinctTitles(titles) {
+  const sorted = [...new Set(titles.map(t => t.toLowerCase()))].sort();
+  const lcp = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+  const cut = new Map(sorted.map((t, i) => [t, Math.max(i ? lcp(t, sorted[i - 1]) : 0, i < sorted.length - 1 ? lcp(t, sorted[i + 1]) : 0)]));
+  return t => {
+    const n = cut.get(t.toLowerCase()) || 0;
+    if (n < 24) return t;
+    const start = t.lastIndexOf(' ', n) + 1;
+    return start && start < t.length - 8 ? `…${t.slice(start)}` : t;
+  };
+}
+
 function renderHistory() {
   const q = $('#historySearch').value.trim().toLowerCase();
   const items = state.history.filter(e =>
@@ -5114,6 +5129,7 @@ function renderHistory() {
   }
   let group = '';
   const shown = items.slice(0, state.historyLimit);
+  const shortTitle = distinctTitles(state.history.map(e => e.theme || ''));
   list.innerHTML = shown.map(e => {
     const g = dayGroup(e.createdAt);
     const heading = g !== group ? `<h2 class="hgroup">${g}</h2>` : '';
@@ -5140,12 +5156,12 @@ function renderHistory() {
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Bookmark this prompt: ${esc(title)}" title="${e.favorite ? 'Remove prompt bookmark' : 'Bookmark this prompt to reuse. Rate the artwork in Gallery.'}">${bookmarkIcon}</button>
         <div class="hbody">
           <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.batch ? `<span class="tag batch" title="From the batch “${esc(e.batch)}”">🎞 ${esc(e.batch)}</span>` : ''}${e.manual ? '<span class="tag" title="You wrote this prompt yourself: it was sent word for word, no Brain">✍️ your own prompt</span>' : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
-          <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open">${esc(title)}</div>
+          <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open" title="${esc(title.slice(0, 300))}">${esc(e.theme ? shortTitle(e.theme) : title)}</div>
           ${e.manual && first === e.theme ? '' : `<p class="hprompt">${esc(first)}</p>`}
           <div class="hactions">
             <button type="button" class="btn small" data-act="copy" aria-label="Copy ${takes > 1 ? `all ${takes} takes` : 'prompt'}: ${esc(title)}">${takes > 1 ? `Copy all ${takes}` : 'Copy'}</button>
             ${going.has(e.id) ? `<span class="hgoing" role="status">${goingText(going.get(e.id))}</span><button type="button" class="btn small primary open" data-act="undo" aria-label="Undo deleting: ${esc(title)}">↶ Undo</button>` : `<button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image, motion video, spoken line and renders, here and in ComfyUI, shredded. You get a few seconds to undo">Delete</button>
-            <button type="button" class="btn small open" data-act="open" aria-label="Open: ${esc(title)}">Open prompt →</button>`}
+            <button type="button" class="btn small open" data-act="open" aria-label="Open: ${esc(title)}">Open →</button>`}
           </div>
         </div>
       </article>`;

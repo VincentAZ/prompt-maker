@@ -150,7 +150,23 @@ for (const dir of fs.readdirSync(path.join(REPO, 'workflows'), { withFileTypes: 
   }
 }
 
-export function startMockComfy(port, { png, root = null, mp4 = null }) {
+// Like ComfyUI, every PNG it saves holds the job: a tEXt "prompt" chunk (Prompt Maker's copy must not keep it).
+export const MOCK_JOB = '{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "MOCK JOB WORDS"}}}';
+function withJob(png) {
+  if (png.toString('latin1', 1, 4) !== 'PNG') return png;
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = buf => { let c = 0xffffffff; for (const x of buf) c = crcTable[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const body = Buffer.concat([Buffer.from('tEXtprompt\0', 'latin1'), Buffer.from(MOCK_JOB, 'latin1')]);
+  const chunk = Buffer.alloc(body.length + 8);
+  chunk.writeUInt32BE(body.length - 4, 0);
+  body.copy(chunk, 4);
+  chunk.writeUInt32BE(crc(body), body.length + 4);
+  const ihdrEnd = 8 + 12 + png.readUInt32BE(8);
+  return Buffer.concat([png.subarray(0, ihdrEnd), chunk, png.subarray(ihdrEnd)]);
+}
+
+export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
+  const png = withJob(plain);
   const prompts = [];
   const uploads = [];
   const history = {};
