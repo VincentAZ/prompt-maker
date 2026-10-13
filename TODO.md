@@ -26,6 +26,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 - 1.57.2 — A render landing never switches Create to Your renders by itself (the tab gets a dot); a render that
   lands takes the place of its own running tile, on the take and in Your renders (×4: four tiles from the start),
   so nothing slides over mid-run. Pick from your Library shows each picture's stars.
+- 1.57.4 — Studio polish (ChatGPT): a draggable divider between Create's form and results, a resizable prompt box
+  in the render viewer (both remembered in the browser), Saved-prompts cards with a ▶ Video badge and a two-column
+  action row. Three UI tests still expect the old viewer and Settings layout (the stars before the prompt box, the
+  Create tab covered in the character-sheet test, the cleanup folder field); the UI side owes them a fix.
 - 1.57.3 — Add an image's **browse** lists videos too, so a video's recipe can be picked from the file dialog, not
   only dragged in; the box says a picture or video you made brings its recipe.
 - 1.57.1 — At the Safer and Nothing-stays levels (ComfyUI in memory), a kept render's copy stayed in ComfyUI's

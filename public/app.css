@@ -725,6 +725,8 @@ body.narrow .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); }
 .hthumb.textonly { aspect-ratio: auto; height: 64px; font-size: 28px !important; }
 .hthumb.textonly { display: grid; place-items: center; font-size: 44px; background: radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--m) 55%, transparent), transparent 60%), linear-gradient(135deg, var(--panel-3), var(--panel-2)); }
 .hthumb .kind { position: absolute; left: 8px; bottom: 8px; }
+.hvideo { position: absolute; top: 8px; left: 8px; z-index: 1; display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid #ffffff55; border-radius: 6px; background: #17251ded; color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; }
+.hcard.picked .hvideo { top: 44px; }
 .hstar { position: absolute; top: 8px; right: 8px; z-index: 1; width: 32px; height: 32px; border-radius: 50%; border: 1px solid rgb(36 76 57 / 20%); background: rgb(10 9 16 / 65%); backdrop-filter: blur(6px); color: #fff; font-size: 17px; display: grid; place-items: center; }
 .hstar.on { color: var(--warn); border-color: var(--warn); }
 .hbody { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; flex: 1; }
@@ -740,10 +742,11 @@ body.narrow .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); }
 .htheme.none { color: var(--muted); font-style: italic; font-weight: 600; }
 .hprompt { margin: 0; color: var(--text-2); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 4px; }
-.hactions { flex-wrap: nowrap; gap: 4px; }
-.hactions > * { white-space: nowrap; }
+.hactions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.hactions > * { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.hactions .hgoing { grid-column: 1 / -1; }
 .hactions .btn.small { padding: 5px 10px; font-size: 12.5px; }
-.hactions .open { margin-left: auto; }
+.hactions .open { grid-column: 1 / -1; margin-left: 0; }
 
 /* ---------- models ---------- */
 .models-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }

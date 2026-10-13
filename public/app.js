@@ -5390,6 +5390,7 @@ function renderHistory() {
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${e.manual ? '🖼️ image' : { reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
           ${lookTagOf(e) ? `<span class="tag kind" title="The look picked under the theme">${esc(lookTagOf(e))}</span>` : ''}
         </div>
+        ${videoPrompt ? `<span class="hvideo"><span aria-hidden="true">▶</span> ${cover?.kind === 'video' ? 'Video' : 'Video prompt'}</span>` : ''}
         <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Bookmark this prompt: ${esc(title)}" title="${e.favorite ? 'Remove prompt bookmark' : 'Bookmark this prompt to reuse. Rate the artwork in Library.'}">${bookmarkIcon}</button>
         <div class="hbody">
           <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.batch ? `<span class="tag batch" title="From the batch “${esc(e.batch)}”">🎞 ${esc(e.batch)}</span>` : ''}${e.manual ? '<span class="tag" title="You wrote this prompt yourself: it was sent word for word, no Brain">✍️ your own prompt</span>' : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
@@ -9667,7 +9668,7 @@ function lbRender() {
   $('#lbInfo').innerHTML = `
     <div class="lb-idea${saved.get('lbIdeaOpen', false) ? ' open' : ''}"><button type="button" class="lb-idea-btn" aria-expanded="${saved.get('lbIdeaOpen', false)}">${saved.get('lbIdeaOpen', false) ? '▾' : '▸'} Your idea</button><p class="lb-idea-text">${esc(entry.theme || 'From an image')}</p></div>
     <div class="lb-rate" role="group" aria-label="How good is it?"><span class="lb-rate-q">How good is it?</span>${[1, 2, 3].map(n => `<button type="button" class="chip-btn" data-lb-rate="${n}" aria-pressed="${rating === n}" title="${rating === n ? 'Click again to take the rating off' : `Rate it ${RATINGS[n].toLowerCase()} (key ${n})`}"><b>${starsOf(n)}</b> ${RATINGS[n]}</button>`).join('')}</div>
-    <pre class="lb-prompt">${esc(render.text)}</pre>
+    <div class="lb-prompt-box" id="lbPromptBox"><pre class="lb-prompt" tabindex="0" aria-label="Prompt text">${esc(render.text)}</pre><div class="lb-prompt-sizebar"><button type="button" id="lbPromptGrip" class="lb-prompt-grip" title="Drag to resize the prompt box (double-click to reset)"><span aria-hidden="true">⤡</span></button><span aria-hidden="true">Drag corner to resize</span></div></div>
     <div class="lb-actions">
       <a class="btn small primary" href="/renders/${encodeURIComponent(file.file)}" download="${esc(file.name || file.file)}">${utilityIcon('download')} Download</a>
       <button type="button" class="btn small" data-lb="copy">${utilityIcon('copy')} Copy prompt</button>
@@ -9683,6 +9684,7 @@ function lbRender() {
     </div>
     <dl class="lb-facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
     <p class="muted small">${lb.index + 1} of ${lb.items.length} · ← → to browse · 1 2 3 to rate · Esc to close</p>`;
+  wireLightboxPromptResize();
   $('[data-lb="compare"]', $('#lbInfo'))?.addEventListener('click', () => {
     if (lb.pin) lb.pin = null;
     else {
@@ -12857,3 +12859,72 @@ async function loadModels() {
 
 // Keeps a copy of the page, so it still opens (with a Start button) when Prompt Maker's server is off.
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+// Remember the workspace split without constraining the one-column mobile layout.
+const createGrip = $('#createGrip');
+function sizeCreateSplit(width = saved.get('createWidth', null), remember = false) {
+  const layout = $('.create');
+  if (!layout.offsetWidth || innerWidth <= 900 || document.body.classList.contains('narrow')) return;
+  const gap = parseFloat(getComputedStyle(layout).columnGap) || 32;
+  const max = Math.max(280, layout.clientWidth - gap - 320);
+  const normal = innerWidth <= 1250 ? 320 : 350;
+  const next = Math.round(Math.min(max, Math.max(280, Number(width) || normal)));
+  layout.style.setProperty('--create-width', `${next}px`);
+  createGrip.style.left = `${next + (gap - 12) / 2}px`;
+  createGrip.setAttribute('aria-valuemin', '280');
+  createGrip.setAttribute('aria-valuemax', String(Math.floor(max)));
+  createGrip.setAttribute('aria-valuenow', String(next));
+  createGrip.setAttribute('aria-valuetext', `Controls ${next} pixels wide`);
+  if (remember) saved.set('createWidth', next);
+}
+const finishCreateResize = () => {
+  saved.set('createWidth', $('#createForm').offsetWidth);
+  resizeTextareas();
+  if (!$('#reel').hidden) sizeReel();
+};
+dragGrip(createGrip, () => $('#createForm').offsetWidth, (was, dx) => sizeCreateSplit(was + dx), finishCreateResize);
+createGrip.addEventListener('dblclick', () => {
+  saved.set('createWidth', null);
+  sizeCreateSplit();
+  resizeTextareas();
+});
+createGrip.addEventListener('keydown', e => {
+  const step = { ArrowLeft: -20, ArrowRight: 20 }[e.key];
+  if (!step && e.key !== 'Home' && e.key !== 'End') return;
+  e.preventDefault();
+  const width = e.key === 'Home' ? 280 : e.key === 'End' ? Number(createGrip.getAttribute('aria-valuemax')) : $('#createForm').offsetWidth + step * (e.shiftKey ? 5 : 1);
+  sizeCreateSplit(width, true);
+  resizeTextareas();
+});
+new ResizeObserver(() => sizeCreateSplit()).observe($('.create'));
+
+// The prompt's lower-left corner grows into the image area, keeping its right edge on screen.
+function sizeLightboxPrompt(size = saved.get('lbPromptSize', null), remember = false) {
+  const box = $('#lbPromptBox');
+  if (!box) return;
+  const info = $('#lbInfo'), style = getComputedStyle(info);
+  const inset = info.offsetWidth - info.clientWidth + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const width = Math.round(Math.min(Math.max(180, innerWidth - (innerWidth > 800 ? 100 : 0) - inset), Math.max(180, Number(size?.width) || 315)));
+  const height = Math.round(Math.min(Math.max(80, innerHeight - 120), Math.max(80, Number(size?.height) || innerHeight * .4)));
+  $('#lightbox').style.setProperty('--lb-width', `${width + inset}px`);
+  box.style.width = `${width}px`;
+  box.style.height = `${height}px`;
+  $('#lbPromptGrip').setAttribute('aria-label', `Resize prompt box, ${width} by ${height} pixels. Drag or use arrow keys; double-click to reset.`);
+  if (remember) saved.set('lbPromptSize', { width, height });
+}
+function wireLightboxPromptResize() {
+  sizeLightboxPrompt();
+  const grip = $('#lbPromptGrip');
+  const current = () => ({ width: $('#lbPromptBox').offsetWidth, height: $('#lbPromptBox').offsetHeight });
+  dragGrip(grip, current, (was, dx, dy) => sizeLightboxPrompt({ width: was.width - dx, height: was.height + dy }), () => saved.set('lbPromptSize', current()));
+  grip.addEventListener('dblclick', () => { saved.set('lbPromptSize', null); sizeLightboxPrompt(); });
+  grip.addEventListener('keydown', e => {
+    const delta = { ArrowLeft: [20, 0], ArrowRight: [-20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[e.key];
+    if (!delta) return;
+    e.preventDefault();
+    e.stopPropagation(); // Arrow keys resize the box instead of browsing to another render.
+    const was = current(), step = e.shiftKey ? 5 : 1;
+    sizeLightboxPrompt({ width: was.width + delta[0] * step, height: was.height + delta[1] * step }, true);
+  });
+}
+addEventListener('resize', () => { if (!$('#lightbox').hidden) sizeLightboxPrompt(); });

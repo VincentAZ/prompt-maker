@@ -66,9 +66,15 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 The light studio layout puts navigation in a sidebar and keeps your work beside a compact Create panel. **Library** holds artwork; **Saved prompts** holds your sessions. **Brains**, **Chains**, **Batches**, and **Jobs** each have their own page. Create’s **Pipeline** tab shows chain progress and lets you choose what continues; Settings groups its controls into clear sections. Existing prompts, renders, workflows, and preferences carry over. Saved prompts with a long shared opening show the words that distinguish them; hover to see the full opening.
 
+In Create’s **Your renders** tab, the gallery is the only scrolling area on the results side; the results tabs and gallery toolbar stay in place. **Prompt takes** and **Pipeline** retain their own scrolling.
+
+Drag the divider between Create’s controls and results left or right to give either side more room. In the lightbox, drag the prompt box’s lower-left corner to change its width and height. Both sizes are remembered in your browser; double-click either handle to reset it. The handles also work with arrow keys.
+
 The main button tells you what comes next: **Write prompt**, **Make image**, or **Make video**, with the total output count when making several. **Review prompt first** sits beside it and remembers your choice for each model; existing auto-render preferences carry over. Progress tells you when the prompt is being written, the artwork is being made, and the result is ready.
 
 Choose **Shape**, **Size** and **Variations** on the main path. Size offers Small to Huge in the picked shape (HD, Full HD, 2K and 4K by name on video), starts on the model's usual size, and takes any width × height you type; prompt length and adventurousness sit under **More options → Writing options**. **Exact ratio** opens every supported shape; the four shape tiles keep common choices close. The model guide and look choices (eleven looks, **No look**, or **your own**) open when needed. **Models** starts with what each model makes, what it needs and its local rendering readiness; **Customize** opens the existing playbook and workflow editor.
+
+Saved prompt thumbnails show a permanent **▶ Video** badge for video previews, or **▶ Video prompt** for video prompts without a video preview. Card actions keep **Copy** and **Delete** together, with **Open** on its own full-width row so buttons stay inside narrow cards.
 
 In Library, search stays visible on small screens, with the finer choices under **Filters** (when it was made, shape, not rated yet, spoken line, workflow, LoRA, look), an active-filter count and **Clear filters**; search also finds a seed or a size. The viewer links back to the original prompt. **Pin on the left** changes the comparison reference; stars rate the artwork. Secondary actions and panels are quieter so the work stands out.
 

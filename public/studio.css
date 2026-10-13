@@ -209,6 +209,13 @@ body.as-open:not(.as-over) main { margin-left: var(--sidebar-w); }
   body:not(.narrow) .create { height: calc(100dvh - var(--topbar-h, 68px) - var(--banner-h, 0px) - var(--create-chrome-h, 182px)); min-height: 360px; }
   body:not(.narrow) .director-steps { border-radius: 12px 12px 0 0; }
   body:not(.narrow) .create > .stage { margin-right: 0; padding-right: 5px; }
+  /* The gallery owns scrolling in this tab. A retained takes scroll-floor must not
+     create a second scroll container around it. Takes and Pipeline still scroll normally. */
+  body:not(.narrow) .create > .stage:has(> #rendersPane:not([hidden])) { min-height: 0; overflow: clip; }
+  body:not(.narrow) .stage:has(> #rendersPane:not([hidden])) > .scroll-floor { display: none; }
+  body:not(.narrow) .create > .stage > #rendersPane { flex-basis: 0; }
+  body:not(.narrow) #rendersPane .reel-head { flex-shrink: 0; }
+
 }
 @media (min-width: 1600px) { main { padding-inline: clamp(48px, 6vw, 170px); } }
 @media (max-width: 1250px) { .create { grid-template-columns: 320px minmax(0, 1fr); gap: 24px; } main { padding: 24px; } .director-steps { padding: 20px; } .generate-bar { padding-inline: 20px; } .studio-breadcrumb > span:first-child { display: none; } }
@@ -314,3 +321,28 @@ body:has(.director.manual) .studio-look { display: none; }
 body.narrow .settings-layout { grid-template-columns: minmax(0, 1fr); }
 body.narrow .settings-nav { position: static; display: flex; flex-direction: row; flex-wrap: wrap; gap: 5px; }
 @media (max-width: 760px) { .settings-layout { grid-template-columns: minmax(0, 1fr); } .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 5px; } .settings-nav button { padding: 8px 10px; font-size: 12px; } .settings-layout .settings > .card { padding: 20px; } }
+
+/* Adjustable workspace divider and lightbox prompt box. */
+.create { position: relative; }
+.create-grip { display: none; }
+@media (min-width: 901px) {
+  body:not(.narrow) .create { grid-template-columns: var(--create-width, 350px) minmax(0, 1fr); }
+  body:not(.narrow) .create-grip { position: absolute; z-index: 2; inset-block: 0; width: 12px; display: grid; place-items: center; cursor: ew-resize; touch-action: none; border-radius: 6px; }
+}
+.create-grip::before { content: ""; position: absolute; inset-block: 0; left: 5px; width: 2px; background: var(--line-2); border-radius: 2px; }
+.create-grip span { z-index: 1; width: 6px; height: 42px; border: 1px solid var(--line-2); border-radius: 4px; background: #e5ebde; }
+.create-grip:hover, .create-grip:focus-visible, .create-grip.dragging { background: #dce6d4; }
+.create-grip:hover::before, .create-grip.dragging::before { background: var(--hot); }
+.lightbox { grid-template-columns: minmax(0, 1fr) var(--lb-width, 360px); }
+.lb-close, .lb-next { right: calc(var(--lb-width, 360px) + 14px); }
+.lb-info { min-width: 0; scrollbar-gutter: stable; }
+.lb-prompt-box { max-width: 100%; min-width: 0; min-height: 80px; flex-shrink: 0; display: flex; flex-direction: column; align-self: flex-end; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: #f5f7f0; }
+.lb-prompt-box .lb-prompt { flex: 1 1 auto; min-height: 0; max-height: none; overflow: auto; overflow-wrap: anywhere; border: 0; border-radius: 0; }
+.lb-prompt-sizebar { flex: none; height: 26px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; user-select: none; }
+.lb-prompt-grip { flex: none; align-self: stretch; width: 30px; border: 0; background: transparent; border-radius: 0; color: var(--hot); cursor: nesw-resize; touch-action: none; font-size: 20px; line-height: 1; }
+.lb-prompt-grip:hover, .lb-prompt-grip:focus-visible, .lb-prompt-grip.dragging { background: #dce6d4; }
+@media (max-width: 800px) {
+  .lightbox { grid-template-columns: minmax(0, 1fr); }
+  .lb-close, .lb-next { right: 14px; }
+  .lb-info { max-height: 65dvh; }
+}
