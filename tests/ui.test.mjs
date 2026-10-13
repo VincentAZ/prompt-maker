@@ -4486,6 +4486,34 @@ esac
     assert(await fileExists(path.join(comfyRoot, 'output', 'not-ours.png')), 'other files are never touched');
   });
 
+  await test('cleanup: ComfyUI started with --output-directory (in memory at the Safer levels) has its copy deleted from there', async () => {
+    const ramOut = path.join(tmp, 'comfy-ram-output');
+    await fs.mkdir(ramOut, { recursive: true });
+    const settingsFile = path.join(dataDir, 'settings.json');
+    const was = JSON.parse(await fs.readFile(settingsFile, 'utf8'));
+    await fs.writeFile(settingsFile, JSON.stringify({ ...was, comfyCleanup: true, comfyOutputDir: '', comfyLaunch: { dir: comfyRoot, python: 'python', pre: [], args: ['--output-directory', ramOut] } }));
+    comfy.setOutputDir(ramOut);
+    await fs.writeFile(path.join(ramOut, 'not-ours.png'), 'keep me');
+    try {
+      await click('.tabs button[data-view="create"]');
+      await click('.model-card[data-id="krea2-raw"]');
+      await type('#theme', 'a heron in the reeds');
+      await click('#generateBtn');
+      await genDone();
+      await click('.take .rb-go');
+      await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+      const made = `mock_${comfy.prompts.at(-1).id.slice(0, 6)}.png`;
+      assert(!(await fileExists(path.join(ramOut, made))), 'gone from the folder ComfyUI was started with');
+      assert(!(await fileExists(path.join(comfyRoot, 'output', made))), '(it was never in the install folder\'s)');
+      assert(await fileExists(path.join(ramOut, 'not-ours.png')), 'other files there are never touched');
+      const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'a heron in the reeds');
+      assert(await fileExists(path.join(dataDir, 'renders', entry.variations[0].renders[0].files[0].file)), 'the copy is in the data folder');
+    } finally {
+      comfy.setOutputDir(null);
+      await fs.writeFile(settingsFile, JSON.stringify(was));
+    }
+  });
+
   await test('delete: a render or a run leaves Your renders and the disk at once', async () => {
     const history = async () => (await fetch(`${APP}/api/history`)).json();
     await click('.tabs button[data-view="create"]');

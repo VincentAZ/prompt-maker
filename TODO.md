@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.57.1 — At the Safer and Nothing-stays levels (ComfyUI in memory), a kept render's copy stayed in ComfyUI's
+  output folder, whole job inside: keep-time cleanup looked only at the install folder's output (or the one set),
+  never at the one ComfyUI was started with. It looks there first now, as deletes already did.
 - 1.57.0 — The studio redesign and the render-file tags (1.55.0, 1.55.1) are one branch again: videos and
   pictures made from here on say which model made them, the way Civitai reads it, and nothing else.
 - 1.56.1 — Closing the viewer on a video no longer looks like the video playing on: the tile it was opened from

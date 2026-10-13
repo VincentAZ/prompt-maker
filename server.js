@@ -1127,6 +1127,16 @@ async function comfyFolders(settings) {
   return ['output', 'input', 'temp'].every(k => live[k] === disk[k]) ? [live] : [live, disk];
 }
 
+// ComfyUI's own copy of a render just kept, deleted from the folder ComfyUI really saves to: the one it was started
+// with (--output-directory: in memory at the Safer levels), the one set in Settings, or its install folder's. Before,
+// only the last two were looked at, so at the in-memory levels every copy stayed in ComfyUI's folder, whole job
+// inside, until the card was deleted or the computer shut down.
+async function removeComfyCopy(settings, base, out, size) {
+  const dirs = [...new Set([...(await comfyFolders(settings)).map(d => d.output), settings.comfyOutputDir].filter(Boolean))];
+  for (const dir of dirs) if (await comfy.removeOutput(base, out, size, dir)) return true;
+  return comfy.removeOutput(base, out, size, '');
+}
+
 // Uploads of Prompt Maker's (prompt-maker_…) left in ComfyUI's input folders that nothing uses anymore: from before
 // ComfyUI worked in memory (deletes looked only at its live folders before 1.34.3), or from deletes made while its
 // folders were out of reach. Run at start and when the Privacy level changes; a file under ten minutes old is left
@@ -1540,7 +1550,7 @@ async function keepRender({ settings, base, entry, index, versionIndex, text, wo
         copies.push(original);
         files.push({ file, kind: out.kind, name: `${named}${outputs.length > 1 ? `-${n + 1}` : ''}${ext}`, original, ...(await cleanedTags(file, entry.modelName)) });
         if (settings.comfyCleanup) {
-          await comfy.removeOutput(base, out, buf.length, settings.comfyOutputDir).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
+          await removeComfyCopy(settings, base, out, buf.length).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
         }
       }
       // The size it really came out at: a workflow may round what was asked for (to a multiple of 16, say).
@@ -1652,7 +1662,7 @@ async function joinPieces(base, settings, parts, outputs, name, motionVideo, cop
     if (settings.comfyCleanup) {
       for (const [k, out] of files.entries()) {
         const size = (await fs.stat(local[k])).size;
-        await comfy.removeOutput(base, out, size, settings.comfyOutputDir).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
+        await removeComfyCopy(settings, base, out, size).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
       }
     }
     return file;

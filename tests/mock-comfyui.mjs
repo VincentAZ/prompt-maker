@@ -167,6 +167,7 @@ function withJob(png) {
 
 export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
   const png = withJob(plain);
+  let outputDir = null; // where it saves instead of root/output (as if started with --output-directory)
   const prompts = [];
   const uploads = [];
   const history = {};
@@ -223,7 +224,7 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
     // MP4TEST (with an mp4 to give): the render is a little video, as a video workflow would make.
     const video = mp4 && text.includes('MP4TEST');
     const made = `mock_${id.slice(0, 6)}.${video ? 'mp4' : 'png'}`;
-    if (root) fs.writeFileSync(path.join(root, 'output', made), video ? mp4 : png);
+    if (outputDir || root) fs.writeFileSync(path.join(outputDir || path.join(root, 'output'), made), video ? mp4 : png);
     history[id] = { prompt: [0, id, prompt, { client_id: clientId }, ['9']], outputs: { 9: { [video ? 'videos' : 'images']: [{ filename: made, subfolder: '', type: 'output' }] } }, status: { status_str: 'success', completed: true, messages: [] } };
     send(clientId, { type: 'executing', data: { node: null, prompt_id: id } });
     send(clientId, { type: 'execution_success', data: { prompt_id: id } });
@@ -329,6 +330,7 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
     prompts,
     uploads,
     history,
+    setOutputDir(dir) { outputDir = dir; },
     editSaved(fn) {
       saved.json = fn(structuredClone(saved.json));
       saved.modified = Date.now();
