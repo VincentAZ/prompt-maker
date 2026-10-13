@@ -50,24 +50,26 @@ You don't write the long, technical prompts these models want. You type a few wo
 - **The same person in every shot.** Drop in one picture of someone and they stay themselves in new places, new light, new scenes. See below.
 - **Clips that carry on.** Turn any still into a video, then the next scene from the next still, and join them. The film above is four of these.
 - **A voice for your character.** Describe a voice in plain words, hear it, keep it by name and have your character say a line in a video.
-- **Your best work stays findable.** Gallery holds your artwork: rate it with stars, choose **Select → two pictures → Compare 2**, or pick any number and **⬇ Download** them in one .zip. **Saved prompts** holds the automatically saved prompts and sessions: bookmark the ones you want to reuse. **Hide from Create** tidies your workspace while keeping the artwork in Gallery.
+- **Your best work stays findable.** Library holds your artwork: rate it with stars, choose **Select → two pictures → Compare 2**, or pick any number and **⬇ Download** them in one .zip. **Saved prompts** holds the automatically saved prompts and sessions: bookmark the ones you want to reuse. **Hide from Create** tidies your workspace while keeping the artwork in Library.
 - **A creative partner when you need one.** Open **Ask** for an Assistant that looks at your renders, helps you choose, plans a task of several steps and ticks it off, and can run a batch. It starts closed and remembers your preference. On small screens, **Create / Results** keeps your work one click away, including beside Ask on a laptop.
-- **Several pictures at once.** A workflow that takes more than one picture (a person and a place with Krea 2 Character, pictures to combine with Qwen Image Edit, two views of the same person for MiniMax H3 Reference) gives step ③ a named slot per picture.
+- **Several pictures at once.** A workflow that takes more than one picture (a person and a place with Krea 2 Character, pictures to combine with Qwen Image Edit, two views of the same person for MiniMax H3 Reference) gives **Add an image** a named slot per picture.
 - **Nothing leaves your computer.** No account, no cloud, no tracking.
 
 <div align="center">
 
-<img src="docs/screenshots/gallery.jpg" alt="The Gallery: every render in one grid, to rate, put side by side, hide and find again" width="900">
+<img src="docs/screenshots/gallery.jpg" alt="The Library: every render in one grid, to rate, put side by side, hide and find again" width="900">
 
 </div>
 
-## A clearer creative workflow in 1.37
+## A new studio layout in 1.54
+
+The light studio layout puts navigation in a sidebar and keeps your work beside a compact Create panel. **Library** holds artwork; **Saved prompts** holds your sessions. **Brains**, **Chains**, **Batches**, and **Jobs** each have their own page. Create’s **Pipeline** tab shows chain progress and lets you choose what continues; Settings groups its controls into clear sections. Existing prompts, renders, workflows, and preferences carry over. Saved prompts with a long shared opening show the words that distinguish them; hover to see the full opening.
 
 The main button tells you what comes next: **Write prompt**, **Make image**, or **Make video**, with the total output count when making several. **Review prompt first** sits beside it and remembers your choice for each model; existing auto-render preferences carry over. Progress tells you when the prompt is being written, the artwork is being made, and the result is ready.
 
-Choose **Shape**, **Size** and **Variations** on the main path. Size offers Small to Huge in the picked shape (HD, Full HD, 2K and 4K by name on video), starts on the model's usual size, and takes any width × height you type; prompt length and adventurousness sit under **⑤ Settings**. The model guide and look choices (eleven looks, **No look**, or **your own**) open when needed. **Models** starts with what each model makes, what it needs and its local rendering readiness; **Customize** opens the existing playbook and workflow editor.
+Choose **Shape**, **Size** and **Variations** on the main path. Size offers Small to Huge in the picked shape (HD, Full HD, 2K and 4K by name on video), starts on the model's usual size, and takes any width × height you type; prompt length and adventurousness sit under **More options → Writing options**. **Exact ratio** opens every supported shape; the four shape tiles keep common choices close. The model guide and look choices (eleven looks, **No look**, or **your own**) open when needed. **Models** starts with what each model makes, what it needs and its local rendering readiness; **Customize** opens the existing playbook and workflow editor.
 
-In Gallery, search stays visible on small screens, with the finer choices under **Filters** (when it was made, shape, not rated yet, spoken line, workflow, LoRA, look), an active-filter count and **Clear filters**; search also finds a seed or a size. The viewer links back to the original prompt. **Pin on the left** changes the comparison reference; stars rate the artwork. Secondary actions and panels are quieter so the work stands out.
+In Library, search stays visible on small screens, with the finer choices under **Filters** (when it was made, shape, not rated yet, spoken line, workflow, LoRA, look), an active-filter count and **Clear filters**; search also finds a seed or a size. The viewer links back to the original prompt. **Pin on the left** changes the comparison reference; stars rate the artwork. Secondary actions and panels are quieter so the work stands out.
 
 ## The same person, every shot
 
@@ -122,7 +124,7 @@ Eleven models are ready: **Krea 2 RAW** (text to image, image to image, and a Ch
 
 ## More
 
-**[The full guide](docs/guide.md)** covers every page, setting and trick: Create, Voices, the Assistant, rendering with ComfyUI, chains, the Gallery, choosing a Brain, your data, troubleshooting and development.
+**[The full guide](docs/guide.md)** covers every page, setting and trick: Create, Voices, the Assistant, rendering with ComfyUI, chains, the Library, choosing a Brain, your data, troubleshooting and development.
 
 ## Contributing
 
@@ -133,12 +135,12 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 - [LM Studio](https://lmstudio.ai), for making local AI models easy.
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI), for being the best local rendering engine there is.
 - The prompting guides from **Krea**, **Tongyi-MAI (Z-Image)**, **Qwen (Alibaba)**, **Lightricks (LTX)**, **MiniMax** and **Wan-AI** that the bundled playbooks are built on (sources are in each model's editor).
-- Fonts: [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), both under the SIL Open Font License (`public/fonts/OFL.txt`).
+- Fonts: Ubuntu Sans under the Ubuntu Font Licence (`public/fonts/ubuntu-font-license.txt`); [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) and [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), both under the SIL Open Font License (`public/fonts/OFL.txt`).
 - The silhouette motion video behind the Wan Animate 2 clip is from [Pixabay](https://pixabay.com).
 
 ## License
 
-[Functional Source License 1.1, Apache 2.0 future license](LICENSE) (FSL-1.1-ALv2) © 2026 Serpico Enterprises LLC. Bundled fonts are under the SIL Open Font License (`public/fonts/OFL.txt`).
+[Functional Source License 1.1, Apache 2.0 future license](LICENSE) (FSL-1.1-ALv2) © 2026 Serpico Enterprises LLC. Ubuntu Sans uses the Ubuntu Font Licence (`public/fonts/ubuntu-font-license.txt`); the other bundled fonts use the SIL Open Font License (`public/fonts/OFL.txt`).
 
 In plain words: use it, change it and share it for anything, including paid work made with it (your images and videos are yours). What you can't do is sell Prompt Maker, or a copy of it under another name, as a competing product or service. Two years after each version comes out, that version also becomes Apache 2.0, with no limits.
 

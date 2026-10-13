@@ -123,7 +123,8 @@ function assistantTurn(body) {
     : /use the screen/.test(said) ? (() => {
       const last = re => [...results.matchAll(re)].at(-1)?.[1];
       return [
-        { calls: [['go_to', { page: 'settings' }], ['see_screen', { find: 'top' }]] },
+        { calls: [['go_to', { page: 'settings' }], ['see_screen', { find: 'Brain & prompting' }]] },
+        { calls: [['press', { control: Number(last(/\[(\d+)\] button “Brain & prompting”/g)) }], ['see_screen', { find: 'top' }]] },
         { calls: [['fill', { control: Number(last(/\[(\d+)\] number box “Top P/g)), text: '0.77' }], ['see_screen', { find: 'save settings' }]] },
         { calls: [['press', { control: Number(last(/\[(\d+)\] button “Save settings”/g)) }]] },
         { text: results.includes('Pressed “Save settings”') ? 'Saved: top P is 0.77.' : 'That failed.' },

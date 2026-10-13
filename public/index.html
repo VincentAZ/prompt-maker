@@ -3,47 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light">
   <title>Prompt Maker</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="studio.css">
   <script type="module" src="app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#stage">Skip to your results</a>
   <div class="bg-fx" aria-hidden="true"><i></i><i></i><i></i></div>
 
+<aside class="studio-sidebar" id="studioSidebar" aria-label="Studio navigation">
+<button type="button" id="navClose" class="icon-btn nav-close" aria-label="Close navigation">×</button>
+<a class="brand" href="#create" aria-label="Prompt Maker home"><img src="icon.svg" alt="" width="30" height="30"><span><span class="wordmark">prompt maker</span><small>Your local creative studio</small></span></a>
+<nav class="tabs" aria-label="Sections">
+<div class="nav-group"><p>Workspace</p><button type="button" data-view="create" aria-label="Create" title="Create"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>Create</span></button><button type="button" data-view="gallery" aria-label="Library" title="Library"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg><span>Library</span></button><button type="button" data-view="history" aria-label="Saved prompts" title="Saved prompts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg><span>Saved prompts</span><em id="historyBadge" class="badge" hidden></em></button></div>
+<div class="nav-group"><p>Your studio</p><button type="button" data-view="models" aria-label="Models & workflows" title="Models & workflows"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg><span>Models & workflows</span></button><button type="button" data-view="brains" aria-label="Brains" title="Brains"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4a3 3 0 0 0-5 3 4 4 0 0 0-1 7 3 3 0 0 0 6 4V4m6 0a3 3 0 0 1 5 3 4 4 0 0 1 1 7 3 3 0 0 1-6 4V4M9 9h6M9 15h6"/></svg><span>Brains</span></button><button type="button" data-view="voices" aria-label="Voices" title="Voices"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg><span>Voices</span></button></div>
+<div class="nav-group"><p>Automation</p><button type="button" data-view="chains" aria-label="Chains" title="Chains"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H6a4 4 0 0 0 0 8h3m6-8h3a4 4 0 0 1 0 8h-3M8 12h8"/></svg><span>Chains</span></button><button type="button" data-view="batches" aria-label="Batches" title="Batches"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>Batches</span></button><button type="button" data-view="jobs" aria-label="Jobs" title="Jobs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6V3h6v3M3 6h18v15H3zM3 11h18M10 11v3h4v-3"/></svg><span>Jobs</span></button></div>
+<div class="nav-bottom"><button type="button" data-view="settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>Settings</span></button></div></nav>
+<button type="button" id="studioStatus" class="studio-status"><span class="dot"></span><span><b id="studioStatusTitle">Checking your studio</b><small id="studioStatusDetail">Local, private, and yours</small></span><span aria-hidden="true">›</span></button><p class="studio-version" id="studioVersion"></p></aside>
+<div class="nav-backdrop" id="navBackdrop" hidden></div>
+
   <header class="topbar">
-    <a class="brand" href="#create" aria-label="Prompt Maker home">
-      <img src="icon.svg" alt="" width="30" height="30">
-      <span class="wordmark">prompt<b>maker</b></span>
-    </a>
-    <nav class="tabs" aria-label="Sections">
-      <button type="button" data-view="create" aria-label="Create" title="Create">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
-        <span>Create</span>
-      </button>
-      <button type="button" data-view="history" aria-label="Saved prompts" title="Saved prompts">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>
-        <span>Prompts</span><em id="historyBadge" class="badge" hidden></em>
-      </button>
-      <button type="button" data-view="gallery" aria-label="Gallery" title="Gallery">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
-        <span>Gallery</span>
-      </button>
-      <button type="button" data-view="models" aria-label="Models" title="Models">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
-        <span>Models</span>
-      </button>
-      <button type="button" data-view="voices" aria-label="Voices" title="Voices">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg>
-        <span>Voices</span>
-      </button>
-      <button type="button" data-view="settings" aria-label="Settings" title="Settings">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
-        <span>Settings</span>
-      </button>
-    </nav>
+    <button type="button" id="navToggle" class="icon-btn" aria-label="Open navigation" aria-controls="studioSidebar" aria-expanded="false">☰</button>
+    <div class="studio-breadcrumb"><span id="studioGroup">Workspace</span><span aria-hidden="true">›</span><b id="studioPage">Create</b></div>
+    <span class="spacer"></span>
     <div class="rp-wrap">
       <button type="button" id="rendersBtn" class="renders-btn" aria-expanded="false" aria-controls="rendersPanel" title="Renders in progress: see them, open them, cancel them" hidden><span class="rp-spin" aria-hidden="true">🎨</span><span class="rp-label">Rendering</span><em id="rendersCount">0</em></button>
       <div id="rendersPanel" class="renders-panel" role="dialog" aria-label="Renders in progress" hidden>
@@ -52,7 +37,7 @@
       </div>
     </div>
     <button type="button" id="jobsBtn" class="renders-btn jobs-btn" title="Jobs: long tasks the assistant works through, and their logs" hidden><span class="rp-spin" aria-hidden="true">🗂</span><span class="rp-label">Job</span><em id="jobsCount"></em></button>
-    <button type="button" id="askBtn" class="ask-btn" aria-expanded="false" aria-controls="assistant" title="Ask the assistant (Ctrl+K)"><span aria-hidden="true">✦</span><span class="ask-label">Ask</span></button>
+    <button type="button" id="askBtn" class="ask-btn" aria-expanded="false" aria-controls="assistant" title="Ask the assistant (Ctrl+K)"><span aria-hidden="true">✦</span><span class="ask-label">Ask the assistant</span></button>
     <div class="llm" id="llmBox">
       <span class="dot" id="llmDot"></span>
       <span class="llm-label">Brain</span>
@@ -85,6 +70,7 @@
   <main>
     <!-- ================= CREATE ================= -->
     <section id="view-create" class="view" aria-label="Create">
+      <header class="create-heading"><div><p class="eyebrow">Your next good idea</p><h1>Make room for your imagination.</h1><p>A small idea can become something extraordinary.</p></div><button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in Saved prompts." aria-label="New session">＋ New session</button></header>
       <div class="create-switch" role="group" aria-label="Create workspace">
         <button type="button" class="btn small" id="showCreate" aria-pressed="true" aria-controls="createForm">Create</button>
         <button type="button" class="btn small" id="showResults" aria-pressed="false" aria-controls="stage">Results <span id="resultCount"></span></button>
@@ -93,23 +79,27 @@
         <div id="jobBar" class="job-bar" role="status" hidden></div>
         <form id="createForm" class="director" autocomplete="off" novalidate>
           <div class="director-steps">
+          <h2 class="starting-title">The starting point</h2>
           <section class="step" data-panel="create-model">
-            <header class="step-head"><span class="num">1</span><h2>What do you want to make?</h2></header>
-            <div id="taskChoices" class="task-choices" role="group" aria-label="Creative task"></div>
-            <details id="modelChoice" class="model-choice">
-              <summary><span id="chosenModel"></span><span class="model-change">Change model</span></summary>
-            <div id="modelChips" class="model-grid" role="radiogroup" aria-label="Target model"></div>
-            </details>
+            <header class="step-head"><span class="num">1</span><h2>What would you like to make?</h2></header>
+            <select id="taskSelect" aria-label="What would you like to make?"></select>
+            <div id="taskChoices" class="task-choices" role="group" aria-label="Creative task" hidden></div>
+            <label class="field"><span>Target model</span><select id="targetSelect" aria-label="Target model"></select></label>
             <details id="modelGuide" class="model-guide" hidden>
               <summary>About this model</summary>
               <p id="modelDesc" class="model-desc"></p>
               <div id="modelGuideBody"></div>
+            <details id="modelChoice" class="model-choice">
+              <summary><span id="chosenModel"></span><span class="model-change">Browse models</span></summary>
+            <div id="modelChips" class="model-grid" role="radiogroup" aria-label="Target model"></div>
+            </details>
+
             </details>
           </section>
 
           <section class="step" data-panel="create-theme">
             <header class="step-head">
-              <span class="num">2</span><h2>Describe the shot</h2><span class="opt" id="themeOpt"></span>
+              <span class="num">2</span><h2>Your idea</h2><span class="opt" id="themeOpt"></span>
               <span class="head-actions">
                 <button type="button" id="themeUndo" class="chip-btn undo" hidden>↶ Undo</button>
                 <button type="button" id="themeClear" class="chip-btn" title="Empty this box (↶ Undo brings it back)" disabled>Clear</button>
@@ -117,40 +107,6 @@
               </span>
             </header>
             <textarea id="theme" spellcheck="true" class="theme" rows="3" aria-label="Describe your idea" autocomplete="off"></textarea>
-            <details class="look-options"><summary>Choose a look <span id="chosenLook">Automatic</span></summary>
-            <div class="looks" id="lookRow" role="radiogroup" aria-label="Look: how the camera and light feel">
-              <span class="looks-label" title="How the camera and the light feel: how close, from which angle, what kind of light">🎥 <b>Look</b></span>
-              <button type="button" class="chip-btn" role="radio" data-value="" title="The Brain picks the camera and light that suit your theme">✨ Brain picks</button>
-              <button type="button" class="chip-btn" role="radio" data-value="none" title="No camera, lens or light of the Brain's own: only what your theme or image says">🚫 No look</button>
-              <button type="button" class="chip-btn" role="radio" data-value="natural" title="Like a real photo: eye level, soft window light, the background softly blurred">🪟 Natural</button>
-              <button type="button" class="chip-btn" role="radio" data-value="intimate" title="Close and quiet: a tight shot, the background melting away, soft light from the side">🕯️ Intimate</button>
-              <button type="button" class="chip-btn" role="radio" data-value="powerful" title="Larger than life: the camera looks up, strong light from behind outlines the subject">⚡ Powerful</button>
-              <button type="button" class="chip-btn" role="radio" data-value="lonely" title="Small in a big world: wide shot, lots of empty space, cool dim light">🌫️ Lonely</button>
-              <button type="button" class="chip-btn" role="radio" data-value="suspense" title="Something's wrong: a tilted frame, half hidden, deep shadows">🫣 Suspense</button>
-              <button type="button" class="chip-btn" role="radio" data-value="horror" title="Dread: dark, centered, flickering light, light from below">👻 Horror</button>
-              <button type="button" class="chip-btn" role="radio" data-value="noir" title="Old detective film: black and white, hard light, blind-stripe shadows, smoke">🕵️ Noir</button>
-              <button type="button" class="chip-btn" role="radio" data-value="dreamy" title="Soft and glowing: hazy focus, warm light from behind, pastel colors">☁️ Dreamy</button>
-              <button type="button" class="chip-btn" role="radio" data-value="gritty" title="Raw and real: handheld, only the light that's there, every detail and flaw">📷 Gritty</button>
-              <button type="button" class="chip-btn" role="radio" data-value="epic" title="Huge and grand: very wide, everything sharp, hazy light from behind">🏔️ Epic</button>
-              <button type="button" class="chip-btn" role="radio" data-value="luxury" title="Polished ad: studio light, gleaming highlights, perfect composition">💎 Luxury</button>
-              <span id="lookMine" class="looks-mine"></span>
-              <button type="button" id="lookAdd" class="chip-btn" title="Describe your own camera and light once, and keep it as a look">＋ Your own look…</button>
-            </div>
-            <div id="lookTools" class="look-tools" hidden>
-              <button type="button" id="lookEdit" class="chip-btn">✎ Edit this look</button>
-              <button type="button" id="lookDel" class="chip-btn">🗑 Delete this look</button>
-            </div>
-            <div id="lookEditor" class="look-editor" role="group" aria-label="Your own look" hidden>
-              <div class="look-editor-row">
-                <input id="lkEmoji" maxlength="16" placeholder="🌧" aria-label="An emoji for the look (optional)" autocomplete="off">
-                <input id="lkName" maxlength="40" placeholder="Name it, e.g. Rainy neon" aria-label="Name of the look" autocomplete="off">
-              </div>
-              <label>What the camera and light do <textarea id="lkStill" spellcheck="true" rows="3" maxlength="500" placeholder="e.g. a 35mm lens at eye level, neon signs as the only light, wet reflections, shallow focus"></textarea></label>
-              <label>Camera move on video <span class="muted">(optional)</span> <input id="lkMove" spellcheck="true" maxlength="200" placeholder="e.g. a slow handheld drift" autocomplete="off"></label>
-              <div class="look-editor-acts"><button type="button" id="lkSave" class="btn small primary">✓ Keep this look</button><button type="button" id="lkCancel" class="btn small">Cancel</button></div>
-            </div>
-            <p id="lookMemoryHint" class="hint" hidden>Your own looks are kept for this session only (Privacy: Nothing stays).</p>
-            </details>
             <div class="manual-row">
               <label class="switch mini" title="Off: your Brain writes the prompt from your idea. On: what you type here is the prompt, sent as it is"><input type="checkbox" id="manualMode"><span class="track" aria-hidden="true"></span><span>Use my own prompt, word for word</span></label>
               <span id="manualHint" class="hint" hidden>No Brain: your text, image and model go straight to the render.</span>
@@ -165,13 +121,13 @@
               <div class="dz-empty">
                 <span class="dz-title">Drop an image, paste it, or <u>browse</u></span>
                 <span class="dz-sub" id="dzSub">JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.</span>
-                <button type="button" id="dzGallery" class="chip-btn dz-gallery">Pick from your Gallery</button>
+                <button type="button" id="dzGallery" class="chip-btn dz-gallery">Pick from your Library</button>
               </div>
               <div class="dz-preview" hidden>
                 <button type="button" id="imageZoom" class="dz-zoom" title="See it full screen" aria-label="See your image full screen"><img id="imagePreview" alt="Your image"></button>
                 <span id="dzSource" class="dz-source" hidden></span>
                 <div class="dz-actions">
-                  <button type="button" id="imageGallery" class="btn small glass" title="Pick another image from your Gallery">Gallery</button>
+                  <button type="button" id="imageGallery" class="btn small glass" title="Pick another image from your Library">Library</button>
                   <button type="button" id="imageReplace" class="btn small glass">Replace</button>
                   <button type="button" id="imageClear" class="btn small glass danger">Remove</button>
                 </div>
@@ -217,14 +173,14 @@
                 <div class="dz-empty mz-empty">
                   <span class="dz-title">Drop a motion video, or <u>browse</u></span>
                   <span class="dz-sub">MP4 · WebM · MOV. Frame it like your character (full body to full body).</span>
-                  <button type="button" id="mzGallery" class="chip-btn dz-gallery">Pick a video from your Gallery</button>
+                  <button type="button" id="mzGallery" class="chip-btn dz-gallery">Pick a video from your Library</button>
                 </div>
                 <div class="dz-preview mz-preview" hidden>
                   <video id="motionPreview" muted loop playsinline aria-label="Your motion video"></video>
                   <span id="mzInfo" class="dz-source"></span>
                   <div class="dz-actions">
                     <button type="button" id="videoTrim" class="btn small glass" title="Use only part of this video, cut to the frame" hidden>✂️ Trim</button>
-                    <button type="button" id="videoGallery" class="btn small glass" title="Pick another video from your Gallery">Gallery</button>
+                    <button type="button" id="videoGallery" class="btn small glass" title="Pick another video from your Library">Library</button>
                     <button type="button" id="videoReplace" class="btn small glass">Replace</button>
                     <button type="button" id="videoClear" class="btn small glass danger">Remove</button>
                   </div>
@@ -241,10 +197,45 @@
           </div>
           </section>
 
+          <div class="studio-look">            <details class="look-options"><summary>Choose a look <span id="chosenLook">Automatic</span></summary>
+            <div class="looks" id="lookRow" role="radiogroup" aria-label="Look: how the camera and light feel">
+              <span class="looks-label" title="How the camera and the light feel: how close, from which angle, what kind of light">🎥 <b>Look</b></span>
+              <button type="button" class="chip-btn" role="radio" data-value="" title="The Brain picks the camera and light that suit your theme">✨ Brain picks</button>
+              <button type="button" class="chip-btn" role="radio" data-value="none" title="No camera, lens or light of the Brain's own: only what your theme or image says">🚫 No look</button>
+              <button type="button" class="chip-btn" role="radio" data-value="natural" title="Like a real photo: eye level, soft window light, the background softly blurred">🪟 Natural</button>
+              <button type="button" class="chip-btn" role="radio" data-value="intimate" title="Close and quiet: a tight shot, the background melting away, soft light from the side">🕯️ Intimate</button>
+              <button type="button" class="chip-btn" role="radio" data-value="powerful" title="Larger than life: the camera looks up, strong light from behind outlines the subject">⚡ Powerful</button>
+              <button type="button" class="chip-btn" role="radio" data-value="lonely" title="Small in a big world: wide shot, lots of empty space, cool dim light">🌫️ Lonely</button>
+              <button type="button" class="chip-btn" role="radio" data-value="suspense" title="Something's wrong: a tilted frame, half hidden, deep shadows">🫣 Suspense</button>
+              <button type="button" class="chip-btn" role="radio" data-value="horror" title="Dread: dark, centered, flickering light, light from below">👻 Horror</button>
+              <button type="button" class="chip-btn" role="radio" data-value="noir" title="Old detective film: black and white, hard light, blind-stripe shadows, smoke">🕵️ Noir</button>
+              <button type="button" class="chip-btn" role="radio" data-value="dreamy" title="Soft and glowing: hazy focus, warm light from behind, pastel colors">☁️ Dreamy</button>
+              <button type="button" class="chip-btn" role="radio" data-value="gritty" title="Raw and real: handheld, only the light that's there, every detail and flaw">📷 Gritty</button>
+              <button type="button" class="chip-btn" role="radio" data-value="epic" title="Huge and grand: very wide, everything sharp, hazy light from behind">🏔️ Epic</button>
+              <button type="button" class="chip-btn" role="radio" data-value="luxury" title="Polished ad: studio light, gleaming highlights, perfect composition">💎 Luxury</button>
+              <span id="lookMine" class="looks-mine"></span>
+              <button type="button" id="lookAdd" class="chip-btn" title="Describe your own camera and light once, and keep it as a look">＋ Your own look…</button>
+            </div>
+            <div id="lookTools" class="look-tools" hidden>
+              <button type="button" id="lookEdit" class="chip-btn">✎ Edit this look</button>
+              <button type="button" id="lookDel" class="chip-btn">🗑 Delete this look</button>
+            </div>
+            <div id="lookEditor" class="look-editor" role="group" aria-label="Your own look" hidden>
+              <div class="look-editor-row">
+                <input id="lkEmoji" maxlength="16" placeholder="🌧" aria-label="An emoji for the look (optional)" autocomplete="off">
+                <input id="lkName" maxlength="40" placeholder="Name it, e.g. Rainy neon" aria-label="Name of the look" autocomplete="off">
+              </div>
+              <label>What the camera and light do <textarea id="lkStill" spellcheck="true" rows="3" maxlength="500" placeholder="e.g. a 35mm lens at eye level, neon signs as the only light, wet reflections, shallow focus"></textarea></label>
+              <label>Camera move on video <span class="muted">(optional)</span> <input id="lkMove" spellcheck="true" maxlength="200" placeholder="e.g. a slow handheld drift" autocomplete="off"></label>
+              <div class="look-editor-acts"><button type="button" id="lkSave" class="btn small primary">✓ Keep this look</button><button type="button" id="lkCancel" class="btn small">Cancel</button></div>
+            </div>
+            <p id="lookMemoryHint" class="hint" hidden>Your own looks are kept for this session only (Privacy: Nothing stays).</p>
+            </details>
+</div>
           <section class="step" data-panel="create-dials">
-            <header class="step-head"><span class="num">4</span><h2>Shape, size &amp; variations</h2></header>
+            <header class="step-head"><span class="num">4</span><h2>Make it yours</h2></header>
             <div class="dials">
-              <div class="dial shape-dial" id="aspectField"><span>Shape<em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">from image</em></span><select id="aspect" class="sr-only" tabindex="-1" aria-hidden="true"></select><div id="aspectTiles" class="shape-tiles" role="radiogroup" aria-label="Shape"></div></div>
+              <div class="dial shape-dial" id="aspectField"><span>Shape<em id="aspectNote" class="dial-note" hidden title="Picked to match your image's shape">from image</em></span><div id="aspectTiles" class="shape-tiles" role="radiogroup" aria-label="Shape"></div><details class="exact-shape"><summary>Exact ratio</summary><select id="aspect" aria-label="Exact aspect ratio"></select></details></div>
               <label class="dial" id="resolutionField"><span>Size</span><select id="resolution" aria-label="Size"></select></label>
               <label class="dial" id="durationField"><span>Duration <small>seconds</small></span><input id="duration" type="number" min="1" max="20" step="1" inputmode="numeric" aria-label="Duration in seconds"></label>
               <span id="resCustom" class="res-custom" hidden><input id="resW" type="text" inputmode="numeric" maxlength="4" aria-label="Width" placeholder="Width"><b>×</b><input id="resH" type="text" inputmode="numeric" maxlength="4" aria-label="Height" placeholder="Height"><button type="button" id="resUse" class="btn small primary" title="Use this size and keep it in the menu">✓ Use</button><button type="button" id="resForget" class="btn small" title="Take this size out of the menu">✕ Forget</button></span>
@@ -261,7 +252,7 @@
           </section>
 
           <section class="step quiet" id="settingsStep" data-panel="create-settings" data-default="collapsed">
-            <header class="step-head"><span class="num">5</span><h2>Settings</h2></header>
+            <header class="step-head"><span class="num">5</span><h2>More options</h2></header>
             <div class="sub-step" id="renderStep" data-panel="create-render" data-default="collapsed">
             <div class="panel-head">
               <b>Render</b><span class="opt">workflow, seed, LoRAs, batches</span>
@@ -296,15 +287,14 @@
               <div id="batchBox" class="wfp-batch" data-panel="create-render-batch" data-default="collapsed" hidden>
                 <div class="panel-head"><b>Batch</b><span class="opt">named batches of images or videos</span></div>
                 <label class="batch-pick"><span>Batch to make</span><select id="batchPick" aria-label="Which batch to make"></select></label>
-                <ul id="batchList" class="batch-list" aria-label="Your batches"></ul>
-                <button type="button" id="batchAdd" class="btn small">＋ New batch</button>
+                <a class="studio-link" href="#batches" data-studio-go="batches">Manage batches ↗</a>
                 <p id="batchHint" class="hint"></p>
               </div>
             </div>
           </div>
 
           <div class="sub-step" id="chainStep" data-panel="create-chain" data-default="collapsed">
-            <div class="panel-head"><b>Writing &amp; more steps</b><span class="opt">prompt length, how adventurous, Then…</span></div>
+            <div class="panel-head"><b>Creative controls</b><span class="opt">length and adventurousness</span></div>
             <div id="writingOptions" class="writing-options">
               <div class="dial" id="lengthField"><span>Prompt length</span><div class="seg" id="lengthSeg" role="radiogroup" aria-label="Prompt length"><button type="button" role="radio" data-value="short">Short</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="long">Long</button></div></div>
               <div class="dial temp" id="tempField">
@@ -313,9 +303,8 @@
                 <div class="range-labels"><span>🎯 precise</span><span>🌶️ wild</span></div>
               </div>
             </div>
-            <div class="panel-head chain-head"><b>Then…</b><span class="opt">add more steps, like still → video</span></div>
-            <div id="chainBox" class="chain"></div>
-            <input type="file" id="chainImportInput" accept=".json,application/json" hidden>
+            <a class="studio-link" href="#chains" data-studio-go="chains">Build a chain <span aria-hidden="true">↗</span></a>
+            <p class="hint" id="createChainSummary"></p>
           </div>
           </section>
           </div>
@@ -330,28 +319,33 @@
               <span class="gen-spark" aria-hidden="true">✦</span><span id="genLabel">Write prompt</span><kbd>Ctrl ↵</kbd>
             </button>
             <button type="button" id="stopBtn" class="btn-stop" hidden>■ Stop <kbd>Esc</kbd></button>
-            <button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in Saved prompts." aria-label="New session">＋ New session</button>
+
           </div>
         </form>
 
         <section class="stage" id="stage" aria-label="Results" tabindex="-1">
           <div class="stage-tabs" role="tablist" aria-label="Results">
-            <button type="button" role="tab" id="tabTakes" aria-selected="true" aria-controls="takesPane">Prompt takes</button>
-            <button type="button" role="tab" id="tabRenders" aria-selected="false" aria-controls="rendersPane" tabindex="-1">Your renders</button>
+            <button type="button" role="tab" id="tabRenders" aria-selected="false" aria-controls="rendersPane" tabindex="-1">Your renders <span id="rendersTabCount"></span></button>
+            <button type="button" role="tab" id="tabTakes" aria-selected="true" aria-controls="takesPane">Prompt takes <span id="takesTabCount"></span></button>
+            <button type="button" role="tab" id="tabPipeline" aria-selected="false" aria-controls="pipelinePane" tabindex="-1">Pipeline</button>
+            <a href="#gallery" data-studio-go="gallery" class="stage-library" title="Open full library" aria-label="Open full library">⛶</a>
           </div>
-          <div id="takesPane" class="stage-pane" role="tabpanel" aria-labelledby="tabTakes">
           <div id="lineBox" class="line-box" role="region" aria-label="Waiting in line" hidden>
             <div class="line-head">
               <b id="lineHead"></b>
               <button type="button" id="lineGo" class="btn small" hidden>▶ Carry on</button>
-              <button type="button" id="lineClear" class="btn small danger">Clear</button>
+              <button type="button" id="queueClear" class="btn small danger">Clear</button>
             </div>
             <ol id="lineList" class="line-list"></ol>
           </div>
-          <div id="runStrip" class="run-strip" role="region" aria-label="Chain run" hidden></div>
-          <div id="stageHead" class="stage-head" hidden></div>
           <p id="creationProgress" class="creation-progress" role="status" hidden></p>
           <div id="stageError" class="error-card" role="alert" hidden></div>
+          <div id="pipelinePane" class="stage-pane" role="tabpanel" aria-labelledby="tabPipeline" hidden>
+            <div class="pipeline-intro"><h2>From one idea to the next</h2><p>Follow a chain as pictures become the starting point for your next step.</p><a class="btn" href="#chains" data-studio-go="chains">Manage chains</a></div>
+          <div id="runStrip" class="run-strip" role="region" aria-label="Chain run" hidden></div>
+          </div>
+          <div id="takesPane" class="stage-pane" role="tabpanel" aria-labelledby="tabTakes">
+          <div id="stageHead" class="stage-head" hidden></div>
           <div id="resultsList" class="takes"></div>
           <div id="resultsEmpty" class="empty quiet">
             <div class="try"><span>Try an idea</span><div id="tryChips" class="try-chips"></div></div>
@@ -372,14 +366,14 @@
             <div id="reelBody" class="reel-body">
               <div id="reelFilters" class="reel-filters">
                 <input type="search" id="reelFind" class="reel-find" placeholder="Search your artwork…" aria-label="Find renders by their prompt">
-                <button type="button" id="reelFilterToggle" class="btn small" aria-expanded="false" aria-controls="reelFilterOptions">Filters</button>
-                <button type="button" id="reelFilterClear" class="chip-btn" hidden>Clear filters</button>
-                <div id="reelFilterOptions" class="reel-filter-options">
                 <div id="reelKinds" class="filter-chips" role="group" aria-label="Show">
                   <button type="button" class="chip-btn" data-kind="" aria-pressed="true">All</button>
                   <button type="button" class="chip-btn" data-kind="image" aria-pressed="false">Images</button>
                   <button type="button" class="chip-btn" data-kind="video" aria-pressed="false">Videos</button>
                 </div>
+                <button type="button" id="reelFilterToggle" class="btn small" aria-expanded="false" aria-controls="reelFilterOptions">Filters</button>
+                <button type="button" id="reelFilterClear" class="chip-btn" hidden>Clear filters</button>
+                <div id="reelFilterOptions" class="reel-filter-options">
                 <button type="button" id="reelSession" class="chip-btn" aria-pressed="false" title="Only renders made since Prompt Maker last started">This session</button>
                 <div id="reelRated" class="filter-chips" role="group" aria-label="Filter by rating">
                   <button type="button" class="chip-btn rated" data-min="1" aria-pressed="false" title="Rated pretty good or better">★ &amp; up</button>
@@ -425,7 +419,7 @@
     <section id="view-history" class="view" aria-label="Saved prompts">
       <div class="page-head">
         <h1>Saved prompts <span id="historyCount" class="count-pill"></span></h1>
-        <p>Every prompt is saved automatically. Bookmark ideas to reuse; rate your pictures and videos in the Gallery.</p>
+        <p>Every prompt is saved automatically. Bookmark ideas to reuse; rate your pictures and videos in the Library.</p>
       </div>
       <div class="toolbar">
         <div class="search">
@@ -440,45 +434,23 @@
     </section>
 
     <!-- ================= GALLERY ================= -->
-    <section id="view-gallery" class="view" aria-label="Gallery">
+    <section id="view-gallery" class="view" aria-label="Library">
       <div class="page-head">
-        <h1>Gallery <span id="galleryCount" class="count-pill"></span></h1>
+        <h1>Your library <span id="galleryCount" class="count-pill"></span></h1>
         <p>Your pictures and videos, saved automatically. Rate your best work, select two to compare, or open one to use it again.</p>
       </div>
-      <div id="galleryHome"></div><!-- (Your renders moves here while the Gallery shows) -->
+      <div id="galleryHome"></div><!-- (Your renders moves here while the Library shows) -->
     </section>
 
     <!-- ================= MODELS ================= -->
     <section id="view-models" class="view" aria-label="Models">
       <div class="page-head models-head">
         <div>
-          <h1>Models</h1>
+          <h1>Models &amp; workflows</h1>
           <p id="modelsIntro">Choose what suits your idea. See what each model needs and whether it is ready to make pictures or videos.</p>
           <p id="brainsIntro" hidden>Your LM Studio models ("Brains") write the prompts. Prompt Maker learns how each one thinks, how fast it is and which jobs it does well from your own runs. New models show up here on their own.</p>
         </div>
-        <div class="seg models-switch" role="tablist" aria-label="Which models">
-          <button type="button" role="tab" data-pane="models" class="active" aria-selected="true">🎯 Image &amp; video models</button>
-          <button type="button" role="tab" data-pane="brains" aria-selected="false">🧠 Brains <span id="brainCount" class="count"></span></button>
-        </div>
-      </div>
-      <div id="brainsPane" class="brains-pane" hidden>
-        <div class="brains-bar">
-          <input id="brainSearch" type="search" class="brain-search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" aria-label="Search Brains by name">
-          <div id="brainFilters" class="brain-filters"></div>
-          <div class="seg brain-sort" role="radiogroup" aria-label="Sort Brains">
-            <button type="button" data-sort="fit" role="radio">Best fit</button>
-            <button type="button" data-sort="recent" role="radio">Last used</button>
-            <button type="button" data-sort="name" role="radio">Name</button>
-          </div>
-          <label class="field inline"><span>Best for</span><select id="brainTarget" aria-label="Rank Brains for this model"></select></label>
-          <p class="hint">Ranked by what you rendered, starred and refined with each Brain, then by Quick check. ⚡ Quick check loads the Brain in LM Studio (unloading the one there now) and writes two test prompts: about 20 seconds.</p>
-        </div>
-        <ul id="brainList" class="brain-list"></ul>
-        <details id="brainsNew" class="brains-new" hidden>
-          <summary></summary>
-          <ul id="brainListNew" class="brain-list"></ul>
-        </details>
-        <p id="brainsEmpty" class="notice" hidden></p>
+
       </div>
       <section id="modelCatalog" aria-label="Choose a model">
         <div class="catalog-toolbar"><p class="hint">Your Brain writes the prompt. These models make the picture or video.</p><button type="button" id="customizeModels" class="btn small">Customize models</button></div>
@@ -574,7 +546,7 @@
           </section>
 
           <section class="sub" data-panel="model-sizes" data-default="collapsed">
-            <div class="panel-head"><b>Sizes</b><small>what step ④ offers</small></div>
+            <div class="panel-head"><b>Sizes</b><small>what size and variations offers</small></div>
             <div class="grid-3">
               <label class="field"><span>Aspect ratios <small>comma-separated</small></span><input id="mAspects" placeholder="1:1, 16:9, 9:16"></label>
               <label class="field"><span>Resolutions <small>comma-separated</small></span><input id="mRes" placeholder="1024×1024, 1920×1080"></label>
@@ -584,7 +556,7 @@
           </section>
 
           <section class="sub" data-panel="models-defaults" data-default="collapsed">
-            <div class="panel-head"><b>Defaults</b><small>what step ④ starts with</small></div>
+            <div class="panel-head"><b>Defaults</b><small>what size and variations starts with</small></div>
             <div class="grid-5">
               <label class="field"><span>Aspect</span><select id="dAspect"></select></label>
               <label class="field"><span>Resolution</span><select id="dRes"></select></label>
@@ -668,11 +640,12 @@
 
     <section id="view-settings" class="view" aria-label="Settings">
       <div class="page-head">
-        <h1>Settings</h1>
+        <p class="eyebrow">Studio settings</p><h1>Make yourself at home.</h1>
         <p>Prompt Maker runs 100% offline: nothing leaves your machine, unless you choose a ☁️ cloud Brain.</p>
       </div>
+<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button type="button" data-settings-tab="services" aria-controls="settingsForm">Services</button><button type="button" data-settings-tab="prompting" aria-controls="settingsForm">Brain & prompting</button><button type="button" data-settings-tab="instructions" aria-controls="settingsForm">Master instructions</button><button type="button" data-settings-tab="rendering" aria-controls="settingsForm">Rendering</button><button type="button" data-settings-tab="privacy" aria-controls="settingsForm">Privacy</button><button type="button" data-settings-tab="cloud" aria-controls="settingsForm">Cloud Brains</button><button type="button" data-settings-tab="assistant" aria-controls="settingsForm">Assistant</button><button type="button" data-settings-tab="updates" aria-controls="settingsForm">Data & updates</button></nav>
       <form id="settingsForm" class="settings" autocomplete="off" novalidate>
-        <section class="card" id="servicesCard" data-panel="set-services">
+        <section class="card" id="servicesCard" data-panel="set-services" data-settings-group="services">
           <h2>🖥️ Services</h2>
           <ul class="svc-list">
             <li class="svc" data-svc="app">
@@ -701,7 +674,7 @@
           <div class="row"><button type="button" class="btn small danger" id="stopAllBtn" title="Stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker">■ Stop everything (frees the GPU)</button></div>
         </section>
 
-        <section class="card" data-panel="set-update" id="updateCard">
+        <section class="card" data-panel="set-update" data-settings-group="updates" id="updateCard">
           <h2>⬆ Updates</h2>
           <p class="hint" id="updNow">Checking which version this is…</p>
           <div class="row">
@@ -713,7 +686,7 @@
           <p class="hint" id="updNote" hidden></p>
         </section>
 
-        <section class="card" data-panel="set-privacy" id="privacyCard">
+        <section class="card" data-panel="set-privacy" data-settings-group="privacy" id="privacyCard">
           <h2>🔒 Privacy check</h2>
           <p class="hint">What this computer does with your files below the app. Fixes that need an administrator's password ask for it with the system's own prompt.</p>
           <div class="row" id="privacyLevelRow"><span id="privacyLevelLine" class="muted"></span><button type="button" class="btn small" id="privacyLevelBtn">Change the level</button><button type="button" class="btn small primary" id="privacyRestart" hidden title="The new level takes effect when Prompt Maker starts again">↻ Restart now to apply</button></div>
@@ -727,16 +700,16 @@
           <p class="hint" id="deleteWarnOff" hidden>The "Delete it for good?" warning is off on this browser. <button type="button" id="deleteWarnBack" class="link-btn">Show it again</button></p>
         </section>
 
-        <section class="card" data-panel="set-lmstudio" data-default="collapsed">
+        <section class="card" data-panel="set-lmstudio" data-settings-group="services" data-default="collapsed">
           <h2>🔌 LM Studio</h2>
           <label class="field"><span>Local server URL</span>
             <div class="row"><input id="sUrl" placeholder="http://127.0.0.1:1234"><button type="button" id="sTest" class="btn small">Test connection</button></div>
           </label>
           <p id="sTestResult" class="test-result" hidden></p>
-          <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start and stop LM Studio's server in <b>Services</b> above. Choose the Brain in the top bar. Image input needs a vision model marked 👁.</p>
+          <p class="hint">Offline only: the app refuses anything that isn't this computer or your local network. Start and stop LM Studio's server in <b>Services</b>. Choose the Brain in the top bar. Image input needs a vision model marked 👁.</p>
         </section>
 
-        <section class="card" id="cloudCard" data-panel="set-cloud">
+        <section class="card" id="cloudCard" data-panel="set-cloud" data-settings-group="cloud">
           <h2>☁️ Cloud Brains <span class="tag">optional</span></h2>
           <p class="hint">Prompt Maker runs 100% offline. If a local model isn't good enough, add a cloud provider with your own API key: its models then show up in the Brain menu, marked ☁️. Whatever you write with a cloud Brain is sent to that provider, and Prompt Maker asks before you switch to one.</p>
           <ul id="providerList" class="svc-list"></ul>
@@ -750,14 +723,14 @@
           <div class="row"><button type="button" id="cpReset" class="btn small" hidden>Ask again before every cloud Brain</button></div>
         </section>
 
-        <section class="card" data-panel="set-comfy" data-default="collapsed">
+        <section class="card" data-panel="set-comfy" data-settings-group="rendering" data-default="collapsed">
           <h2>🎨 ComfyUI <span class="tag">optional</span></h2>
           <label class="field"><span>Local ComfyUI URL</span>
             <div class="row"><input id="sComfyUrl" placeholder="http://127.0.0.1:8188"><button type="button" id="sComfyTest" class="btn small">Test connection</button></div>
           </label>
           <p id="sComfyResult" class="test-result" hidden></p>
           <div id="sComfyHealth" class="health" hidden><p></p><ul></ul><button type="button" id="sComfyRecheck" class="btn small">↻ Check again</button></div>
-          <p class="hint">Every workflow is checked against ComfyUI when Prompt Maker starts, whenever ComfyUI comes back and every ten minutes: a node pack that didn't load, a model file it lacks. What can't render is marked ⚠ in step ⑤, which says why.</p>
+          <p class="hint">Every workflow is checked against ComfyUI when Prompt Maker starts, whenever ComfyUI comes back and every ten minutes: a node pack that didn't load, a model file it lacks. What can't render is marked ⚠ in Render settings, which says why.</p>
           <label class="check-row"><input type="checkbox" id="sComfyCleanup"> <span>After copying a render, delete it from ComfyUI's output folder</span></label>
           <label class="field" id="sComfyDirField"><span>ComfyUI output folder <small>only if ComfyUI was started with <code>--output-directory</code></small></span><input id="sComfyDir" placeholder="found automatically"></label>
           <p class="hint">Keeps ComfyUI's output folder clean: Prompt Maker keeps every render in your data folder, with its own name. It only deletes the exact file it just copied, and only when ComfyUI runs on this computer. Deleting from Saved prompts always removes ComfyUI's copies of those renders too, so the folder matters even with this off.</p>
@@ -769,10 +742,10 @@
             <label class="field"><span>ComfyUI folder <small>to start it from Services</small></span><input id="sComfyFolder" placeholder="found automatically"></label>
             <label class="field"><span>Start options</span><input id="sComfyArgs" class="mono" placeholder="as you last ran it"></label>
           </div>
-          <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI in <b>Services</b> above (or as usual), then attach workflows to a model in the <b>Models</b> tab. Prompt Maker starts it the way it last saw it running, or with live previews on (<code>--preview-method auto</code>).</p>
+          <p class="hint">Only needed if you want to render prompts into images and videos. Start ComfyUI in <b>Services</b> (or as usual), then attach workflows to a model in the <b>Models &amp; workflows</b> page. Prompt Maker starts it the way it last saw it running, or with live previews on (<code>--preview-method auto</code>).</p>
         </section>
 
-        <section class="card" data-panel="set-thinking" data-default="collapsed">
+        <section class="card" data-panel="set-thinking" data-settings-group="prompting" data-default="collapsed">
           <h2>🧠 How the Brain thinks</h2>
           <div class="grid-3">
             <label class="field"><span>Thinking</span>
@@ -783,7 +756,7 @@
                 <option value="high">High</option>
                 <option value="default">Model default</option>
               </select>
-              <small class="hint">For reasoning models such as Qwen 3.5/3.6. Left on, they can think for thousands of tokens before writing. This is the default for every Brain; give one Brain its own level on <b>Models → Brains</b>.</small>
+              <small class="hint">For reasoning models such as Qwen 3.5/3.6. Left on, they can think for thousands of tokens before writing. This is the default for every Brain; give one Brain its own level on <b>Brains</b>.</small>
             </label>
             <label class="field"><span>Top P</span><input id="sTopP" type="number" min="0" max="1" step="0.01"><small class="hint">Lower is more focused. Temperature is set per run on the Create page.</small></label>
             <label class="field"><span>Max tokens</span><input id="sMax" type="number" min="256" max="32768" step="256"><small class="hint">The cap on each answer. Raise it if thinking is on.</small></label>
@@ -792,7 +765,7 @@
           <p class="hint">On by default. After each take, one more short Brain call compares it with what you typed and puts back any detail it changed (a color, a count, a place). The take says what was put back. Off is a few seconds faster per take.</p>
         </section>
 
-        <section class="card" data-panel="set-master" data-default="collapsed">
+        <section class="card" data-panel="set-master" data-settings-group="instructions" data-default="collapsed">
           <h2>📜 Master instructions</h2>
           <p class="hint">Shared rules sent before every model's own instructions: output format, staying faithful to the theme, and so on.</p>
           <textarea id="sMaster" class="mono" rows="16" spellcheck="true"></textarea>
@@ -806,7 +779,7 @@
           </details>
         </section>
 
-        <section class="card" data-panel="set-assistant">
+        <section class="card" data-panel="set-assistant" data-settings-group="assistant">
           <h2>✦ Assistant</h2>
           <p class="hint">The assistant (<b>✦ Ask</b>, in the top bar) always runs Prompt Maker for you, and can find folders and look at pictures anywhere on this computer.</p>
           <label class="check-row"><input type="checkbox" id="sComputer" data-not-assistant> <span>💻 Let the assistant use my computer</span></label>
@@ -820,7 +793,49 @@
           <span id="settingsDirty" class="tag warn" hidden>● Unsaved</span>
           <button type="submit" class="btn primary">Save settings</button>
         </div>
-      </form>
+      </form></div>
+    </section>
+
+    <section id="view-brains" class="view" aria-label="Brains">
+      <div class="page-head"><p class="eyebrow">Your studio</p><h1>Meet your Brains <span id="brainCount" class="count"></span></h1><p>The AI models that turn your ideas into prompts. Find the best fit from your own results.</p></div>
+      <div id="brainsPane" class="brains-pane" hidden>
+        <div class="brains-bar">
+          <input id="brainSearch" type="search" class="brain-search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" aria-label="Search Brains by name">
+          <div id="brainFilters" class="brain-filters"></div>
+          <div class="seg brain-sort" role="radiogroup" aria-label="Sort Brains">
+            <button type="button" data-sort="fit" role="radio">Best fit</button>
+            <button type="button" data-sort="recent" role="radio">Last used</button>
+            <button type="button" data-sort="name" role="radio">Name</button>
+          </div>
+          <label class="field inline"><span>Best for</span><select id="brainTarget" aria-label="Rank Brains for this model"></select></label>
+          <p class="hint">Ranked by what you rendered, starred and refined with each Brain, then by Quick check. ⚡ Quick check loads the Brain in LM Studio (unloading the one there now) and writes two test prompts: about 20 seconds.</p>
+        </div>
+        <ul id="brainList" class="brain-list"></ul>
+        <details id="brainsNew" class="brains-new" hidden>
+          <summary></summary>
+          <ul id="brainListNew" class="brain-list"></ul>
+        </details>
+        <p id="brainsEmpty" class="notice" hidden></p>
+      </div>
+    </section>
+    <section id="view-chains" class="view" aria-label="Chains">
+      <div class="page-head"><p class="eyebrow">Automation</p><h1>One idea. More possibilities.</h1><p>Build a chain: make a picture, choose your favorite, then bring it to life.</p></div>
+      <div class="automation-layout"><article class="card automation-editor"><div class="automation-start"><h2>Your starting point</h2><p id="chainStartSummary"></p><a class="btn small" href="#create" data-studio-go="create">Set up in Create</a></div>
+      <p id="chainManualNotice" class="notice" hidden>Chains use the Brain to write each step. Turn off “Use my own prompt” in Create to use your chain.</p>
+      <div id="chainEditorContent">            <div class="panel-head chain-head"><b>Then…</b><span class="opt">add more steps, like still → video</span></div>
+            <div id="chainBox" class="chain"></div>
+            <input type="file" id="chainImportInput" accept=".json,application/json" hidden></div></article><aside class="automation-note"><h2>Keep the best moving</h2><p>Between steps, choose the pictures yourself, let the Brain choose, or continue with every picture.</p><p>Start the chain from Create. Finished steps are kept, even if you stop.</p><a class="btn primary" href="#create" data-studio-go="create">Back to Create</a></aside></div>
+    </section>
+    <section id="view-batches" class="view" aria-label="Batches">
+      <div class="page-head"><p class="eyebrow">Automation</p><h1>Make room to explore.</h1><p>Save a recipe for a few variations or a whole collection. Run one batch or all of them from Create.</p></div>
+      <div class="automation-layout"><article class="card automation-editor"><h2>Your batches</h2>                <ul id="batchList" class="batch-list" aria-label="Your batches"></ul>
+                <button type="button" id="batchAdd" class="btn small">＋ New batch</button>
+<p id="batchesEmpty" class="hint">Make your first batch to explore an idea in several ways.</p></article><aside class="automation-note"><h2>One idea, many directions</h2><p>Keep one prompt and vary the render, or write a fresh prompt for every image or video. Each batch keeps its own saved session.</p><a class="btn primary" href="#create" data-studio-go="create">Choose a batch in Create</a></aside></div>
+    </section>
+    <section id="view-jobs" class="view" aria-label="Jobs">
+      <div class="page-head"><p class="eyebrow">Automation</p><h1>Your studio at work.</h1><p>Long tasks from the assistant, with progress and a log of every result.</p></div>
+      <button type="button" class="btn primary" id="jobAsk">Plan a job with the assistant</button>
+      <div id="jobsList" class="jobs-list"></div>
     </section>
   </main>
 
@@ -967,7 +982,7 @@
   <dialog id="imgPick" class="modal img-pick" aria-labelledby="imgPickTitle">
     <div class="modal-body">
       <header class="modal-head">
-        <h2 id="imgPickTitle">Pick an image from your Gallery</h2>
+        <h2 id="imgPickTitle">Pick an image from your Library</h2>
         <button type="button" class="icon-btn" id="imgPickClose" aria-label="Close">✕</button>
       </header>
       <div class="ip-bar">
@@ -975,17 +990,6 @@
         <label class="ip-size" title="Thumbnail size">🔍<input type="range" id="imgPickSize" min="110" max="480" step="10" value="140" aria-label="Thumbnail size"></label>
       </div>
       <div id="imgPickGrid" class="ip-grid"></div>
-    </div>
-  </dialog>
-
-  <dialog id="jobsDlg" class="modal jobs-dlg" aria-labelledby="jobsTitle">
-    <div class="modal-body">
-      <header class="modal-head">
-        <h2 id="jobsTitle">🗂 Jobs</h2>
-        <button type="button" class="icon-btn" id="jobsClose" aria-label="Close">✕</button>
-      </header>
-      <p class="muted small jobs-intro">Long tasks you give the assistant run here, one item after another. Whatever goes wrong is skipped and logged for you to look at, and the job goes on.</p>
-      <div id="jobsList" class="jobs-list"></div>
     </div>
   </dialog>
 

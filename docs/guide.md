@@ -31,7 +31,7 @@ The full manual for [Prompt Maker](../README.md): every page, setting and trick.
   - 🪞 **Recreate**: describe it so the model can reproduce it.
   - 🎬 **Animate**: video models only. The image is frame one, and the prompt describes what happens next.
 - **Image alone.** Leave the theme empty and it suggests a prompt from the image.
-- **✍️ Your own prompt (off by default).** Already have the prompt? Switch on **✍️ Use my own prompt, word for word** under step ②: what you type or paste is sent to the model exactly as it is, with your image and your workflow. No Brain is asked, so LM Studio can even be off.
+- **✍️ Your own prompt (off by default).** Already have the prompt? Switch on **✍️ Use my own prompt, word for word** under Your idea: what you type or paste is sent to the model exactly as it is, with your image and your workflow. No Brain is asked, so LM Studio can even be off.
 - **🧾 Same person, every render (Krea 2 Character, MiniMax H3 Reference).** Drop in a picture of someone and they stay themselves in brand-new pictures and clips: the Brain writes their **character sheet** once (face, eyes, hair, skin, build, marks), you can fix any line, and every take carries all of it. **🪪 Turnaround** renders them from every side and makes that the picture to follow. No denoise: the picture is the person, not a picture to repaint ([more](#same-person-every-render)).
 - **🎙 Voices.** Describe a voice once ("a woman in her late twenties, warm light alto, soft Midwestern lilt"), hear it, keep it by name. Any line you write is then said in that voice, on this computer, and MiniMax H3 makes the person in your picture say it ([more](#voices)). One-click setup; ComfyUI isn't touched.
 - **🕺 Character animation (Wan Animate 2).** Give it a character image and a motion video: your character performs the video's moves, in a setting and from a camera angle you describe. The Brain watches the video (a sheet of its frames) to name the motion, and ComfyUI's own Wan Animate 2 templates are one click away, set up for you. A model file your ComfyUI lacks is one **⬇ Download** away, and a video's black bars one **✂️ Crop** away.
@@ -59,10 +59,10 @@ The full manual for [Prompt Maker](../README.md): every page, setting and trick.
   - **🎞 Your renders**, on its own tab beside the takes, holds every render you've made, newest first, with filters and a caption under each (the idea's first words and the model), so nothing gets lost below a long prompt. Drag the cards into your own order, pick several (Ctrl-click or drag a box) to download or delete them in one go, and make the box as tall as you like, or full screen.
   - Rate the good ones: **★ Pretty good**, **★★ Very good**, **★★★ Excellent**.
   - **⇆ Compare** two renders side by side and **Pin on the left** until the best is left.
-  - **Hide from Create** tidies your workspace; the artwork stays in Gallery and Saved prompts. **Delete** waits 8 seconds with **↶ Undo**.
-  - Browse every result in the **Gallery**: the same grid as 🎞 Your renders, as tall as the window, in the same order you dragged them into. View any of them in a full-screen lightbox.
+  - **Hide from Create** tidies your workspace; the artwork stays in Library and Saved prompts. **Delete** waits 8 seconds with **↶ Undo**.
+  - Browse every result in the **Library**: the same grid as 🎞 Your renders, as tall as the window, in the same order you dragged them into. View any of them in a full-screen lightbox.
   - Chain models: turn a still into the input image for a video model with one click.
-- **🧠 Brain profiles.** **Models → Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
+- **🧠 Brain profiles.** **Brains** shows every LM Studio model: how it thinks, how fast it is here, and how its prompts did for each of your models. The Brain menu suggests the best ones for the model you're on, and a one-click **Quick check** tests a new model in about 20 seconds.
 - **🔞 Adult content (optional, off by default).** A switch under **Settings → Master instructions** lets the Brain write explicit prompts between adults: plain anatomical language, who does what to whom kept exact, the act at the center of the shot. Each model can also have **Adult examples**, used only while the switch is on.
 - **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let your Brain draft the playbook. Import and export models as `.json`.
 - **Zero install fuss.** Plain Node.js with no dependencies: no `npm install`, no build step.
@@ -168,12 +168,14 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 ## Quick start
 
 1. **Pick a brain.** Use the **Brain** menu at the top right: models marked 👁 can see images, and "loaded" means it's ready right now.
-2. **Choose what to make**, for example **Make a picture**. The task picks a suitable model; **Change model** lets you choose another.
+2. **Choose what to make**, for example **Make a picture**. The task picks a suitable model; **Target model** lets you choose another.
 3. **Describe the shot.** Type a theme, or hit **🎲 Surprise me**. **✕ Clear** empties the box in one click (**↶ Undo** brings it back).
 4. Click **Write prompt**, or turn off **Review prompt first** to **Make image** or **Make video** with your configured workflow. `Ctrl+Enter` runs the same action. Existing auto-render preferences are preserved.
 5. **Copy** the prompt, or tweak it: type *"make it night time"* in the box under the take and press Enter.
 
 ## Using Prompt Maker
+
+The sidebar has Workspace (**Create**, **Library**, **Saved prompts**), Your studio (**Models & workflows**, **Brains**, **Voices**), Automation (**Chains**, **Batches**, **Jobs**), and **Settings**. On a phone, open the navigation button in the top bar. Existing `#gallery`, `#history`, and `#models/brains` links still work.
 
 ### Create
 
@@ -181,17 +183,17 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 
 | Step | What it does |
 |---|---|
-| **① What do you want to make?** | Choose a creative task. Its recommended model appears below as one line; **Change model** opens the full choice and remembers your preference, and **About this model** folds out what it's for and how to use it. **Animate a picture** and **Make a video** are different models: the first starts from your picture (LTX 2.3, MiniMax H3), the second from your words alone (**LTX 2.3: video from words**, **MiniMax H3: video from words**). **About this model** starts folded and offers the practical guide and example ideas when you want them. |
-| **② Describe the shot** | Your theme: short or long, casual is fine. Optional if you add an image. Under it, the **🎥 Look** sets how the camera and light feel: one of eleven, **No look**, or **your own** (see below). Have the exact prompt already? **✍️ Use my own prompt, word for word** (below) sends it as it is, with no Brain (the Look steps aside). |
-| **③ Add an image** | Drop, paste (`Ctrl+V`) or browse. **More than one picture:** when the workflow picked in step ⑤ takes several (a person and a place, pictures to combine), step ③ grows a slot per picture under the first, each named by the workflow (**Person**, **Another picture**…) and marked *needed* or *optional*: ＋ Add, Gallery, Replace, Remove, or drop a picture straight onto the slot. The Brain sees every picture and is told which is which; the render uploads them all, and an optional slot left empty is simply left out of the workflow. On a model that works from words alone (the **video from words** ones) this step is greyed out and says **No image**: nothing can be dropped, and a picture you already added is set aside, not sent, until you pick a model that takes one. Otherwise:  Click the image to see it full screen (click again for actual size). Picking from your Gallery? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
-| **④ Shape, size & variations** | Click a shape tile (Portrait, Square, Landscape or Wide, each with its exact ratio drawn as a little frame), then the size, video duration and the number of alternatives. **Size** lists sizes in the picked shape, from Small (about half a megapixel) through Standard, Large and Extra large to Huge (about four), with HD, Full HD, 2K and 4K by name; it starts on the model's usual size and follows the shape. **✎ Type your own size…** at the bottom takes any width × height; **✓ Use** keeps it in that model's Size menu for good (the last twelve, in your data folder, so after a reboot and in any browser too; at the *Nothing stays* privacy level, for the session only). Pick it and **✕ Forget** takes it out. Step ④ as you leave it (shape, size, duration, and in ⑤ prompt length and how adventurous) is kept per model in the data folder too, so the app window, a browser tab and every restart open on what you picked last. |
-| **⑤ Settings** | One quiet fold at the bottom, closed to start, with two folds inside. **Render** (optional, with ComfyUI): the workflow that renders your takes, edit it or add one, and under **Advanced** its seed, LoRAs and sampler, then auto-render, renders per take and batches (see [Rendering](#rendering-with-comfyui-optional)). **Writing & more steps**: **Prompt length** and **How adventurous** for the Brain's writing, and **Then…** to chain more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
+| **What would you like to make?** | Choose a creative task. Its recommended model appears in **Target model**; use that menu to change it. The app remembers your preference. **Animate a picture** and **Make a video** are different models: the first starts from your picture (LTX 2.3, MiniMax H3), the second from your words alone (**LTX 2.3: video from words**, **MiniMax H3: video from words**). **About this model** starts folded and offers the practical guide and example ideas when you want them. |
+| **Your idea** | Your theme: short or long, casual is fine. Optional if you add an image. Below the image inputs, **Choose a look** sets how the camera and light feel: one of eleven, **No look**, or **your own** (see below). Have the exact prompt already? **✍️ Use my own prompt, word for word** (below) sends it as it is, with no Brain (the Look steps aside). |
+| **Add an image** | Drop, paste (`Ctrl+V`) or browse. **More than one picture:** when the workflow picked in More options → Render settings takes several (a person and a place, pictures to combine), Add an image grows a slot per picture under the first, each named by the workflow (**Person**, **Another picture**…) and marked *needed* or *optional*: ＋ Add, Library, Replace, Remove, or drop a picture straight onto the slot. The Brain sees every picture and is told which is which; the render uploads them all, and an optional slot left empty is simply left out of the workflow. On a model that works from words alone (the **video from words** ones) this step is greyed out and says **No image**: nothing can be dropped, and a picture you already added is set aside, not sent, until you pick a model that takes one. Otherwise:  Click the image to see it full screen (click again for actual size). Picking from your Library? Drag the 🔍 slider for bigger thumbnails, or hit a tile's 🔍 to look closer. Then choose how to use it (below). On a character-animation model (Wan Animate 2) this step is **Character & motion**: the image is your character, and a **🕺 motion video** goes under it (see [Character animation](#character-animation-wan-animate-2)). |
+| **Make it yours** | Click a shape tile (Portrait, Square, Landscape or Wide, each with its exact ratio drawn as a little frame), or open **Exact ratio** for the full list, then pick the size, video duration and the number of alternatives. **Size** lists sizes in the picked shape, from Small (about half a megapixel) through Standard, Large and Extra large to Huge (about four), with HD, Full HD, 2K and 4K by name; it starts on the model's usual size and follows the shape. **✎ Type your own size…** at the bottom takes any width × height; **✓ Use** keeps it in that model's Size menu for good (the last twelve, in your data folder, so after a reboot and in any browser too; at the *Nothing stays* privacy level, for the session only). Pick it and **✕ Forget** takes it out. Your choices (shape, size, duration, and in More options → Writing options prompt length and how adventurous) are kept per model in the data folder too, so the app window, a browser tab and every restart open on what you picked last. |
+| **More options** | One quiet fold at the bottom, closed to start, with two folds inside. **Render** (optional, with ComfyUI): the workflow that renders your takes, edit it or add one, and under **Advanced** its seed, LoRAs and sampler, then auto-render, renders per take and batches (see [Rendering](#rendering-with-comfyui-optional)). **Writing options**: **Prompt length** and **How adventurous** for the Brain's writing, and a link to **Chains** to add more steps, like still → video (see [Chains](#4-chains-build-your-own-pipelines)). |
 
-**The results have two tabs**, beside the steps: **✦ Prompt takes** (what the Brain wrote, with its buttons) and **🎞 Your renders** (every picture and video, in one grid that fills the rest of the window). One shows at a time, so neither ever pushes the other down the page. Before you write anything, the takes tab is one line of ideas to try. Pressing the main button (or opening a saved prompt) shows the takes; the first render of a run landing shows Your renders, unless you're typing in a take, in which case the tab gets a dot instead. On a wide window the renders grid fills the stage; on a narrow one the box has a bottom edge to drag.
+**The results have three tabs**, beside the form: **Your renders** (every picture and video, in one grid that fills the rest of the window), **Prompt takes** (what the Brain wrote, with its buttons), and **Pipeline** (your chain’s steps and continuation controls). One shows at a time, so switching between them keeps the workspace steady. Before you write anything, the takes tab is one line of ideas to try. Pressing the main button (or opening a saved prompt) shows the takes; the first render of a run landing shows Your renders, unless you're typing in a take, in which case the tab gets a dot instead. On a wide window the renders grid fills the stage; on a narrow one the box has a bottom edge to drag.
 
-**Review prompt first** beside the main action remembers your choice per model. The button states the outcome and total count, such as **Make 8 images** for four variations rendered twice. Progress shows **Writing prompt → Making image/video → Ready**. On narrow screens, including a laptop with Ask open, **Create / Results** switches directly between the form and current work. Current results come before the historical render grid.
+**Review prompt first** beside the main action remembers your choice per model. The button states the outcome and total count, such as **Make 8 images** for four variations rendered twice. Progress shows **Writing prompt → Making image/video → Ready**. On narrow screens, including a laptop with Ask open, **Create / Results** switches directly between the form and current work. **Your renders**, **Prompt takes**, and **Pipeline** are separate result tabs. Queue status and errors stay visible across them. **Pipeline** shows the steps and choices for a chain and opens when the chain needs your next pick.
 
-**＋ New session** beside the main action clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in Saved prompts.
+**＋ New session** beside the page heading clears the theme, image and takes but keeps your model and dials. **↶ Undo** brings it all back, and everything stays in Saved prompts.
 
 **⏳ Queue: line up as many as you like.** While a prompt is cooking (or a batch is rendering), the main button turns into **＋ Line up another**, with what's cooking (**✦ Writing prompt…**, a batch's progress) on the line above it and how many are waiting under it; it (or `Ctrl+Enter`) puts the form, as it is right then, in line, the way ComfyUI queues renders:
 
@@ -199,16 +201,16 @@ On **Windows**, double-click **`start.bat`** in the app folder. It starts LM Stu
 - **They run in order**, each its own run and Saved prompts entry. A take's renders go on in ComfyUI while the next prompt is written; a batch finishes its renders before the next starts.
 - **Up next**, at the top of the results, lists them: **✕** takes one out (with **↶ Undo**), **Clear** empties the line. Clicking twice on the same form within a second queues it once.
 - **■ Stop** (or `Esc`) stops only the one running; the rest carry on. If one fails (LM Studio or ComfyUI went away, say), the line goes **⏸ on hold** so the rest don't fail the same way: fix it, then **▶ Carry on**.
-- A chain (step ⑤, Then…) can't wait in line, since it may stop to ask you to pick. The line lives in the page: reloading it lets go of what's waiting (the page asks first).
+- A chain (More options → Render settings, Then…) can't wait in line, since it may stop to ask you to pick. The line lives in the page: reloading it lets go of what's waiting (the page asks first).
 
-**✍️ Your own prompt, word for word.** Off by default. When you already know exactly what to send, switch on **✍️ Use my own prompt, word for word**, under the box in step ②. Then no Brain is involved at all:
+**✍️ Your own prompt, word for word.** Off by default. When you already know exactly what to send, switch on **✍️ Use my own prompt, word for word**, under the box in Your idea. Then no Brain is involved at all:
 
-- **② Your prompt** is the prompt. What you type or paste goes to the model letter for letter: weights like `(red kite:1.3)`, odd spellings, all of it. It must not be empty.
-- **③ Your image** goes into the workflow as it is: there's no Reference / Recreate / Animate to pick, since those tell the Brain what to write.
-- **① Your model** and **⑤ your workflow** are the ones that render it. Aspect, resolution and duration in step ④ still set the size; prompt length and how adventurous step aside, and **Takes** becomes **Renders**: how many times your prompt is rendered (×1–4), each with its own seed.
+- **Your idea Your prompt** is the prompt. What you type or paste goes to the model letter for letter: weights like `(red kite:1.3)`, odd spellings, all of it. It must not be empty.
+- **Add an image Your image** goes into the workflow as it is: there's no Reference / Recreate / Animate to pick, since those tell the Brain what to write.
+- **What would you like to make? Your model** and **More options → Render settings your workflow** are the ones that render it. Aspect, resolution and duration in Make it yours still set the size; prompt length and how adventurous step aside, and **Takes** becomes **Renders**: how many times your prompt is rendered (×1–4), each with its own seed.
 - The main button becomes **Make image** or **Make video** and renders right away (auto-render isn't needed). No workflow for that model yet? It becomes **Keep my prompt**: the take is saved, ready to copy or render later.
 - The take says *✍️ your own prompt, word for word*, and Saved prompts marks it the same way. Reopening one from Saved prompts switches the mode back on; reopening a Brain's prompt switches it off. You can still click **Refine** on the take if you do want the Brain's help with it.
-- A batch renders your one prompt as many times as it says. A chain (step ⑤, Then…) is written by the Brain, so it's hidden while the switch is on, and waits for you, untouched, until you switch it off.
+- A batch renders your one prompt as many times as it says. A chain (More options → Render settings, Then…) is written by the Brain, so it's hidden while the switch is on, and waits for you, untouched, until you switch it off.
 - LM Studio doesn't need to be running.
 
 **Image modes**
@@ -241,13 +243,13 @@ On a video model the look also picks the camera's move (a slow push in for Intim
 
 **Your own look.** Click **＋ Your own look…** at the end of the row, give it a name (and an emoji if you like), say what the camera and light do ("a 35mm lens at eye level, neon signs as the only light, wet reflections") and, for video, what the camera does; **✓ Keep this look** adds it to the row, picked. **✎ Edit this look** and **🗑 Delete this look** under the row work on the picked one (↶ Undo for a few seconds). A take keeps the words of the look it was written with, so refining it works even after the look is edited or deleted; opening such a take from Saved prompts says so and goes back to Brain picks. At the **Nothing stays** privacy level your own looks live in memory and go when Prompt Maker stops (the row says so).
 
-**How adventurous** (in step ⑤ → Writing & more steps; the Brain's *temperature*, the number beside the slider) runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
+**How adventurous** (in More options → Writing options; the Brain's *temperature*, the number beside the slider) runs from 🎯 *precise* to 🌶️ *wild*. Lower values stick closely to your words, higher values get more inventive. Each model sets its own default.
 
-**Prompt length** (in step ⑤ → Writing & more steps; *short / medium / long*) means something different for each model. For example, "medium" is about 70–120 words for Krea and about 160–260 for MiniMax. Every take shows its word count against that target.
+**Prompt length** (in More options → Writing options; *short / medium / long*) means something different for each model. For example, "medium" is about 70–120 words for Krea and about 160–260 for MiniMax. Every take shows its word count against that target.
 
 **Every detail of your idea stays in the prompt.** The Brain is told to keep every fact you typed (who and how many, colors, clothes, objects, place, time, weather, what happens, quoted words) and to add detail only where you said nothing. After each take, one more short Brain call checks it against your idea; if a detail was changed or dropped, it is put back and the take says so under the text: *✓ Checked against your idea* or *✎ Put back: a red dress, two dogs*. Saved prompts shows the same on the card. A refine is checked too (what you asked to change isn't a lost detail). Switch it off under **Settings → 🧠 How the Brain thinks** if you'd rather save a few seconds per take.
 
-**Keep it tidy:** every step on Create, every card in Settings and Models, and every take folds down to a one-line summary. Click its header or the ▾ button; Prompt Maker remembers what you folded. The technical parts start folded: in Settings the server addresses, how the Brain thinks and the master instructions; on a model's page its instructions, sizes, defaults and lengths. Step ⑤ Settings starts folded; seed, LoRAs and the sampler settings live under step ⑤ → Render → **Advanced**.
+**Keep it tidy:** every step on Create, every card in Settings and Models, and every take folds down to a one-line summary. Click its header or the ▾ button; Prompt Maker remembers what you folded. Settings groups technical controls by section. On a model's page, instructions, sizes, defaults and lengths start folded. More options starts folded; seed, LoRAs and the sampler settings live under More options → Render settings → **Advanced**.
 
 **Nothing jumps.** On a wide window the steps and your takes sit side by side and each scrolls on its own, so new takes and renders never move the steps. While a take is being written, its buttons are already there, greyed out, and so is the tile for its render when auto-render is on; nothing below moves when the take is done. Fold a step or a take and the header you clicked stays where it is: the space it freed sits at the end until you scroll back up. A running job's bar (from the assistant) sits above the takes. The box of a take is held at the height its prompt is expected to need from the first word (from the model's length target), its word count's row is there from the start, and a refine keeps the box at least as tall as it was, so nothing under a take moves while it's written or rewritten.
 
@@ -260,7 +262,7 @@ The **🎙 Voices** page makes speech on this computer, so the same person can s
 - **One-time setup.** Click **⬇ Install voices**: Prompt Maker fetches two speech models ([Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache 2.0, about 9 GB) into its data folder and sets up the few packages they need, beside ComfyUI's own Python. ComfyUI's packages aren't changed, so nothing there can break. After that, voices work offline. A graphics card makes a line take a few seconds; without one it still works, slower.
 - **Describe a voice** in plain words (age, warmth, accent, pace, mood), give it a sentence, and **▶ Hear it**. Not it? Change the words and hear it again. Right? Name it and **💾 Keep this voice**. No real person is cloned: the voice is made from your description.
 - **Your voices** are listed with their description. **▶ Sample** plays the sentence they were made with; type any line in **Try a line** and **🗣 Say it** on a voice to hear it. **✏** renames, **🗑** deletes (it asks once).
-- **In a video** ([MiniMax H3](#target-models)): step ③ shows **🎙 Says a line**. If the picked workflow takes no line but one of the model's does (or the one that comes with the app), it offers **🎙 Use the one that does**: one click adds and picks it; the assistant's `set_line` does the same by itself. Then: pick the voice, write the line word for word. When you create, the line is said in that voice and the Brain writes the take around it; at **Render** the clip is the video's soundtrack, so the person in your picture says exactly those words, lips in time, and the video is made at least as long as the line. The line is saved with the prompt (Saved prompts puts it back; the full-screen view shows *Says*). A take with no line renders as before: the sound nodes are simply left out.
+- **In a video** ([MiniMax H3](#target-models)): Add an image shows **🎙 Says a line**. If the picked workflow takes no line but one of the model's does (or the one that comes with the app), it offers **🎙 Use the one that does**: one click adds and picks it; the assistant's `set_line` does the same by itself. Then: pick the voice, write the line word for word. When you create, the line is said in that voice and the Brain writes the take around it; at **Render** the clip is the video's soundtrack, so the person in your picture says exactly those words, lips in time, and the video is made at least as long as the line. The line is saved with the prompt (Saved prompts puts it back; the full-screen view shows *Says*). A take with no line renders as before: the sound nodes are simply left out.
 - **The assistant does it too:** *"make a new voice called Sam: a deep, calm narrator"* (`make_voice`), *"make her say 'Hello there' in Sam's voice"* (`set_line`). In a job, a `set_line` step before `generate` gives each cut its line, so a whole promo can run overnight: stills, the pick, the line, the video, the judge.
 - **Where it lives:** `voice/` in your data folder: the packages (`site/`), the models (`hf/`), your voices (`voices.json`) and their clips (`clips/`). Delete the folder to start over.
 
@@ -268,10 +270,10 @@ The **🎙 Voices** page makes speech on this computer, so the same person can s
 
 Two models keep the person in your picture instead of repainting the picture: **Krea 2 Character** (pictures) and **MiniMax H3 Reference** (video clips with sound, MiniMax's *ref2va*). Your picture only tells them *who*: the place, clothes, pose, camera and light come from your theme. There is no denoise to set.
 
-- **🧾 Character sheet.** Pick one of the two models and add a picture in step ③: a **Character sheet** box appears under it. When you create, your Brain (one that sees images 👁) looks at the picture and writes the person's traits, one per line: age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height and marks (freckles, moles, tattoos). Then every take carries **all** of them, in the sheet's words; a trait the Brain leaves out is added back by the app. It's saved with the prompt in Saved prompts.
+- **🧾 Character sheet.** Pick one of the two models and add a picture in Add an image: a **Character sheet** box appears under it. When you create, your Brain (one that sees images 👁) looks at the picture and writes the person's traits, one per line: age, face, eyes, eyebrows, nose, lips, skin, hair, facial hair, build, height and marks (freckles, moles, tattoos). Then every take carries **all** of them, in the sheet's words; a trait the Brain leaves out is added back by the app. It's saved with the prompt in Saved prompts.
   - **Fix a line** by typing in the box (the Brain got the eye color wrong, say): the next prompt uses your sheet as it is.
   - **↻** writes a fresh one from the picture next time you create. A new picture starts a new sheet.
-- **🪪 Turnaround** (Krea 2 Character): one click renders the person on a plain background from the front, three-quarter, side and back, with a close-up of the face, and when it's done it becomes your picture in step ③ (the sheet stays). From then on every render reproduces them from all sides, and a full-body turnaround also lets the sheet name their build and height. It uses the workflow that comes with the model (or yours) in step ⑤.
+- **🪪 Turnaround** (Krea 2 Character): one click renders the person on a plain background from the front, three-quarter, side and back, with a close-up of the face, and when it's done it becomes your picture in Add an image (the sheet stays). From then on every render reproduces them from all sides, and a full-body turnaround also lets the sheet name their build and height. It uses the workflow that comes with the model (or yours) in More options → Render settings.
 - **The workflows that come with these two models**:
   - **Krea 2 Character**: Krea 2 Turbo with the [Krea 2 Identity Edit](https://huggingface.co/conradlocke/krea2-identity-edit) LoRA, 10 steps, its likeness dial at 4. It needs the [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) nodes (in ComfyUI: **Manager → Install Missing Custom Nodes**). The LoRA is under the Krea 2 Community License.
   - **MiniMax H3 Reference**: ComfyUI's own reference-to-video template, with one reference picture and 20 steps (its optional 4-step turbo LoRA left out, so nothing extra to download); only ComfyUI's own nodes.
@@ -279,13 +281,13 @@ Two models keep the person in your picture instead of repainting the picture: **
 
 ### Character animation (Wan Animate 2)
 
-[Wan Animate 2](https://github.com/Wan-Video/Wan-Animate-2) makes a **character image** perform the moves of a **motion video**: a dance, a walk, a fight scene. The character keeps its look from the image, the moves come from the video, and the **setting, light and camera angle come from your theme**. Pick **Wan Animate 2** in step ① and step ③ becomes **Character & motion**:
+[Wan Animate 2](https://github.com/Wan-Video/Wan-Animate-2) makes a **character image** perform the moves of a **motion video**: a dance, a walk, a fight scene. The character keeps its look from the image, the moves come from the video, and the **setting, light and camera angle come from your theme**. Pick **Wan Animate 2** in What would you like to make? and Add an image becomes **Character & motion**:
 
 - **🧍 Character:** drop, paste or pick an image, like any image. A clear, full shot of one character works best.
-- **🕺 Motion video:** drop a video on the page, **browse**, or **🎞️ Pick a video from your Gallery** (any video you rendered). MP4, WebM, MOV and MKV work, up to 500 MB. It plays in step ③.
-  - **The clip takes your character's shape**, as in Wan-AI's own code: **Aspect** (step ④) follows the character image, and ComfyUI crops the motion video to it at the center. (Until you add a character, Aspect follows the video.) When the two differ a lot, step ③ says which sides of the video get cropped: keep the moves near the middle, or use a character image in the video's shape.
+- **🕺 Motion video:** drop a video on the page, **browse**, or **🎞️ Pick a video from your Library** (any video you rendered). MP4, WebM, MOV and MKV work, up to 500 MB. It plays in Add an image.
+  - **The clip takes your character's shape**, as in Wan-AI's own code: **Aspect** (Make it yours) follows the character image, and ComfyUI crops the motion video to it at the center. (Until you add a character, Aspect follows the video.) When the two differ a lot, Add an image says which sides of the video get cropped: keep the moves near the middle, or use a character image in the video's shape.
   - Frame it like your character: full body to full body. A close-up character with a full-body dance (or the other way round) is the most common cause of a bad result.
-  - **⬛ Black bars** (a webcam or screen recording inside a wider frame, a letterboxed film) would count as part of the video. Step ③ spots them and offers **✂️ Crop the bars**: a copy with just the picture, sound kept.
+  - **⬛ Black bars** (a webcam or screen recording inside a wider frame, a letterboxed film) would count as part of the video. Add an image spots them and offers **✂️ Crop the bars**: a copy with just the picture, sound kept.
   - **✂️ Trim** (under the video) uses just part of a long video, cut to the frame, in a big window of its own:
     - **The frame at the playhead** fills the window, with its time and number below it (*0:05.92 · frame 72 of 1159*).
     - **The timeline** is a strip of the video's frames. Press and drag anywhere to move the playhead. The part you keep is lit between two handles, and the rest is dimmed: drag a handle to move the start or the end, and the frame it lands on shows as you go.
@@ -294,26 +296,26 @@ Two models keep the person in your picture instead of repainting the picture: **
     - **▶ Play part** (`Space`) plays just that stretch, over and over.
     - It starts out as the whole video, or as long as the picked workflow animates when that is less. **✂️ Use this part** swaps in a copy of just those frames, sound kept.
   - The video's length, size and frame rate and its buttons sit in a bar under it, so nothing covers the picture.
-  - The clip is as long as the video. Step ③ shows its length, shape and frame rate. Wan Animate 2 uses the frames one for one, so above 30 fps (many phones film at 60 or 120) the moves would play too fast and take longer to render: Prompt Maker renders from a 24 fps copy instead, made for the render and shredded after it. Your video itself stays as it is.
+  - The clip is as long as the video. Add an image shows its length, shape and frame rate. Wan Animate 2 uses the frames one for one, so above 30 fps (many phones film at 60 or 120) the moves would play too fast and take longer to render: Prompt Maker renders from a 24 fps copy instead, made for the render and shredded after it. Your video itself stays as it is.
   - **Phone videos (H.265/HEVC)** often don't play in the browser. ComfyUI uses them as they are; for the page, Prompt Maker makes a small upright preview, so you still see it, Aspect still matches it, and the Brain still sees the moves. The preview, the 24 fps copy for rendering and the crop need [ffmpeg](https://ffmpeg.org) on this computer (most Linux systems have it). Without it, the video still renders; the Brain then goes by your theme for the moves.
-- **② The theme** says where the character is and from where the camera sees it: *"on a rooftop at dusk, low angle, three-quarter view"*. Leave it empty and the Brain picks a setting that suits the character.
+- **Your idea The theme** says where the character is and from where the camera sees it: *"on a rooftop at dusk, low angle, three-quarter view"*. Leave it empty and the Brain picks a setting that suits the character.
 
 **What the Brain writes.** The prompt is in Wan Animate 2's own format: a `Character appearance description:` line (looks only: no actions or emotions), a `Background description:` line (the place, the light, the camera), and a `Motion:` line naming the moves. A 👁 vision Brain sees your character and a **contact sheet of the motion video** (6 frames in order, with their times), so it describes the character faithfully and names the motion from the video. A text-only Brain still works: it goes by your theme.
 
-**Rendering it.** In step ⑤, click **＋ Add workflow**. **⭐ ComfyUI's templates for Wan Animate 2** come first, straight from your ComfyUI (update ComfyUI if they're missing):
+**Rendering it.** In More options → Render settings, click **＋ Add workflow**. **⭐ ComfyUI's templates for Wan Animate 2** come first, straight from your ComfyUI (update ComfyUI if they're missing):
 
 | Template | What it does |
 |---|---|
 | **Wan Animate 2: Motion Transfer** | The full model with the LightX2V LoRA (6 steps). It follows the whole motion video, however long, in 81-frame pieces. |
 | **Wan Animate 2 Distilled: Motion Transfer** | The distilled model (10 steps). Also the built-in workflow. It makes 81 frames at a time and Prompt Maker chains them to follow the whole motion video. |
 
-Prompt Maker sets them up for you: the look and setting go to the prompt, the **Motion** line to the pose prompt, your character to *Load Image*, the motion video to *Load Video*, and the size from step ④. It also **fixes a mistake in ComfyUI's template**: its pose window starts and ends at 0, which leaves the motion video unused; Prompt Maker sets the end to 1.0 and says so in the setup. The templates also save a side-by-side of the render and the motion video; Prompt Maker leaves that out, so only your render lands in the Gallery. While a long video renders in pieces, the progress line says which piece it's on (*piece 3 of 15*), and the percentage counts the whole render.
+Prompt Maker sets them up for you: the look and setting go to the prompt, the **Motion** line to the pose prompt, your character to *Load Image*, the motion video to *Load Video*, and the size from Make it yours. It also **fixes a mistake in ComfyUI's template**: its pose window starts and ends at 0, which leaves the motion video unused; Prompt Maker sets the end to 1.0 and says so in the setup. The templates also save a side-by-side of the render and the motion video; Prompt Maker leaves that out, so only your render lands in the Library. While a long video renders in pieces, the progress line says which piece it's on (*piece 3 of 15*), and the percentage counts the whole render.
 
-**How much of the video.** The clip follows the whole motion video. The Distilled template makes 81 frames (3.4 s at 24 fps) in one piece; Prompt Maker adds pieces like it, each carrying on from the last frame of the one before and reading the video from where that one stopped, and cuts the last piece to what's left. A long video takes a while (a minute of video is about 18 pieces), so use **✂️ Trim** in step ③ to pick the stretch you want. A workflow of your own that makes a fixed stretch and can't be chained: step ⑤ says how much it makes, and which of your workflows does all of it.
+**How much of the video.** The clip follows the whole motion video. The Distilled template makes 81 frames (3.4 s at 24 fps) in one piece; Prompt Maker adds pieces like it, each carrying on from the last frame of the one before and reading the video from where that one stopped, and cuts the last piece to what's left. A long video takes a while (a minute of video is about 18 pieces), so use **✂️ Trim** in Add an image to pick the stretch you want. A workflow of your own that makes a fixed stretch and can't be chained: More options → Render settings says how much it makes, and which of your workflows does all of it.
 
 Your own Wan Animate 2 (or SCAIL) workflows work too, from ComfyUI or a file. One that **renders in pieces** (copies of the same part, each making the next stretch of the video) gets the same prompt and size in every piece, and if it also saves its first piece on its own, only the full video is kept. The setup says so.
 
-**Whose background.** A SCAIL 2 workflow can keep either background, and step ③ shows a **Background** choice for it, under your motion video: **🖼️ From your picture** brings your picture to life (its character moves like the person in your video, its background stays), and **🎬 From your video** puts your character in place of the person in your video (the video's background stays). It starts at the workflow's own setting (a *character replacement* workflow keeps the video's), and your pick stays with the workflow. (Wan Animate 2's own templates keep neither: their background comes from the prompt's *Background description* line.)
+**Whose background.** A SCAIL 2 workflow can keep either background, and Add an image shows a **Background** choice for it, under your motion video: **🖼️ From your picture** brings your picture to life (its character moves like the person in your video, its background stays), and **🎬 From your video** puts your character in place of the person in your video (the video's background stays). It starts at the workflow's own setting (a *character replacement* workflow keeps the video's), and your pick stays with the workflow. (Wan Animate 2's own templates keep neither: their background comes from the prompt's *Background description* line.)
 
 **Any length.** A workflow built as a chain of pieces (SCAIL 2's *Base* + *Extend*: 81 frames each, every next piece carrying on from the last 5 frames of the one before) makes only as much as it has pieces, about 6.5 s for two. Prompt Maker adds pieces like the last one, as many as your motion video (or the part you trimmed) needs: a 48 s clip at 24 fps takes 16. Each new piece carries on from the one before, they're all joined into one video, and the model and LoRAs are loaded once for all of them. Up to 50 pieces (about 2½ minutes at 24 fps).
 
@@ -321,7 +323,7 @@ Your own Wan Animate 2 (or SCAIL) workflows work too, from ComfyUI or a file. On
 
 **Long videos don't run out of memory.** ComfyUI saves each piece as its own short video, and Prompt Maker joins them into one, with your motion video's sound (the progress line says *Joining the pieces into one video…*). Joined inside ComfyUI instead, a long video needs a lot of memory all at once right at the end (13 GB more for 35 pieces), and ComfyUI could be shut down for running out of memory just as the render finished. Joining needs ffmpeg; on a computer without it, ComfyUI joins the pieces as before.
 
-**Models it needs.** Each template needs five model files in ComfyUI (the Wan Animate 2 model, a LoRA, the text encoder, a CLIP vision model and the VAE). If your ComfyUI lacks one, step ⑤ names it and where it goes, with **⬇ Download** (see [Missing models](#missing-models)). A file that sits in a subfolder (`checkpoints/wan-2.1/sam3.1….safetensors` where the workflow says `sam3.1….safetensors`) is found there on its own.
+**Models it needs.** Each template needs five model files in ComfyUI (the Wan Animate 2 model, a LoRA, the text encoder, a CLIP vision model and the VAE). If your ComfyUI lacks one, More options → Render settings names it and where it goes, with **⬇ Download** (see [Missing models](#missing-models)). A file that sits in a subfolder (`checkpoints/wan-2.1/sam3.1….safetensors` where the workflow says `sam3.1….safetensors`) is found there on its own.
 
 The setup's **🎛️ Sampler** settings add Wan Animate 2's own controls:
 
@@ -331,44 +333,44 @@ The setup's **🎛️ Sampler** settings add Wan Animate 2's own controls:
 | **Pose start / Pose end** | When, in the sampling steps (0–1), the motion video counts. An end around 0.7 keeps the moves but loosens fine detail. |
 | **Character strength** | How closely the character keeps the image's look. Below 1 lets the prompt restyle it (a new outfit); above 1 holds it tighter. |
 
-**From a render.** In the lightbox, **🧍 Animate as a character** sends a still to Wan Animate 2 as the character, and **🕺 Use as motion video** sends a video render as the moves. A chain can do it too: a **Then** step on Wan Animate 2 uses the still before it as the 🧍 *character* and the motion video in step ③.
+**From a render.** In the lightbox, **🧍 Animate as a character** sends a still to Wan Animate 2 as the character, and **🕺 Use as motion video** sends a video render as the moves. A chain can do it too: a **Then** step on Wan Animate 2 uses the still before it as the 🧍 *character* and the motion video in Add an image.
 
 The motion video is kept with the take (Saved prompts puts it back), and deleting the Saved prompts card deletes it, here and in ComfyUI.
 
 ### ✦ The assistant
 
-<img src="screenshots/ask.jpg" alt="The optional Assistant panel beside the Gallery, ready to help with your artwork" width="900">
+<img src="screenshots/ask.jpg" alt="The optional Assistant panel beside the Library, ready to help with your artwork" width="900">
 
 Your creative partner, ready when you need it: **✦ Ask** in the top bar (or **Ctrl+K**) opens or closes it. It starts closed and remembers your choice. The page takes the room beside the panel; when Create becomes one column, **Create / Results** keeps either workspace one click away. The top bar's menus (Brain, 🎨 Rendering) open over it. It runs on your **Brain** (the same LM Studio model, so it stays offline):
 
 - **As big as you like.** Drag the panel's left edge to make it wider or narrower, as far as the whole window; **⤢** in its header fills the window in one click, and **⤡** puts it back at the side. The message box grows as you write, and dragging the little bar above it makes it as tall as you want. A double click on either edge goes back to normal. Your sizes are remembered.
 - **Ask what it thinks.** *"Which of these renders do you like better?"*, *"Should the princess be in the high tower or the dungeon?"*, *"Based on this prompt, what aspect ratio should it be?"* It gives a real opinion with a reason, and offers to act on it.
-- **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, 🎞 Your renders, the Gallery, and pictures and videos in any folder on your computer. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
+- **It sees.** It looks at renders (and frames of videos), the image in step 3, the lightbox, 🎞 Your renders, the Library, and pictures and videos in any folder on your computer. The chat shows a 👁 strip of what it looked at. Seeing needs a 👁 vision Brain; the pictures are never saved, only their names.
 - **Show it a picture.** Paste a picture into the message box (or drop one on it): it shows above the box until you send, with ✕ to take it out, and goes with your message (*"what do you think of this?"*, *"set up a shot like this one"*). Up to 8 at a time; shrunk to 768 px for the Brain.
 - **📋 Copy any reply.** Every reply has a copy button in its corner.
-- **It follows ✍️ your own prompt.** While that switch (step ②) is on, what the assistant puts in step ② is sent word for word and rendered, the same as when you click; it knows this, and only you can switch it.
+- **It follows ✍️ your own prompt.** While that switch (Your idea) is on, what the assistant puts in Your idea is sent word for word and rendered, the same as when you click; it knows this, and only you can switch it.
 - **It finds your work.** *"Check out the renders of the woman walking around her apartment"*: it searches every render you ever made by the words of its prompt (typos are fine) instead of only the newest. *"They're in my renderings folder"*: it finds a folder by its name or one close to it ("renderings" finds "renders"), first Prompt Maker's own renders folder and ComfyUI's output, then anywhere in your home folder and on your other drives (USB sticks, a second disk). It can look for any file or folder by name too, and looks before it asks you where something is.
 - **💻 Let it use your computer (opt-in).** Switch on **Settings → ✦ Assistant → 💻 Let the assistant use my computer** and click **Save settings**, and it can also work outside Prompt Maker: run programs and commands (*"open these in GIMP"*, *"make a folder Best of October and copy my excellent renders into it"*), and read and write any file. It doesn't ask each time, except before anything that may delete, move, copy over or replace a file, however the command is written (`/bin/rm`, inside `bash -c "…"`, `> file`, code handed to Python or PowerShell), and before a command that talks to Prompt Maker itself: it shows you the command and waits for **▶ Run it**. Off by default; only you can switch it (the assistant can't press that switch), and only the app on this computer can use it.
 - **It knows what you're looking at:** the takes on screen (their full text), the render open in the lightbox, this session's runs and their ratings, renders in progress.
 - **Tell it what to make.** *"Set up a 9:16 Krea shot of a surfer at golden hour, 2 takes, film grain LoRA at 0.6, then render them."* Or *"use seconds 12 to 15 of the motion video and crop its black bars."*
   - It runs the app with the same controls you have: model, theme, dials, workflow, sampler settings (steps, CFG, sampler, scheduler, denoise), LoRAs, seed, takes, renders, refining, animating, motion videos (trimmed, cropped, 24 fps) and characters (Wan Animate 2), chains, Saved prompts, playbooks, ratings, the lightbox, cancelling renders, the Brain, and settings (adult content, thinking, top-p, max tokens, ComfyUI cleanup).
   - **And anything else on screen.** It reads what the app is showing (every page, dialog, fold and setting) and presses, types and picks there like you do: *"make a batch called Hero shots, 6 images, a different prompt each"*, *"add my ComfyUI workflow z_image_base to Krea as a second workflow"*, *"set the LM Studio address and save"*, *"start ComfyUI"*. Pressing anything that deletes or removes asks you first.
-  - **It picks the best for you.** *"Pick the best render for a winter poster and use it as the reference"*: it looks at them, says which and why, and puts it in step ③ (as a reference, the first frame of a video, or the character).
+  - **It picks the best for you.** *"Pick the best render for a winter poster and use it as the reference"*: it looks at them, says which and why, and puts it in Add an image (as a reference, the first frame of a video, or the character).
   - Each step shows in the chat ("✓ Model → Krea 2 RAW") and on screen.
   - **■ Stop** or **Esc** stops it.
 - **🗂 Give it long jobs.** *"Use the 4 pictures in folder ABC to do 2 takes each, the first with low temperature, the second with high. Skip any problems and log them for me to review later."*
   - **Jobs judge as they go.** A job can pick the best of what it has made so far and carry it on (animate it, or make it the character), and change sampler settings between renders. *"Generate 8 images with Krea of a woman in a noir coffee shop, a different prompt each, same seed. Then pick the best for 'a stranger sits down next to her' and make 4 MiniMax videos of it, steps from 20 down to 10."* becomes one job: 8 stills, the pick, then the video at 20, 17, 13 and 10 steps.
-  - **🎬 Join videos.** In 🎞 Your renders (or the Gallery), show the videos you want (filters, drag them into order) and click **🎬 Join N videos**: they become one video, in that order, as a new render (*Joined video*) that lands in the grid like any other, with its own stars. Clips of different sizes are padded to the first one's; a clip without sound gets silence. The assistant and jobs do it too: *"join the videos shown"*, or as a job's last step `join_videos` takes the best video of each run (the highest rated, else the newest), in the runs' order, so a job ends with one film of its cuts. Needs ffmpeg.
+  - **🎬 Join videos.** In 🎞 Your renders (or the Library), show the videos you want (filters, drag them into order) and click **🎬 Join N videos**: they become one video, in that order, as a new render (*Joined video*) that lands in the grid like any other, with its own stars. Clips of different sizes are padded to the first one's; a clip without sound gets silence. The assistant and jobs do it too: *"join the videos shown"*, or as a job's last step `join_videos` takes the best video of each run (the highest rated, else the newest), in the runs' order, so a job ends with one film of its cuts. Needs ffmpeg.
   - **Jobs rate while you sleep.** A pick can also rate the winner (★ to ★★★), and look only at what the current run made, so every scene of a job gets its own best. *"…and rate every video of each run for 'her face matches the still, the sign is spelled right'"* rates each render of the run ★ pretty good, ★★ very good or ★★★ excellent, and hides a clear failure (a warped face, garbled text) from 🎞 Your renders: nothing is deleted, the hidden filter shows it again, and the log says why. Renders you rated yourself keep your rating. The Brain sees a video as a few still frames, so it can't judge sound or lip sync. It works in chat too: *"rate the renders from the Promo job"*.
   - It looks in the folder (a full path, `~/…`, or just its name, found anywhere in your home folder or on your other drives), plans the job, and starts it. The job then runs **on its own**, one item after another, while you do other things. Its tools don't pull you back to Create.
   - Anything that fails is **skipped and logged**, and the job goes on. If the same thing fails 3 times in a row (LM Studio off, ComfyUI down…), it pauses so you can fix that first.
   - **🗂 Job** in the top bar shows progress (item 3 of 8). On Create, a strip says a job is using the page: changes you make there go into it. You can leave Create and come back any time: the job's steps don't pull you back, and the **Create** tab always answers your click.
-  - The **Jobs** window has each job's log: ✓ done or ⏭ skipped (with why), the picture (click it to look closer), **👁 View** for what it rendered and **↗ Open** to bring it onto Create. **Only the skipped ones** filters the log, and **↻ Retry skipped** tries them again. You can **⏸ Pause** (after the current item), **■ Stop now**, **▶ Resume** or **🗑 Remove** (what the job made stays in Saved prompts).
+  - The **Jobs** page has each job's log: ✓ done or ⏭ skipped (with why), the picture (click it to look closer), **👁 View** for what it rendered and **↗ Open** to bring it onto Create. **Only the skipped ones** filters the log, and **↻ Retry skipped** tries them again. You can **⏸ Pause** (after the current item), **■ Stop now**, **▶ Resume** or **🗑 Remove** (what the job made stays in Saved prompts).
   - Jobs survive reloads: each step is saved. If the page reloads or closes mid-job, the job pauses, the item it was on is marked to check, and a toast offers **Resume**.
-  - Ask *"how did the job go?"* and it tells you what was done and what was skipped, and why. Once you've seen a finished job's log, the pill goes away; **🗂** in the assistant panel opens the Jobs window any time.
+  - Ask *"how did the job go?"* and it tells you what was done and what was skipped, and why. Once you've seen a finished job's log, the pill goes away; **🗂** in the assistant panel opens the Jobs page any time.
 - **It keeps working in a long session.** Only the newest pictures it looked at are kept in the conversation, so asking it to look at renders many times doesn't make the conversation too big to send. A long file or command output keeps its start and its end. If it runs out of room in the middle of a step, it says so (*say "go on"*) instead of showing half a step as text.
 - **Long tasks start with a plan.** For anything that takes more than a few steps it writes a short to-do list first, shown as a card at the top of the chat, and ticks the steps off as it goes, so it doesn't rethink the whole task every turn. When every step is ticked it says so and the card goes away. (A thinking Brain thinks a little less while it has a plan.) The very long jobs still go to 🗂 Jobs.
-- **When the chat gets long, earlier steps fold into a note.** Before each turn it checks how much the Brain has room for (the context length the model was loaded with in LM Studio, shown on **Models → Brains**). First the details of older steps go, keeping one line each; then the oldest part of the conversation is folded into a short progress note (what you asked, what was done and found, what's left), written by the Brain, and the chat shows *🗜 Earlier steps were folded into a short note to make room*. Your request is kept word for word. The saved conversation shrinks the same way. If LM Studio still answers that the conversation doesn't fit, it folds once more and asks again before telling you.
+- **When the chat gets long, earlier steps fold into a note.** Before each turn it checks how much the Brain has room for (the context length the model was loaded with in LM Studio, shown on **Brains**). First the details of older steps go, keeping one line each; then the oldest part of the conversation is folded into a short progress note (what you asked, what was done and found, what's left), written by the Brain, and the chat shows *🗜 Earlier steps were folded into a short note to make room*. Your request is kept word for word. The saved conversation shrinks the same way. If LM Studio still answers that the conversation doesn't fit, it folds once more and asks again before telling you.
 - **One step at a time.** When a step it asked for fails (a render it couldn't put in step 3, a model name that fits two models), the rest of that step is not run: it looks at what the app holds and goes on from there, instead of generating with the wrong picture. A model name that fits two models ("Krea 2") is an error, not a guess, unless one of them is the model on Create.
 - **Videos are asked first.** In a chat, it may start a couple of video renders on its own; more than that in one turn (a third one, four takes of MiniMax, rendering again what auto-render already started) it asks you on screen: **▶ Go ahead** or **No**. Many renders belong in a job, which never asks. It is told when auto-render already rendered the takes it wrote, so it doesn't render them twice.
 - **The chat is saved as it goes**, after each step, so a long turn (renders that take an hour) leaves its log even if the page closes in the middle.
@@ -393,10 +395,12 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 
 **Prompts** in the top bar. Every prompt you write is saved automatically:
 
-- **Find things:** search themes and prompts, filter by model, or show only **Bookmarks**. The bookmark saves a prompt for reuse; stars in Gallery rate artwork.
+- **Each card shows its whole picture or video**, uncropped, small enough to see many at once. When several prompts start with the same words (a pasted template, "For the target video, at 0.00 seconds…"), the title skips them and starts at the word where they differ, after an "…"; hover it for the start.
+
+- **Find things:** search themes and prompts, filter by model, or show only **Bookmarks**. The bookmark saves a prompt for reuse; stars in Library rate artwork.
 - **Pick up where you left off:** click a card to reopen it exactly as it was made: model, theme, image and its role, aspect, resolution, duration, length, temperature, takes and batch, plus how it was rendered (workflow, renders per take, seed and seed mode, LoRAs and their strengths, sampler settings). Keep refining, or write and render again the same way. The card that's open on Create is ringed in Saved prompts, which scrolls to it.
 - **Delete several at once.** **Ctrl**-click (**⌘** on a Mac) the cards, **Shift**-click to take every card up to the one you click, or drag a box across them from an empty spot (or with **Ctrl** held, from a card). Picked cards get a ✓ and a bar at the bottom says how many; **🗑 Delete** (twice: *Sure?*) or the **Delete** key deletes them all the way one Delete does, with one **↶ Undo** for all of them during the 8 seconds. **Esc**, **✕** or a click on an empty spot lets go; **Ctrl + A** picks every card shown.
-- **Delete gives you a few seconds to undo, then it's for good.** The first time, **Delete** opens **Delete it for good?**, which says what goes; tick **Don't show this again** and from then on it's **Delete**, then **Sure?** (**Settings → 🔒 Privacy check → Show it again** brings the warning back) (it says so when rated renders go too; a double click only asks, it doesn't confirm). Either way the card stays in place, dimmed, for 8 seconds with **↶ Undo** on it and in the toast, both counting down the seconds left; a render deleted from the full-screen view works the same way: the render is greyed out wherever it shows (the full-screen view, 🎞 Your renders, the Gallery, its take), with the seconds left and **↶ Undo** on it. After that, or when you close the page, it's gone. Deleting a card removes its prompts, its input image and motion video (unless another card, or a prompt waiting in line or being written, uses the same one), the clip of its spoken line, and its renders, along with ComfyUI's copies of them: the files in its output folder, the image and clip uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. A render you made yourself in ComfyUI with the same prompt is yours and stays. If the Create form still shows the deleted card's theme, picture or motion video, it lets go of them too. Quotes of it in the assistant chat and in jobs become "[deleted]", and so do the lines in LM Studio's own server logs that quote the request and the answer, and any line in ComfyUI's log that names one of its files (both unless you switch that off in [Settings](#settings); LM Studio keeps those logs in its `.lmstudio/server-logs` folder, and when it runs on another computer, the toast says its logs there are out of reach). A video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render, image or video no Saved prompts card uses anymore; a picture or motion video still waiting in the Create form is never one of them.
+- **Delete gives you a few seconds to undo, then it's for good.** The first time, **Delete** opens **Delete it for good?**, which says what goes; tick **Don't show this again** and from then on it's **Delete**, then **Sure?** (**Settings → 🔒 Privacy check → Show it again** brings the warning back) (it says so when rated renders go too; a double click only asks, it doesn't confirm). Either way the card stays in place, dimmed, for 8 seconds with **↶ Undo** on it and in the toast, both counting down the seconds left; a render deleted from the full-screen view works the same way: the render is greyed out wherever it shows (the full-screen view, 🎞 Your renders, the Library, its take), with the seconds left and **↶ Undo** on it. After that, or when you close the page, it's gone. Deleting a card removes its prompts, its input image and motion video (unless another card, or a prompt waiting in line or being written, uses the same one), the clip of its spoken line, and its renders, along with ComfyUI's copies of them: the files in its output folder, the image and clip uploaded to its input folder, and the job (with your prompt in it) in ComfyUI's history. A render you made yourself in ComfyUI with the same prompt is yours and stays. If the Create form still shows the deleted card's theme, picture or motion video, it lets go of them too. Quotes of it in the assistant chat and in jobs become "[deleted]", and so do the lines in LM Studio's own server logs that quote the request and the answer, and any line in ComfyUI's log that names one of its files (both unless you switch that off in [Settings](#settings); LM Studio keeps those logs in its `.lmstudio/server-logs` folder, and when it runs on another computer, the toast says its logs there are out of reach). A video made from a deleted still keeps its own frame but loses the link and the still's prompt. On start-up, Prompt Maker also removes any render, image or video no Saved prompts card uses anymore; a picture or motion video still waiting in the Create form is never one of them.
 - **Shredded, not just removed.** Every file a delete takes (renders, pictures, videos, clips, ComfyUI's copies, and the copy of Saved prompts from before the delete) is written over three times, with zeros, ones and random bytes, each pass put on the disk before the next, then given a meaningless name and removed: the three passes of the DoD 5220.22-M wipe, so a recovery tool finds nothing. Honest limit: an SSD, and a file system that keeps old copies of blocks (Btrfs, ZFS, APFS), may hold the old bytes somewhere no program can reach; full-disk encryption covers that.
 
 ### Keyboard shortcuts
@@ -412,8 +416,8 @@ Some community fine-tunes come with a chat template that LM Studio can't fill in
 | `Ctrl` / `⌘` + `K` | Open or close the assistant |
 | `←` `→` (full-screen view) | The render before or after |
 | `1` `2` `3` (full-screen view) | Rate it ★, ★★ or ★★★; `0` takes the rating off |
-| `Shift` + `←` `→` on a render card | Move the card in 🎞 Your renders or the Gallery |
-| `Ctrl` / `⌘` + click, `Shift` + click on a render card | Pick several in 🎞 Your renders, the Gallery or Saved prompts; `Delete` deletes them (8 s to undo), `Esc` lets go |
+| `Shift` + `←` `→` on a render card | Move the card in 🎞 Your renders or the Library |
+| `Ctrl` / `⌘` + click, `Shift` + click on a render card | Pick several in 🎞 Your renders, the Library or Saved prompts; `Delete` deletes them (8 s to undo), `Esc` lets go |
 
 ## Rendering with ComfyUI (optional)
 
@@ -421,9 +425,9 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 
 ### 1. Attach a workflow to a model
 
-**Every built-in model already has one.** The first time you open Prompt Maker, each of the eleven models gets every workflow that comes with it (listed below), so you can **▶ Render** right away; step ⑤ offers **⬇ Download** for any model file ComfyUI doesn't have yet. A workflow that arrives with an update is added the same way, next to the ones you have. Each is added once: delete it and it stays gone (**＋ Add workflow → 🎁 Comes with Prompt Maker** brings it back).
+**Every built-in model already has one.** The first time you open Prompt Maker, each of the eleven models gets every workflow that comes with it (listed below), so you can **▶ Render** right away; More options → Render settings offers **⬇ Download** for any model file ComfyUI doesn't have yet. A workflow that arrives with an update is added the same way, next to the ones you have. Each is added once: delete it and it stays gone (**＋ Add workflow → 🎁 Comes with Prompt Maker** brings it back).
 
-**To use your own instead**, add it as below: a workflow you add is the one the model uses from then on, and the picker in step ⑤ (or on the take) switches between them.
+**To use your own instead**, add it as below: a workflow you add is the one the model uses from then on, and the picker in More options → Render settings (or on the take) switches between them.
 
 | Model | The workflow that comes with it |
 |---|---|
@@ -442,9 +446,9 @@ Prompt Maker is great on its own. If you run [ComfyUI](https://github.com/comfya
 All but Krea 2 Character use only ComfyUI's own nodes.
 
 1. Start ComfyUI as usual. Prompt Maker expects it at `http://127.0.0.1:8188`; change that in **Settings → ComfyUI**. No ComfyUI yet? See [Setting up ComfyUI](#setting-up-comfyui-one-click) below: one click installs it.
-2. On **Create**, pick a model (say *Krea 2 RAW*) and click **＋ Add workflow** in step ⑤. (Or do it in **Models**, which lists every model's workflows.)
+2. On **Create**, pick a model (say *Krea 2 RAW*) and click **＋ Add workflow** in More options → Render settings. (Or do it in **Models**, which lists every model's workflows.)
 3. Choose where the workflow comes from:
-   - **🎁 Comes with Prompt Maker** shows first: the workflow the app has for the model. Click it and it's set up: where the prompt and your picture go, the seed, the sampler. Step ⑤ offers **⬇ Download** for any of its model files you don't have (see [Missing models](#missing-models)). It shows even while ComfyUI is off.
+   - **🎁 Comes with Prompt Maker** shows first: the workflow the app has for the model. Click it and it's set up: where the prompt and your picture go, the seed, the sampler. More options → Render settings offers **⬇ Download** for any of its model files you don't have (see [Missing models](#missing-models)). It shows even while ComfyUI is off.
    - **From ComfyUI** lists every workflow you've saved in ComfyUI. Click one. For some models (Wan Animate 2), **⭐ ComfyUI's own templates** for it come first: one click, and it's set up.
    - **Upload a file** accepts a saved workflow, an *Export (API)* file, or a workflow exported from Prompt Maker.
 4. Check the **setup**. Prompt Maker reads the workflow and suggests where things go:
@@ -465,17 +469,17 @@ All but Krea 2 Character use only ComfyUI's own nodes.
    - A **CFG of 1 is locked**, because distilled, turbo and lightning models need it. **🔒 unlock** is there if you really mean it.
    - Leave *New random seed every render* on, or turn it off to use a fixed seed.
 
-**Changed a workflow in ComfyUI?** Prompt Maker renders from its own copy, saved when you added the workflow. When you save the workflow again in ComfyUI, Prompt Maker notices (next time you come back to its tab) and shows **↻ Changed in ComfyUI · Update** in step ⑤, on the take's render bar and in **Models**. One click pulls in the new version and keeps your setup: where the prompt goes, the size and seed slots, and your sampler tweaks. If a part of your setup no longer fits (say the prompt node was replaced), the setup opens so you can check it. **↻ Update from ComfyUI** in a workflow's setup does the same any time. Workflows you uploaded as files offer **↻ Update from a file** instead, and a workflow that came with the app offers **↻ Update to this version's**, for when a newer Prompt Maker brings a better one.
+**Changed a workflow in ComfyUI?** Prompt Maker renders from its own copy, saved when you added the workflow. When you save the workflow again in ComfyUI, Prompt Maker notices (next time you come back to its tab) and shows **↻ Changed in ComfyUI · Update** in More options → Render settings, on the take's render bar and in **Models**. One click pulls in the new version and keeps your setup: where the prompt goes, the size and seed slots, and your sampler tweaks. If a part of your setup no longer fits (say the prompt node was replaced), the setup opens so you can check it. **↻ Update from ComfyUI** in a workflow's setup does the same any time. Workflows you uploaded as files offer **↻ Update from a file** instead, and a workflow that came with the app offers **↻ Update to this version's**, for when a newer Prompt Maker brings a better one.
 
 ### 2. Render
 
-Step **⑤ Settings → Render** on the Create page is your control center:
+Step **More options → Render** on the Create page is your control center:
 
 - **Pick the workflow** your takes render with. Prompt Maker remembers it for each model.
 - **⚙ Edit** changes its name, inputs and sampler settings; under **Advanced**, chips show what it will use (sampler, steps, CFG), and clicking them jumps to those settings. **＋** adds another workflow. **Delete workflow** is in the edit dialog.
 - **Auto-render every new prompt** sends each new or refined take to ComfyUI as soon as it's written.
-- **Renders per take** (×1–×4, just below) is how many renders each take gets on auto-render, each with its own seed, so 2 takes ×3 make 6 renders. Each take's 🎨 Render bar starts from it too. While you build a chain (Then…, in the same step) it is how many renders step 1 makes. It hides while a batch is picked (the batch says how many) and with ✍️ your own prompt (Takes is the count).
-- **Batch** (folds open like Advanced) holds your saved batches, for images and videos alike. Each one stands on its own:
+- **Renders per take** (×1–×4, just below) is how many renders each take gets on auto-render, each with its own seed, so 2 takes ×3 make 6 renders. Each take's 🎨 Render bar starts from it too. While you build a chain on the **Chains** page it is how many renders step 1 makes. It hides while a batch is picked (the batch says how many) and with ✍️ your own prompt (Takes is the count).
+- The **Batches** page in the sidebar holds your saved batches, for images and videos alike. Each one stands on its own:
   - **a name** you give it, e.g. *Hero shots* or *Explore*,
   - **how many** images or videos (any number up to 50),
   - **🔁 One prompt** (one prompt, rendered that many times with a new seed each) or **🔀 A different prompt each** (that many different prompts, each rendered once).
@@ -484,10 +488,10 @@ Step **⑤ Settings → Render** on the Create page is your control center:
 
 Every take also has a **🎨 Render** bar:
 
-- **The workflow menu** is the same choice as step ⑤; change either one.
-- **⚙ This take's settings** opens every knob a render of this take uses, on the take itself: **Shape**, **Size** and **Duration** (step ④'s as it is now, even changed after the prompt was written, unless you change them here; your own typed sizes are in the Size menu too, and picking one brings its shape), the **Seed** (new each render, or fixed at a number), every sampler setting the workflow has (steps, CFG, sampler, scheduler, denoise…) and the LoRAs' switches and strengths (a LoRA you switch or change in step ⑤ shows here at once; one you changed here stays as you set it). What you set here is this take's alone: step ⑤, the other takes and the workflow keep theirs, and the line under the bar says what the take has of its own (⚙ 9:16 · 1080×1920, own sampler settings…). **↺ Same as step ⑤** gives it all back. With a fixed seed and ×2 or more, the seed chip shows the seeds the renders use (🔒 Seeds 4242–4244): the first is your seed, each next one the seed after it, so they differ. A queued prompt, a batch or a chain renders at the size its prompt was written for. Picking another workflow for the take clears its own sampler, seed and LoRA settings (they belonged to the other one). ＋ Add LoRA and the workflow itself stay in step ⑤.
-- **×1–×4**: render several at once, each with its own seed. It starts at **Renders per take** from step ⑤. (For more, use **Batch** in step ⑤.)
-- **🎲 Random seed / 🔒 Seed**: the seed the take renders with (step ⑤'s, or the take's own from ⚙); click it to change it for this take.
+- **The workflow menu** is the same choice as More options → Render settings; change either one.
+- **⚙ This take's settings** opens every knob a render of this take uses, on the take itself: **Shape**, **Size** and **Duration** (Make it yours's as it is now, even changed after the prompt was written, unless you change them here; your own typed sizes are in the Size menu too, and picking one brings its shape), the **Seed** (new each render, or fixed at a number), every sampler setting the workflow has (steps, CFG, sampler, scheduler, denoise…) and the LoRAs' switches and strengths (a LoRA you switch or change in More options → Render settings shows here at once; one you changed here stays as you set it). What you set here is this take's alone: More options → Render settings, the other takes and the workflow keep theirs, and the line under the bar says what the take has of its own (⚙ 9:16 · 1080×1920, own sampler settings…). **↺ Same as More options → Render settings** gives it all back. With a fixed seed and ×2 or more, the seed chip shows the seeds the renders use (🔒 Seeds 4242–4244): the first is your seed, each next one the seed after it, so they differ. A queued prompt, a batch or a chain renders at the size its prompt was written for. Picking another workflow for the take clears its own sampler, seed and LoRA settings (they belonged to the other one). ＋ Add LoRA and the workflow itself stay in More options → Render settings.
+- **×1–×4**: render several at once, each with its own seed. It starts at **Renders per take** from More options → Render settings. (For more, use **Batch** in More options → Render settings.)
+- **🎲 Random seed / 🔒 Seed**: the seed the take renders with (More options → Render settings's, or the take's own from ⚙); click it to change it for this take.
 - **▶ Render**: live progress shows on the tile (queue position, node, step, %), with previews if ComfyUI was started with `--preview-method auto`. **✕** cancels.
 - **🎨 Render all** does every take in one go.
 
@@ -504,7 +508,7 @@ Click any result to open the **lightbox**, where you can:
 
 <img src="screenshots/comfy-setup.png" alt="The Set up ComfyUI dialog: the graphics card with its driver, the Python it found, where ComfyUI goes, and the Set it up button" width="600">
 
-Without a ComfyUI on this computer, **Settings → Services** shows **⬇ Set up ComfyUI**, and so does *ComfyUI isn't set up* in step ⑤ on Create. One click, and Prompt Maker:
+Without a ComfyUI on this computer, **Settings → Services** shows **⬇ Set up ComfyUI**, and so does *ComfyUI isn't set up* in More options → Render settings on Create. One click, and Prompt Maker:
 
 1. **Checks the computer**: your graphics card and its driver, and Python. An NVIDIA card without a driver gets **Install the driver** (Ubuntu's own driver tool, or Debian's package, behind the system's password prompt; then restart the computer). Python's environment tool, when Ubuntu left it out, gets **Install it** the same way.
 2. **Fetches ComfyUI** from GitHub into `ComfyUI/` in the data folder (or the folder under **Settings → ComfyUI**, or one you pick with **Change**; an existing folder must be empty, or ComfyUI's own).
@@ -512,7 +516,7 @@ Without a ComfyUI on this computer, **Settings → Services** shows **⬇ Set up
 4. **Installs PyTorch for your card**: the CUDA build for NVIDIA (about 3 GB), the ROCm build for AMD (new, not yet tried on a real card), the small CPU build without a card.
 5. **Installs ComfyUI's packages**, then **starts it** and points **Settings → ComfyUI** at it, so ▶ Start, ■ Stop and *Start ComfyUI along with it* work from then on.
 
-Each step shows in plain words, with the last line of what runs under it. Close the dialog and it goes on; Services shows how far it is. **✕ Stop** stops it, and a set-up that stopped (no internet, the laptop closed) **carries on from where it was** next time: what's done is skipped. Model files aren't part of it: step ⑤ offers **⬇ Download** for each one a workflow needs (see [Missing models](#missing-models)).
+Each step shows in plain words, with the last line of what runs under it. Close the dialog and it goes on; Services shows how far it is. **✕ Stop** stops it, and a set-up that stopped (no internet, the laptop closed) **carries on from where it was** next time: what's done is skipped. Model files aren't part of it: More options → Render settings offers **⬇ Download** for each one a workflow needs (see [Missing models](#missing-models)).
 
 Linux for now. On Windows and macOS, install [ComfyUI Desktop](https://www.comfy.org/download) and enter its folder in **Settings → ComfyUI**.
 
@@ -520,19 +524,19 @@ Linux for now. On Windows and macOS, install [ComfyUI Desktop](https://www.comfy
 
 A workflow can load a model file your ComfyUI doesn't have yet: a checkpoint, a LoRA, a CLIP vision model… ComfyUI would refuse it. Prompt Maker checks before every render, so nothing is half-done:
 
-- **Step ⑤ says which files are missing** for the picked workflow, and the ComfyUI folder each goes in (`models/clip_vision`, say). A render started anyway stops with the same list.
+- **More options → Render settings says which files are missing** for the picked workflow, and the ComfyUI folder each goes in (`models/clip_vision`, say). A render started anyway stops with the same list.
 - **⬇ Download** gets one (or **⬇ Download all**) straight into that folder, with a progress bar. It uses the link the workflow carries: ComfyUI's templates and most shared workflows list a download link for each model. It runs in Prompt Maker's server, so it goes on through a reload; **✕** stops it. As soon as it's done, the notice goes and the workflow renders.
 - **Only from Hugging Face**, and only when you click. A link to another site is shown for you to open yourself, and a workflow with no link for a file says so: get it there (or where the workflow came from) and put it in that folder.
 - **A file in a subfolder** (the workflow says `sam3.1.safetensors`, your ComfyUI has `wan-2.1/sam3.1.safetensors`) is found there, with nothing to do.
 - **ComfyUI skipping part of a workflow** (an output that fails its checks) also stops the render, with ComfyUI's reasons in short. Before, the render ran without its result.
 
-**Missing nodes.** A workflow can also use a node your ComfyUI doesn't offer right now. Most often the node's pack *is* installed but didn't load when ComfyUI started (a Python package broke, a ComfyUI update changed something it needs), and ComfyUI only says so in its log, so a render would just say "Node 'Image Save' not found". Prompt Maker reads that log: step ⑤ names the node, the pack it comes from and why it didn't load ("the pack was-node-suite-comfyui didn't load when ComfyUI started: cannot import name 'ThreadpoolController'…"), with **↻ Restart ComfyUI** for once you've fixed the pack in ComfyUI (Manager → Try fix, or install what it says is missing) and **↻ Check again**. A node no loaded pack has is reported too: install the pack (ComfyUI Manager → Install Missing Custom Nodes), then restart ComfyUI.
+**Missing nodes.** A workflow can also use a node your ComfyUI doesn't offer right now. Most often the node's pack *is* installed but didn't load when ComfyUI started (a Python package broke, a ComfyUI update changed something it needs), and ComfyUI only says so in its log, so a render would just say "Node 'Image Save' not found". Prompt Maker reads that log: More options → Render settings names the node, the pack it comes from and why it didn't load ("the pack was-node-suite-comfyui didn't load when ComfyUI started: cannot import name 'ThreadpoolController'…"), with **↻ Restart ComfyUI** for once you've fixed the pack in ComfyUI (Manager → Try fix, or install what it says is missing) and **↻ Check again**. A node no loaded pack has is reported too: install the pack (ComfyUI Manager → Install Missing Custom Nodes), then restart ComfyUI.
 
-**Checked at start, for every workflow.** When Prompt Maker starts (and whenever ComfyUI comes back, and every ten minutes while it runs), every workflow of every model is checked against ComfyUI in the background: nodes it lacks, model files it lacks. A workflow that can't render is marked **⚠** in step ⑤'s workflow list and the notice says why, before you pick it; a toast says so once. **Settings → ComfyUI** lists them all, with **↻ Check again**.
+**Checked at start, for every workflow.** When Prompt Maker starts (and whenever ComfyUI comes back, and every ten minutes while it runs), every workflow of every model is checked against ComfyUI in the background: nodes it lacks, model files it lacks. A workflow that can't render is marked **⚠** in More options → Render settings's workflow list and the notice says why, before you pick it; a toast says so once. **Settings → ComfyUI** lists them all, with **↻ Check again**.
 
 ### Seed
 
-Step ⑤ has a **🎲 Seed** row for the picked workflow, with ComfyUI's four modes:
+More options → Render settings has a **🎲 Seed** row for the picked workflow, with ComfyUI's four modes:
 
 | Mode | What each render gets |
 |---|---|
@@ -549,11 +553,11 @@ Step ⑤ has a **🎲 Seed** row for the picked workflow, with ComfyUI's four mo
 
 ### Denoise (image-to-image)
 
-When the picked workflow takes an image and has a **denoise** setting, step ③ shows a **🎚️ How much to change your picture** slider under your image, inside **Picture settings**. Only on picture models: a video model follows your picture as its first frame (or its character) rather than repainting it, so there denoise could only make it render less (at 0 nothing at all: a flat grey clip). Not on Krea 2 Character either: there your picture is the person to keep. It goes down to 0.05, never 0, and a 0 saved earlier renders at the workflow's own value instead. Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
+When the picked workflow takes an image and has a **denoise** setting, Add an image shows a **🎚️ How much to change your picture** slider under your image, inside **Picture settings**. Only on picture models: a video model follows your picture as its first frame (or its character) rather than repainting it, so there denoise could only make it render less (at 0 nothing at all: a flat grey clip). Not on Krea 2 Character either: there your picture is the person to keep. It goes down to 0.05, never 0, and a 0 saved earlier renders at the workflow's own value instead. Lower keeps more of your image, higher changes more, and a hint says which. **↺** puts the workflow's value back. It's saved with the workflow, like its other sampler settings.
 
 ### LoRAs
 
-Step ⑤ shows the **🧬 LoRAs** of the picked workflow:
+More options → Render settings shows the **🧬 LoRAs** of the picked workflow:
 
 - **The workflow's own LoRAs** (LoRA loader nodes, and rgthree's Power Lora Loader) are listed with a switch and a strength slider, −5 to 5. For a LoRA made for more (some go up to 100), type the strength in the box next to the slider: any value goes.
   - **Switching one off** leaves it out of the render entirely, so its file isn't even loaded.
@@ -564,7 +568,7 @@ Step ⑤ shows the **🧬 LoRAs** of the picked workflow:
 - **A workflow that renders in pieces** (like SCAIL 2, where each piece loads its own copy of the same LoRAs) shows each LoRA once, marked *×2 pieces*: its switch and strength set every piece.
 
 - **🆕 A newer version is offered.** When your LoRA folder has a newer release of a LoRA in use (`film_grain` → `film_grain_v2`, `v1.1` → `v2`), its row shows **🆕 v2**: one click uses it, with the same switch and strength (**Undo** in the message; on the workflow's own LoRAs, **↺** goes back to its file). A later training step (`-000800` after `-000600`) is offered the same way, though later isn't always better: compare. **✕** keeps the one you have and stops suggesting that file.
-- **A LoRA file that's gone** (you deleted v1 when v2 came out): step ⑤'s missing-files notice offers **Use v2**, the newest version you have, instead of a dead end.
+- **A LoRA file that's gone** (you deleted v1 when v2 came out): More options → Render settings's missing-files notice offers **Use v2**, the newest version you have, instead of a dead end.
 
 - **The assistant swaps versions too:** *"use the newest film grain"*. When it changes a LoRA, it says if a newer version is in the folder.
 
@@ -579,18 +583,18 @@ Hover any still you rendered and click **🎬 Animate** (it's also in the lightb
 - **Full quality.** ComfyUI gets the original render file as the first frame, not a re-compressed copy.
 - **It remembers where it came from.** The video's results, Saved prompts card and lightbox link back with **⬑ from Krea 2 RAW · take 1 · seed …**.
 
-You'll need an image-to-video workflow (one with a *Load Image* node) on the video model. Step ⑤ warns you if the picked workflow can't take the frame.
+You'll need an image-to-video workflow (one with a *Load Image* node) on the video model. More options → Render settings warns you if the picked workflow can't take the frame.
 
 ### 4. Chains: build your own pipelines
 
-A chain runs several steps in a row, each one continuing from the renders of the step before, like a still that becomes a video. Build it in step **⑤ Settings → Writing & more steps → Then…** on the Create page:
+A chain runs several steps in a row, each one continuing from the renders of the step before, like a still that becomes a video. Build it on the **Chains** page in the sidebar. Its first step uses the current Create idea and model:
 
-1. Set up step 1 as usual (model, theme, dials, and a workflow in step ⑤).
-2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*; 🧍 *character* on Wan Animate 2, which also uses the motion video in step ③), **what happens** (optional; empty lets the Brain choose), its workflow, takes and renders, and for a video step its **duration** (a slider, 1 to 20 seconds).
+1. Set up step 1 as usual (model, theme, dials, and a workflow in More options → Render settings).
+2. Click **＋ Then…** to add a step. Pick its model, how it uses the image (🎬 *first frame*, *reference* or *recreate*; 🧍 *character* on Wan Animate 2, which also uses the motion video in Add an image), **what happens** (optional; empty lets the Brain choose), its workflow, takes and renders, and for a video step its **duration** (a slider, 1 to 20 seconds).
 3. **☐ Let AI choose** at the top of the chains section is the one-click version: on, the AI picks the best render at every step (a still becomes the video's first frame) and for steps you add later; off, the chain waits for you to pick. Or, between steps, choose each on its own: **⏸️ Let me pick** (the chain waits while you pick the best renders), **🧠 Brain picks** (the Brain looks at every render and only the best one goes on, so 16 stills and a video step with 2 takes make 2 videos, not 32) or **⚡ Auto** (every render goes on). Brain picks needs a Brain that can see images (👁); if it can't pick, the chain waits for you instead.
-4. Click **Run all steps**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
+4. Return to **Create** and click **Run all steps**. The line above it says what you'll get, e.g. *2 stills → you pick → videos*.
 
-While a chain runs, a strip above the results shows every step. Click any thumbnail to see that step's takes.
+While a chain runs, the **Pipeline** tab on Create shows every step. Click any thumbnail to see that step's takes.
 
 - **At a ⏸️ step,** tick **☐ Pick** on the renders you like and click **Continue ▶**. Pick several to make one video from each.
 - **Change a step while you pick,** for example what happens next. Continue uses the chain as you see it.
@@ -601,9 +605,9 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 
 > Chains continue from images for now: a video can't feed the next step yet. Extending a clip from its last frame is coming next.
 
-### 5. Your renders and the Gallery
+### 5. Your renders and the Library
 
-<img src="screenshots/gallery.jpg" alt="The Gallery: every rated render in one grid, with stars, filters and a size slider" width="900">
+<img src="screenshots/gallery.jpg" alt="The Library: every rated render in one grid, with stars, filters and a size slider" width="900">
 
 **🎞 Your renders** is a tab beside the takes on Create. It holds a card for every render you've ever made, from every run and batch, all in one grid, newest first, each with a caption: the first words of the idea it was made from and the model (small pictures keep it for the hover). It keeps them when you reload the page or restart Prompt Maker.
 
@@ -611,10 +615,10 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - **Filters**, behind the one **Filters** button over the grid (it counts the ones that are on): Images or Videos, **🕘 This session** (only what you made since Prompt Maker last started), **★ & up**, **★★ & up** or **★★★** or **☆ Not rated yet**, a model, **📅 Today / This week / This month / Older**, the shape (**▯ Portrait**, **▭ Landscape**, **▢ Square**), **🎙 Spoken line** (videos made with one), and, once there's a choice, the **workflow**, the **LoRA** and the **look** they were made with. **Find…** searches the words of the prompt, the model, the workflow, the look, the LoRAs, the seed and the size (type *1920×1080* or a seed number). The count says how many show (*12 of 183*). The filters are remembered, except Find.
 - **Arrange them your way.** Drag a card where you want it and the others slide aside to make room: over a card's left half it goes before it, over its right half after it. On a touch screen, hold it a moment first; with the keyboard, **Shift + ←** or **→** moves the card you're on. Your order is saved in your data folder, so it stays. New renders come in first, ahead of the ones you've placed. **↺ Newest first** goes back to newest first.
 - **As big as you want.** On a wide window the grid fills the stage beside the steps; on a narrow one, drag the box's bottom edge to make it taller or shorter. **🔍** makes the pictures bigger or smaller, up to one picture as tall as the box. **⛶ Full screen** gives the box the whole window (**Esc** goes back). All of this is remembered.
-- **Download or delete several at once.** **Ctrl**-click (**⌘** on a Mac) the cards you want (or click **Select** in the Gallery, then the cards), **Shift**-click to take every card up to the one you click, or drag a box across them from an empty spot (or with **Ctrl** held, from a card). Picked cards get a ✓. The bar at the bottom says how many. **⬇ Download** saves them in your Downloads folder: one picture or video as it is, several as one .zip file (*prompt-maker-12-renders-2026-10-11.zip*) holding each file as it is, untouched; your browser shows the download as it comes. **Delete** (click twice: *Sure?*) or the **Delete** key deletes them for good, here and in ComfyUI. They dim for 8 seconds first, with one **↶ Undo** for them all. **Esc**, **✕** or a click on an empty spot lets go of the selection; **Ctrl + A** picks every card shown.
+- **Download or delete several at once.** **Ctrl**-click (**⌘** on a Mac) the cards you want (or click **Select** in the Library, then the cards), **Shift**-click to take every card up to the one you click, or drag a box across them from an empty spot (or with **Ctrl** held, from a card). Picked cards get a ✓. The bar at the bottom says how many. **⬇ Download** saves them in your Downloads folder: one picture or video as it is, several as one .zip file (*prompt-maker-12-renders-2026-10-11.zip*) holding each file as it is, untouched; your browser shows the download as it comes. **Delete** (click twice: *Sure?*) or the **Delete** key deletes them for good, here and in ComfyUI. They dim for 8 seconds first, with one **↶ Undo** for them all. **Esc**, **✕** or a click on an empty spot lets go of the selection; **Ctrl + A** picks every card shown.
 - **A dragged card is never left hanging.** Let go outside the window, or switch to another program mid-drag, and the card drops where it was.
-- **In the Gallery, a hidden one is marked** (dimmed, with **👁 Show** on it), so you can tell it from the others and bring it back there too.
-- **Hide from Create** at a picture's top right tidies this grid (**↶ Undo** brings it back). Nothing is deleted; it stays in Saved prompts, Gallery and its take. **Hidden (n)** in the filters shows the ones you hid; **Show in Create** puts one back.
+- **In the Library, a hidden one is marked** (dimmed, with **👁 Show** on it), so you can tell it from the others and bring it back there too.
+- **Hide from Create** at a picture's top right tidies this grid (**↶ Undo** brings it back). Nothing is deleted; it stays in Saved prompts, Library and its take. **Hidden (n)** in the filters shows the ones you hid; **Show in Create** puts one back.
 - Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage. To close it, click ✕, press **Esc**, or click anywhere in the dark around the picture.
 
 **Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
@@ -623,9 +627,9 @@ While a chain runs, a strip above the results shows every step. Click any thumbn
 - Click the stars on a render in **Your renders** (hover a render to see them), or the buttons at the top of the lightbox's side panel, or press **1**, **2** or **3** in the lightbox. Clicking the rating it already has takes it off (or press **0**). Browsing with a rating filter on (say **★★★**) and you rate one lower, however you rate it (the side panel, the keys, or the stars under the one you browse in **⇆ Compare**): it leaves what you browse and the next one comes up, with **↶ Undo** in case. The one pinned on the left in Compare stays.
 - Renders you marked ♥ favorite before ratings count as ★★★ Excellent.
 
-Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Gallery and it's moved on Create too). The Gallery always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its Saved prompts card.
+Every render also appears in the **Library** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Library and it's moved on Create too). The Library always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its Saved prompts card.
 
-- After you close the lightbox, the Gallery rings the render you looked at last, so you don't lose your place.
+- After you close the lightbox, the Library rings the render you looked at last, so you don't lose your place.
 - **Select → choose two → Compare 2** opens those exact pictures or videos side by side. **Select → choose any → ⬇ Download** saves them all at once (several as one .zip). **Pin on the left** changes the comparison reference; stars rate the work. **Open original prompt** returns to its saved prompt on Create.
 - Search stays visible on narrow screens. **Filters** opens the remaining choices and counts active filters; **Clear filters** resets them and the search together.
 - Video tiles show a still of their first frame and play while you hover them.
@@ -634,7 +638,7 @@ Every render also appears in the **Gallery** tab. It *is* 🎞 Your renders, giv
 - **Many renders at once don't slow the page.** However many are going, Stop, Cancel, the main button and saving settings answer right away. **✕ Cancel** on a ×2–×4 render also stops the ones that hadn't started yet, whenever you click it.
 - **Renders survive a page reload.** A render keeps going in Prompt Maker's server if you reload or close the page; when the page comes back it shows the take again with the render still live. Only **✕ Cancel** on a running tile (or **■ Stop**) stops it. A chain or batch run is steered by the page, though: after a reload, the step that was rendering finishes, but the next ones don't start.
 - **And a restart of Prompt Maker.** Restart it (↻ Restart, ⬆ Update, a crash, the computer's service) while ComfyUI renders, and when it's back it picks up every render ComfyUI still has, running or finished meanwhile, and puts each on its take as usual, with its tile and 🎨 Rendering showing it again. What it keeps for that is a short note per render in `rendering.json` (ids and settings, never your prompt), gone once the render is kept. Renders of a ×2–×4 that hadn't been sent to ComfyUI yet aren't sent; render those again.
-- **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Gallery, Saved prompts, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
+- **Moved a render out of the renders folder?** (to sort your favorites into a folder of your own, say) It leaves the Library, Saved prompts, the takes and the pickers, with no blank tile, even if it's on screen when you move it. Put the file back and it shows again.
 
 > **Tip:** if a workflow runs its own prompt-writing node (an LLM inside the workflow; some LTX workflows have one), Prompt Maker warns you during setup. Its prompt is already written for the model, so you may want that node off.
 
@@ -645,14 +649,14 @@ Eleven models come with ready-made playbooks, researched from their official pro
 | Model | Type | Prompt style |
 |---|---|---|
 | **Krea 2 RAW** | Image | Dense, literal natural-language captions. Medium and shot first; skin texture and restrained color to avoid the "airbrushed" look. Its example prompts each frame and light the shot differently (from high above, from the floor, through a telephoto lens, film noir), so the Brain doesn't copy one camera into every prompt. |
-| **Krea 2 RAW Edit** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. Its workflow (12 steps with Krea's turbo LoRA) comes with the app. Step ③'s **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
+| **Krea 2 RAW Edit** | Image (image-to-image) | Krea 2 RAW changing a picture you give it: the caption describes the picture as it is, then states the one change you want and what stays. Its workflow (12 steps with Krea's turbo LoRA) comes with the app. Add an image's **🎚️ How much to change your picture** slider sets how far it goes ([Denoise](#denoise-image-to-image)). |
 | **Krea 2 Character** | Image (same person) | Krea 2 with the Identity Edit LoRA: an instruction (*"Create a photo of this woman…"*), every trait of the [character sheet](#same-person-every-render), the new clothes, pose, camera and light, then "Preserve the exact facial identity and body". Its workflow comes with the app. |
 | **Z-Image Turbo** | Image | Tongyi-MAI's fast 6B model, 8 steps: one caption paragraph with the medium first, skin texture for realism, and the exact words of any sign or label in quotes, which it renders correctly in English and Chinese. |
 | **Qwen Image Edit** | Image (editing) | Qwen-Image-Edit-2509: one short instruction, not a caption: the change, then what must stay ("keep her face and the background"). The person, the product and the layout stay as they are; edited text keeps its font. Its workflow (4 steps with the Lightning LoRA) comes with the app. |
 | **LTX 2.3** | Video + audio (from a picture) | One chronological paragraph: shot, subject, action beats, explicit camera, and ambience, sound effects and dialogue woven in. |
-| **LTX 2.3: video from words** | Video + audio (from words) | The same prompt style, for a clip that starts from your words alone: step ③ takes no picture. Under **Make a video** in step ①. |
+| **LTX 2.3: video from words** | Video + audio (from words) | The same prompt style, for a clip that starts from your words alone: Add an image takes no picture. Under **Make a video** in What would you like to make?. |
 | **MiniMax H3 (Hailuo 03)** | Video + audio (from a picture) | MiniMax's structured shooting-script format (`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`) with `[Shot N]` cuts and `(S1)` dialogue tags. |
-| **MiniMax H3: video from words** | Video + audio (from words) | The same shooting-script format, for a clip from your words alone: step ③ takes no picture. Under **Make a video** in step ①. |
+| **MiniMax H3: video from words** | Video + audio (from words) | The same shooting-script format, for a clip from your words alone: Add an image takes no picture. Under **Make a video** in What would you like to make?. |
 | **MiniMax H3 Reference** | Video + audio (same person) | MiniMax's full-reference format (`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`): your picture is `<Subject 1>`, defined once with every trait of the [character sheet](#same-person-every-render). Its workflow comes with the app. |
 | **Wan Animate 2** | Video (character animation) | Wan-AI's official caption format: `Character appearance description:` (looks only) and `Background description:` (place, light, camera angle), plus a `Motion:` line for the pose prompt. Takes a character image and a motion video ([more](#character-animation-wan-animate-2)). |
 
@@ -674,7 +678,7 @@ The **Models** tab first shows what each model makes, what input it needs and wh
   |---|---|
   | **Instructions** | The playbook: prompt structure, vocabulary that works, things to avoid, how to use an attached image. Markdown. |
   | **Example prompts** | 2–4 gold-standard prompts. The Brain copies their *style*, never their content. |
-  | **Aspect ratios / resolutions / durations** | The options shown on the Create page. Durations: the first is where step ③'s Duration box starts (the box takes any whole number of seconds, 1 to 20); a video model with none, like Wan Animate 2, shows no box: its clip is as long as the motion video. |
+  | **Aspect ratios / resolutions / durations** | The options shown on the Create page. Durations: the first is where Add an image's Duration box starts (the box takes any whole number of seconds, 1 to 20); a video model with none, like Wan Animate 2, shows no box: its clip is as long as the motion video. |
   | **Defaults** | Starting aspect, resolution, duration, length and temperature. |
   | **Length guide** | What *short / medium / long* mean for this model, e.g. `≈70–120 words`. |
   | **Color** | Its accent color in the app. |
@@ -696,7 +700,7 @@ Each model is a single `.json` file (built-ins in `playbooks/<id>.json`, yours i
     "bestFor": "What it's good for",
     "youNeed": "What to give it (a picture? a video? nothing?)",
     "steps": ["Step one", "Step two"],
-    "tryThese": ["a theme to try, one click puts it in step ②"]
+    "tryThese": ["a theme to try, one click puts it in Your idea"]
   },
   "color": "#22d3ee",
   "instructions": "## Prompt format\n- Write ONE flowing paragraph…",
@@ -731,7 +735,7 @@ The **Brain** is the AI model in LM Studio that writes your prompts. Pick it fro
 >
 > LM Studio can only switch thinking off for models it recognizes, mostly the official releases. Many community fine-tunes ignore the switch. Prompt Maker handles those itself: if a Brain starts thinking when Thinking is Off, it stops it right away and asks again with the thinking already marked as finished. It remembers which Brains need this, and hovering over the Brain in the top bar shows it.
 
-### Brain profiles (Models → Brains)
+### Brain profiles (Brains)
 
 Open **Models** and switch to **🧠 Brains** to see every model in LM Studio. Prompt Maker fills in each card on its own as you work:
 
@@ -745,7 +749,9 @@ Search the cards by name and sort them by **Best fit**, **Last used** or **Name*
 
 ## Settings
 
-Settings is a page of cards: **🖥️ Services**, **⬆ Updates**, **🔌 LM Studio**, **☁️ Cloud Brains**, **🎨 ComfyUI**, **🧠 How the Brain thinks**, **📜 Master instructions** and **✦ Assistant**. The technical ones start folded; click a header to open it. Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
+Choose a section at the left: **Services**, **Brain & prompting**, **Master instructions**, **Rendering**, **Privacy**, **Cloud Brains**, **Assistant**, or **Data & updates**. Edits stay in the form when you switch sections or pages; **Save** keeps them.
+
+Settings is a page of cards: **🖥️ Services**, **⬆ Updates**, **🔌 LM Studio**, **☁️ Cloud Brains**, **🎨 ComfyUI**, **🧠 How the Brain thinks**, **📜 Master instructions** and **✦ Assistant**. Choosing a section opens its controls; you can fold individual cards by clicking their headers. Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -761,7 +767,7 @@ Settings is a page of cards: **🖥️ Services**, **⬆ Updates**, **🔌 LM St
 | **Clean up ComfyUI's output folder** | Off | After copying a render into your data folder, delete it from ComfyUI's output folder. Only the exact file just copied is deleted, and only when ComfyUI runs on this computer. The output folder is found automatically; set it if ComfyUI was started with `--output-directory`. Deleting from Saved prompts removes ComfyUI's copies whether this is on or not, so set the folder in that case even with this off. |
 | **When I delete from Saved prompts, also clean LM Studio's and ComfyUI's logs of it** | On | On from the start, because deleting is meant to leave nothing behind, and that includes the other apps' logs. LM Studio writes every request and answer to its own server logs, so a deleted prompt would live on there. With this on, a delete replaces the card's words with "[deleted]" in LM Studio's server logs (`~/.lmstudio/server-logs`) and in ComfyUI's log (`user/comfyui.log`, which may name the files a node saved), on this computer only. Off leaves the other apps' logs alone. The assistant's `change_setting` knows it as `log_scrub`. |
 | **ComfyUI folder** and **Start options** | found automatically | Where **▶ Start** in Services starts ComfyUI from, and with which options (live previews are on: `--preview-method auto`). |
-| **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. It's the default for every Brain; a Brain can have its own level on **Models → Brains**. |
+| **Thinking** | Off | Reasoning effort for "thinking" models: off, low, medium, high, or the model's default. It's the default for every Brain; a Brain can have its own level on **Brains**. |
 | **Top P** | 0.95 | Lower is more focused. *How adventurous* (the temperature) is set for each run on the Create page. |
 | **Max tokens** | 4096 | The cap on each answer. Raise it if you turn thinking on. |
 | **✓ Check each prompt against your idea** (How the Brain thinks) | On | One more short Brain call per take compares it with your idea and puts back any detail the Brain changed; the take says what was put back. |
@@ -824,9 +830,9 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── jobs.json       # the assistant's jobs: their plan, progress and log (the newest 30)
 ├── render-order.json # the order you dragged 🎞 Your renders into
 ├── holds.json      # the pictures and videos your Create page still holds (so tidying up leaves them alone)
-├── looks.json      # looks you made (step ② → ＋ Your own look…); at "Nothing stays", in memory with history.json
-├── sizes.json      # sizes you typed (step ④ → ✎ Type your own size…), per model; at "Nothing stays", in memory too
-├── dials.json      # step ④ as you left it, per model (shape, size, duration, length, how adventurous)
+├── looks.json      # looks you made (Your idea → ＋ Your own look…); at "Nothing stays", in memory with history.json
+├── sizes.json      # sizes you typed (Make it yours → ✎ Type your own size…), per model; at "Nothing stays", in memory too
+├── dials.json      # Make it yours as you left it, per model (shape, size, duration, length, how adventurous)
 ├── rendering.json  # renders sent to ComfyUI and not yet kept (ids and settings only), so a restart picks them up
 ├── *.json.bak      # each file as it was before its last save
 └── models/         # playbooks you added or edited
@@ -868,7 +874,7 @@ The model used up all its tokens, usually by thinking. Set **Thinking** to *Off*
 <details>
 <summary><b>The assistant answers "LM Studio error: The number of tokens to keep … is greater than the context length"</b></summary>
 
-The Brain was loaded in LM Studio with too little room for the assistant, which sends more along than writing a prompt does (about 12,000 tokens; small models often load with 8,192). The assistant folds earlier steps into a note before this happens, and once more when LM Studio reports it; if the message still shows, the Brain has too little room even for one turn. In LM Studio, open **My Models**, click the ⚙ next to the model and raise **Context Length** to 16,000 or more (32,000 is comfortable), then load it again. **Models → Brains** shows the room each loaded Brain has. Writing prompts works either way.
+The Brain was loaded in LM Studio with too little room for the assistant, which sends more along than writing a prompt does (about 12,000 tokens; small models often load with 8,192). The assistant folds earlier steps into a note before this happens, and once more when LM Studio reports it; if the message still shows, the Brain has too little room even for one turn. In LM Studio, open **My Models**, click the ⚙ next to the model and raise **Context Length** to 16,000 or more (32,000 is comfortable), then load it again. **Brains** shows the room each loaded Brain has. Writing prompts works either way.
 </details>
 
 <details>
@@ -904,13 +910,13 @@ Click **▶ Start it** next to *ComfyUI offline* (or **▶ Start** in **Settings
 <details>
 <summary><b>"Your ComfyUI doesn't have a model this workflow needs"</b></summary>
 
-The workflow loads a model file that isn't in ComfyUI's models folders. Click **⬇ Download** in step ⑤ (see [Missing models](#missing-models)). Without a download link, get the file where the workflow came from and put it in the folder step ⑤ names; the notice goes on its own.
+The workflow loads a model file that isn't in ComfyUI's models folders. Click **⬇ Download** in More options → Render settings (see [Missing models](#missing-models)). Without a download link, get the file where the workflow came from and put it in the folder More options → Render settings names; the notice goes on its own.
 </details>
 
 <details>
 <summary><b>"ComfyUI would skip part of this workflow"</b></summary>
 
-ComfyUI checked the workflow and found a part it can't run (it names the node and why, often a missing model or a value it doesn't accept). It would have run the rest without the result, so Prompt Maker stopped the render instead. Fix what it names (in ComfyUI if it's in the workflow itself), then **↻ Update** the workflow in step ⑤.
+ComfyUI checked the workflow and found a part it can't run (it names the node and why, often a missing model or a value it doesn't accept). It would have run the rest without the result, so Prompt Maker stopped the render instead. Fix what it names (in ComfyUI if it's in the workflow itself), then **↻ Update** the workflow in More options → Render settings.
 </details>
 
 <details>
@@ -922,7 +928,7 @@ The workflow needs custom nodes that aren't installed. In ComfyUI, open **Manage
 <details>
 <summary><b>"This workflow uses a node your ComfyUI doesn't have right now"</b> / <b>"Node 'X' not found"</b></summary>
 
-A node the workflow uses isn't in ComfyUI at the moment. Step ⑤ says which, and when the node's pack is installed but didn't load when ComfyUI started, which pack and why (from ComfyUI's log: usually a Python package that broke or an update the pack hasn't caught up with). Fix the pack in ComfyUI (**Manager → Try fix**, or install what the reason names), then **↻ Restart ComfyUI** in the notice and **↻ Check again**. If no pack has the node, install the one that does (**Manager → Install Missing Custom Nodes**) and restart. See [Missing models](#missing-models).
+A node the workflow uses isn't in ComfyUI at the moment. More options → Render settings says which, and when the node's pack is installed but didn't load when ComfyUI started, which pack and why (from ComfyUI's log: usually a Python package that broke or an update the pack hasn't caught up with). Fix the pack in ComfyUI (**Manager → Try fix**, or install what the reason names), then **↻ Restart ComfyUI** in the notice and **↻ Check again**. If no pack has the node, install the one that does (**Manager → Install Missing Custom Nodes**) and restart. See [Missing models](#missing-models).
 </details>
 
 <details>
@@ -934,7 +940,7 @@ Prompt Maker reads the motion video in your browser to show it and to take frame
 <details>
 <summary><b>"This workflow needs a motion video"</b></summary>
 
-The workflow has a *Load Video* node mapped as the motion video, but the take has none. On Create, add a motion video in step ③ (Wan Animate 2), then create again: the motion video is kept with each take.
+The workflow has a *Load Video* node mapped as the motion video, but the take has none. On Create, add a motion video in Add an image (Wan Animate 2), then create again: the motion video is kept with each take.
 </details>
 
 <details>
@@ -1007,7 +1013,7 @@ npm run test:ui
 The suite runs the real app against a mock LM Studio and a mock ComfyUI in headless Chrome, and uses a temporary data folder so your models and history are never touched:
 
 - **Real clicks:** it uses real mouse events, so a button hidden under something else fails.
-- **Coverage:** generating, refining, versions, images, errors, stopping, Saved prompts, Models, Settings, keyboard use, ComfyUI workflows, rendering, the Gallery and security checks.
+- **Coverage:** generating, refining, versions, images, errors, stopping, Saved prompts, Models, Settings, keyboard use, ComfyUI workflows, rendering, the Library and security checks.
 - **Strict:** it fails on any console error.
 - **Layout:** it checks for sideways scrolling at six screen sizes, from 360px phones to 1920px desktops.
 

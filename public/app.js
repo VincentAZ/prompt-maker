@@ -17,12 +17,12 @@ const state = {
   video: null, // the motion video (character-animation models): { file, sheet, seconds, frames, width, height, ratio }
   imageRole: 'reference', // the user's choice; "animate" falls back to reference on image models
   length: 'medium',
-  looks: [], // your own looks (step ②), from /api/looks
+  looks: [], // your own looks (Your idea), from /api/looks
   look: '', // the camera-and-light look under the theme; '' lets the Brain pick
   variations: 1,
   sheet: '', // 🧾 the character sheet of the image's person (models that keep a person): their traits, one per line
   manual: false, // ✍️ step 2's text is the prompt, word for word: Generate asks no Brain and renders it as it is
-  manualRenders: 1, // how many renders that prompt gets (step 4, while manual is on)
+  manualRenders: 1, // how many renders that prompt gets (size and variations, while manual is on)
   entry: null, // history entry behind the visible takes
   cards: [],
   timings: {},
@@ -37,19 +37,19 @@ const state = {
   editId: null,
   dirty: false,
   settingsDirty: false,
-  chain: { steps: [], renders: 1, recipeId: null }, // the Then steps being built on Create (step ⑤ → Then…)
+  chain: { steps: [], renders: 1, recipeId: null }, // the follow-up steps being built on the Chains page
   recipes: [], // saved chains
-  ownSizes: {}, // the sizes you typed in step ④, per model (from the data folder)
-  dials: {}, // step ④ as you left it, per model (from the data folder)
+  ownSizes: {}, // the sizes you typed in size and variations, per model (from the data folder)
+  dials: {}, // size and variations as you left it, per model (from the data folder)
   run: null, // the chain run shown above the results
   chainActive: false, // a chain is running steps right now
-  batchPick: '', // what Generate runs (step ⑤ Batch): '' no batch, a saved batch's id, or '*' every batch in order
+  batchPick: '', // what Generate runs (Render settings Batch): '' no batch, a saved batch's id, or '*' every batch in order
   batchRun: null, // while batches run: { list, index, name, total, done, allDone, stopped }
   workflows: [],
-  extras: [], // the other picture slots of step ③ (index 0 = the workflow's second slot): { file, dataUrl? } or null
+  extras: [], // the other picture slots of your inputs (index 0 = the workflow's second slot): { file, dataUrl? } or null
   loraList: null, // every LoRA ComfyUI has, e.g. "krea2/film_grain.safetensors" (loaded when needed)
   loraPicker: { open: false, q: '' },
-  line: { voice: '', text: '' }, // 🎙 what the person says, in which voice (step 3, video models)
+  line: { voice: '', text: '' }, // 🎙 what the person says, in which voice (your inputs, video models)
   wfStale: new Set(), // workflows edited in ComfyUI since Prompt Maker copied them
   wfMissing: new Map(), // workflow id → model files it needs that ComfyUI doesn't have
   wfNodes: new Map(), // workflow id → nodes it uses that ComfyUI doesn't have (with the pack that didn't load)
@@ -94,27 +94,27 @@ let stageTab = 'takes';
 const inStage = () => $('#reel').parentElement?.id === 'rendersPane';
 const typingInTakes = () => !$('#takesPane').hidden && Boolean(document.activeElement?.closest?.('#takesPane textarea, #takesPane input'));
 function showStageTab(which, { focus = false } = {}) {
-  const tab = which === 'renders' ? 'renders' : 'takes';
+  const tab = ['renders', 'takes', 'pipeline'].includes(which) ? which : 'takes';
   const changed = tab !== stageTab;
   stageTab = tab;
-  $('#takesPane').hidden = tab !== 'takes';
-  $('#rendersPane').hidden = tab !== 'renders';
-  for (const [id, on] of [['#tabTakes', tab === 'takes'], ['#tabRenders', tab === 'renders']]) {
-    $(id).setAttribute('aria-selected', String(on));
-    $(id).tabIndex = on ? 0 : -1;
+  for (const [key, id] of [['renders', 'Renders'], ['takes', 'Takes'], ['pipeline', 'Pipeline']]) {
+    $(`#${key}Pane`).hidden = key !== tab;
+    $(`#tab${id}`).setAttribute('aria-selected', String(key === tab));
+    $(`#tab${id}`).tabIndex = key === tab ? 0 : -1;
   }
   if (tab === 'renders') {
     $('#tabRenders').classList.remove('fresh');
-    if (changed && state.booted) { renderReel(); pollRenders(); } // (sized now that it shows)
+    if (changed && state.booted) { renderReel(); pollRenders(); }
   }
-  if (focus) $(tab === 'renders' ? '#tabRenders' : '#tabTakes').focus();
+  if (focus) $(`#tab${tab[0].toUpperCase() + tab.slice(1)}`).focus();
 }
-$('#tabTakes').addEventListener('click', () => showStageTab('takes'));
-$('#tabRenders').addEventListener('click', () => showStageTab('renders'));
+for (const key of ['renders', 'takes', 'pipeline']) $(`#tab${key[0].toUpperCase() + key.slice(1)}`).addEventListener('click', () => showStageTab(key));
 $('.stage-tabs').addEventListener('keydown', e => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
   e.preventDefault();
-  showStageTab(e.key === 'Home' ? 'takes' : e.key === 'End' ? 'renders' : stageTab === 'takes' ? 'renders' : 'takes', { focus: true });
+  const tabs = ['renders', 'takes', 'pipeline'];
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? 2 : (tabs.indexOf(stageTab) + (e.key === 'ArrowRight' ? 1 : 2)) % 3;
+  showStageTab(tabs[next], { focus: true });
 });
 
 const bookmarkIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>';
@@ -136,10 +136,10 @@ const assistantWidth = () => Math.min(innerWidth, Math.max(AS_MIN_W, Number(save
 // lays itself out as on a narrow window, instead of the panel lying over its right side.
 function syncNarrow() {
   const open = document.body.classList.contains('as-open');
-  const room = innerWidth - assistantWidth();
+  const room = innerWidth - (innerWidth > 1100 ? 206 : innerWidth > 760 ? 76 : 0) - (open ? assistantWidth() : 0);
   document.documentElement.style.setProperty('--as-w', `${assistantWidth()}px`);
   document.body.classList.toggle('as-over', open && room < AS_PAGE_MIN);
-  document.body.classList.toggle('narrow', innerWidth > 900 && open && room >= AS_PAGE_MIN && room <= 900);
+  document.body.classList.toggle('narrow', innerWidth > 900 && room <= 800);
 }
 addEventListener('resize', syncNarrow);
 
@@ -238,7 +238,8 @@ function announce(msg) {
 
 const BASE_TITLE = 'Prompt Maker';
 function setTitle(prefix) {
-  document.title = prefix ? `${prefix} · ${BASE_TITLE}` : BASE_TITLE;
+  const page = $('#studioPage')?.textContent;
+  document.title = prefix ? `${prefix} · ${BASE_TITLE}` : page ? `${BASE_TITLE} · ${page}` : BASE_TITLE;
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.busy) setTitle(''); });
 
@@ -509,10 +510,15 @@ function fillAspect(m, value) {
 // menu keeps the value everything else reads; a click here sets it and says so, like picking from the menu.
 function renderAspectTiles() {
   const sel = $('#aspect');
-  const box = $('#aspectTiles');
-  box.innerHTML = [...sel.options].map(o => {
-    const [word, rest] = o.textContent.split(' · ');
-    return `<button type="button" role="radio" aria-checked="${o.value === sel.value}" tabindex="${o.value === sel.value ? 0 : -1}" data-value="${esc(o.value)}" title="${esc(o.textContent)}"><i class="shape-ico" style="--r:${ratioOf(o.value) || 1}"></i><b>${esc(word)}</b><small>${esc(rest || o.value)}</small></button>`;
+  const shape = ratio => ratio < 0.95 ? 'portrait' : ratio <= 1.05 ? 'square' : ratio > 1.95 ? 'wide' : 'landscape';
+  const selectedShape = shape(ratioOf(sel.value) || 1);
+  const choices = [...sel.options];
+  $('#aspectTiles').innerHTML = [['portrait', 'Portrait'], ['square', 'Square'], ['landscape', 'Landscape'], ['wide', 'Wide']].map(([key, name]) => {
+    const matching = choices.filter(o => shape(ratioOf(o.value) || 1) === key);
+    const option = matching.find(o => o.value === sel.value) || matching.find(o => ['2:3', '1:1', '3:2', '2.35:1'].includes(o.value)) || matching[0];
+    if (!option) return '';
+    const on = key === selectedShape;
+    return `<button type="button" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}" data-value="${esc(option.value)}" title="${esc(name)} · ${esc(option.value)}"><i class="shape-ico" style="--r:${ratioOf(option.value) || 1}"></i><b>${name}</b><small>${esc(option.value)}</small></button>`;
   }).join('');
 }
 function pickAspectTile(value) {
@@ -526,7 +532,7 @@ $('#aspectTiles').addEventListener('click', e => pickAspectTile(e.target.closest
 $('#aspectTiles').addEventListener('keydown', e => {
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
   e.preventDefault();
-  const values = [...$('#aspect').options].map(o => o.value);
+  const values = $$('#aspectTiles [data-value]').map(o => o.dataset.value);
   const i = values.indexOf($('#aspect').value);
   pickAspectTile(values[(i + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : values.length - 1)) % values.length]);
 });
@@ -666,7 +672,8 @@ const effectiveRole = () => {
 
 // ---------- navigation ----------
 
-const VIEWS = ['create', 'history', 'gallery', 'models', 'voices', 'settings'];
+const VIEWS = ['create', 'history', 'gallery', 'models', 'brains', 'voices', 'chains', 'batches', 'jobs', 'settings'];
+const VIEW_LABELS = { create: 'Create', history: 'Saved prompts', gallery: 'Library', models: 'Models & workflows', brains: 'Brains', voices: 'Voices', chains: 'Chains', batches: 'Batches', jobs: 'Jobs', settings: 'Settings' };
 const isView = name => $(`#view-${name}`).classList.contains('active');
 
 // Textareas measured while hidden (or at another width) need re-measuring.
@@ -681,9 +688,9 @@ let quietNav = false;
 
 function showView(name, { push = true, byUser = false } = {}) {
   const [view, sub] = String(name).split('/');
-  name = VIEWS.includes(view) ? view : 'create';
+  name = view === 'library' ? 'gallery' : view === 'models' && sub === 'brains' ? 'brains' : VIEWS.includes(view) ? view : 'create';
   if (quietNav && !byUser && name === 'create' && !isView('create')) return;
-  if (name === 'models') showModelsPane(sub || modelsPane, { push: false });
+  if (name === 'models' || name === 'brains') showModelsPane(name === 'brains' ? 'brains' : 'models', { push: false });
   $$('.tabs button').forEach(b => {
     const on = b.dataset.view === name;
     b.classList.toggle('active', on);
@@ -692,14 +699,27 @@ function showView(name, { push = true, byUser = false } = {}) {
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
   reelFullScreen(false);
   placeReel(name);
-  const hash = name === 'models' && modelsPane === 'brains' ? '#models/brains' : `#${name}`;
+  const hash = `#${name}`;
+  $('#studioPage').textContent = VIEW_LABELS[name];
+  $('#studioGroup').textContent = ['create', 'gallery', 'history'].includes(name) ? 'Workspace' : ['chains', 'batches', 'jobs'].includes(name) ? 'Automation' : 'Your studio';
+  document.title = `Prompt Maker · ${VIEW_LABELS[name]}`;
+  setNavigation(false);
   if (push && location.hash !== hash) history.pushState(null, '', hash);
   if (name === 'history') loadHistory();
   if (name === 'models') renderModelCatalog();
   if (name === 'gallery') loadGallery();
   if (name === 'voices') loadVoices();
+  if (name === 'brains') renderBrains();
+  if (name === 'chains') renderChainEditor();
+  if (name === 'batches') renderBatch();
+  if (name === 'jobs') {
+    if (jobs.list[0] && !jobs.open.size) jobs.open.add(jobs.list[0].id);
+    for (const job of jobs.list) if (job.status === 'done' && !job.seen) { job.seen = true; saveJob(job); }
+    renderJobsList();
+    drawJobs();
+  }
   if (name === 'settings' && !state.settingsDirty) renderSettings();
-  if (name === 'settings') showOutputDir();
+  if (name === 'settings') { showSettingsSection(); showOutputDir(); }
   if (name === 'settings') { loadServices(); loadPrivacy(); loadAutostart(); }
   if (name === 'settings') loadProviders();
   if (name === 'models' && !state.dirty && (!state.editId || !modelById(state.editId))) {
@@ -708,6 +728,45 @@ function showView(name, { push = true, byUser = false } = {}) {
   requestAnimationFrame(resizeTextareas);
 }
 window.addEventListener('popstate', () => showView(location.hash.slice(1), { push: false, byUser: true }));
+function setNavigation(open) {
+  open = open && innerWidth <= 760;
+  const wasOpen = document.body.classList.contains('nav-open');
+  document.body.classList.toggle('nav-open', open);
+  $('#studioSidebar').inert = innerWidth <= 760 && !open;
+  $('#navToggle').setAttribute('aria-expanded', String(open));
+  $('#navToggle').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+  $('#navBackdrop').hidden = !open;
+  if (open && !wasOpen) $('.tabs button.active')?.focus();
+  if (!open && wasOpen && innerWidth <= 760 && $('#studioSidebar').contains(document.activeElement)) $('#navToggle').focus();
+}
+addEventListener('resize', () => setNavigation(document.body.classList.contains('nav-open')));
+$('#navToggle').addEventListener('click', () => setNavigation(!document.body.classList.contains('nav-open')));
+$('#navBackdrop').addEventListener('click', () => setNavigation(false));
+$('#navClose').addEventListener('click', () => setNavigation(false));
+addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('nav-open')) { setNavigation(false); $('#navToggle').focus(); } });
+addEventListener('keydown', e => {
+  if (e.key !== 'Tab' || !document.body.classList.contains('nav-open')) return;
+  const controls = $$('#studioSidebar a, #studioSidebar button').filter(el => !el.disabled && el.getClientRects().length);
+  const index = controls.indexOf(document.activeElement);
+  e.preventDefault();
+  controls[(index + (e.shiftKey ? controls.length - 1 : 1)) % controls.length].focus();
+});
+document.addEventListener('click', e => {
+  const link = e.target.closest('[data-studio-go], .brand');
+  if (!link) return;
+  e.preventDefault();
+  showView(link.dataset.studioGo || 'create', { byUser: true });
+});
+$('#studioStatus').addEventListener('click', () => { showView('settings', { byUser: true }); showSettingsSection('services'); });
+function renderStudioStatus() {
+  const ready = state.llmOk && state.comfy?.ok;
+  const title = state.appDown ? 'Studio disconnected' : state.llmOk === false ? 'Brain offline' : state.comfy?.ok === false ? 'Rendering offline' : ready ? 'All systems ready' : 'Checking your studio';
+  $('#studioStatusTitle').textContent = title;
+  $('#studioStatus').setAttribute('aria-label', `${title}. Open services`);
+  $('#studioStatus .dot').className = `dot ${ready ? 'ok' : 'warn'}`;
+  $('#studioStatusDetail').textContent = selectedLlm()?.cloud ? 'Cloud Brain selected' : 'Local, private, and yours';
+}
+
 
 // 🎬 Join videos: whole renders, in order, as one new video that lands in 🎞 Your renders like any render.
 async function joinVideos(items, title) {
@@ -927,7 +986,7 @@ $('#voiceList').addEventListener('keydown', e => {
   if (e.key === 'Escape' && e.target.matches('input')) { e.preventDefault(); $('[data-act="rename-no"]', e.target.closest('li'))?.click(); }
 });
 
-// 🎙 Says a line (step 3): on a video model whose picked workflow takes a sound file, pick a voice and write the line.
+// 🎙 Says a line (your inputs): on a video model whose picked workflow takes a sound file, pick a voice and write the line.
 // At Generate the server says it in that voice; at Render the clip is the soundtrack the video follows.
 const lineOn = () => currentModel()?.kind === 'video' && Boolean(activeFlow()?.maps?.audio);
 // A workflow of this model that takes a spoken line: one you have, else one that comes with the app (added for you).
@@ -1070,6 +1129,7 @@ window.addEventListener('focus', () => {
 });
 
 function renderBanner() {
+  renderStudioStatus();
   const down = state.llmOk === false;
   $('#banner').hidden = !down;
   // With the app's server gone, the page can't start anything itself, but the promptmaker:// link can, where
@@ -1476,6 +1536,7 @@ async function setBrain(id) {
     renderLlmPick();
     renderVisionWarning();
     renderBrains();
+    renderStudioStatus();
     const m = selectedLlm();
     const speed = m && brainSpeed(m);
     toast(id ? `🧠 Brain: ${m?.cloud ? '☁️ ' : ''}${m?.name || id}${speed ? ` · about ${fmtSecs(speed.seconds)} per prompt` : ''}` : '🧠 Brain: auto (uses whatever is loaded)');
@@ -1618,6 +1679,11 @@ function modelTask(m) {
   return workflowsFor(m.id).some(f => f.maps?.image) ? 'edit' : 'picture';
 }
 const modelPurpose = m => m.description || `Make ${m.kind === 'video' ? 'videos' : 'pictures'} from your ideas.`;
+function syncStudioSelect(select, items, value) {
+  const html = items.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  if (select.innerHTML !== html) select.innerHTML = html;
+  select.value = value || '';
+}
 function renderCreativeTask() {
   const m = currentModel();
   const task = m && modelTask(m);
@@ -1627,9 +1693,13 @@ function renderCreativeTask() {
   if (box.dataset.key !== html) { box.dataset.key = html; box.innerHTML = html; } // (redrawn only when it changes: a redraw drops keyboard focus)
   $('#chosenModel').textContent = m ? m.name : 'Choose a model';
   if (!m) $('#modelChoice').open = true;
+  const tasks = CREATIVE_TASKS.filter(t => state.models.some(x => modelTask(x) === t.id));
+  syncStudioSelect($('#taskSelect'), tasks.map(t => ({ id: t.id, name: t.label })), task);
+  syncStudioSelect($('#targetSelect'), state.models, m?.id);
+
 }
-$('#taskChoices').addEventListener('click', e => {
-  const task = CREATIVE_TASKS.find(t => t.id === e.target.closest('[data-task]')?.dataset.task);
+function chooseTask(id) {
+  const task = CREATIVE_TASKS.find(t => t.id === id);
   if (!task) return;
   const models = state.models.filter(m => modelTask(m) === task.id);
   const remembered = saved.get(`taskModel.${task.id}`, '');
@@ -1639,7 +1709,10 @@ $('#taskChoices').addEventListener('click', e => {
   $('#modelChoice').open = false;
   setCreateWorkspace('create');
   $('#theme').focus({ preventScroll: true });
-});
+}
+$('#taskChoices').addEventListener('click', e => chooseTask(e.target.closest('[data-task]')?.dataset.task));
+$('#taskSelect').addEventListener('change', e => chooseTask(e.target.value));
+$('#targetSelect').addEventListener('change', e => selectModel(e.target.value));
 
 function renderModelChips() {
   const grid = $('#modelChips');
@@ -1684,7 +1757,7 @@ $('#modelChips').addEventListener('keydown', e => {
 });
 
 // Per-model memory of the dials (aspect, resolution, duration, length, temperature).
-const prefsKey = id => `prefs.${id}`; // (before 1.53: step ④ was kept in the browser under this name)
+const prefsKey = id => `prefs.${id}`; // (before 1.53: size and variations was kept in the browser under this name)
 // Step ④ as you left it, per model, kept in the data folder (see adoptBrowserDials for the browser's old copies).
 let dialsTimer = null;
 function setDials(id, value) {
@@ -1706,7 +1779,7 @@ function adoptBrowserDials() {
 function savePrefs() {
   const m = currentModel();
   if (!m) return;
-  state.cards?.forEach(c => { if (c.rb?.panelOpen && !c.rb.size) renderTakePanel(c); }); // their ⚙ shows step ④'s size
+  state.cards?.forEach(c => { if (c.rb?.panelOpen && !c.rb.size) renderTakePanel(c); }); // their ⚙ shows size and variations's size
   const typed = state.sizeShape && $('#aspect').value === state.sizeShape; // a typed size's shape is kept with it
   const own = !m.aspectRatios.includes($('#aspect').value) && !typed; // the image's own ratio: belongs to the image, not the model
   const before = own ? state.dials[m.id] || {} : null;
@@ -1731,8 +1804,8 @@ function renderModelGuide(m) {
     ${g.bestFor ? `<p><b>Good for:</b> ${esc(g.bestFor)}</p>` : ''}
     ${g.youNeed ? `<p><b>You need:</b> ${esc(g.youNeed)}</p>` : ''}
     ${g.steps.length ? `<ol class="mg-steps">${g.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
-    ${g.tryThese.length ? `<p class="mg-try-head"><b>Try one</b> (click to put it in step ②):</p>
-      <div class="mg-try">${g.tryThese.map(x => `<button type="button" class="mg-ex" title="Put this in step ②">“${esc(x)}”</button>`).join('')}</div>` : ''}`;
+    ${g.tryThese.length ? `<p class="mg-try-head"><b>Try one</b> (click to put it in Your idea):</p>
+      <div class="mg-try">${g.tryThese.map(x => `<button type="button" class="mg-ex" title="Put this in Your idea">“${esc(x)}”</button>`).join('')}</div>` : ''}`;
   $$('.mg-ex', box).forEach((b, i) => b.addEventListener('click', () => replaceTheme(g.tryThese[i])));
 }
 $('#modelGuide').addEventListener('toggle', e => saved.set('modelGuideOpen', e.target.open));
@@ -1744,7 +1817,7 @@ function selectModel(id, { values } = {}) {
   renderModelChips();
   renderCreativeTask();
   if (m) saved.set(`taskModel.${modelTask(m)}`, m.id);
-  document.documentElement.style.setProperty('--m', m ? modelColor(m) : '#ff4d8d');
+  document.documentElement.style.setProperty('--m', '#244c39');
   $('#modelDesc').textContent = m ? modelPurpose(m) : '';
   $('#modelDesc').hidden = !m;
   renderModelGuide(m);
@@ -1798,7 +1871,7 @@ function renderRole() {
   $('#roleHint').hidden = !hasImage || state.manual || Boolean(m?.noImage);
   for (const b of $$('#roleBlock .role')) b.hidden = !offered.includes(b.dataset.value);
   setActive($('#roleBlock'), role);
-  // Character animation: step 3 takes the character and the motion video (also for a chain step that animates one).
+  // Character animation: your inputs takes the character and the motion video (also for a chain step that animates one).
   const motion = Boolean(m?.motionVideo);
   $('#motionBlock').hidden = !motion && !chainNeedsVideo();
   $('#charLabel').hidden = !motion;
@@ -1807,13 +1880,13 @@ function renderRole() {
   $('#dropzone').setAttribute('aria-disabled', String(noImage));
   $('#dropzone').tabIndex = noImage ? -1 : 0;
   $('#dzGallery').disabled = noImage;
-  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another model in step ①.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
+  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another target model.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it.';
   $('#imageStepTitle').textContent = motion ? 'Character & motion' : noImage ? 'No image' : 'Add an image';
   $('#imageStepOpt').textContent = noImage ? (hasImage ? 'this model works from words: your picture is set aside' : 'this model works from words') : motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
   $('#roleHint').textContent = m?.characterSheet ? SHEET_HINT[hasTheme ? 0 : 1] : ROLE_HINTS[role][hasTheme ? 0 : 1];
   $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual || Boolean(m?.noImage);
-  try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of step 3
+  try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of your inputs
   $('#turnaroundBtn').hidden = m?.kind !== 'image';
   renderExtraSlots();
   $('#themeOpt').textContent = state.manual ? 'sent word for word' : hasImage || (motion && state.video) ? 'optional' : '';
@@ -1823,7 +1896,7 @@ function renderRole() {
   if (state.llmOk !== null) renderLlmSelect(); // suggestions follow the model and the image
 }
 
-// 🧾 The character sheet (step 3, models that keep the image's person): written by the Brain at Generate, editable.
+// 🧾 The character sheet (your inputs, models that keep the image's person): written by the Brain at Generate, editable.
 function setSheet(text, { persist = true } = {}) {
   state.sheet = String(text || '');
   if ($('#sheetText').value !== state.sheet) $('#sheetText').value = state.sheet;
@@ -1836,13 +1909,13 @@ $('#sheetRedo').addEventListener('click', () => {
 });
 
 // 🪪 Turnaround: renders a reference sheet of the person (word for word, no Brain) with the picked workflow, then
-// makes it step 3's picture, so every render after it reproduces the person from all sides. The sheet stays.
+// makes it your inputs's picture, so every render after it reproduces the person from all sides. The sheet stays.
 const TURNAROUND = 'Create a character reference sheet of this person on a plain light-grey studio background: four full-body views standing side by side in a row (front view, three-quarter view, side profile and back view) and a large close-up of the face on the right. The same clothing, hairstyle and body proportions in every view, arms relaxed at the sides, neutral expression, even soft studio light from the front, sharp focus, true-to-life colors.';
 $('#turnaroundBtn').addEventListener('click', async () => {
   const m = currentModel();
-  if (!m || !state.image) return toast('🪪 Add a picture of the person in step 3 first.', true);
+  if (!m || !state.image) return toast('🪪 Add a picture of the person in your inputs first.', true);
   const flow = state.workflows.find(f => f.id === activeWorkflowId(m.id));
-  if (!flow) return toast('🪪 A turnaround is rendered: pick or add a workflow in step 5 first (＋ Add workflow → 🎁 Comes with Prompt Maker).', true);
+  if (!flow) return toast('🪪 A turnaround is rendered: pick or add a workflow in Render settings first (＋ Add workflow → 🎁 Comes with Prompt Maker).', true);
   const traits = state.sheet.trim().split('\n').filter(Boolean).map(l => l.replace(/:\s*/, ': ')).join('; ');
   const prompt = `${TURNAROUND}${traits ? ` The person: ${traits}.` : ''} Preserve the exact facial identity and body.`;
   const wide = m.kind === 'image' ? m.resolutions.find(r => /^1344\s*[×x]\s*768$/.test(r)) : null;
@@ -1850,10 +1923,10 @@ $('#turnaroundBtn').addEventListener('click', async () => {
   let finish;
   const done = new Promise(r => { finish = r; });
   enqueue({ id: ++line.seq, at: Date.now(), body, model: m, batches: [], render: { workflowId: flow.id, flowName: flow.name, loras: { tweaks: flow.loras?.tweaks || {}, added: flow.loras?.added || [] }, overrides: flow.overrides || {}, count: 1 }, turnaround: { sheet: state.sheet }, done, finish });
-  toast('🪪 Rendering a turnaround of this person. It becomes your picture in step 3 when it\'s done');
+  toast('🪪 Rendering a turnaround of this person. It becomes your picture in your inputs when it\'s done');
 });
 
-// The finished turnaround becomes step 3's picture (the character sheet goes with it: same person).
+// The finished turnaround becomes your inputs's picture (the character sheet goes with it: same person).
 async function useTurnaround(entryId, sheet) {
   const e = (await api('/api/history').catch(() => [])).find(x => x.id === entryId);
   const render = e?.variations?.[0]?.renders?.at(-1);
@@ -1861,7 +1934,7 @@ async function useTurnaround(entryId, sheet) {
   if (!file) return;
   await useRenderAsImage({ entry: e, index: 0, render, file });
   if (sheet.trim()) setSheet(sheet);
-  toast('🪪 Your turnaround is now the picture in step 3: every render reproduces this person from it');
+  toast('🪪 Your turnaround is now the picture in your inputs: every render reproduces this person from it');
 }
 
 // The look under the theme (step 2). Not per model: it belongs to the shot you describe. A built-in from the HTML
@@ -1962,7 +2035,7 @@ function setVariations(n, { persist = true } = {}) {
 }
 
 // ✍️ Your own prompt (step 2's switch, off by default): what you type is the prompt, word for word. No Brain writes
-// or rewrites it, and Generate renders it with the workflow in step 5, with your image as it is. The Brain's dials
+// or rewrites it, and Generate renders it with the workflow in Render settings, with your image as it is. The Brain's dials
 // (prompt length, how adventurous, the image's role) step aside, and Takes becomes how many renders it gets.
 function setManual(on, { persist = true } = {}) {
   state.manual = Boolean(on);
@@ -1970,7 +2043,7 @@ function setManual(on, { persist = true } = {}) {
   $('#manualMode').checked = state.manual;
   $('#createForm').classList.toggle('manual', state.manual);
   $('#manualHint').hidden = !state.manual;
-  $('[data-panel="create-theme"] h2').textContent = state.manual ? 'Your prompt' : 'Describe the shot';
+  $('[data-panel="create-theme"] h2').textContent = state.manual ? 'Your prompt' : 'Your idea';
   $('#theme').setAttribute('aria-label', state.manual ? 'Your prompt' : 'Describe your idea');
   $('#surpriseBtn').hidden = state.manual;
   $('#lengthField').hidden = state.manual;
@@ -1978,7 +2051,9 @@ function setManual(on, { persist = true } = {}) {
   $('.look-options').hidden = state.manual;
   $('#tempField').hidden = state.manual;
   $('#chainStep').hidden = state.manual;
-  $('#manualHint').textContent = `No Brain: your text, image and model go straight to the render.${state.manual && state.chain.steps.length ? ' Your chain (step 5, Then…) waits until this is off.' : ''}`;
+  $('#chainManualNotice').hidden = !state.manual;
+  $('#chainEditorContent').inert = state.manual;
+  $('#manualHint').textContent = `No Brain: your text, image and model go straight to the render.${state.manual && state.chain.steps.length ? ' Your chain (Chains) waits until this is off.' : ''}`;
   renderRole();
   renderChainEditor(); // its renders-per-take dial, and the batch it turns off
   refreshPanelSummaries();
@@ -2119,7 +2194,7 @@ async function imageFromRender(file) {
 
 async function loadImageFile(file, { source = null, quiet = false } = {}) {
   if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
-  if (currentModel()?.noImage) return toast(`${currentModel().name} works from your words alone and takes no picture. Pick another model in step ① to use one.`, true);
+  if (currentModel()?.noImage) return toast(`${currentModel().name} works from your words alone and takes no picture. Pick another target model to use one.`, true);
   let dataUrl;
   let ratio;
   try {
@@ -2188,7 +2263,7 @@ function renderSourceBadge() {
 }
 
 const dz = $('#dropzone');
-const imageOff = () => Boolean(currentModel()?.noImage); // the model works from words alone: step ③ takes nothing
+const imageOff = () => Boolean(currentModel()?.noImage); // the model works from words alone: your inputs takes nothing
 dz.addEventListener('click', e => { if (!state.image && !imageOff() && !e.target.closest('button')) $('#imageInput').click(); });
 dz.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target === dz && !state.image && !imageOff()) { e.preventDefault(); $('#imageInput').click(); }
@@ -2197,8 +2272,8 @@ $('#imageInput').addEventListener('change', e => { loadImageFile(e.target.files[
 $('#imageReplace').addEventListener('click', () => $('#imageInput').click());
 $('#imageClear').addEventListener('click', () => { setImage(null); dz.focus(); });
 
-// ---------- create: step 3, the other picture slots ----------
-// A workflow with more than one Load Image node (a person and a place, more pictures to combine) gives step ③ a
+// ---------- create: your inputs, the other picture slots ----------
+// A workflow with more than one Load Image node (a person and a place, more pictures to combine) gives your inputs a
 // slot per picture: the first is the big dropzone, the rest show here, each with its name from the workflow.
 const pictureSlots = () => { const m = currentModel(); return m && !m.noImage && !m.motionVideo ? activeFlow()?.imageSlots || [] : []; };
 function renderExtraSlots() {
@@ -2213,7 +2288,7 @@ function renderExtraSlots() {
       <span class="xslot-label">🖼️ ${esc(name)}<small>${sl.optional ? 'optional' : 'needed'}</small></span>
       ${sl.hint ? `<span class="xslot-hint">${esc(sl.hint)}</span>` : ''}
       ${img ? `<img src="${img.dataUrl || `/images/${esc(img.file)}`}" alt="${esc(name)}">` : ''}
-      <span class="xslot-acts">${img ? `<button type="button" class="btn small" data-act="replace">Replace</button><button type="button" class="btn small" data-act="gallery">Gallery</button><button type="button" class="btn small danger" data-act="clear">Remove</button>` : `<button type="button" class="btn small primary" data-act="replace">＋ Add</button><button type="button" class="btn small" data-act="gallery">🖼️ Gallery</button>`}</span>
+      <span class="xslot-acts">${img ? `<button type="button" class="btn small" data-act="replace">Replace</button><button type="button" class="btn small" data-act="gallery">Library</button><button type="button" class="btn small danger" data-act="clear">Remove</button>` : `<button type="button" class="btn small primary" data-act="replace">＋ Add</button><button type="button" class="btn small" data-act="gallery">🖼️ Library</button>`}</span>
       <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden>
     </div>`;
   }).join('');
@@ -2306,7 +2381,7 @@ document.addEventListener('paste', e => {
   if (file) { e.preventDefault(); loadImageFile(file); }
 });
 
-// ---------- create: step 3, the motion video (character animation) ----------
+// ---------- create: your inputs, the motion video (character animation) ----------
 // For models like Wan Animate 2: the character in the image performs the moves of this video. ComfyUI gets the file
 // as it is; the Brain sees a contact sheet of its frames, so it can name the motion.
 
@@ -2395,7 +2470,7 @@ async function uploadVideo(file, type) {
 // Reads a video, stores it and its contact sheet, and makes it the motion video. A video the browser can't decode
 // (H.265 from a phone, mostly) is stored as it is for ComfyUI; the page then reads a preview the server makes with
 // ffmpeg, if this computer has it.
-// A Then step animates a character, so step 3's motion video is for it.
+// A Then step animates a character, so your inputs's motion video is for it.
 const chainNeedsVideo = () => state.chain.steps.some(st => modelById(st.modelId)?.motionVideo);
 
 let videoToken = null;
@@ -2752,7 +2827,7 @@ $('#motionPreview').addEventListener('error', () => {
   if (state.video?.file && !state.video.url) { setVideo(null); toast('The motion video is gone from the data folder. Add it again.', true); }
 });
 
-// ---------- create: step 3, an image from the Gallery ----------
+// ---------- create: your inputs, an image from the Library ----------
 // Any image you've rendered can be the input image: it's linked back to its render, and ComfyUI gets the original.
 
 // kind 'video' picks a motion video instead (any video you rendered).
@@ -2764,7 +2839,7 @@ async function openImagePicker(kind = 'image', { slot = 0 } = {}) {
   picker.kind = kind === 'video' ? 'video' : 'image';
   picker.slot = slot;
   picker.items = galleryItems().filter(it => it.file.kind === picker.kind);
-  $('#imgPickTitle').textContent = picker.kind === 'video' ? 'Pick a motion video from your Gallery' : 'Pick an image from your Gallery';
+  $('#imgPickTitle').textContent = picker.kind === 'video' ? 'Pick a motion video from your Library' : 'Pick an image from your Library';
   renderImagePicker();
   $('#imgPick').showModal();
   ($('#imgPickGrid .ip-tile') || $('#imgPickClose')).focus();
@@ -2834,7 +2909,7 @@ $('#imgPickSize').addEventListener('input', e => {
   try { localStorage.setItem('imgPickSize', e.target.value); } catch {}
 });
 
-// A plain full-screen viewer for one image (step 3's image, a picker tile). Click the image for actual size.
+// A plain full-screen viewer for one image (your inputs's image, a picker tile). Click the image for actual size.
 let ivUse = null;
 function openImageView(src, onUse = null) {
   ivUse = onUse;
@@ -2946,7 +3021,7 @@ async function pollRenders() {
   const before = rendersNow;
   rendersNow = await api(`/api/renders${open ? '?previews' : ''}`).catch(() => rendersNow);
   drawRenders();
-  // A render finished (or a job ended): its entry, fresh, for Your renders, its takes and the Gallery.
+  // A render finished (or a job ended): its entry, fresh, for Your renders, its takes and the Library.
   // (Runs this page follows bring their renders in themselves.)
   const followed = new Set([...state.renderRuns].map(r => r.runId));
   const moved = new Set(before.filter(j => !followed.has(j.runId) && !rendersNow.some(n => n.runId === j.runId && n.finished === j.finished)).map(j => j.historyId));
@@ -3059,7 +3134,7 @@ function rateBarHtml(rating, label = 'this render') {
   return `<div class="rate-bar" role="group" aria-label="Rate ${esc(label)}">${[1, 2, 3].map(n => `<button type="button" class="${n <= rating ? 'on' : ''}" data-rate="${n}" aria-pressed="${n === rating}" title="${RATINGS[n]}${n === rating ? ' (click to take the rating off)' : ''}" aria-label="${RATINGS[n]}">★</button>`).join('')}</div>`;
 }
 
-// Hides a render from 🎞 Your renders, or shows it there again. It stays in Saved prompts, the Gallery and its take.
+// Hides a render from 🎞 Your renders, or shows it there again. It stays in Saved prompts, the Library and its take.
 async function hideRender(entry, render, hidden) {
   const updated = await api(`/api/history/${entry.id}/renders/${render.id}`, { method: 'PATCH', body: { hidden } });
   forgetRender(updated);
@@ -3087,7 +3162,7 @@ function sessionFromHistory(history) {
 }
 
 // A render that finished somewhere the page wasn't following (another tab, or a run that left the stage): fetch its
-// entry, so it shows here, on its takes and in the Gallery.
+// entry, so it shows here, on its takes and in the Library.
 async function refreshSessionEntry(id) {
   const fresh = await api(`/api/history/${id}`).catch(() => null);
   if (!fresh) return;
@@ -3098,8 +3173,8 @@ async function refreshSessionEntry(id) {
 const reelOpen = () => inGallery() || inStage() || !saved.get('reelClosed', false);
 const reelLive = () => (isView('create') || isView('gallery')) && !$('#reel').hidden && reelOpen();
 
-// The Gallery is Your renders, all of it: the same box (same cards, filters, order and drag) moves there while the
-// Gallery shows, open and as tall as the window, and back to Create after. Hiding is Create's alone: the Gallery
+// The Library is Your renders, all of it: the same box (same cards, filters, order and drag) moves there while the
+// Library shows, open and as tall as the window, and back to Create after. Hiding is Create's alone: the Library
 // shows every render.
 const reelHome = { parent: $('#reel').parentElement, next: $('#reel').nextSibling };
 const inGallery = () => $('#reel').parentElement?.id === 'galleryHome';
@@ -3242,6 +3317,7 @@ function reelRatioOf(it) {
 // Drawn in place: cards are kept by key and only their details change, so a click never lands on a card being
 // redrawn and a video playing under the mouse keeps playing.
 function renderReel() {
+  $('#rendersTabCount').textContent = allRenders().length || '';
   const box = $('#reel');
   if (!box) return;
   const all = allRenders();
@@ -3260,7 +3336,7 @@ function renderReel() {
   const rendering = rendersLeft();
   const shown = all.length - hiddenCount;
   $('#reelCount').textContent = [
-    // (In the Gallery the page's heading already says how many there are.)
+    // (In the Library the page's heading already says how many there are.)
     reelFilter.hidden ? `${items.length} hidden` : shown && (reelFiltered() ? `${items.length} of ${shown}` : inGallery() ? '' : `${shown} render${shown > 1 ? 's' : ''}`),
     rendering && `${rendering} rendering`,
   ].filter(Boolean).join(' · ');
@@ -3425,7 +3501,7 @@ function reelTile(it) {
     cell.querySelector(':scope > .going-over')?.remove();
     if (gid) cell.append(goingOverlay(gid));
   }
-  cell.classList.toggle('is-hidden', Boolean(it.render.hidden)); // the Gallery still shows it, marked, with 👁 Show
+  cell.classList.toggle('is-hidden', Boolean(it.render.hidden)); // the Library still shows it, marked, with 👁 Show
   cell.classList.toggle('picked', reelPicked.has(key));
   const theme = it.entry.theme || 'From an image';
   const rating = ratingOf(it.render);
@@ -3436,7 +3512,7 @@ function reelTile(it) {
   $('.rtile', cell).setAttribute('aria-label', `Open render: ${theme.slice(0, 80)}${rating ? `, rated ${RATINGS[rating].toLowerCase()}` : ''}. Shift and an arrow key move it.`);
   const hide = $('.rt-hide', cell);
   hide.innerHTML = it.render.hidden ? 'Show<span class="rt-hide-long"> in Create</span>' : 'Hide<span class="rt-hide-long"> from Create</span>'; // (the long form only where the tile has room)
-  hide.title = it.render.hidden ? 'Show it in Create again' : 'Hide from Create only. It stays in Gallery and Saved prompts.';
+  hide.title = it.render.hidden ? 'Show it in Create again' : 'Hide from Create only. It stays in Library and Saved prompts.';
   hide.setAttribute('aria-label', it.render.hidden ? 'Show in Create again' : 'Hide from Create');
   if (cell.dataset.rating !== String(rating)) {
     cell.dataset.rating = rating;
@@ -3465,7 +3541,7 @@ $('#reelGrid').addEventListener('click', async e => {
     const want = !it.render.hidden;
     try {
       await hideRender(it.entry, it.render, want);
-      if (want) toast('Hidden from Create. Still in Gallery and Saved prompts.', false, { label: '↶ Undo', run: () => hideRender(it.entry, it.render, false).catch(err => toast(err.message, true)) });
+      if (want) toast('Hidden from Create. Still in Library and Saved prompts.', false, { label: '↶ Undo', run: () => hideRender(it.entry, it.render, false).catch(err => toast(err.message, true)) });
       else toast('👁 Back in Your renders');
     } catch (err) {
       toast(err.message, true);
@@ -3659,7 +3735,7 @@ $('#reelNewest').addEventListener('click', e => confirmClick(e.currentTarget, 'S
   toast('Newest first again');
 }));
 
-// ---------- pick several, delete them (Your renders, the Gallery, Saved prompts) ----------
+// ---------- pick several, delete them (Your renders, the Library, Saved prompts) ----------
 // Ctrl-click (⌘ on a Mac) picks a card, Shift-click every card up to it; drag across empty space (or Ctrl-drag from a
 // card) draws a box that picks what it touches. A bar deletes them, with 8 s to undo. Esc lets go, Ctrl+A picks all.
 //   grid: what holds the cards; card: a card's selector (it has data-key); host: where the box is drawn (it holds the
@@ -3764,7 +3840,7 @@ function cardPicker({ grid, card, host, edge, free, show, selecting = () => fals
   return P;
 }
 
-// Picking in Your renders (and the Gallery, the same grid): a render with two files counts once.
+// Picking in Your renders (and the Library, the same grid): a render with two files counts once.
 let reelSelecting = false;
 const reelPick = cardPicker({
   selecting: () => reelSelecting,
@@ -3876,7 +3952,7 @@ function sizeReel() {
   const h = inGallery() ? innerHeight - box.getBoundingClientRect().top - window.scrollY - 24 : saved.get('reelHeight', 400);
   const set = px => box.style.setProperty('--reel-h', `${Math.round(Math.min(reelMaxH(), Math.max(REEL_MIN_H, px)))}px`);
   set(h);
-  // The Gallery fills the window exactly: whatever still sticks out under it (its own edges, the page's padding)
+  // The Library fills the window exactly: whatever still sticks out under it (its own edges, the page's padding)
   // comes off, so the page itself has nothing to scroll and only the grid does.
   const over = inGallery() && !box.classList.contains('full') ? document.documentElement.scrollHeight - innerHeight - window.scrollY : 0;
   if (over > 0) set(h - over);
@@ -3885,7 +3961,7 @@ function sizeReel() {
   const room = Math.max(80, body.clientHeight - $('#reelFilters').offsetHeight - 28);
   const slider = $('#reelSize');
   // (One range everywhere, so the knob stands in the same place for the same size; pictures stop growing at what fits.)
-  slider.value = saved.get('reelSize', 160);
+  slider.value = saved.get('reelSize', 240);
   const captions = Math.min(Number(slider.value), room) >= CAPTION_MIN_H; // (small tiles: the caption is on hover only)
   box.classList.toggle('captions', captions);
   box.style.setProperty('--tile-h', `${Math.min(Number(slider.value), room - (captions ? CAPTION_H : 0))}px`);
@@ -4195,6 +4271,7 @@ function showVersion(card, i) {
 const stageScrolls = () => getComputedStyle($('.stage')).overflowY !== 'visible';
 
 function renderResults(entry, { totalSecs } = {}) {
+  $('#takesTabCount').textContent = entry?.variations?.length || '';
   state.entry = entry;
   renderCreationProgress();
   renderReel();
@@ -4321,7 +4398,7 @@ async function newSession() {
   $('.director-steps').scrollTo({ top: 0, behavior: scrollMode() });
   $('#theme').focus({ preventScroll: true });
   announce('New session. The theme, image and takes are cleared.');
-  const rendering = state.renderRuns.size ? ' Renders still running will land in the Gallery.' : '';
+  const rendering = state.renderRuns.size ? ' Renders still running will land in the Library.' : '';
   toast(`✨ Fresh start.${before.entry ? ' Your takes are in Saved prompts.' : ''}${rendering}`, false, {
     label: '↶ Undo',
     run: () => {
@@ -4504,7 +4581,7 @@ $('#lineGo').addEventListener('click', () => {
   drawLine();
   pumpLine();
 });
-$('#lineClear').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', () => {
+$('#queueClear').addEventListener('click', e => confirmClick(e.currentTarget, 'Sure?', () => {
   const gone = line.orders.splice(0);
   gone.forEach(o => o.finish());
   line.held = false;
@@ -4522,11 +4599,11 @@ async function formRequest() {
   if (m.motionVideo && state.video && !motion) return showError('Hold on, the motion video is still loading.');
   if (state.manual && !theme) {
     $('#theme').focus();
-    return showError('Type or paste your prompt in step 2. With ✍️ your own prompt on, it\'s sent word for word.');
+    return showError('Type or paste your prompt in Your prompt. With ✍️ your own prompt on, it\'s sent word for word.');
   }
   if (!theme && !state.image && !motion) {
     $('#theme').focus();
-    return showError(m.motionVideo ? 'Give me something to work with: add your character and a motion video in step 3, type a theme, or both.' : 'Give me something to work with: type a theme, add an image, or both.');
+    return showError(m.motionVideo ? 'Give me something to work with: add your character and a motion video in your inputs, type a theme, or both.' : 'Give me something to work with: type a theme, add an image, or both.');
   }
   if (state.manual) { // no Brain: LM Studio can be off
     await flushEdits();
@@ -4913,7 +4990,7 @@ function deleteSoon(id, url, what, run, redraw) {
   $('#toast').dataset.going = id;
 }
 
-// On a render waiting to be deleted (its tile in Your renders, the Gallery and the take, and the full-screen view):
+// On a render waiting to be deleted (its tile in Your renders, the Library and the take, and the full-screen view):
 // greyed out, with the seconds left and ↶ Undo on top.
 const goingIdOf = it => (going.has(it.render.id) ? it.render.id : going.has(it.entry.id) ? it.entry.id : null);
 const goingLeft = id => `🗑 Deleting in ${secondsLeft(going.get(id))} s`;
@@ -5091,6 +5168,21 @@ function shapeLabel(e) {
 // else the built-in's label.
 const lookTagOf = e => (!e.look || e.manual ? '' : e.lookName ? `${customLook(e.look)?.emoji ? `${customLook(e.look).emoji} ` : ''}${e.lookName}` : lookName(e.look));
 
+// Where a card's title starts telling it apart: prompts pasted with the same opening ("integrated_multimodal_description
+// [Shot 1] Live-action, cinematic, …") all looked alike on their cards, so a title sharing its first 24+ characters
+// with another one starts at the word where they part, after an "…". The same title saved twice stays whole.
+function distinctTitles(titles) {
+  const sorted = [...new Set(titles.map(t => t.toLowerCase()))].sort();
+  const lcp = (a, b) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+  const cut = new Map(sorted.map((t, i) => [t, Math.max(i ? lcp(t, sorted[i - 1]) : 0, i < sorted.length - 1 ? lcp(t, sorted[i + 1]) : 0)]));
+  return t => {
+    const n = cut.get(t.toLowerCase()) || 0;
+    if (n < 24) return t;
+    const start = t.lastIndexOf(' ', n) + 1;
+    return start && start < t.length - 8 ? `…${t.slice(start)}` : t;
+  };
+}
+
 function renderHistory() {
   const q = $('#historySearch').value.trim().toLowerCase();
   const items = state.history.filter(e =>
@@ -5114,6 +5206,7 @@ function renderHistory() {
   }
   let group = '';
   const shown = items.slice(0, state.historyLimit);
+  const shortTitle = distinctTitles(state.history.map(e => e.theme || ''));
   list.innerHTML = shown.map(e => {
     const g = dayGroup(e.createdAt);
     const heading = g !== group ? `<h2 class="hgroup">${g}</h2>` : '';
@@ -5137,15 +5230,15 @@ function renderHistory() {
           ${cover ? `<span class="tag kind">🎨 ${renderCount} render${renderCount > 1 ? 's' : ''}</span>` : e.imageFile ? `<span class="tag kind">${e.manual ? '🖼️ image' : { reference: '🎯 reference', recreate: '🪞 recreate', animate: '🎬 animate', character: e.video ? '🧍 character · 🕺 motion' : '🧍 character' }[e.imageRole] || ''}</span>` : ''}
           ${lookTagOf(e) ? `<span class="tag kind" title="The look picked under the theme">${esc(lookTagOf(e))}</span>` : ''}
         </div>
-        <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Bookmark this prompt: ${esc(title)}" title="${e.favorite ? 'Remove prompt bookmark' : 'Bookmark this prompt to reuse. Rate the artwork in Gallery.'}">${bookmarkIcon}</button>
+        <button type="button" class="hstar${e.favorite ? ' on' : ''}" data-act="fav" aria-pressed="${Boolean(e.favorite)}" aria-label="Bookmark this prompt: ${esc(title)}" title="${e.favorite ? 'Remove prompt bookmark' : 'Bookmark this prompt to reuse. Rate the artwork in Library.'}">${bookmarkIcon}</button>
         <div class="hbody">
           <div class="hmeta"><span class="tag model">${kindIcon(e.modelKind)} ${esc(e.modelName)}</span>${e.chain ? `<span class="tag chain" title="Part of a chain run. Open it to see every step">⛓ step ${e.chain.step + 1}</span>` : ''}${e.batch ? `<span class="tag batch" title="From the batch “${esc(e.batch)}”">🎞 ${esc(e.batch)}</span>` : ''}${e.manual ? '<span class="tag" title="You wrote this prompt yourself: it was sent word for word, no Brain">✍️ your own prompt</span>' : ''}${e.source ? `<span class="hsrc" title="${esc(takeLabel(e.source))}">⬑ from ${esc(e.source.modelName)}</span>` : ''}<span>${esc(bits.join(' · '))}</span><span>· ${esc(timeAgo(e.createdAt))}</span></div>
-          <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open">${esc(title)}</div>
+          <div class="htheme hopen${e.theme ? '' : ' none'}" data-act="open" title="${esc(title.slice(0, 300))}">${esc(e.theme ? shortTitle(e.theme) : title)}</div>
           ${e.manual && first === e.theme ? '' : `<p class="hprompt">${esc(first)}</p>`}
           <div class="hactions">
             <button type="button" class="btn small" data-act="copy" aria-label="Copy ${takes > 1 ? `all ${takes} takes` : 'prompt'}: ${esc(title)}">${takes > 1 ? `Copy all ${takes}` : 'Copy'}</button>
             ${going.has(e.id) ? `<span class="hgoing" role="status">${goingText(going.get(e.id))}</span><button type="button" class="btn small primary open" data-act="undo" aria-label="Undo deleting: ${esc(title)}">↶ Undo</button>` : `<button type="button" class="btn small danger" data-act="delete" aria-label="Delete: ${esc(title)}" title="Deletes it for good: its prompts, input image, motion video, spoken line and renders, here and in ComfyUI, shredded. You get a few seconds to undo">Delete</button>
-            <button type="button" class="btn small open" data-act="open" aria-label="Open: ${esc(title)}">Open prompt →</button>`}
+            <button type="button" class="btn small open" data-act="open" aria-label="Open: ${esc(title)}">Open →</button>`}
           </div>
         </div>
       </article>`;
@@ -5470,20 +5563,11 @@ const brainFilter = loadBrainFilter('brainFilters');
 function showModelsPane(pane, { push = true } = {}) {
   modelsPane = pane === 'brains' ? 'brains' : 'models';
   saved.set('modelsPane', modelsPane);
-  $$('.models-switch button').forEach(b => {
-    const on = b.dataset.pane === modelsPane;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-selected', String(on));
-  });
   showModelEditor(modelEditOpen);
-  $('#modelsIntro').hidden = modelsPane !== 'models';
+  $('#modelsIntro').hidden = false;
   $('#brainsPane').hidden = modelsPane !== 'brains';
-  $('#brainsIntro').hidden = modelsPane !== 'brains';
-  const hash = modelsPane === 'brains' ? '#models/brains' : '#models';
-  if (push && location.hash !== hash) history.pushState(null, '', hash);
-  renderBrains();
+  if (push) showView(modelsPane === 'brains' ? 'brains' : 'models');
 }
-$$('.models-switch button').forEach(b => b.addEventListener('click', () => showModelsPane(b.dataset.pane)));
 
 // One card per Brain, the best for the "Best for" model first. Brains you haven't used or checked go in a fold.
 function renderBrains() {
@@ -5998,6 +6082,25 @@ window.addEventListener('beforeunload', e => {
 });
 
 // ---------- settings ----------
+
+let settingsSection = saved.get('settingsSection', 'services');
+function showSettingsSection(section = settingsSection) {
+  const button = $(`[data-settings-tab="${CSS.escape(section)}"]`);
+  settingsSection = button ? section : 'services';
+  saved.set('settingsSection', settingsSection);
+  $$('[data-settings-tab]').forEach(b => {
+    const active = b.dataset.settingsTab === settingsSection;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+  });
+  $$('[data-settings-group]').forEach(el => el.classList.toggle('settings-visible', el.dataset.settingsGroup === settingsSection));
+  // Choosing a section should reveal its controls immediately. Services keeps its
+  // secondary connection card folded until requested.
+  const cards = $$('.settings-visible[data-settings-group]');
+  if (cards.length === 1) setPanel(cards[0], false, false);
+}
+$$('[data-settings-tab]').forEach(b => b.addEventListener('click', () => showSettingsSection(b.dataset.settingsTab)));
+
 
 function setSettingsDirty(d) {
   state.settingsDirty = d;
@@ -6527,7 +6630,7 @@ function renderComfySetup() {
   if (!dirEl.value) dirEl.value = st.installed || st.dir || '';
   $('#csDirShown').textContent = st.installed ? `${st.installed} (ComfyUI is already there: this finishes its set-up and starts it)` : dirEl.value;
   $('#csDirChange').hidden = running || Boolean(st.installed);
-  $('#csAbout').textContent = `It downloads ComfyUI and PyTorch (${st.torchAbout || 'about 3 GB'}${st.git ? '' : '; ComfyUI as an archive, since git isn\'t on this computer'}). Model files come later: step ⑤ offers ⬇ Download for each one a workflow needs.`;
+  $('#csAbout').textContent = `It downloads ComfyUI and PyTorch (${st.torchAbout || 'about 3 GB'}${st.git ? '' : '; ComfyUI as an archive, since git isn\'t on this computer'}). Model files come later: Render settings offers ⬇ Download for each one a workflow needs.`;
   $('#csProgress').hidden = !job;
   $('#csProgress').classList.toggle('done', job?.state === 'done');
   if (job) {
@@ -6648,6 +6751,7 @@ function renderSettings() {
   $('#sAdultPrompt').value = s.adultPrompt || '';
   $('#sDataDir').textContent = s.dataDir ? `📁 Your data lives in ${s.dataDir}` : '';
   $('#sVersion').textContent = s.version ? `Prompt Maker ${s.version}` : '';
+  $('#studioVersion').textContent = s.version ? `Version ${s.version}` : '';
   $('#sTestResult').hidden = true;
   setSettingsDirty(false);
 }
@@ -6728,7 +6832,7 @@ async function loadWorkflows() {
   renderModelList();
   renderWorkflowPicker();
   renderChainEditor();
-  refreshPanelSummaries(); // (a folded step ⑤ said "No workflow yet" until something was clicked)
+  refreshPanelSummaries(); // (a folded Render settings said "No workflow yet" until something was clicked)
   if (isView('models')) renderWorkflowList();
   state.cards.forEach(c => { if (!c.interrupted && state.entry?.id) renderZone(c); });
   checkWorkflowUpdates();
@@ -6800,7 +6904,7 @@ async function editWorkflow(id, { focusSampler = false } = {}) {
   }
 }
 
-// ---------- create: step 5, seed ----------
+// ---------- create: Render settings, seed ----------
 // Like ComfyUI's "control after generate": 🎲 random, 🔒 fixed, ＋1 or −1 after each render. Saved on the
 // workflow; the server hands seeds out, so renders started together never share one.
 
@@ -6883,7 +6987,7 @@ $('#wfpSeed').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.classList.contains('seed-val')) { e.preventDefault(); e.target.dispatchEvent(new Event('change', { bubbles: true })); } // inside the Create form: not Generate
 });
 
-// ---------- create: step 5, denoise (image-to-image) ----------
+// ---------- create: Render settings, denoise (image-to-image) ----------
 // How much the render may change the input image: 0 keeps it, 1 ignores it. Shown when the picked workflow
 // takes an image and has a denoise setting; saved on the workflow like its other sampler settings.
 
@@ -6922,7 +7026,7 @@ function saveDenoise(flow, key, value) {
       $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
       state.cards.forEach(updateSettingsLine);
       takeParamCache.delete(flow.id);
-      state.cards.forEach(c => { if (c.rb?.panelOpen && c.rb.workflowId === flow.id) renderTakePanel(c); }); // their ⚙ shows step ⑤'s values
+      state.cards.forEach(c => { if (c.rb?.panelOpen && c.rb.workflowId === flow.id) renderTakePanel(c); }); // their ⚙ shows Render settings's values
     } catch (err) {
       toast(`Couldn't save it: ${err.message}`, true);
     }
@@ -6947,7 +7051,7 @@ $('#wfpDenoise').addEventListener('click', e => {
   renderDenoise();
 });
 
-// ---------- create: step 3, background (character animation) ----------
+// ---------- create: your inputs, background (character animation) ----------
 // A SCAIL 2 workflow can keep the picture's background (it animates the picture) or the motion video's (the character
 // replaces the video's performer). Saved on the workflow like its sampler settings.
 
@@ -6986,7 +7090,7 @@ $('#wfpBackground').addEventListener('click', async e => {
   }
 });
 
-// ---------- create: step 5, LoRAs ----------
+// ---------- create: Render settings, LoRAs ----------
 // A workflow's LoRAs: its own (switch off or re-weight them) plus ones you add from the model's LoRA folder.
 // Saved on the workflow in your data folder; renders record what they used.
 
@@ -7163,7 +7267,7 @@ function saveLoras(flow, { now = false } = {}) {
       $('#wfpSettings').innerHTML = settingsHtml(activeFlow());
       state.cards.forEach(updateSettingsLine);
       takeParamCache.delete(flow.id);
-      state.cards.forEach(c => { if (c.rb?.panelOpen && c.rb.workflowId === flow.id) renderTakePanel(c); }); // their ⚙ shows step ⑤'s values
+      state.cards.forEach(c => { if (c.rb?.panelOpen && c.rb.workflowId === flow.id) renderTakePanel(c); }); // their ⚙ shows Render settings's values
     } catch (err) {
       toast(`Couldn't save the LoRAs: ${err.message}`, true);
     }
@@ -7262,7 +7366,7 @@ $('#wfpLoras').addEventListener('keydown', e => {
   }
 });
 
-// ---------- create: step 5, the workflow picker ----------
+// ---------- create: Render settings, the workflow picker ----------
 
 const autoRenderKey = modelId => `autoRender.${modelId}`;
 
@@ -7285,7 +7389,7 @@ function renderWorkflowPicker() {
     renderLine();
     $('#wfpAuto').checked = saved.get(autoRenderKey(m.id), false);
   }
-  renderBackground(); // in step 3, so it follows the picked workflow even when there is none
+  renderBackground(); // in your inputs, so it follows the picked workflow even when there is none
   renderBatch();
   renderWorkflowWarning();
   renderExtraSlots(); // (another workflow may have other picture slots)
@@ -7301,9 +7405,9 @@ function renderWorkflowWarning() {
   const flow = state.workflows.find(f => f.id === $('#wfpSelect').value && f.modelId === state.modelId);
   const msg = !flow || $('#wfpBox').hidden ? ''
     : animating() && !flow.maps.image ? `“${flow.name}” has no image input, so it would ignore your first frame. Pick or add an image-to-video workflow.`
-      : !state.image && flow.maps.image ? `“${flow.name}” needs ${currentModel()?.motionVideo ? 'your character image' : 'an input image'}. Add one in step 3, or pick another workflow.`
-        : (flow.imageSlots || []).some((sl, i) => i > 0 && !sl.optional && !state.extras[i - 1]) ? `“${flow.name}” also needs a picture in its “${(flow.imageSlots || []).find((sl, i) => i > 0 && !sl.optional && !state.extras[i - 1]).label || 'second'}” slot in step 3.`
-        : !state.video && flow.maps.video ? `“${flow.name}” needs a motion video. Add one in step 3.`
+      : !state.image && flow.maps.image ? `“${flow.name}” needs ${currentModel()?.motionVideo ? 'your character image' : 'an input image'}. Add one in your inputs, or pick another workflow.`
+        : (flow.imageSlots || []).some((sl, i) => i > 0 && !sl.optional && !state.extras[i - 1]) ? `“${flow.name}” also needs a picture in its “${(flow.imageSlots || []).find((sl, i) => i > 0 && !sl.optional && !state.extras[i - 1]).label || 'second'}” slot in your inputs.`
+        : !state.video && flow.maps.video ? `“${flow.name}” needs a motion video. Add one in your inputs.`
           : state.video && currentModel()?.motionVideo && !flow.maps.video ? `“${flow.name}” has no Load Video node, so it would ignore your motion video. Pick or add a Wan Animate 2 workflow.`
             : clipNote(flow);
   warn.hidden = !msg;
@@ -7316,7 +7420,7 @@ function clipNote(flow) {
   const f = flow.motionFrames;
   if (!currentModel()?.motionVideo || !v?.seconds || !v.fps || typeof f !== 'number' || f >= Math.round(v.seconds * v.fps) - 1) return '';
   const all = workflowsFor(state.modelId).find(w => w.motionFrames === 'all');
-  return `“${flow.name}” animates ${f} frames: the first ${secsLabel(f / v.fps)} of your ${secsLabel(v.seconds)} motion video. ${all ? `For all of it, pick “${all.name}”. To pick which part, use` : 'To pick which part, use'} ✂️ Trim in step ③.`;
+  return `“${flow.name}” animates ${f} frames: the first ${secsLabel(f / v.fps)} of your ${secsLabel(v.seconds)} motion video. ${all ? `For all of it, pick “${all.name}”. To pick which part, use` : 'To pick which part, use'} ✂️ Trim in your inputs.`;
 }
 
 function renderStaleNotice() {
@@ -7327,7 +7431,7 @@ function renderStaleNotice() {
 }
 $('#wfpStale button').addEventListener('click', () => updateWorkflow($('#wfpSelect').value));
 
-// ---------- create: step 5, model files the workflow needs ----------
+// ---------- create: Render settings, model files the workflow needs ----------
 // A workflow can load a model file ComfyUI doesn't have (a CLIP vision model, say): ComfyUI then refuses it. Step 5
 // says which, and downloads it into ComfyUI's models folder (from the link the workflow carries) with one click.
 
@@ -7352,7 +7456,7 @@ const sizeLabel = b => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1,
 const downloadFor = m => state.downloads.find(d => d.file === m.file && d.folder === m.folder);
 
 // Every workflow, checked against ComfyUI on the server (at start, whenever ComfyUI comes back, every ten minutes):
-// what can't render right now feeds step ⑤ and Settings → ComfyUI, before any workflow is picked.
+// what can't render right now feeds Render settings and Settings → ComfyUI, before any workflow is picked.
 let healthToasted = false;
 async function loadHealth({ fresh = false } = {}) {
   const h = await api(`/api/comfy/health${fresh ? '?fresh=1' : ''}`).catch(() => null);
@@ -7361,7 +7465,7 @@ async function loadHealth({ fresh = false } = {}) {
   const bad = new Set(h.problems.map(p => p.id));
   if (fresh) for (const f of state.workflows) if (!bad.has(f.id)) { state.wfMissing.set(f.id, []); state.wfNodes.set(f.id, []); }
   for (const p of h.problems) {
-    if ((checkedModels.get(p.id) || 0) > (h.checkedAt || 0)) continue; // step ⑤ asked more recently: its answer is newer
+    if ((checkedModels.get(p.id) || 0) > (h.checkedAt || 0)) continue; // Render settings asked more recently: its answer is newer
     state.wfMissing.set(p.id, p.missing);
     state.wfNodes.set(p.id, p.nodes);
   }
@@ -7511,6 +7615,7 @@ async function pollDownloads() {
 }
 
 function renderComfyState() {
+  renderStudioStatus();
   renderModelCatalog();
   renderCreativeTask();
   updateGenerateLabel();
@@ -7549,7 +7654,7 @@ function autoRender(cards) {
   cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); });
 }
 
-// ---------- batch (step ⑤) ----------
+// ---------- batch (Render settings) ----------
 // Your saved batches. Each stands on its own: a name, how many images or videos, and whether they all come from one
 // prompt (a new seed each) or each from its own prompt. Generate runs no batch, one of them, or all of them in order.
 // Batches render, so they need a workflow; a chain has its own takes and renders, so they're off while one is set up.
@@ -7557,7 +7662,7 @@ function autoRender(cards) {
 const BATCH_MAX = 50; // the server allows as many
 const batches = () => state.settings?.batches || [];
 const batchAvailable = () => workflowsFor(state.modelId).length > 0 && !chainOn();
-// A chain built in step 5 (Then…) runs on Generate, except with ✍️ your own prompt: its Then steps are written by the Brain.
+// A chain built on the Chains page runs on Generate, except with ✍️ your own prompt: its Then steps are written by the Brain.
 const chainOn = () => state.chain.steps.length > 0 && !state.manual;
 const outputWord = (n, kind = currentModel()?.kind) => `${kind === 'video' ? 'video' : 'image'}${n === 1 ? '' : 's'}`;
 const batchLine = b => `${b.count} ${outputWord(b.count)}, ${b.mode === 'same' ? 'one prompt' : 'a different prompt each'}`;
@@ -7576,6 +7681,7 @@ function batchOn() {
 
 function renderBatch() {
   const list = batches();
+  $('#batchesEmpty').hidden = list.length > 0;
   if (state.batchPick === '*' && list.length < 2) state.batchPick = list[0]?.id || '';
   if (state.batchPick && state.batchPick !== '*' && !list.some(b => b.id === state.batchPick)) state.batchPick = '';
   const picked = pickedBatches();
@@ -7586,7 +7692,7 @@ function renderBatch() {
   // A batch counts its own, and with your own prompt Takes is the count.
   $('#wfpRenders').hidden = !chainOn() && (on || state.manual);
   const pick = $('#batchPick');
-  pick.innerHTML = '<option value="">No batch: just the takes from step 4</option>'
+  pick.innerHTML = '<option value="">No batch: use the takes above</option>'
     + list.map(b => `<option value="${esc(b.id)}">🎞 ${esc(b.name)} · ${esc(batchLine(b))}</option>`).join('')
     + (list.length > 1 ? `<option value="*">🎞 All ${list.length} batches, one after another</option>` : '');
   pick.value = state.batchPick;
@@ -7597,10 +7703,10 @@ function renderBatch() {
     : picked.length > 1 ? `Generate runs all ${picked.length} batches, one after another: ${total} ${outputWord(total)} in all.`
       : on ? `Generate runs “${picked[0].name}”: ${picked[0].mode === 'same' || state.manual ? `1 prompt, rendered ${total} times with a new seed each` : `${total} different prompts, each rendered once`}.`
         : 'Pick a batch above and Generate runs it.';
-  // Takes (step ④): a batch decides how many prompts get written.
+  // Takes (size and variations): a batch decides how many prompts get written.
   $('#varSeg').classList.toggle('locked', on);
   $$('#varSeg button').forEach(b => { b.disabled = on; });
-  $('#varSeg').title = on ? 'Set by the batch in step 5' : '';
+  $('#varSeg').title = on ? 'Set by the selected batch' : '';
   renderManualDials();
 }
 
@@ -7898,7 +8004,7 @@ function renderZone(card) {
   zone.inert = writing;
   let bar = '';
   if (flows.length) {
-    card.rb ??= { count: state.chain.renders }; // starts from Renders per take in step ⑤
+    card.rb ??= { count: state.chain.renders }; // starts from Renders per take in Render settings
     card.rb.workflowId = activeWorkflowId(model.id);
     const name = card.el.getAttribute('aria-label');
     bar = `<div class="render-bar">
@@ -7947,8 +8053,8 @@ function settingsHtml(flow) {
   return bits.length ? bits.map(b => `<span>${esc(b)}</span>`).join('') : '<span>workflow defaults</span>';
 }
 
-// The size a take renders at when its ⚙ has none of its own: what step ④ says now (changed after the prompt was
-// written, it still counts), for takes of the model step ④ is set for; else the size it was written for.
+// The size a take renders at when its ⚙ has none of its own: what size and variations says now (changed after the prompt was
+// written, it still counts), for takes of the model size and variations is set for; else the size it was written for.
 function stepSize(card) {
   const entry = state.entry;
   if (!card?.model || card.model.id !== currentModel()?.id || $('#resolutionField').hidden) return null;
@@ -7967,7 +8073,7 @@ function updateSettingsLine(card) {
   if (card.rb?.overrides) ownBits.push('own sampler settings');
   if (card.rb?.loras) ownBits.push('own LoRA strengths');
   line.innerHTML = `${stale ? '<button type="button" class="chip-btn rb-stale" title="This workflow was saved again in ComfyUI after you added it">↻ Changed in ComfyUI · Update</button>' : ''}${settingsHtml(flow)}${ownBits.map(b => `<span class="rb-own" title="Set with ⚙ on this take">⚙ ${esc(b)}</span>`).join('')}`;
-  // The details are in step ⑤ already: on the take they live in the ⚙ button's tooltip.
+  // The details are in Render settings already: on the take they live in the ⚙ button's tooltip.
   const tune = $('.rb-tune', card.el);
   if (tune) tune.title = `Sampler settings: ${[...line.querySelectorAll(':scope > span')].map(x => x.textContent).join(', ')}. Click to change.`;
   $('.rb-stale', line)?.addEventListener('click', () => updateWorkflow(flow.id));
@@ -7986,14 +8092,14 @@ function updateSeedChip(card) {
   const n = card.rb.count || 1;
   const seeds = fixed != null && n > 1 ? `Seeds ${fixed}–${fixed + n - 1}` : null;
   chip.textContent = own ? (own.mode === 'fixed' ? `🔒 ${seeds || `Seed ${own.value}`}` : '🎲 Random seed') : s.mode === 'random' ? '🎲 Random seed' : `${SEED_ICON[s.mode]} ${s.mode === 'fixed' && seeds ? seeds : `Seed ${s.value}`}`;
-  chip.title = `${own ? 'This take\'s own seed (⚙). Click to change it' : 'The workflow\'s seed, as set in step 5. Click to give this take its own'}${seeds ? `. With ×${n}, the first render uses seed ${fixed} and each next one the seed after it, so they differ` : ''}`;
+  chip.title = `${own ? 'This take\'s own seed (⚙). Click to change it' : 'The workflow\'s seed, as set in Render settings. Click to give this take its own'}${seeds ? `. With ×${n}, the first render uses seed ${fixed} and each next one the seed after it, so they differ` : ''}`;
   $$('.rb-count button', card.el).forEach(b => { b.title = fixed != null && Number(b.dataset.value) > 1 ? `${b.dataset.value} renders: seed ${fixed}, then ${fixed + 1}…` : ''; });
 }
 
 // ---------- ⚙ this take's settings ----------
 // Every knob a render of this take uses, on the take itself: shape, size and duration (the set's unless changed
 // here), seed, every sampler setting the workflow has, and its LoRAs' switches and strengths. What's set here is
-// this take's alone: step ⑤ and the other takes keep theirs. ↺ gives it all back to step ⑤.
+// this take's alone: Render settings and the other takes keep theirs. ↺ gives it all back to Render settings.
 const takeParamCache = new Map(); // workflow id → { at, data }
 async function workflowParams(id) {
   const hit = takeParamCache.get(id);
@@ -8002,8 +8108,8 @@ async function workflowParams(id) {
   takeParamCache.set(id, { at: Date.now(), data });
   return data;
 }
-// A take's LoRAs: step ⑤'s, with only what you changed in the take's ⚙ on top (rb.loras: { tweaks: by node key,
-// added: by file name }), so a LoRA switched in step ⑤ reaches every take that didn't change that one itself.
+// A take's LoRAs: Render settings's, with only what you changed in the take's ⚙ on top (rb.loras: { tweaks: by node key,
+// added: by file name }), so a LoRA switched in Render settings reaches every take that didn't change that one itself.
 function takeLoras(rb, flow) {
   const l = flow?.loras || { tweaks: {}, added: [] };
   const mine = rb?.loras || { tweaks: {}, added: {} };
@@ -8037,7 +8143,7 @@ async function renderTakePanel(card) {
   const size = rb.size || stepSize(card) || { aspectRatio: entry.aspectRatio, resolution: entry.resolution, duration: entry.duration };
   const aspects = [...new Set([...(m.aspectRatios || []), size.aspectRatio].filter(Boolean))];
   const shapeSizes = sizeChoices(m, size.aspectRatio);
-  const yours = ownSizes(m).filter(r => !shapeSizes.includes(r)); // the sizes you typed in step ③, in any shape
+  const yours = ownSizes(m).filter(r => !shapeSizes.includes(r)); // the sizes you typed in your inputs, in any shape
   const sizes = [...new Set([...shapeSizes, size.resolution, ...yours].filter(Boolean))];
   const seedInputs = Boolean(flow.seed?.inputs);
   const seed = rb.seed || (flow.seed?.mode === 'random' || !flow.seed ? { mode: 'random', value: flow.seed?.value ?? 0 } : { mode: 'fixed', value: flow.seed.value });
@@ -8060,8 +8166,8 @@ async function renderTakePanel(card) {
   panel.innerHTML = `
     <div class="rb-row">
       <span class="rb-ptitle">⚙ This take's settings</span>
-      <span class="muted small">${takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as steps ④ and ⑤'}</span>
-      <button type="button" class="chip-btn rb-same"${takeHasOwn(card) ? '' : ' disabled'}>↺ Same as step ⑤</button>
+      <span class="muted small">${takeHasOwn(card) ? 'custom settings for this take' : 'the same as your Create settings'}</span>
+      <button type="button" class="chip-btn rb-same"${takeHasOwn(card) ? '' : ' disabled'}>↺ Same as Render settings</button>
     </div>
     <div class="rb-row rb-size-row">
       ${flow.maps?.size ? `<label>Shape<select class="rb-aspect" aria-label="Shape for this take">${aspects.map(a => opt(a, a, size.aspectRatio)).join('')}</select></label>
@@ -8071,8 +8177,8 @@ async function renderTakePanel(card) {
     </div>
     ${params.length ? `<div class="sp-grid rb-params">${params.map(field).join('')}</div>` : ''}
     ${own.length || added.length ? `<ul class="rb-loras">${own.map(l => lora(l, l.key)).join('')}${added.map((l, i) => lora(l, `+${i}`)).join('')}</ul>` : ''}
-    <p class="muted small">Only this take's renders use these. ＋ Add LoRA and the workflow itself live in step ⑤.</p>`;
-  const refresh = () => { updateSettingsLine(card); updateSeedChip(card); $('.rb-same', panel).disabled = !takeHasOwn(card); $('.rb-row .muted', panel).textContent = takeHasOwn(card) ? 'its own, not step ⑤\'s' : 'the same as steps ④ and ⑤'; };
+    <p class="muted small">Only this take's renders use these. ＋ Add LoRA and the workflow itself live in Render settings.</p>`;
+  const refresh = () => { updateSettingsLine(card); updateSeedChip(card); $('.rb-same', panel).disabled = !takeHasOwn(card); $('.rb-row .muted', panel).textContent = takeHasOwn(card) ? 'custom settings for this take' : 'the same as your Create settings'; };
   const sizeNow = () => ({ aspectRatio: $('.rb-aspect', panel)?.value ?? size.aspectRatio, resolution: $('.rb-size', panel)?.value ?? size.resolution, duration: $('.rb-duration', panel) ? `${clampInt(Number($('.rb-duration', panel).value) || 1, 1, 20)}s` : size.duration });
   $('.rb-aspect', panel)?.addEventListener('change', () => {
     const next = sizeNow();
@@ -8124,7 +8230,7 @@ async function renderTakePanel(card) {
     $('.lr-num', li).disabled = !on;
     refresh();
   });
-  $('.rb-same', panel).addEventListener('click', () => { rb.size = rb.seed = rb.overrides = rb.loras = null; renderTakePanel(card); refresh(); toast('↺ This take uses step ④\'s size and step ⑤\'s settings again'); });
+  $('.rb-same', panel).addEventListener('click', () => { rb.size = rb.seed = rb.overrides = rb.loras = null; renderTakePanel(card); refresh(); toast('↺ This take uses your Create size and render settings again'); });
 }
 
 function updateRenderStatus(card) {
@@ -8225,7 +8331,7 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   const ownSetup = !setup && card.rb && (card.rb.overrides || card.rb.loras) ? { loras: takeLoras(card.rb, flow), overrides: card.rb.overrides ?? flow.overrides ?? {} } : null;
   const body = { runId, historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : ownSetup ? { setup: ownSetup } : {}), ...(size ? { size } : {}), ...(card.rb?.seed ? { seed: card.rb.seed } : {}) };
   const start = () => api('/api/render', { method: 'POST', body }).catch(err => {
-    if (err.missing) noteMissingModels(flow.id, err.missing); // step ⑤ offers to download them
+    if (err.missing) noteMissingModels(flow.id, err.missing); // Render settings offers to download them
     throw err;
   });
   return followRender(card, entry, { count: card.rb.count, flowName: flow.name, quiet, open: (onEvent, signal) => watchRender(runId, onEvent, signal, start) });
@@ -8435,7 +8541,7 @@ const characterTarget = () => (currentModel()?.motionVideo ? currentModel() : st
 
 // Starts the next step from a render: it becomes the input image on Create, linked back to where it came from.
 // animate: switch to a video model and use the still as the first frame. character: switch to a character-animation
-// model (Wan Animate 2) with the still as the character, for the motion video in step 3.
+// model (Wan Animate 2) with the still as the character, for the motion video in your inputs.
 async function continueFrom(it, { animate, character = false }) {
   if (state.busy) return toast('Hold on, a prompt is still cooking. Stop it or wait.', true);
   const target = character ? characterTarget() : animate ? animateTarget() : null;
@@ -8472,7 +8578,7 @@ async function continueFrom(it, { animate, character = false }) {
   }
 }
 
-// ---------- chains: build them on Create (step ⑥) ----------
+// ---------- chains: build follow-up steps on the Chains page ----------
 // Step 1 is the Create form itself; each "Then" step takes the renders of the step before as its input image.
 // state.chain = { steps: [then steps], renders: renders per take for step 1, recipeId }.
 
@@ -8527,7 +8633,7 @@ function chainProblems() {
   const steps = state.chain.steps;
   let all = '';
   if (m0?.kind === 'video') all = `A video can't feed the next step yet, so start the chain with an image model. (Extending clips is coming.)`;
-  else if (m0 && !workflowsFor(m0.id).length) all = `Chains continue from renders: add a workflow for ${m0.name} in step 5 first.`;
+  else if (m0 && !workflowsFor(m0.id).length) all = `Chains continue from renders: add a workflow for ${m0.name} in Render settings first.`;
   const per = steps.map((st, i) => {
     const m = modelById(st.modelId);
     if (!m) return 'Pick a model for this step.';
@@ -8535,7 +8641,7 @@ function chainProblems() {
     const flow = flows.find(f => f.id === st.workflowId);
     if (!flow) return flows.some(f => f.maps.image) ? `Pick a workflow for ${m.name}.` : `${m.name} has no workflow that takes an image yet. Add one with ＋ (it needs a Load Image node).`;
     if (!flow.maps.image) return `“${flow.name}” has no image input, so it can't take the image from the step before. Pick an image-to-${m.kind} workflow.`;
-    if (m.motionVideo && !state.video?.file) return `${m.name} copies the moves of a motion video: add one in step 3 (this step uses it).`;
+    if (m.motionVideo && !state.video?.file) return `${m.name} copies the moves of a motion video: add one in your inputs (this step uses it).`;
     if (m.kind === 'video' && i < steps.length - 1) return 'A video can\'t feed the next step yet. (Extending clips is coming.)';
     return '';
   });
@@ -8575,9 +8681,9 @@ function updateGenerateLabel() {
   $('#reviewChoice').hidden = state.manual || chained || Boolean(list.length);
   $('#reviewFirst').checked = !flow || !saved.get(autoRenderKey(model?.id), false);
   $('#reviewFirst').disabled = !flow;
-  $('#outcomeHint').textContent = chained ? 'Runs every step shown below.' : list.length ? `${list.reduce((n, b) => n + b.count, 0)} ${media}s across ${list.length} batch${list.length > 1 ? 'es' : ''}.`
-    : direct ? `${state.manual ? 'Your exact prompt' : 'Writes the prompt'}, then makes ${amount} ${media}${amount > 1 ? 's' : ''}.${!state.comfy?.ok || flowTrouble(flow.id) ? ' Rendering setup needs attention in step 5.' : ''}`
-      : !flow ? `${state.manual ? 'Saves your exact prompt' : 'Writes a prompt to use anywhere'}. Add a workflow in step 5 to make it here.` : `You can edit the prompt before making your ${media}.`;
+  $('#outcomeHint').textContent = chained ? 'Runs the steps set up in Chains.' : list.length ? `${list.reduce((n, b) => n + b.count, 0)} ${media}s across ${list.length} batch${list.length > 1 ? 'es' : ''}.`
+    : direct ? `${state.manual ? 'Your exact prompt' : 'Writes the prompt'}, then makes ${amount} ${media}${amount > 1 ? 's' : ''}.${!state.comfy?.ok || flowTrouble(flow.id) ? ' Rendering setup needs attention in Render settings.' : ''}`
+      : !flow ? `${state.manual ? 'Saves your exact prompt' : 'Writes a prompt to use anywhere'}. Add a workflow in Render settings to make it here.` : `You can edit the prompt before making your ${media}.`;
   const which = run && (run.list.length > 1 ? `Batch ${run.index + 1}/${run.list.length}` : `“${cut(run.name, 22)}”`);
   const status = run ? (run.stopped ? 'Stopping…' : state.busy ? `${which}: writing…` : `${which}: ${run.done} of ${run.total} rendered`)
     : state.busy ? 'Writing prompt…' : state.chainActive ? 'Steps running…' : '';
@@ -8624,7 +8730,7 @@ function stepCardHtml(st, i, warn) {
   const open = st.open || Boolean(warn);
   const summary = [USE_LABEL[st.use], flow?.name || 'no workflow', `${st.takes} take${st.takes > 1 ? 's' : ''}${st.renders > 1 ? ` ×${st.renders}` : ''}`, video ? st.duration : ''].filter(Boolean).join(' · ');
   const models = [...state.models].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'video' ? -1 : 1));
-  const from = i === 0 ? 'step 5' : `the step before`;
+  const from = i === 0 ? 'your first step' : 'the step before';
   return `
     <li class="chain-gate" data-i="${i}">
       <div class="seg gate" role="radiogroup" aria-label="Between ${from} and this step">
@@ -8648,7 +8754,7 @@ function stepCardHtml(st, i, warn) {
           <label class="dial"><span>Use the image as</span><select data-f="use">${uses.map(u => `<option value="${u}"${u === st.use ? ' selected' : ''}>${USE_LABEL[u]}</option>`).join('')}</select></label>
         </div>
         <label class="dial"><span>${st.use === 'animate' ? 'What happens' : st.use === 'character' ? 'Where, and from what angle' : 'What changes'} <small class="cc-opt">optional</small></span>
-          <textarea data-f="direction" rows="2" spellcheck="true" placeholder="${st.use === 'animate' ? 'e.g. she takes a sip and laughs, slow push-in. Empty = the AI picks fitting motion' : st.use === 'character' ? 'e.g. on a rooftop at sunset, low angle. The moves come from the motion video in step 3' : 'e.g. make it night, add rain. Empty = keep it as is'}">${esc(st.direction)}</textarea></label>
+          <textarea data-f="direction" rows="2" spellcheck="true" placeholder="${st.use === 'animate' ? 'e.g. she takes a sip and laughs, slow push-in. Empty = the AI picks fitting motion' : st.use === 'character' ? 'e.g. on a rooftop at sunset, low angle. The moves come from the motion video in your inputs' : 'e.g. make it night, add rain. Empty = keep it as is'}">${esc(st.direction)}</textarea></label>
         <div class="dial"><span>Workflow</span>
           <div class="cc-wf">
             <select data-f="workflowId" aria-label="Workflow for this step"><option value="">— pick a workflow —</option>${flows.map(f => `<option value="${esc(f.id)}"${f.id === st.workflowId ? ' selected' : ''}${f.maps.image ? '' : ' disabled'}>${esc(f.name)}${f.maps.image ? '' : ' (no image input)'}</option>`).join('')}</select>
@@ -8709,6 +8815,10 @@ function renderChainEditor() {
   $('[data-act="brain-all"]', box).indeterminate = mixed; // (some steps the AI picks, some you do)
   if (focus?.sel) $(`${focus.i != null ? `[data-i="${focus.i}"].chain-card ` : ''}${focus.sel}`, box)?.focus();
   setActive($('#wfpRenders .seg'), state.chain.renders);
+  const start = currentModel();
+  const summary = [start?.name || 'Choose a model', $('#theme').value.trim() || 'Add your idea in Create'].join(' · ');
+  $('#chainStartSummary').textContent = summary;
+  $('#createChainSummary').textContent = steps.length ? `${steps.length + 1} steps ready · ${steps.map(st => modelById(st.modelId)?.name || 'Choose model').join(' → ')}` : 'Continue from your best picture.';
   renderBatch(); // a chain turns the batch off, and hides auto-render
 
 }
@@ -8905,7 +9015,7 @@ async function runChain() {
   const stepProblem = per.find(Boolean);
   if (all || stepProblem) {
     showError(all || `Then step ${per.indexOf(stepProblem) + 1}: ${stepProblem}`);
-    $('#chainStep').scrollIntoView({ block: 'center', behavior: scrollMode() });
+    showView('chains');
     return;
   }
   const body = await formRequest();
@@ -8986,7 +9096,7 @@ async function continueWith(run, k, items) {
       showError(`Couldn't use that render: ${friendly(err)}`);
       break;
     }
-    // A character animation takes the character's shape (and the motion video from step 3, cropped to it).
+    // A character animation takes the character's shape (and the motion video from your inputs, cropped to it).
     const motion = model.motionVideo ? videoForRequest() : null;
     const shape = img.ratio || (motion && state.video.ratio);
     const aspect = ownAspect(model, shape) || closestAspect(model, shape) || model.defaults.aspectRatio || '';
@@ -9044,6 +9154,10 @@ function finishRun(run, message) {
   run.status = runStep(run, run.entries.reduce((k, e) => Math.max(k, e.chain?.step ?? 0), 0) + 1) ? 'waiting' : 'done';
   setChainActive(false);
   renderRunStrip();
+  if (run.status === 'waiting' && !run.stopped && isView('create')) {
+    setCreateWorkspace('results');
+    showStageTab('pipeline');
+  }
   state.cards.forEach(renderTiles);
   if (message && !run.stopped) toast(message);
 }
@@ -9094,6 +9208,7 @@ function togglePick(it) {
 }
 
 function renderRunStrip() {
+  $('.pipeline-intro').hidden = Boolean(state.run);
   const el = $('#runStrip');
   const run = state.run;
   el.hidden = !run;
@@ -9124,6 +9239,7 @@ function renderRunStrip() {
       ${next && run.status !== 'running' && outputs.length ? `${pool.length > 1 ? `<button type="button" class="btn small" data-act="pick-all">Pick all ${pool.length}</button>` : ''}<button type="button" class="btn small primary" data-act="continue"${picks.length ? '' : ' disabled'}>Continue ▶${picks.length ? ` ${picks.length}` : ''}</button>` : ''}
       <button type="button" class="icon-btn" data-act="close" aria-label="Close the chain view" title="Close (the run stays in Saved prompts)">✕</button>
     </div>
+    <p class="hint">Open a step below to see its prompts and renders. Pick the pictures you want to carry on, then return to Pipeline and Continue.</p>
     <ol class="rs-steps">${steps.map((st, k) => {
       const m = modelById(st.modelId);
       const entries = run.entries.filter(e => e.chain?.step === k);
@@ -9213,7 +9329,7 @@ function closeLightbox() {
   document.body.style.overflow = '';
   const seen = lb.items[lb.index];
   if (lb.fromGallery && seen) {
-    // The Gallery marks the render you looked at last (you may have browsed on from the one you opened).
+    // The Library marks the render you looked at last (you may have browsed on from the one you opened).
     state.gallerySeen = galleryKey(seen);
     const tile = markSeen();
     if (tile) {
@@ -10029,20 +10145,20 @@ const TOOLS = [
   T('search_history', 'Find earlier prompts in Saved prompts by words in their theme or text.', { query: S('Words to look for'), limit: I('How many, up to 10') }, ['query']),
   T('read_take', 'The full text of a take on screen, and its renders.', { take: I('Take number, starting at 1') }, ['take']),
   T('set_model', 'Pick the target model on Create.', { model: S('Model name, e.g. "LTX 2.3"') }, ['model']),
-  T('set_theme', 'Write the theme in step 2: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
-  T('set_dials', 'Set step 4 dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), look: S('How the camera and light feel (step 2, under the theme): "brain picks" suits them to the theme, "no look" adds none of the Brain\'s own, one of Natural, Intimate, Powerful, Lonely, Suspense, Horror, Noir, Dreamy, Gritty, Epic, Luxury, or the name of a look the user made (get_state lists them)'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
-  T('set_image_role', 'How the image in step 3 is used.', { role: E(['reference', 'recreate', 'animate', 'character'], 'animate = first frame of a video (video models only); character = the character a motion video animates (character-animation models like Wan Animate 2 only)') }, ['role']),
-  T('clear_image', 'Remove the image from step 3.'),
-  T('use_motion_video', 'Set the motion video in step 3 for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
-  T('clear_motion_video', 'Remove the motion video from step 3.'),
-  T('edit_motion_video', 'Change the motion video in step 3 (needs ffmpeg; each makes a copy and uses it): use only part of it (start and seconds, e.g. the stretch the workflow animates), crop the black bars around its picture, or make a 24 fps copy of a fast one.', { start: N('Use part of it: seconds from its start'), seconds: N('Use part of it: how many seconds'), crop_bars: B('Crop the black bars around the picture'), fps24: B('Make a 24 fps copy') }),
+  T('set_theme', 'Write Your idea: what the shot shows, or what happens (when animating an image).', { text: S('The theme') }, ['text']),
+  T('set_dials', 'Set size and variations dials. Only the ones given change.', { aspect: S('e.g. "16:9", "9:16"'), resolution: S('One of the model\'s, e.g. "1920×1080", or any W×H of your own'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), length: E(['short', 'medium', 'long'], 'Prompt length'), takes: I('How many versions to write, 1–4'), temperature: N('0 = precise … 2 = wild'), look: S('How the camera and light feel (Choose a look, below the image inputs): "brain picks" suits them to the theme, "no look" adds none of the Brain\'s own, one of Natural, Intimate, Powerful, Lonely, Suspense, Horror, Noir, Dreamy, Gritty, Epic, Luxury, or the name of a look the user made (get_state lists them)'), batch: S('What Generate runs: the name of a saved batch, "all" (every batch, one after another) or "off"') }),
+  T('set_image_role', 'How the image in your inputs is used.', { role: E(['reference', 'recreate', 'animate', 'character'], 'animate = first frame of a video (video models only); character = the character a motion video animates (character-animation models like Wan Animate 2 only)') }, ['role']),
+  T('clear_image', 'Remove the image from your inputs.'),
+  T('use_motion_video', 'Set the motion video in your inputs for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
+  T('clear_motion_video', 'Remove the motion video from your inputs.'),
+  T('edit_motion_video', 'Change the motion video in your inputs (needs ffmpeg; each makes a copy and uses it): use only part of it (start and seconds, e.g. the stretch the workflow animates), crop the black bars around its picture, or make a 24 fps copy of a fast one.', { start: N('Use part of it: seconds from its start'), seconds: N('Use part of it: how many seconds'), crop_bars: B('Crop the black bars around the picture'), fps24: B('Make a 24 fps copy') }),
   T('character_from_render', 'Make a still render the character for Wan Animate 2: switches to that model and attaches the still. Then set a motion video (use_motion_video) and a theme for the place and camera, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
-  T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (step 5).', { name: S('Workflow name') }, ['name']),
+  T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (Render settings).', { name: S('Workflow name') }, ['name']),
   T('add_lora', 'Add a LoRA (from the model\'s LoRA folder) to the picked workflow.', { name: S('LoRA name or part of it'), strength: N('Strength, usually 0.3–1.2; default 1') }, ['name']),
   T('set_lora', 'Change a LoRA\'s strength or switch it on or off (the workflow\'s own LoRAs or added ones), or load another version of it in its place (same switch and strength). The result says when a newer version is in the LoRA folder.', { name: S('LoRA name or part of it'), strength: N('New strength'), on: B('On or off'), version: S('"newest" for the newest version in the LoRA folder, or another file\'s name (or part of it) from the same folder') }, ['name']),
   T('remove_lora', 'Remove a LoRA that was added (the workflow\'s own LoRAs can only be switched off).', { name: S('LoRA name or part of it') }, ['name']),
   T('set_seed', 'Set how the picked workflow seeds each render: random, fixed, increment (+1 each render) or decrement (−1), and/or the seed number.', { mode: E(['random', 'fixed', 'increment', 'decrement'], 'Seed mode'), value: I('The seed (the next one, for increment / decrement)') }),
-  T('set_sampler', 'Change the sampler settings of the picked workflow (step 5): steps, CFG, sampler, scheduler, denoise, and Wan Animate 2\'s strengths. Only the ones given change; they stay with the workflow until changed again (like the user\'s own tweaks). A workflow with several samplers gets the value in each.', {
+  T('set_sampler', 'Change the sampler settings of the picked workflow (Render settings): steps, CFG, sampler, scheduler, denoise, and Wan Animate 2\'s strengths. Only the ones given change; they stay with the workflow until changed again (like the user\'s own tweaks). A workflow with several samplers gets the value in each.', {
     steps: I('Sampling steps, e.g. 20'),
     cfg: N('CFG (guidance)'),
     sampler: S('Sampler name, e.g. "euler"'),
@@ -10055,21 +10171,21 @@ const TOOLS = [
   }),
   T('set_auto_render', 'Turn auto-render on or off for the current model (renders every new prompt right away), and how many renders each take gets.', { on: B('On or off'), renders_per_take: I('Renders per take, 1–4 (also where each take\'s Render bar starts)') }, ['on']),
   T('new_session', 'Clear the theme, image and takes to start fresh. Everything stays in Saved prompts.'),
-  T('generate', 'Write the takes for the current setup (or run the chain if one is built in step 5, Then…). Waits until they are written.'),
+  T('generate', 'Write the takes for the current setup (or run the chain if one is built in Chains). Waits until they are written.'),
   T('refine_take', 'Change a take with an instruction, e.g. "golden hour" or "shorter".', { take: I('Take number, starting at 1'), instruction: S('What to change') }, ['take', 'instruction']),
   T('render', 'Render takes with ComfyUI and wait for the result.', { take: I('Take number; leave out to render every take'), count: I('Renders per take, 1–50; default 1') }),
   T('animate_render', 'Make a still render the first frame of a video: switches to the video model and attaches the still. Then use set_theme for what happens, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
-  T('use_render_as_image', 'Put a still render in step 3 for the next prompt: as the first frame of a video (animate), the character (Wan Animate 2), or a reference / recreate image. Default: the render in the lightbox, else take 1\'s newest.', {
+  T('use_render_as_image', 'Put a still render in your inputs for the next prompt: as the first frame of a video (animate), the character (Wan Animate 2), or a reference / recreate image. Default: the render in the lightbox, else take 1\'s newest.', {
     use: E(['animate', 'character', 'reference', 'recreate'], 'How the next prompt uses it'),
     take: I('Take number on screen'),
     render: I('1 = newest render of that take'),
-    render_id: S('A render\'s id from look_at, for one that isn\'t on screen (Your renders, Gallery)'),
+    render_id: S('A render\'s id from look_at, for one that isn\'t on screen (Your renders, Library)'),
     model: S('The model to use it with, e.g. the video model to animate with; default: the last video model for animate, else the one on Create'),
   }, ['use']),
-  T('build_chain', 'Set the steps after step 1 in step 5, Then… (replaces any there). Each step continues from the renders of the step before.', {
-    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in step 3)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), gate: E(['pick', 'brain', 'auto'], 'pick = wait for the user to choose renders; brain = you (the Brain) pick the best render and only it goes on; auto = all go on') }, required: ['model'] } },
+  T('build_chain', 'Set the steps after step 1 in Chains (replaces any there). Each step continues from the renders of the step before.', {
+    steps: { type: 'array', description: 'The Then steps, in order', items: { type: 'object', properties: { model: S('Model name'), use: E(['animate', 'reference', 'recreate', 'character'], 'How it uses the image; animate = first frame; character = Wan Animate 2 (uses the motion video in your inputs)'), what_happens: S('Optional direction'), workflow: S('Optional workflow name'), takes: I('1–4'), renders: I('1–4'), duration: S('Video only: seconds, 1 to 20, e.g. "6s"'), gate: E(['pick', 'brain', 'auto'], 'pick = wait for the user to choose renders; brain = you (the Brain) pick the best render and only it goes on; auto = all go on') }, required: ['model'] } },
   }, ['steps']),
-  T('clear_chain', 'Remove every step from Then… in step 5, back to a single step.'),
+  T('clear_chain', 'Remove every following step from Chains, back to a single step.'),
   T('load_chain', 'Load a saved chain by name.', { name: S('Chain name') }, ['name']),
   T('continue_chain', 'In a chain run that is waiting, send renders on to the next step.', { takes: { type: 'array', items: { type: 'integer' }, description: 'Take numbers whose renders go on; leave out for all of them' } }),
   T('read_playbook', 'Read a model\'s playbook: its instructions for the Brain, description, aspect ratios, resolutions, durations, length targets and example prompts.', { model: S('Model name; default: the current model') }),
@@ -10084,10 +10200,10 @@ const TOOLS = [
     add_examples: { type: 'array', items: { type: 'string' }, description: 'Complete example prompts to add' },
   }),
   T('undo_playbook_edit', 'Put back the playbook as it was before your last edit_playbook.'),
-  T('go_to', 'Open a page of the app.', { page: E(['create', 'history', 'gallery', 'models', 'settings'], 'The page') }, ['page']),
+  T('go_to', 'Open a page of the app. History is Saved prompts; gallery is the Library.', { page: E(VIEWS, 'The page') }, ['page']),
   T('open_history', 'Open an earlier prompt from Saved prompts on the Create page.', { query: S('Words from its theme or text') }, ['query']),
   T('look_at', 'See renders (images, or frames of videos), the input image, or pictures and videos in a folder, with your own eyes. Use it whenever the user asks about how something looks, which one is better, what to change. Renders are numbered per take, 1 = newest. When the user speaks of renders they made ("in the gallery", "my renders", "the ones of the diver"), use gallery with find: every render Prompt Maker ever made is there.', {
-    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery', 'files'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in step 3; this_session: every render since Prompt Maker started, newest run first; gallery: every render ever made, newest first; files: pictures or videos in a folder on this computer (folder, files). Each render comes with its render id (for use_render_as_image)'),
+    what: E(['takes', 'lightbox', 'input_image', 'this_session', 'gallery', 'files'], 'takes (default): renders of the takes on screen; lightbox: what is open full screen; input_image: the image in your inputs; this_session: every render since Prompt Maker started, newest run first; gallery: every render ever made, newest first; files: pictures or videos in a folder on this computer (folder, files). Each render comes with its render id (for use_render_as_image)'),
     find: S('this_session or gallery: words of what the renders show or of their prompt, e.g. "woman walking apartment"; the best matches come first'),
     take: I('Only this take'),
     renders: { type: 'array', items: { type: 'integer' }, description: 'Only these renders of the take (1 = newest)' },
@@ -10095,26 +10211,26 @@ const TOOLS = [
     files: { type: 'array', items: { type: 'string' }, description: 'files: file names in that folder, or full paths; leave out for the folder\'s first pictures' },
     limit: I('At most this many pictures, up to 8; default 6'),
   }),
-  T('pick_best', 'Look at renders and pick the best one for a purpose, then (if asked) rate it and put it in step 3 for the next step. In a job it picks among what the job made so far (this_run: only what this run made), so a job can go: stills, then pick the best, then animate it. Only stills can go in step 3. Hidden renders are left out.', {
+  T('pick_best', 'Look at renders and pick the best one for a purpose, then (if asked) rate it and put it in your inputs for the next step. In a job it picks among what the job made so far (this_run: only what this run made), so a job can go: stills, then pick the best, then animate it. Only stills can go in your inputs. Hidden renders are left out.', {
     for: S('What it\'s for, or what makes one the best, e.g. "a stranger sits down next to her: room beside her, moody light"'),
-    from: E(['job', 'this_run', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, the job\'s (default) or only this run\'s; else this session\'s (default), the takes on screen, or the newest in the Gallery'),
+    from: E(['job', 'this_run', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, the job\'s (default) or only this run\'s; else this session\'s (default), the takes on screen, or the newest in the Library'),
     kind: E(['any', 'image', 'video'], 'Only stills or only videos (default any; then other than nothing takes stills)'),
-    then: E(['nothing', 'animate', 'character', 'reference', 'recreate'], 'What to do with the winner: nothing (default, just say which), or put it in step 3 that way'),
+    then: E(['nothing', 'animate', 'character', 'reference', 'recreate'], 'What to do with the winner: nothing (default, just say which), or put it in your inputs that way'),
     rate: I('Also rate the winner: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent (never lowers a rating it has)'),
     model: S('The model for the next step, e.g. the video model to animate with'),
   }, ['for']),
   T('judge_renders', 'Look at renders and rate each one for a purpose: ★ pretty good, ★★ very good, ★★★ excellent; a clear failure (warped face or hands, garbled text, broken motion, not what was asked) is hidden from 🎞 Your renders instead (the hidden filter shows it again; nothing is deleted). Renders already rated are left as they are. The reasons go in the job log. It sees videos as a few still frames: it can\'t hear sound or check lip sync. Works in a job (default: what this run made) and in chat (a finished job by its title).', {
     for: S('What makes one good, e.g. "her face matches the still, the sign is spelled right, natural motion"'),
-    from: E(['this_run', 'job', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, this run\'s (default) or the whole job\'s; else this session\'s (default), the takes on screen, the newest in the Gallery, or job with job set'),
+    from: E(['this_run', 'job', 'this_session', 'on_screen', 'gallery'], 'Which renders: in a job, this run\'s (default) or the whole job\'s; else this session\'s (default), the takes on screen, the newest in the Library, or job with job set'),
     kind: E(['any', 'image', 'video'], 'Only stills or only videos (default any)'),
     job: S('With from job outside a job: the job\'s title'),
   }, ['for']),
   T('set_line', '🎙 Give the person a line to say, in a kept voice (video models whose picked workflow takes a sound file, like MiniMax H3): at Generate the line is said in that voice and the video follows it, lips in time. Empty text takes the line off. Needs Voices installed (🎙 Voices page) and a kept voice: the state says which there are.', { text: S('What they say, word for word; "" for no line'), voice: S('A kept voice, by name; default the one picked (else the first)') }, ['text']),
   T('make_voice', '🎙 Make and keep a new voice from a description, for set_line (a name already kept is simply used again). Takes a few seconds (longer the first time). Say what it sounds like: age, warmth, accent, pace, mood.', { name: S('A short name, e.g. "Jess"'), description: S('What it sounds like, e.g. "a woman in her late twenties, warm light alto, soft Midwestern lilt, relaxed pace"'), text: S('A sentence it says as its sample; default a friendly greeting'), language: S('English, German, … ; default auto') }, ['name', 'description']),
-  T('join_videos', '🎬 Join videos into one, in order (a new "Joined video" render in 🎞 Your renders and the Gallery). In a job (from job, the default there): the best video of each run so far, in the runs\' order (the highest rated, else the newest), so a job can end with one film of its cuts. Else: the videos shown in 🎞 Your renders in their order, or render ids.', { from: E(['job', 'shown', 'ids'], 'Which videos: the job\'s best per run; the ones shown in Your renders (their order); or render_ids'), render_ids: { type: 'array', items: { type: 'string' }, description: 'With from ids: render ids (look_at shows them), in order' }, title: S('A name for the joined video') }),
+  T('join_videos', '🎬 Join videos into one, in order (a new "Joined video" render in 🎞 Your renders and the Library). In a job (from job, the default there): the best video of each run so far, in the runs\' order (the highest rated, else the newest), so a job can end with one film of its cuts. Else: the videos shown in 🎞 Your renders in their order, or render ids.', { from: E(['job', 'shown', 'ids'], 'Which videos: the job\'s best per run; the ones shown in Your renders (their order); or render_ids'), render_ids: { type: 'array', items: { type: 'string' }, description: 'With from ids: render ids (look_at shows them), in order' }, title: S('A name for the joined video') }),
   T('show_render', 'Open a render full screen in the lightbox for the user.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('close_lightbox', 'Close the full-screen lightbox.'),
-  T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (🎞 Your renders and the Gallery show it, and filter by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
+  T('rate_render', 'Rate a render: 1 ★ pretty good, 2 ★★ very good, 3 ★★★ excellent, 0 takes the rating off (🎞 Your renders and the Library show it, and filter by it). Default: the one in the lightbox.', { take: I('Take number'), render: I('1 = newest render of that take'), rating: I('0–3; default 3') }),
   T('favorite_entry', 'Bookmark the prompt on screen in Saved prompts, or remove its bookmark.', { on: B('true = bookmark (default), false = remove bookmark') }),
   T('delete_render', 'Delete a render for good (asks the user to confirm on screen). Default: the one in the lightbox. Only when the user asked.', { take: I('Take number'), render: I('1 = newest render of that take') }),
   T('delete_entry', 'Delete a prompt from Saved prompts for good, with its renders (asks the user to confirm on screen). Default: the one on screen. Only when the user asked.', { query: S('Words from its theme or text; default: the one on screen') }),
@@ -10122,8 +10238,8 @@ const TOOLS = [
   T('set_brain', 'Switch the Brain (the LLM in the top bar) that writes prompts and runs you. A ☁️ cloud Brain asks the user first.', { name: S('Brain name or part of it') }, ['name']),
   T('list_folder', 'List the pictures (and videos) in a folder on this computer (for a job, look_at, use_image or use_motion_video). A name alone, or one close to it ("renderings" finds "renders"), is looked for in Prompt Maker\'s and ComfyUI\'s folders, then everywhere in the home folder and on other drives; others lists more folders that fit.', { folder: S('Full path, ~/…, or just the folder name') }, ['folder']),
   T('find', 'Find files or folders on this computer by name, anywhere in the home folder and on every drive (USB, second disk). Names close to it count too.', { name: S('The name or part of it'), kind: E(['folder', 'file', 'any'], 'default: any'), in: S('Optional: only inside this folder') }, ['name']),
-  T('use_image', 'Put a picture from a folder into step 3.', { folder: S('The folder, as list_folder took it'), file: S('The file name, from list_folder') }, ['folder', 'file']),
-  T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in step 3 first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). A step can judge too: pick_best looks at what the job made so far and can put the winner in step 3 (e.g. stills, then the best one animated, then the same video at other settings with set_sampler and render). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Put the whole task in one job. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}]. Example, "3 stills of a diver, different each time, same seed; animate the best in LTX at 20 steps, then 10": no folder, runs [{label:"still 1", steps:[{tool:"set_model",args:{model:"Krea 2 RAW t2i"}},{tool:"set_seed",args:{mode:"fixed",value:7}},{tool:"set_dials",args:{takes:1}},{tool:"set_theme",args:{text:"a diver in a kelp forest, sun rays"}},{tool:"generate"},{tool:"render"}]}, {label:"still 2", steps:[{tool:"set_theme",args:{text:"a diver over a coral reef at dusk"}},{tool:"generate"},{tool:"render"}]}, {label:"still 3", steps:[{tool:"set_theme",args:{text:"a diver in a wreck, torch light"}},{tool:"generate"},{tool:"render"}]}, {label:"best, 20 steps", steps:[{tool:"pick_best",args:{for:"a diver who turns to the camera",then:"animate",model:"LTX 2.3"}},{tool:"set_theme",args:{text:"the diver turns to the camera"}},{tool:"set_sampler",args:{steps:20}},{tool:"generate"},{tool:"render"}]}, {label:"10 steps", steps:[{tool:"set_sampler",args:{steps:10}},{tool:"render"}]}].`, {
+  T('use_image', 'Put a picture from a folder into your inputs.', { folder: S('The folder, as list_folder took it'), file: S('The file name, from list_folder') }, ['folder', 'file']),
+  T('start_job', `Start a long task that runs on its own, step by step, while the user does other things: "for each picture in folder X…", many variations, "skip problems and log them". Use it instead of doing many steps in chat. A job is runs × pictures: with a folder, every run is done for every picture (the picture is put in your inputs first); without one, each run is done once. A run is a list of steps; a step is one of these tools with the same arguments: ${[...JOB_TOOLS].join(', ')}. Steps work on the Create page as it is, and what a step doesn't set carries over (the theme too: set_theme with "" clears it; clear_chain if a chain is built). A step can judge too: pick_best looks at what the job made so far and can put the winner in your inputs (e.g. stills, then the best one animated, then the same video at other settings with set_sampler and render). If a step fails, the rest of that run for that picture is skipped and logged, and the job goes on. Put the whole task in one job. Example, "the pictures in ABC, 2 takes each: low then high temperature": folder "ABC", runs [{label:"low temp", steps:[{tool:"set_dials",args:{takes:1,temperature:0.3}},{tool:"generate"}]}, {label:"high temp", steps:[{tool:"set_dials",args:{takes:1,temperature:1.4}},{tool:"generate"}]}]. Example, "3 stills of a diver, different each time, same seed; animate the best in LTX at 20 steps, then 10": no folder, runs [{label:"still 1", steps:[{tool:"set_model",args:{model:"Krea 2 RAW t2i"}},{tool:"set_seed",args:{mode:"fixed",value:7}},{tool:"set_dials",args:{takes:1}},{tool:"set_theme",args:{text:"a diver in a kelp forest, sun rays"}},{tool:"generate"},{tool:"render"}]}, {label:"still 2", steps:[{tool:"set_theme",args:{text:"a diver over a coral reef at dusk"}},{tool:"generate"},{tool:"render"}]}, {label:"still 3", steps:[{tool:"set_theme",args:{text:"a diver in a wreck, torch light"}},{tool:"generate"},{tool:"render"}]}, {label:"best, 20 steps", steps:[{tool:"pick_best",args:{for:"a diver who turns to the camera",then:"animate",model:"LTX 2.3"}},{tool:"set_theme",args:{text:"the diver turns to the camera"}},{tool:"set_sampler",args:{steps:20}},{tool:"generate"},{tool:"render"}]}, {label:"10 steps", steps:[{tool:"set_sampler",args:{steps:10}},{tool:"render"}]}].`, {
     title: S('A short name for the job'),
     folder: S('Optional: the folder of pictures to work through'),
     limit: I('Optional: only the first N pictures'),
@@ -10178,7 +10294,7 @@ const TOOL_RUNNING = {
   generate: 'Writing the takes…', refine_take: 'Refining…', render: 'Rendering…', continue_chain: 'Continuing the chain…', read_guide: 'Reading the guide…',
   search_history: 'Looking through Saved prompts…', list_loras: 'Looking at the LoRAs…', animate_render: 'Setting up the video…',
   run_command: 'Running it…', read_file: 'Reading…', write_file: 'Writing…', look_at: 'Looking…', find: 'Searching this computer…', cancel_renders: 'Cancelling…', list_folder: 'Looking in the folder…', use_image: 'Opening the picture…', use_motion_video: 'Opening the video…', start_job: 'Starting the job…',
-  pick_best: 'Choosing the best…', judge_renders: 'Rating the renders…', use_render_as_image: 'Putting it in step 3…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
+  pick_best: 'Choosing the best…', judge_renders: 'Rating the renders…', use_render_as_image: 'Putting it in your inputs…', set_sampler: 'Changing the sampler settings…', see_screen: 'Looking at the screen…', wait: 'Waiting…',
 };
 
 // ---- what the assistant can see ----
@@ -10313,8 +10429,8 @@ function assistantState() {
     theme: $('#theme').value,
     ...(state.manual ? {} : { look: state.look === 'none' ? 'none: no camera or light of the Brain\'s own' : state.look ? lookName(state.look) : 'brain picks', ...(state.looks.length ? { own_looks: state.looks.map(l => l.name) } : {}) }),
     ...(lineOn() ? { line: state.line.text && state.line.voice ? { voice: voiceById(state.line.voice)?.name || state.line.voice, text: state.line.text } : voicesReady() ? 'none (set_line gives the person a line to say in a kept voice)' : 'voices not installed (🎙 Voices page)' } : {}),
-    ...(m?.characterSheet && state.image && !state.manual ? { character_sheet: state.sheet.trim() || 'not written yet: Generate writes it from the image first (step 3, the user can edit it)' } : {}),
-    ...(state.manual ? { own_prompt: 'on: the user\'s ✍️ switch in step 2. Generate sends the theme word for word as the prompt (no Brain) and renders it, and dials.takes is how many renders. Only the user switches it' } : {}),
+    ...(m?.characterSheet && state.image && !state.manual ? { character_sheet: state.sheet.trim() || 'not written yet: Generate writes it from the image first (your inputs, the user can edit it)' } : {}),
+    ...(state.manual ? { own_prompt: 'on: the user\'s ✍️ switch under Your idea. Generate sends the theme word for word as the prompt (no Brain) and renders it, and dials.takes is how many renders. Only the user switches it' } : {}),
     image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
     ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, fps: state.video.fps || null, ready: Boolean(state.video.file), ...(state.video.bars ? { black_bars: `picture is ${state.video.bars.width}×${state.video.bars.height}` } : {}), workflow_animates: activeFlow()?.motionFrames === 'all' ? 'the whole video' : typeof activeFlow()?.motionFrames === 'number' ? `${activeFlow().motionFrames} frames` : 'unknown' } : null } : {}),
     dials: m && {
@@ -10502,10 +10618,10 @@ async function findRender({ take, render, render_id: id }) {
   return it;
 }
 
-// Puts a still in step 3 the way the next step uses it, on the model it's for.
+// Puts a still in your inputs the way the next step uses it, on the model it's for.
 async function useRenderAs(it, use, model) {
   notBusy();
-  if (it.file.kind !== 'image') throw new Error('Only a still can go in step 3: that one is a video.');
+  if (it.file.kind !== 'image') throw new Error('Only a still can go in your inputs: that one is a video.');
   const m = model ? needModel(model) : null;
   if (use === 'animate') {
     if (m && (m.kind !== 'video' || m.motionVideo || m.noImage)) throw new Error(`${m.name} can't animate a still: pick a video model that starts from a picture.`);
@@ -10519,7 +10635,7 @@ async function useRenderAs(it, use, model) {
     await continueFrom(it, { animate: false });
     TOOL_IMPL.set_image_role({ role: use });
   }
-  if (state.image?.source?.renderId !== it.render.id) throw new Error(stageError() || 'Couldn\'t put it in step 3.');
+  if (state.image?.source?.renderId !== it.render.id) throw new Error(stageError() || 'Couldn\'t put it in your inputs.');
   return `${USE_LABEL[use] || use} on ${currentModel().name}`;
 }
 
@@ -10614,10 +10730,10 @@ function needVision() {
   if (llm && llm.vision === false) throw new Error(`${llm.name} can't see images. Switch the Brain (top bar) to a 👁 vision model.`);
 }
 
-const whereWords = (where, title) => ({ job: title ? `from the job “${title}”` : 'from this job', this_run: 'from this run', on_screen: 'on screen', gallery: 'in the Gallery' })[where] || 'this session';
+const whereWords = (where, title) => ({ job: title ? `from the job “${title}”` : 'from this job', this_run: 'from this run', on_screen: 'on screen', gallery: 'in the Library' })[where] || 'this session';
 
 // Renders to pick from or judge, newest first: a job's (or only what this run of it made), this session's, the takes
-// on screen or the Gallery's.
+// on screen or the Library's.
 async function rendersFrom(where, title) {
   if (where === 'job' || where === 'this_run') {
     const job = title ? needJob(title) : jobs.current;
@@ -10681,9 +10797,9 @@ const TOOL_IMPL = {
       if (!lightboxItem()) throw new Error('Nothing is open in the lightbox.');
       items = [{ it: lightboxItem(), label: 'the render open in the lightbox' }];
     } else if (what === 'input_image') {
-      if (!state.image) throw new Error('There\'s no image in step 3.');
+      if (!state.image) throw new Error('There\'s no image in your inputs.');
       const pics = await picturesOf(state.image.dataUrl || `/images/${encodeURIComponent(state.image.file)}`, 'image');
-      return { summary: 'Looked at the input image', pictures: ['the input image (step 3)'], _images: pics.map(url => ({ label: 'the input image', url })) };
+      return { summary: 'Looked at the input image', pictures: ['the input image (your inputs)'], _images: pics.map(url => ({ label: 'the input image', url })) };
     } else if (what === 'this_session' || what === 'earlier_runs') {
       items = reelGroups().flatMap((g, run) => g.items.map(it => ({ it, label: `${g.id === state.entry?.id ? 'the run on screen' : `session run ${run + 1}`} (“${(it.entry.theme || 'from an image').slice(0, 40)}”), take ${it.index + 1}` })));
     } else if (what === 'gallery') {
@@ -11032,7 +11148,7 @@ const TOOL_IMPL = {
         if (want === 'all' && batches().length > 1) setBatchPick('*');
         else {
           const b = batches().find(x => x.name.toLowerCase() === want) || batches().find(x => x.name.toLowerCase().includes(want));
-          if (!b) throw new Error(`There's no batch “${args.batch}”. ${batches().length ? `The batches are: ${batches().map(x => x.name).join(', ')}.` : 'None are saved yet: make one in step 5 → Batch.'}`);
+          if (!b) throw new Error(`There's no batch “${args.batch}”. ${batches().length ? `The batches are: ${batches().map(x => x.name).join(', ')}.` : 'None are saved yet: make one in Batches.'}`);
           setBatchPick(b.id);
         }
       }
@@ -11061,7 +11177,7 @@ const TOOL_IMPL = {
     return { summary: done.length ? done.join(', ') : 'Nothing to change' };
   },
   set_image_role: ({ role }) => {
-    if (!state.image) throw new Error('There\'s no image in step 3.');
+    if (!state.image) throw new Error('There\'s no image in your inputs.');
     if (role === 'animate' && currentModel()?.kind !== 'video') throw new Error('Animate only works with a video model.');
     if (!rolesFor(currentModel()).includes(role)) throw new Error(`${currentModel()?.name} uses the image only as: ${rolesFor(currentModel()).join(', ')}.`);
     state.imageRole = role;
@@ -11091,7 +11207,7 @@ const TOOL_IMPL = {
   },
   clear_motion_video: () => { setVideo(null); return { summary: 'Motion video removed' }; },
   edit_motion_video: async ({ start, seconds, crop_bars: crop, fps24 }) => {
-    if (!state.video?.file) throw new Error('There is no motion video in step 3 yet.');
+    if (!state.video?.file) throw new Error('There is no motion video in your inputs yet.');
     if (!state.video.ffmpeg) throw new Error('Changing the video needs ffmpeg, which isn\'t installed on this computer.');
     const done = [];
     if (crop) {
@@ -11126,13 +11242,13 @@ const TOOL_IMPL = {
     const flows = workflowsFor(m.id);
     const s = squash(name);
     const f = flows.find(x => squash(x.name) === s) || flows.find(x => squash(x.name).includes(s));
-    if (!f) throw new Error(flows.length ? `${m.name} has no workflow like “${name}”. It has: ${flows.map(x => x.name).join(', ')}.` : `${m.name} has no workflows yet. Add one in step 5 (＋).`);
+    if (!f) throw new Error(flows.length ? `${m.name} has no workflow like “${name}”. It has: ${flows.map(x => x.name).join(', ')}.` : `${m.name} has no workflows yet. Add one in Render settings (＋).`);
     pickWorkflow(m.id, f.id);
     return { summary: `Workflow → ${f.name}` };
   },
   add_lora: async ({ name, strength }) => {
     const flow = activeFlow();
-    if (!flow) throw new Error('Pick a workflow in step 5 first: LoRAs belong to a workflow.');
+    if (!flow) throw new Error('Pick a workflow in Render settings first: LoRAs belong to a workflow.');
     await ensureLoraList();
     const m = currentModel();
     const { folder } = loraFolderFor(m);
@@ -11198,7 +11314,7 @@ const TOOL_IMPL = {
   },
   set_sampler: async ({ reset, unlock_cfg: unlock, ...args }) => {
     const flow = activeFlow();
-    if (!flow) throw new Error('Pick a workflow in step 5 first: sampler settings belong to a workflow.');
+    if (!flow) throw new Error('Pick a workflow in Render settings first: sampler settings belong to a workflow.');
     const data = await api(`/api/workflows/${flow.id}`);
     const params = (data.candidates?.params || []).filter(p => p.kind !== 'seed');
     const overrides = reset ? {} : { ...(data.overrides || {}) };
@@ -11357,7 +11473,7 @@ const TOOL_IMPL = {
     showView('create');
     const m = currentModel();
     const auto = m && (state.manual || saved.get(autoRenderKey(m.id), false)) && workflowsFor(m.id).length > 0 && !chainOn();
-    if (auto && state.manual) await okToRenderVideos(state.manualRenders, `Generate would render the prompt in step 2${state.manualRenders > 1 ? ` ${state.manualRenders} times` : ''} right away (✍️ your own prompt is on)`);
+    if (auto && state.manual) await okToRenderVideos(state.manualRenders, `Generate would render your own prompt${state.manualRenders > 1 ? ` ${state.manualRenders} times` : ''} right away (✍️ your own prompt is on)`);
     else if (auto) await okToRenderVideos(state.variations * state.chain.renders, `Generate would also render ${state.variations} take${state.variations > 1 ? 's' : ''}${state.chain.renders > 1 ? ` ×${state.chain.renders}` : ''} right away (auto-render is on for ${m.name})`);
     const before = state.entry;
     await generate();
@@ -11381,7 +11497,7 @@ const TOOL_IMPL = {
     notBusy();
     const cards = take ? [needCard(take)] : state.cards.filter(c => !c.interrupted);
     if (!cards.length) throw new Error('There are no takes to render. Generate first.');
-    if (!cards.every(c => c.rb)) throw new Error(`${currentModel()?.name || 'This model'} has no workflow to render with. Add one in step 5.`);
+    if (!cards.every(c => c.rb)) throw new Error(`${currentModel()?.name || 'This model'} has no workflow to render with. Add one in Render settings.`);
     const each = clampInt(count ?? 1, 1, BATCH_MAX);
     const running = cards.filter(c => c.running.size > 0).length;
     if (running) throw new Error(`${running === cards.length ? 'Those takes are' : `${running} of those takes are`} already rendering (auto-render is on). Wait for them: look_at shows them once they're done.`);
@@ -12190,7 +12306,7 @@ function drawJobs() {
     bar.innerHTML = `<span aria-hidden="true">🗂</span><span class="jb-text">The job <b>${esc(run.title)}</b> is using this page: item ${Math.min(c.total, c.done + c.skipped + 1)} of ${c.total}${u ? ` (${esc(u.label)}${u.now ? `, ${esc(u.now.replace(/_/g, ' '))}` : ''})` : ''}. Changes you make here go into it.</span>
       <button type="button" class="btn small" data-jb="show">Watch</button><button type="button" class="btn small" data-jb="pause"${jobs.pause ? ' disabled' : ''}>${jobs.pause ? 'Pausing after this one…' : '⏸ Pause'}</button>`;
   }
-  if ($('#jobsDlg').open) renderJobsList();
+  if (isView('jobs')) renderJobsList();
 }
 
 function jobUnitHtml(job, u, n) {
@@ -12261,7 +12377,7 @@ function openJobs(id) {
   if (id) jobs.open.add(id);
   else if (jobs.list[0]) jobs.open.add(jobs.list[0].id);
   for (const j of jobs.list) if (j.status === 'done' && !j.seen) { j.seen = true; saveJob(j); }
-  if (!$('#jobsDlg').open) $('#jobsDlg').showModal();
+  showView('jobs', { byUser: true });
   renderJobsList();
   drawJobs();
   if (id) $(`.job[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
@@ -12279,7 +12395,7 @@ async function jobItems(u) {
 
 $('#jobsBtn').addEventListener('click', () => openJobs());
 $('#asJobs').addEventListener('click', () => openJobs());
-$('#jobsClose').addEventListener('click', () => $('#jobsDlg').close());
+$('#jobAsk').addEventListener('click', () => openAssistant(true, { focus: true }));
 $('#jobBar').addEventListener('click', e => {
   const b = e.target.closest('[data-jb]');
   if (!b || !jobs.current) return;
@@ -12322,12 +12438,10 @@ $('#jobsList').addEventListener('click', async e => {
     if (jobs.current) return toast('The job is using Create right now. Pause it first, or use 👁 View.', true);
     const entry = await api(`/api/history/${u.entries.at(-1)}`).catch(() => null);
     if (!entry) return toast('That one is no longer in Saved prompts.', true);
-    $('#jobsDlg').close();
     return openEntry(entry);
   }
   const items = await jobItems(u);
   if (!items.length) return toast(`${u.label} wrote ${u.entries.length > 1 ? 'prompts' : 'a prompt'} but has no renders. Use ↗ Open to read ${u.entries.length > 1 ? 'them' : 'it'}.`);
-  $('#jobsDlg').close();
   openLightbox(items, 0, { fromGallery: true });
 });
 
@@ -12453,10 +12567,17 @@ holdFloor($('.stage'), $('.stage'));
 const barsObserver = new ResizeObserver(() => {
   const root = document.documentElement.style;
   root.setProperty('--topbar-h', `${$('.topbar').offsetHeight}px`);
-  root.setProperty('--banner-h', `${$('#banner').hidden ? 0 : $('#banner').offsetHeight + 14}px`); // + its margin
+  root.setProperty('--banner-h', `${$('#banner').hidden ? 0 : $('#banner').offsetHeight}px`);
+  const heading = $('.create-heading');
+  if (heading.offsetHeight) {
+    const mainStyle = getComputedStyle($('main'));
+    const headingStyle = getComputedStyle(heading);
+    root.setProperty('--create-chrome-h', `${heading.getBoundingClientRect().height + parseFloat(headingStyle.marginBottom) + parseFloat(mainStyle.paddingTop) + parseFloat(mainStyle.paddingBottom)}px`);
+  }
 });
 barsObserver.observe($('.topbar'));
 barsObserver.observe($('#banner'));
+barsObserver.observe($('.create-heading'));
 
 // ---------- boot ----------
 
@@ -12531,6 +12652,9 @@ async function loadModels() {
   loadJobs();
   if (saved.get('assistantOpen', false) && innerWidth >= 1100) await openAssistant(true, { focus: false });
   document.documentElement.dataset.ready = '1';
+  syncNarrow();
+  renderStudioStatus();
+  $('#studioVersion').textContent = state.settings?.version ? `Version ${state.settings.version}` : '';
 })();
 
 // Keeps a copy of the page, so it still opens (with a Start button) when Prompt Maker's server is off.

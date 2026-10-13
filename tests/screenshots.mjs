@@ -59,7 +59,7 @@ const steps = {
     await js(`[...document.querySelectorAll('.model-card')].find(e => e.textContent.includes('Krea 2 RAW') && !e.textContent.includes('Edit'))?.click(); 1`);
     await sleep(1200);
     await js(`document.querySelector('#theme').value=''; document.querySelector('#theme').dispatchEvent(new Event('input',{bubbles:true})); 1`);
-    await pictures(150);
+    await pictures(240);
     await js(`document.querySelector('#modelGuide').open = false; document.querySelector('#modelChoice').open = false; document.querySelector('.director-steps').scrollTop = 0; 1`);
     await sleep(1200); await shot('create');
   },
@@ -75,7 +75,7 @@ const steps = {
     await sleep(800); await shot('ask');
   },
   async models() { await open(`${DEMO}/#models`); await sleep(1500); await shot('models'); },
-  async voices() { await open(`${DEMO}/#voices`); await sleep(1500); await shot('voices', 440); },
+  async voices() { await open(`${DEMO}/#voices`); await sleep(1500); await shot('voices'); },
   async ['comfy-setup']() {
     await open(`${CLEAN}/#settings`);
     await js(`document.querySelector('[data-act="comfy-setup"]')?.click(); 1`);

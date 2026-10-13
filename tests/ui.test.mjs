@@ -141,16 +141,24 @@ const value = sel => js(`document.querySelector(${q(sel)})?.value ?? null`);
 async function click(sel) {
   // Follow the new disclosure/navigation controls before exercising the existing feature.
   // These remain real clicks; assertions about default visibility do not use this helper.
+  for (let disclosures = 0; disclosures < 12; disclosures++) {
   const reveal = await js(`(() => {
     const el = document.querySelector(${q(sel)});
     if (!el) return '';
+    if (el.closest('.studio-sidebar') && innerWidth <= 760 && !document.body.classList.contains('nav-open')) return '#navToggle';
+    const view = el.closest('.view');
+    if (view && !view.classList.contains('active')) return '.tabs [data-view="' + view.id.slice(5) + '"]';
+    const settingsGroup = el.closest('[data-settings-group]');
+    if (settingsGroup && !settingsGroup.classList.contains('settings-visible')) return '[data-settings-tab="' + settingsGroup.dataset.settingsGroup + '"]';
+    if (el.closest('#pipelinePane') && document.querySelector('#pipelinePane').hidden) return '#tabPipeline';
     if (el.closest('#modelsPane') && document.querySelector('#modelsPane').hidden) return '#customizeModels';
     if (el.closest('.director') && getComputedStyle(document.querySelector('.director')).display === 'none') return '#showCreate';
     if (el.closest('.stage') && getComputedStyle(document.querySelector('.stage')).display === 'none') return '#showResults';
     if (el.closest('#rendersPane') && document.querySelector('#rendersPane').hidden) return '#tabRenders';
     if (el.closest('#takesPane') && document.querySelector('#takesPane').hidden) return '#tabTakes';
-    const fold = el.closest('details:not([open])');
-    if (fold && !el.closest('summary')) return '#' + (fold.id || (fold.id = 'test-disclosure')) + ' > summary';
+    let fold = el.closest('details:not([open])');
+    if (fold && fold.querySelector(':scope > summary')?.contains(el)) fold = fold.parentElement.closest('details:not([open])');
+    if (fold) return '#' + (fold.id || (fold.id = 'test-disclosure')) + ' > summary';
     // A folded panel hides what's inside it, except its own header; folds nest (Settings holds Render and Writing).
     let panel = el.closest('[data-panel].collapsed');
     while (panel && panel.querySelector(':scope > .panel-toggle')?.contains(el)) panel = panel.parentElement?.closest('[data-panel].collapsed');
@@ -158,7 +166,9 @@ async function click(sel) {
     if (el.closest('#reelFilterOptions') && !el.closest('#reelFilterOptions').offsetParent) return '#reelFilterToggle';
     return '';
   })()`);
-  if (reveal && reveal !== sel) await click(reveal);
+  if (!reveal || reveal === sel) break;
+  await click(reveal);
+  }
   // Like a person: wait until the element holds still (async updates can move things for a moment).
   let box;
   for (let tries = 0; tries < 20; tries++) {
@@ -532,7 +542,7 @@ esac
     eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
     assert(!(await visible('#banner')), 'offline banner hidden');
     assert(await visible('#resultsEmpty'), 'empty state visible');
-    eq(await js('document.fonts.check("16px Bricolage")'), true, 'bundled display font loaded');
+    eq(await js('document.fonts.check("16px Studio")'), true, 'bundled display font loaded');
     await shot('01-create-empty');
   });
 
@@ -553,9 +563,9 @@ esac
     await choose('#resolution', '1024×1024');
     await viewport(1280, 800);
     assert(await js('document.querySelector("#theme").getBoundingClientRect().top < innerHeight - 150'), 'idea field is in the first laptop viewport');
-    await click('[data-task="edit"]');
+    await choose('#taskSelect', 'edit');
     assert((await text('#chosenModel')).includes('Edit'), 'the task chooses an editing model');
-    await click('[data-task="picture"]');
+    await choose('#taskSelect', 'picture');
     await click('#askBtn');
     assert(await visible('#showResults'), 'laptop with Ask has workspace switching');
     await click('#showResults');
@@ -593,6 +603,49 @@ esac
     assert(await visible('#theme'), 'Use this model returns to the idea');
     await goto(`${APP}/#create`);
     eq(await text('#chosenModel'), 'Krea 2 RAW', 'the selected model is remembered');
+  });
+
+  await test('studio navigation: every page, mobile menu, settings sections and pipeline keyboard', async () => {
+    assert(await js('(() => { const ids = [...document.querySelectorAll("[id]")].map(el => el.id); return new Set(ids).size === ids.length; })()'), 'every control has a unique identity');
+    const pages = ['create', 'gallery', 'history', 'models', 'brains', 'voices', 'chains', 'batches', 'jobs', 'settings'];
+    for (const width of [1440, 900, 390]) {
+      await viewport(width, 900, width === 390);
+      for (const page of pages) {
+        await click(`.tabs [data-view="${page}"]`);
+        eq(await js('document.querySelector(".view.active").id'), `view-${page}`, `${page} opens at ${width}`);
+        assert(await js('document.documentElement.scrollWidth <= innerWidth + 1'), `${page} fits at ${width}`);
+      }
+    }
+    assert(await js('document.querySelector("#studioSidebar").inert'), 'closed mobile navigation cannot receive focus');
+    await click('#navToggle');
+    assert(await js('!document.querySelector("#studioSidebar").inert && document.querySelector("#studioSidebar").contains(document.activeElement)'), 'opening navigation focuses the current page');
+    await press('Escape');
+    eq(await js('document.activeElement.id'), 'navToggle', 'Escape returns focus to navigation');
+    await viewport(1440, 900);
+    assert(await js('!document.querySelector("#studioSidebar").inert'), 'desktop navigation is reachable again');
+    await click('[data-settings-tab="prompting"]');
+    const max = await value('#sMax');
+    await type('#sMax', '4096');
+    await click('[data-settings-tab="privacy"]');
+    assert(!(await visible('#sMax')), 'unselected settings are out of the way');
+    assert(await js('[...document.querySelectorAll("[data-settings-group]:not(.settings-visible)")].every(el => !el.getClientRects().length)'), 'only the selected Settings section is visible');
+    await click('.tabs [data-view="brains"]');
+    await click('.tabs [data-view="settings"]');
+    await click('[data-settings-tab="prompting"]');
+    eq(await value('#sMax'), '4096', 'unsaved settings survive section and page changes');
+    await type('#sMax', max);
+    await click('#settingsForm button[type="submit"]');
+    await click('.tabs [data-view="create"]');
+    await click('#tabRenders');
+    await press('End');
+    eq(await js('document.activeElement.id'), 'tabPipeline', 'End reaches Pipeline');
+    assert(await visible('#pipelinePane'), 'Pipeline is visible');
+    await press('Home');
+    eq(await js('document.activeElement.id'), 'tabRenders', 'Home reaches renders');
+    await click('#tabTakes');
+    await goto(`${APP}/#models/brains`);
+    assert(await js('document.querySelector("#view-brains").classList.contains("active")'), 'old Brains links still work');
+    await goto(`${APP}/#create`);
   });
 
   await test('validation: nothing to work with', async () => {
@@ -928,6 +981,9 @@ esac
 
       // Fold a take, or a step, scrolled to the end: the header you clicked stays under the mouse.
       const take3Head = '.take:nth-child(3) > .take-head';
+      // A take can be taller than the studio stage. Bring its header into view before clicking it.
+      await js(`document.querySelector(${q(take3Head)}).scrollIntoView({ block: 'nearest' })`);
+      await sleep(100);
       const takeHead = await top(take3Head);
       await pressAt(`${take3Head} .collapse-btn`);
       assert(await js('document.querySelector(".take:nth-child(3)").classList.contains("collapsed")'), 'take 3 folded');
@@ -1281,7 +1337,7 @@ esac
     assert(await js('document.querySelector(\'#csChecks [data-check="gpu"] [data-fix]\').hidden'), 'no driver to install');
     assert((await text('#csChecks [data-check="python"] .svc-state')).includes('Python 3.12.9'), `Python, by version: ${await text('#csChecks [data-check="python"] .svc-state')}`);
     eq(await text('#csDirShown'), fresh, 'goes where Settings → ComfyUI points');
-    assert((await text('#csAbout')).includes('3 GB') && (await text('#csAbout')).includes('step ⑤'), 'says what it downloads, and that models come later');
+    assert((await text('#csAbout')).includes('3 GB') && (await text('#csAbout')).includes('Model files come later: Render settings'), 'says what it downloads, and that models come later');
     await shot('comfy-setup');
 
     // Go: each step in plain words, then ComfyUI starts on its own.
@@ -1357,6 +1413,7 @@ esac
     eq(await js('[...document.querySelectorAll("#llmSelect option")].filter(o => o.value.startsWith("cloud:")).length'), 0, 'ships with no cloud Brains');
     await click('.tabs button[data-view="settings"]');
     await waitFor('document.querySelectorAll("#cpPreset option").length > 5', 'provider list');
+    await click('[data-settings-tab="cloud"]');
     await choose('#cpPreset', 'custom');
     assert(await visible('#cpUrl'), 'custom asks for the address');
     await type('#cpUrl', `http://127.0.0.1:${MOCK_PORT}/v1`);
@@ -2168,7 +2225,7 @@ esac
     await choose('#aspect', aspect0); await choose('#resolution', res0);
     await click('.take .rb-tune');
     await waitFor('!!document.querySelector(".take .rb-panel .rb-params")', 'the take\'s settings open');
-    assert((await text('.take .rb-panel')).includes('same as step'), 'nothing of its own yet');
+    assert((await text('.take .rb-panel')).includes('same as your Create settings'), 'nothing of its own yet');
     eq(await js('[...document.querySelectorAll(".take .rb-panel .rb-size option")].find(o => o.value === "1000×700")?.textContent'), 'Your size: 1000×700', 'your sizes are offered for a take too');
     await choose('.take .rb-panel .rb-size', '1000×700');
     await waitFor('document.querySelector(".take .rb-panel .rb-aspect")?.value === "10:7" && document.querySelector(".take .rb-panel .rb-size").value === "1000×700"', 'with their shape');
@@ -2196,7 +2253,7 @@ esac
     assert(Math.abs(sent['5'].inputs.width - w) <= 16 && Math.abs(sent['5'].inputs.height - h) <= 16, `the take's size (${sent['5'].inputs.width}×${sent['5'].inputs.height} for ${picked})`);
     eq((await fetch(`${APP}/api/workflows`).then(r => r.json())).find(f => f.name === 'Mock T2I')?.settings.steps, 20, 'step ⑤\'s workflow keeps its own steps');
     await click('.take .rb-panel .rb-same');
-    await toastText('step');
+    await toastText('Create size and render settings');
     assert(!(await text('.take .rb-settings')).includes('own sampler'), 'back to step ⑤\'s');
     // Step ④'s size, changed after the prompt was written, is what the take renders at (its ⚙ shows it).
     const stepWas = await value('#resolution');
@@ -2389,7 +2446,7 @@ esac
 
   await test('gallery: every render, in Your renders\' grid, opens back into Create', async () => {
     await click('.tabs button[data-view="gallery"]');
-    await waitFor('document.querySelector("#galleryHome #reel") && document.querySelectorAll("#reelGrid .reel-cell").length >= 3', 'Your renders moved into the Gallery');
+    await waitFor('document.querySelector("#galleryHome #reel") && document.querySelectorAll("#reelGrid .reel-cell").length >= 3', 'Your renders moved into the Library');
     eq(await text('#galleryCount'), String(await count('#reelGrid .reel-cell')), 'count');
     assert(!(await visible('#reelToggle')) && !(await visible('#reelGrip')), 'always open, as tall as the window');
     await shot('25-gallery', { full: true });
@@ -2402,7 +2459,7 @@ esac
     await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
   });
 
-  await test('render: rate from the lightbox and Your renders, find it in the Gallery', async () => {
+  await test('render: rate from the lightbox and Your renders, find it in the Library', async () => {
     const rated = async () => (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.rating);
     await click('.take .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
@@ -2450,7 +2507,7 @@ esac
     await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
     await press('ArrowRight');
     await press('Escape');
-    eq(await count('#reelGrid .reel-cell.seen'), 1, 'the Gallery marks the render you looked at last');
+    eq(await count('#reelGrid .reel-cell.seen'), 1, 'the Library marks the render you looked at last');
     assert(await js('document.querySelector("#reelGrid .reel-cell:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
     assert(await js('document.activeElement === document.querySelector("#reelGrid .reel-cell.seen .rtile")'), 'and focus is back on it');
     await click('.tabs button[data-view="create"]');
@@ -2458,7 +2515,7 @@ esac
   });
 
   await test('your renders: every render, from before start-up too, in one grid; filters, drag to arrange, height, picture size, full screen', async () => {
-    // (The page fetches History again when the Gallery opens; a filter click redraws the box right away.)
+    // (The page fetches History again when the Library opens; a filter click redraws the box right away.)
     const refetch = async () => {
       await click('.tabs button[data-view="gallery"]');
       await click('.tabs button[data-view="create"]');
@@ -2488,6 +2545,8 @@ esac
     await waitFor(`!!${boat} && document.querySelector("#reelFind").value === ""`, 'Show everything clears the filters');
 
     // Drag a card past two others: it lands there, opens nothing, and the order is saved. Shift+← moves it back one.
+    // Use small thumbnails so all three drag targets are visible together in the narrower studio stage.
+    await js('(() => { const s = document.querySelector("#reelSize"); s.value = 160; s.dispatchEvent(new Event("input")); })()');
     const keys = () => js('[...document.querySelectorAll("#reelGrid > .reel-cell")].map(c => c.dataset.key)');
     const [k0, k1, k2] = await keys();
     await js('document.querySelector("#reelBody").scrollTop = 0; document.querySelector("#reel").scrollIntoView({ block: "start" })');
@@ -2522,7 +2581,16 @@ esac
     // Pick several: Ctrl-click, then a box dragged with Ctrl from a card; the bar deletes them, with ↶ Undo.
     const cell = n => `#reelGrid > .reel-cell:nth-child(${n + 1})`;
     const ctrlClick = async n => {
-      const p = await at(n);
+      // Undo can restore the grid at a different scroll position. Bring the first
+      // cards back into view and keep the click clear of their rating controls.
+      const p = await js(`(() => {
+        document.querySelector('#reelBody').scrollTop = 0;
+        const tile = document.querySelectorAll('#reelGrid > .reel-cell .rtile')[${n}];
+        const r = tile.getBoundingClientRect();
+        const x = r.left + r.width * .15, y = r.top + r.height * .2;
+        return { x, y, hit: tile.contains(document.elementFromPoint(x, y)) };
+      })()`);
+      assert(p.hit, 'the card is visible and clear of its rating controls');
       for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers: 2 });
       await sleep(60);
     };
@@ -2571,6 +2639,7 @@ esac
     // ⛶ Full screen fills the window; 🔍 makes pictures as big as the box. The lightbox opens over it; Esc goes back.
     await click('#reelFull');
     assert(await js('(() => { const r = document.querySelector("#reel").getBoundingClientRect(); return r.top === 0 && r.left === 0 && r.bottom === innerHeight; })()'), 'full screen fills the window');
+    assert(await js('document.querySelector("#reel").contains(document.elementFromPoint(100, 100))'), 'full screen artwork covers the studio sidebar');
     await js('(() => { const s = document.querySelector("#reelSize"); s.value = s.max; s.dispatchEvent(new Event("input")); })()');
     const tall = await js('document.querySelector("#reel .reel-cell").getBoundingClientRect().height');
     assert(tall > 600, `at its biggest, a picture fills the height: ${tall}px`);
@@ -2859,7 +2928,7 @@ esac
     await click('#varSeg button[data-value="1"]');
   });
 
-  await test('creator review: output totals, saved preference, Gallery selection and narrow filters', async () => {
+  await test('creator review: output totals, saved preference, Library selection and narrow filters', async () => {
     await click('.tabs [data-view="create"]');
     await click('.model-card[data-id="krea2-raw"]');
     await click('#varSeg [data-value="4"]');
@@ -3101,9 +3170,9 @@ esac
     assert(await js('[...document.querySelectorAll("#llmSelect optgroup:first-of-type option")].some(o => o.value === "mock/vision-8b" && /rendered/.test(o.textContent))'), 'the Brain you rendered with is suggested, saying why');
 
     await click('.tabs button[data-view="models"]');
-    await click('.models-switch button[data-pane="brains"]');
+    await click('.tabs button[data-view="brains"]');
     await waitFor('document.querySelector(\'.brain[data-id="mock/vision-8b"]\')?.textContent.includes("refused 1×")', 'Brain cards, with the refusal counted');
-    eq(await js('location.hash'), '#models/brains', 'own address');
+    eq(await js('location.hash'), '#brains', 'own address');
     assert(await visible('#modelsPane') === false, 'model editor hidden');
     eq(await js('document.querySelector("#brainList .brain").dataset.id'), 'mock/vision-8b', 'the Brain in use comes first');
     const card = await text('.brain[data-id="mock/vision-8b"]');
@@ -3144,7 +3213,7 @@ esac
     await toastText('Mock Vision 8B passed the Quick check');
     assert((await text('.brain[data-id="mock/vision-8b"]')).includes('✓ sees images'), 'vision test passed');
     await shot('brains');
-    await click('.models-switch button[data-pane="models"]');
+    await click('.tabs button[data-view="models"]');
     eq(await js('location.hash'), '#models', 'back to the model editor');
   });
 
@@ -3205,7 +3274,7 @@ esac
 
     // Models → Brains: search and sort
     await click('.tabs button[data-view="models"]');
-    await click('.models-switch button[data-pane="brains"]');
+    await click('.tabs button[data-view="brains"]');
     await type('#brainSearch', 'fresh');
     eq(await js('[...document.querySelectorAll("#brainList .brain")].map(b => b.dataset.id).join()'), 'mock/fresh', 'search narrows the cards');
     await type('#brainSearch', 'zzz');
@@ -3216,7 +3285,7 @@ esac
     eq(cards.join('|'), [...cards].sort((a, b) => a.localeCompare(b)).join('|'), 'cards A to Z, none folded');
     assert(await js('document.querySelector("#brainsNew").hidden'), 'no fold when sorted by name');
     await click('.brain-sort button[data-sort="fit"]');
-    await click('.models-switch button[data-pane="models"]');
+    await click('.tabs button[data-view="models"]');
   });
 
   await test('workflows: upload an API file, pick between two, export, delete', async () => {
@@ -3358,7 +3427,7 @@ esac
   await test('create: your own prompt, word for word, with no Brain', async () => {
     await click('.model-card[data-id="krea2-raw"]');
     assert(!(await js('document.querySelector("#manualMode").checked')), 'off by default');
-    eq(await text('[data-panel="create-theme"] h2'), 'Describe the shot', 'the Brain writes from your idea');
+    eq(await text('[data-panel="create-theme"] h2'), 'Your idea', 'the Brain writes from your idea');
     await setFiles('#imageInput', [fixture]);
     await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
     assert(await visible('#roleBlock'), 'the Brain asks how to use the image');
@@ -3577,7 +3646,7 @@ esac
     await click('#wfClose');
   });
 
-  await test('chains: build one on Create, pick the stills, continue to video', async () => {
+  await test('chains: build one in Chains, pick the stills, continue to video', async () => {
     await click('.tabs button[data-view="create"]');
     await click('.model-card[data-id="krea2-raw"]');
     await click('#varSeg button[data-value="2"]');
@@ -3590,6 +3659,7 @@ esac
     assert(await js('document.querySelector(\'.chain-gate button[data-gate="pick"]\').classList.contains("active")'), 'you pick by default');
     eq(await text('#genLabel'), 'Run all steps', 'the button describes the chain');
     eq(await text('#genCost'), '⛓ 2 stills → you pick → videos', 'it says what it will make');
+    await click('.tabs [data-view="create"]');
     assert((await visible('#wfpRenders')) && !(await visible('#wfpAutoRow')), 'step 5 asks for renders per take instead');
     await type('.chain-card [data-f="direction"]', 'a calm sea');
     eq(await js('[document.querySelector(\'.chain-card [data-f="duration"]\').type, document.querySelector(\'.chain-card [data-f="duration"]\').min, document.querySelector(\'.chain-card [data-f="duration"]\').max].join()'), 'range,1,20', 'duration is a 1–20 s slider');
@@ -3712,6 +3782,7 @@ esac
     eq(await count('#runStrip .rs-chip'), 2, 'the still and the video');
     eq(await value('#theme'), 'a lighthouse in a storm', 'the form gets step 1 back');
     assert(await js('[...document.querySelectorAll(".chain-card [data-f=direction]")].some(t => t.value.includes("waves"))'), 'and the chain as it ran');
+    await click('#tabPipeline');
     assert(await visible('#runStrip [data-act="continue"]'), 'a finished run can still send another still on');
     await click('#resultsList .take:nth-of-type(2) .rt-pick');
     await click('#runStrip [data-act="continue"]');
@@ -3958,6 +4029,13 @@ esac
     await click('#toast .toast-act');
     await waitFor('document.querySelectorAll("#lineList li").length === 3', 'put back');
     assert((await text('#lineList li:nth-child(2)')).includes('FAILTEST'), 'in its old place');
+
+    await click('#queueClear');
+    await click('#queueClear');
+    assert(await js('document.querySelector("#lineBox").hidden'), 'Clear hides the emptied queue');
+    assert(!(await text('#genCost')).includes('waiting'), 'no queued work remains');
+    await click('#toast .toast-act');
+    await waitFor('document.querySelectorAll("#lineList li").length === 3', 'undo restores the whole queue');
 
     // Setting up the next one doesn't touch those waiting.
     await setGrain('0.1');
@@ -4487,7 +4565,7 @@ esac
     await click('.model-card[data-id="ltx-2-3-t2v"]');
     await waitFor('document.querySelector("#dropzone").classList.contains("is-off")', 'the dropzone is greyed out');
     eq(await text('#imageStepTitle'), 'No image', 'step 3 says so');
-    assert(await js('document.querySelector("#dzGallery").disabled'), 'no Gallery picking either');
+    assert(await js('document.querySelector("#dzGallery").disabled'), 'no Library picking either');
     eq(await js('document.querySelector(".task-choice[aria-pressed=true]")?.dataset.task'), 'video', 'it is a Make a video model');
     await click('.model-card[data-id="minimax-h3-t2v"]');
     await waitFor('document.querySelector("#dropzone").classList.contains("is-off") && document.querySelector("#imageStepOpt").textContent.includes("words")', 'the MiniMax one too');
@@ -4562,7 +4640,7 @@ esac
     await click('#varSeg button[data-value="1"]');
   });
 
-  await test('step 3: pick any image from the Gallery', async () => {
+  await test('step 3: pick any image from the Library', async () => {
     await click('.tabs button[data-view="create"]');
     if (await visible('.dz-preview')) await click('#imageClear');
     await click('#dzGallery');
@@ -4592,7 +4670,7 @@ esac
     await toastText('Image added');
     assert(!(await js('document.querySelector("#imgPick").open')), 'the picker closed');
     assert((await text('#dzSource')).startsWith('🔗 From '), 'it says where it came from');
-    assert(await visible('#imageGallery'), 'and another can be picked from the Gallery');
+    assert(await visible('#imageGallery'), 'and another can be picked from the Library');
     await click('#imageZoom');
     await waitFor('document.querySelector("#imgView").open && document.querySelector("#ivUse").hidden', 'step 3\'s image opens full screen');
     await press('Escape');
@@ -5009,7 +5087,7 @@ esac
     await fs.rename(away, path.join(dataDir, 'renders', file));
     await fs.writeFile(histFile, JSON.stringify(raw.slice(1)));
     await click('.tabs button[data-view="gallery"]');
-    await waitFor(`!!document.querySelector('#reelGrid [src*="${file}"]')`, 'back in the Gallery with its file');
+    await waitFor(`!!document.querySelector('#reelGrid [src*="${file}"]')`, 'back in the Library with its file');
     // Gone while it's on screen: the tile leaves too.
     await fs.rename(path.join(dataDir, 'renders', file), away);
     await js(`(() => { const el = document.querySelector('#reelGrid [src*="${file}"]'); el.src = el.src + '?again'; })()`);
@@ -5130,7 +5208,7 @@ esac
     eq((await js('fetch("/api/history").then(r => r.json())')).length, before + 6, 'six prompts written: two for each good picture');
 
     await click('#jobsBtn');
-    await waitFor('document.querySelector("#jobsDlg").open && document.querySelectorAll(".job .ju").length === 8', 'the Jobs window with the log');
+    await waitFor('document.querySelector("#view-jobs").classList.contains("active") && document.querySelectorAll(".job .ju").length === 8', 'the Jobs window with the log');
     eq(await count('.job .ju.s-done'), 6, 'six done');
     eq(await count('.job .ju.s-skipped'), 2, 'the broken picture is skipped, both runs');
     assert((await text('.job .ju.s-skipped')).includes('broken.png'), 'and the log says why');
@@ -5143,7 +5221,7 @@ esac
     await click('.job [data-job="only"]');
     eq(await count('.job .ju'), 2, 'Only the skipped ones');
     await waitFor('document.querySelector(".job .ju.s-skipped .ju-thumb")?.classList.contains("broken")', 'a picture that won\'t open shows ⚠ instead', 3000);
-    await click('#jobsClose');
+    await click('.tabs [data-view="create"]');
     assert(await js('document.querySelector("#jobsBtn").hidden'), 'once seen, the pill goes away');
     assert(!(await js('document.querySelector("#asJobs").hidden')), 'the log stays a click away in the assistant panel');
     const saved = JSON.parse(await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8')).jobs[0];
@@ -5162,7 +5240,7 @@ esac
     await click('.job[data-id="reloaded-job"] [data-job="remove"]');
     await click('.job[data-id="reloaded-job"] [data-job="remove"]');
     await waitFor('!document.querySelector(".job[data-id=\'reloaded-job\']")', 'removed');
-    await click('#jobsClose');
+    await click('.tabs [data-view="create"]');
   });
 
   await test('workflows: the ones that come with the app are offered first, set themselves up, and carry nobody\'s prompts', async () => {
@@ -5232,7 +5310,9 @@ esac
     await click('.tabs button[data-view="settings"]');
     await waitFor('/You have Prompt Maker \\d/.test(document.querySelector("#updNow").textContent)', 'the version and how it was installed');
     assert((await text('#updNow')).includes('git'), 'a repo copy says so');
+    await click('[data-settings-tab="services"]');
     assert(await visible('[data-act="app-restart"]'), '↻ Restart on the Prompt Maker row');
+    await click('[data-settings-tab="updates"]');
     assert(!(await visible('#updGo')), 'nothing to update before a check');
     await click('#updCheck');
     await waitFor('!document.querySelector("#updNote").hidden && document.querySelector("#updNote").textContent.length > 5', 'the check answers', 15000);
@@ -5512,14 +5592,14 @@ esac
     for (const [w, h, mobile] of sizes) {
       await viewport(w, h, mobile);
       for (const view of ['create', 'history', 'gallery', 'models', 'brains', 'settings']) {
-        if (view === 'brains') await js(`document.querySelector('.models-switch button[data-pane="brains"]').click()`);
+        if (view === 'brains') await js(`document.querySelector('.tabs button[data-view="brains"]').click()`);
         else await js(`document.querySelector('.tabs button[data-view="${view}"]').click()`);
         await sleep(250);
         const overflow = await js('document.documentElement.scrollWidth - innerWidth');
         const culprit = overflow > 1 ? await js(`[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1 && e.offsetParent).slice(-4).map(e => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\\s+/).join('.') : '') + ' r=' + Math.round(e.getBoundingClientRect().right)).join(' | ')`) : '';
         assert(overflow <= 1, `${view} at ${w}px scrolls sideways by ${overflow}px: ${culprit}`);
         await shot(`r-${w}-${view}`, { full: view === 'create' || view === 'models' });
-        if (view === 'brains') await js(`document.querySelector('.models-switch button[data-pane="models"]').click()`);
+        if (view === 'brains') await js(`document.querySelector('.tabs button[data-view="models"]').click()`);
       }
     }
     await viewport(1440, 900);
@@ -5663,7 +5743,7 @@ esac
     assert(!Object.keys(bypassed).some(id => id.startsWith('2:')), 'and none of its inner nodes are sent');
   });
 
-  await test('the assistant panel never lies over the page; the top bar\'s menus open over the panel; the Gallery fits the window', async () => {
+  await test('the assistant panel never lies over the page; the top bar\'s menus open over the panel; the Library fits the window', async () => {
     const open = async want => { if ((await js('!document.querySelector("#assistant").hidden')) !== want) await click('#askBtn'); await sleep(350); };
     const edges = () => js('(() => { const s = document.querySelector(".stage").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return { stageRight: Math.round(s.right), stageWidth: Math.round(s.width), panelLeft: Math.round(a.left) }; })()');
     await click('.tabs button[data-view="create"]');
@@ -5671,7 +5751,8 @@ esac
     await open(true);
     let e = await edges();
     assert(e.stageRight <= e.panelLeft, `nothing of the results is under the panel: ${JSON.stringify(e)}`);
-    assert(e.stageWidth > 600 && !(await js('document.body.classList.contains("narrow")')), `and they keep the room that is there: ${JSON.stringify(e)}`);
+    const available = await js('(() => { const box = document.querySelector(".create"); return box.clientWidth - document.querySelector(".director").getBoundingClientRect().width - parseFloat(getComputedStyle(box).columnGap); })()');
+    assert(e.stageWidth >= 350 && Math.abs(e.stageWidth - available) <= 1 && !(await js('document.body.classList.contains("narrow")')), `results fill the space beside the studio form and sidebar: ${JSON.stringify(e)}`);
     await click('#llmPick');
     assert(await js('(() => { const b = document.querySelector("#llmMenu").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return b.right > a.left && !!document.elementFromPoint(b.right - 20, b.top + 60)?.closest("#llmMenu"); })()'), 'the Brain menu opens over the panel');
     await press('Escape');
@@ -5687,7 +5768,7 @@ esac
     await viewport(1440, 900);
     await click('.tabs button[data-view="gallery"]');
     await sleep(400);
-    eq(await js('document.documentElement.scrollHeight - innerHeight'), 0, 'the Gallery fills the window exactly: only its grid scrolls');
+    eq(await js('document.documentElement.scrollHeight - innerHeight'), 0, 'the Library fills the window exactly: only its grid scrolls');
     await click('.tabs button[data-view="create"]');
   });
 
@@ -5738,7 +5819,7 @@ esac
 
   await test('viewer: the stars come first; ⇆ Compare puts two renders side by side, each with its stars', async () => {
     await click('.tabs button[data-view="gallery"]');
-    await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length >= 2', 'at least two renders in the Gallery');
+    await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length >= 2', 'at least two renders in the Library');
     eq(await js('[...document.querySelectorAll("#reelGrid .reel-cell .rate-bar")][0].querySelector("button").dataset.rate'), '1', 'on a card, the stars are in their natural order for the keyboard');
     assert(await js('document.querySelector("#reelGrid .rate-bar button").getBoundingClientRect().width >= 28'), 'and big enough to hit');
     await click('#reelGrid .reel-cell .rtile');
