@@ -151,7 +151,7 @@ for (const dir of fs.readdirSync(path.join(REPO, 'workflows'), { withFileTypes: 
 }
 
 // Like ComfyUI, every PNG it saves holds the job: a tEXt "prompt" chunk (Prompt Maker's copy must not keep it).
-export const MOCK_JOB = '{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "MOCK JOB WORDS"}}}';
+export const MOCK_JOB = '{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "MOCK JOB WORDS"}}, "4": {"class_type": "UNETLoader", "inputs": {"unet_name": "krea2_raw_fp8_scaled.safetensors", "weight_dtype": "default"}, "_meta": {"title": "Load Diffusion Model"}}}';
 function withJob(png) {
   if (png.toString('latin1', 1, 4) !== 'PNG') return png;
   const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });

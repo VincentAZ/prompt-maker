@@ -114,7 +114,7 @@ These are short previews without sound; click one to watch the video (the first 
 
 **3. ComfyUI** (free, it makes the pictures and videos). On Linux, open **Settings → Services → ⬇ Set up ComfyUI** and Prompt Maker checks your graphics card, downloads and installs it, and starts it. On other systems install [ComfyUI](https://github.com/comfyanonymous/ComfyUI) yourself; Prompt Maker hooks into it. Without ComfyUI you still get the prompts to use anywhere.
 
-Everything runs on your own computer and talks only to your own LM Studio and ComfyUI; nothing is loaded from the internet. A render you share says which model made it and nothing else: ComfyUI's copy of your prompt is taken out of the file. What stays on the computer, and for how long, is yours to set in Settings → Privacy check ([details](docs/guide.md#privacy--offline)).
+Everything runs on your own computer and talks only to your own LM Studio and ComfyUI; nothing is loaded from the internet. A render you share says which model made it, the way Civitai reads it, and nothing else: ComfyUI's copy of your prompt is taken out of the file. What stays on the computer, and for how long, is yours to set in Settings → Privacy check ([details](docs/guide.md#privacy--offline)).
 
 You need a computer with a good graphics card. Linux is where it's tested every day. On Windows the launcher is written but has **not yet been tried on a real Windows PC**; if something doesn't work there, please tell us.
 

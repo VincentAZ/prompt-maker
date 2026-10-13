@@ -23,6 +23,8 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.55.1 — The model a render says is written the way Civitai reads it (its AIR in `workflow`, the loader node in
+  `prompt`), for every built-in model but Wan Animate 2.
 - 1.55.0 — A render file says which model made it and nothing else: ComfyUI wrote its whole job (the prompt word for
   word, file names, seed) into every PNG and video, and Prompt Maker's copy kept it. Older renders are cleaned once at
   start-up. Saved prompts cards show their whole picture, smaller, and a title starts where look-alike prompts differ.
