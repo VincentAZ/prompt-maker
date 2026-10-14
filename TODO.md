@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.58.0 — The viewer's Open original prompt opens just the take the render came from, on its version, the render
+  ringed; Show all takes above it brings the others back. Open all takes (a tick under the button, off by default,
+  remembered in the browser) opens every take, scrolled to that one.
 - 1.57.2 — A render landing never switches Create to Your renders by itself (the tab gets a dot); a render that
   lands takes the place of its own running tile, on the take and in Your renders (×4: four tiles from the start),
   so nothing slides over mid-run. Pick from your Library shows each picture's stars.

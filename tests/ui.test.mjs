@@ -2477,6 +2477,54 @@ esac
     await toastText('ComfyUI is connected');
   });
 
+  await test('viewer: Open original prompt opens just that take, its render ringed; Open all takes opens every take', async () => {
+    // A prompt with two takes, one render each, from before this session.
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8'));
+    const when = '2026-01-03T10:00:00.000Z';
+    const take = n => ({ versions: [{ text: `two takes, take ${n}`, createdAt: when }], renders: [{ id: `two-takes-r${n}`, versionIndex: 0, text: `two takes, take ${n}`, workflowName: 'Mock', files: [{ file: `two-takes_${n}.png`, kind: 'image', name: `take${n}.png` }], createdAt: when }] });
+    await fs.writeFile(path.join(dataDir, 'renders', 'two-takes_1.png'), makePng(48, 48));
+    await fs.writeFile(path.join(dataDir, 'renders', 'two-takes_2.png'), makePng(48, 48));
+    all.push({ id: 'two-takes', createdAt: when, favorite: false, modelId: 'krea2-raw', modelName: 'Krea 2 RAW', modelKind: 'image', theme: 'a kite over the dunes', aspectRatio: '1:1', variations: [take(1), take(2)] });
+    await fs.writeFile(file, JSON.stringify(all));
+    const second = '#reelGrid .reel-cell[data-file="two-takes_2.png"] .rtile';
+    await click('.tabs button[data-view="gallery"]'); // (the page fetches History again when the Library opens)
+    await waitFor(`!!document.querySelector('${second}')`, 'the second take\'s render is in the Library');
+    await click(second);
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer');
+    eq(await js('document.querySelector(\'[data-lb="openall"]\').checked'), false, 'Open all takes starts unticked');
+    await click('[data-lb="open"]');
+    await waitFor('document.querySelector("#view-create").classList.contains("active") && document.querySelectorAll(".take").length === 2', 'back on Create with the prompt');
+    eq(await count('.take:not([hidden])'), 1, 'just the take it came from');
+    assert(await visible('.take[aria-label="Take 2"] .rtile.seen'), 'that render is ringed on its take');
+    eq(await text('.take-only span'), 'Showing take 2 of 2', 'says which take');
+    await click('.take-only button');
+    await waitFor('document.querySelectorAll(".take:not([hidden])").length === 2 && !document.querySelector(".take-only")', 'Show all takes brings the other back');
+    // Ticked, it opens every take, with that one ringed.
+    await click('.tabs button[data-view="gallery"]');
+    await click(second);
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer again');
+    await click('[data-lb="openall"]');
+    await click('[data-lb="open"]');
+    await waitFor('document.querySelector("#view-create").classList.contains("active") && document.querySelectorAll(".take:not([hidden])").length === 2', 'every take on the stage');
+    assert(!(await visible('.take-only')) && await visible('.take[aria-label="Take 2"] .rtile.seen'), 'no "showing take" line; the render still ringed');
+    // (Unticked again, so the next tests find it as shipped.)
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer from the stage');
+    eq(await js('document.querySelector(\'[data-lb="openall"]\').checked'), true, 'the tick is remembered');
+    await click('[data-lb="openall"]');
+    await press('Escape');
+    // As it was: the two-take prompt gone again (off the stage first: the grid shows the stage's entry too).
+    await click('#newBtn');
+    await waitFor('!document.querySelector(".take")', 'the stage is clear');
+    await fs.writeFile(file, JSON.stringify(all.filter(e => e.id !== 'two-takes')));
+    await fs.rm(path.join(dataDir, 'renders', 'two-takes_1.png'));
+    await fs.rm(path.join(dataDir, 'renders', 'two-takes_2.png'));
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor(`!document.querySelector('${second}')`, 'its renders leave the Library with it');
+    await click('.tabs button[data-view="create"]');
+  });
+
   await test('gallery: every render, in Your renders\' grid, opens back into Create', async () => {
     await click('.tabs button[data-view="gallery"]');
     await waitFor('document.querySelector("#galleryHome #reel") && document.querySelectorAll("#reelGrid .reel-cell").length >= 3', 'Your renders moved into the Library');

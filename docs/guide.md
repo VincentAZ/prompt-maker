@@ -638,7 +638,7 @@ While a chain runs, the **Pipeline** tab on Create shows every step. Click any t
 - **A dragged card is never left hanging.** Let go outside the window, or switch to another program mid-drag, and the card drops where it was.
 - **In the Library, a hidden one is marked** (dimmed, with **👁 Show** on it), so you can tell it from the others and bring it back there too.
 - **Hide from Create** at a picture's top right tidies this grid (**↶ Undo** brings it back). Nothing is deleted; it stays in Saved prompts, Library and its take. **Hidden (n)** in the filters shows the ones you hid; **Show in Create** puts one back.
-- Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **↗ Open in Create** puts its take back on the stage. To close it, click ✕, press **Esc**, or click anywhere in the dark around the picture.
+- Hover a card for its prompt, model, take, seed and when it was made. Click it to see it full screen: **← →** browse what the filters show, and **Open original prompt** puts its take back on the stage (see below). To close it, click ✕, press **Esc**, or click anywhere in the dark around the picture.
 
 **Rate your renders** so the best ones are easy to find again: **★ Pretty good**, **★★ Very good** or **★★★ Excellent**.
 
@@ -649,7 +649,8 @@ While a chain runs, the **Pipeline** tab on Create shows every step. Click any t
 Every render also appears in the **Library** tab. It *is* 🎞 Your renders, given the whole page: the same cards, stars, filters, 🔍 size, ⛶ full screen and drag to arrange, with one order shared by both (move a card in the Library and it's moved on Create too). The Library always shows everything, the renders you 🙈 hid included. The newest render becomes the thumbnail of its Saved prompts card.
 
 - After you close the lightbox, the Library rings the render you looked at last (a glowing ring around its tile), so you don't lose your place.
-- **Select → choose two → Compare 2** opens those exact pictures or videos side by side. **Select → choose any → ⬇ Download** saves them all at once (several as one .zip). **Pin on the left** changes the comparison reference; stars rate the work. **Open original prompt** returns to its saved prompt on Create.
+- **Select → choose two → Compare 2** opens those exact pictures or videos side by side. **Select → choose any → ⬇ Download** saves them all at once (several as one .zip). **Pin on the left** changes the comparison reference; stars rate the work.
+- **Open original prompt** returns to its saved prompt on Create with just the take this render came from, on the version it was rendered from, and the render ringed on its take (the same glowing ring as in the Library). A line above the take says *Showing take 2 of 4*; **Show all takes** brings the others back. Tick **Open all takes** under the button and it opens every take instead, scrolled to this one, the render still ringed. The tick is remembered in this browser.
 - Search stays visible on narrow screens. **Filters** opens the remaining choices and counts active filters; **Clear filters** resets them and the search together.
 - Video tiles show a still of their first frame and play while you hover them. Closing the viewer leaves the tile you opened it from still, even with the pointer on it, until you move to another one: a video you closed or paused doesn't seem to play on.
 - **🎨 Rendering** in the top bar shows while anything renders, with how many are left. Click it for every render still going, from any take (also ones you moved off the stage, started in another tab, or before a reload): its live preview and progress, **Open** to bring its take back with live tiles, **✕ Cancel**, and **Cancel all**.

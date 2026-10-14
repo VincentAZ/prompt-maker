@@ -4438,6 +4438,7 @@ function renderResults(entry, { totalSecs } = {}) {
   list.innerHTML = '';
   $('.stage').scrollTop = 0; // other takes: from the top (on wide screens the takes scroll on their own)
   state.cards = [];
+  state.takeSeen = null;
   $('#resultsEmpty').hidden = Boolean(entry);
   if (state.booted) showStageTab('takes');
   renderStageHead(entry, { totalSecs });
@@ -5631,7 +5632,9 @@ async function loadForm(entry) {
   showError('');
 }
 
-async function openEntry(entry) {
+// From the viewer, `take` and `seen` (the render's gallery key) say which render you came from: its take is put on
+// the version it was rendered from and the render ringed; with `only` the other takes are kept out of sight.
+async function openEntry(entry, { take = null, seen = null, only = false } = {}) {
   // (A batch renders the takes on the stage: opening another entry would hand it the wrong ones.)
   if (state.busy || state.chainActive || state.batchRun) return toast('Hold on, something is still cooking. Stop it or wait.', true);
   if (entry.chain) return openRun(entry);
@@ -5645,13 +5648,37 @@ async function openEntry(entry) {
   state.timings = {};
   showView('create');
   renderResults(entry);
+  const card = take != null ? state.cards.find(c => c.index === take) : null;
+  if (card) {
+    const render = takeRenders(card).find(r => seen?.startsWith(`${r.id}/`));
+    if (render?.versionIndex != null) showVersion(card, render.versionIndex);
+    state.takeSeen = render ? seen : null;
+    markTakeSeen();
+    if (only && state.cards.length > 1) showOnlyTake(card);
+  }
   setCreateWorkspace('results');
   await restoreSetup(entry);
   requestAnimationFrame(() => {
     const stage = $('.stage');
-    if (stage.getBoundingClientRect().left < 40) stage.scrollIntoView({ block: 'start' }); // single-column layout
+    if (card && !card.el.hidden && state.cards.length > 1) card.el.scrollIntoView({ block: 'start' }); // its take in view, the others around it
+    else if (stage.getBoundingClientRect().left < 40) stage.scrollIntoView({ block: 'start' }); // single-column layout
     else window.scrollTo({ top: 0 });
   });
+}
+
+// Just the take a render came from on the stage; a line above it says so and brings the others back.
+function showOnlyTake(card) {
+  state.cards.forEach(c => { c.el.hidden = c !== card; });
+  const bar = document.createElement('div');
+  bar.className = 'take-only';
+  bar.innerHTML = `<span>Showing take ${card.index + 1} of ${state.cards.length}</span><button type="button" class="btn small">Show all takes</button>`;
+  $('button', bar).addEventListener('click', () => { state.cards.forEach(c => { c.el.hidden = false; }); bar.remove(); });
+  $('#resultsList').prepend(bar);
+}
+
+// The take's tile of the render you came from (Open original prompt in the viewer) gets the Library's ring.
+function markTakeSeen() {
+  $$('.take .rtile').forEach(t => t.classList.toggle('seen', Boolean(state.takeSeen) && t.dataset.key === state.takeSeen));
 }
 
 // ---------- models editor ----------
@@ -8445,6 +8472,7 @@ function renderTiles(card) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = `rtile${it.file.kind === 'audio' ? ' audio' : ''}`;
+    b.dataset.key = galleryKey(it);
     b.style.setProperty('--ar', ar);
     b.setAttribute('aria-label', `Open render ${n + 1}${it.render.seed != null ? `, seed ${it.render.seed}` : ''}`);
     b.innerHTML = `${mediaTag(it.file, { hover: true })}${it.file.kind === 'video' ? '<span class="rt-kind">▶ video</span>' : ''}<span class="rt-meta">${it.render.seed != null ? `seed ${it.render.seed}` : ''}${it.render.secs ? ` · ${it.render.secs}s` : ''}</span>`;
@@ -8488,6 +8516,7 @@ function renderTiles(card) {
   const rest = tiles.filter((t, n) => !slots.includes(slotOf.get(items[n].render.id)));
   box.replaceChildren(...inRun.flat(), ...(card.pending && !card.running.size ? [card.waitTile ??= pendingTile()] : []), ...rest);
   box.hidden = !box.children.length;
+  markTakeSeen();
 }
 
 // Where the render will show while the prompt is still being written (auto-render), so the take doesn't grow then.
@@ -9678,7 +9707,7 @@ function lbRender() {
       ${file.kind === 'image' ? '<button type="button" class="btn small" data-lb="use" title="Use this render as the input image for your next prompt">🖼️ Use as input image</button>' : ''}
       ${render.seed != null && state.workflows.some(f => f.id === render.workflowId) ? '<button type="button" class="btn small" data-lb="seed" title="Render with this seed from now on">🔒 Use this seed</button>' : ''}
       ${onStage ? '<button type="button" class="btn small" data-lb="again">Render again</button>' : ''}
-      ${entry.joined ? '' : '<button type="button" class="btn small" data-lb="open">Open original prompt</button>'}
+      ${entry.joined ? '' : `<span class="lb-open"><button type="button" class="btn small" data-lb="open" title="Back to this prompt on Create: just this take, with this render ringed (every take, with Open all takes)">Open original prompt</button><label><input type="checkbox" data-lb="openall"${saved.get('lbOpenAll', false) ? ' checked' : ''}> Open all takes</label></span>`}
       ${lb.items.length > 1 ? `<button type="button" class="btn small" data-lb="compare" aria-pressed="${Boolean(lb.pin)}" title="${lb.pin ? 'Back to one at a time' : 'Pin this on the left and browse the others beside it'}">${lb.pin ? '✕ Stop comparing' : `${utilityIcon('compare')} Compare`}</button>` : ''}
       ${going.has(render.id) ? '<button type="button" class="btn small primary" data-lb="undo">↶ Undo delete</button>' : `<button type="button" class="btn small danger" data-lb="delete" title="Deletes this render for good, here and in ComfyUI. You get a few seconds to undo">${utilityIcon('delete')} Delete</button>`}
     </div>
@@ -9704,7 +9733,14 @@ function lbRender() {
   });
   $('[data-lb="copy"]', $('#lbInfo')).addEventListener('click', e => copyText(render.text, e.currentTarget));
   $$('[data-lb-rate]', $('#lbInfo')).forEach(b => b.addEventListener('click', () => rateInLightbox(Number(b.dataset.lbRate))));
-  $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); openEntry(entry); });
+  // Open original prompt: just the take this render came from (its tile ringed), or every take with Open all
+  // takes ticked (remembered in this browser).
+  $('[data-lb="openall"]', $('#lbInfo'))?.addEventListener('change', e => saved.set('lbOpenAll', e.target.checked));
+  $('[data-lb="open"]', $('#lbInfo'))?.addEventListener('click', () => {
+    const only = !$('[data-lb="openall"]', $('#lbInfo')).checked;
+    closeLightbox();
+    openEntry(entry, { take: it.index, seen: galleryKey(it), only });
+  });
   $('[data-lb="animate"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: true }); });
   $('[data-lb="use"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false }); });
   $('[data-lb="character"]', $('#lbInfo'))?.addEventListener('click', () => { closeLightbox(); continueFrom(it, { animate: false, character: true }); });
