@@ -689,6 +689,12 @@
           <p class="hint" id="updNote" hidden></p>
         </section>
 
+        <section class="card" data-panel="set-wipe" data-settings-group="updates" id="wipeCard">
+          <h2>🗑 Delete everything</h2>
+          <p class="hint">Start over with an empty Library: every saved prompt and everything made from it, gone for good. Your settings, Brains, workflows, LoRAs, chains, batches, looks and voices stay.</p>
+          <div class="row"><button type="button" class="btn small danger" id="wipeBtn">🗑 Delete everything…</button></div>
+        </section>
+
         <section class="card" data-panel="set-privacy" data-settings-group="privacy" id="privacyCard">
           <h2>🔒 Privacy check</h2>
           <p class="hint">What this computer does with your files below the app. Fixes that need an administrator's password ask for it with the system's own prompt.</p>
@@ -979,6 +985,19 @@
       <div class="row cloud-dialog-acts">
         <button value="no" class="btn">Keep it</button>
         <button value="ok" class="btn danger">Delete it</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="wipeDlg" class="modal cloud-dialog" aria-labelledby="wipeDlgTitle" data-not-assistant>
+    <form method="dialog" class="modal-body">
+      <h2 id="wipeDlgTitle">🗑 Delete everything?</h2>
+      <p id="wipeWhat"></p>
+      <p>Also the pictures and videos you dropped in, the spoken lines, the assistant chat and the jobs, here and in ComfyUI. The files are shredded, and your words are wiped from LM Studio's and ComfyUI's logs (unless you switched that off). Renders still in the making are stopped.</p>
+      <p class="muted small">Your settings, Brains, workflows, LoRAs, chains, batches, looks and voices stay. There's no ↶ Undo this time.</p>
+      <label class="check-row"><input type="checkbox" id="wipeSure"> <span>I understand none of it can be brought back</span></label>
+      <div class="row cloud-dialog-acts">
+        <button value="no" class="btn">Keep it all</button>
+        <button value="ok" class="btn danger" id="wipeGo" disabled>Delete everything</button>
       </div>
     </form>
   </dialog>

@@ -3896,7 +3896,7 @@ $('#reelNewest').addEventListener('click', e => confirmClick(e.currentTarget, 'S
 
 // ---------- pick several, delete them (Your renders, the Library, Saved prompts) ----------
 // Ctrl-click (⌘ on a Mac) picks a card, Shift-click every card up to it; drag across empty space (or Ctrl-drag from a
-// card) draws a box that picks what it touches. A bar deletes them, with 8 s to undo. Esc lets go, Ctrl+A picks all.
+// card, or any drag with Select on) draws a box that picks what it touches (adding to what's picked with Select on). A bar deletes them, with 8 s to undo. Esc lets go, Ctrl+A picks all.
 //   grid: what holds the cards; card: a card's selector (it has data-key); host: where the box is drawn (it holds the
 //   grid, is position: relative, and is what scrolls, or scrolls with the page); edge(): the top and bottom where
 //   dragging scrolls on; free(target): a press there may start a box; show(): the bar's count changed.
@@ -3938,10 +3938,10 @@ function cardPicker({ grid, card, host, edge, free, show, selecting = () => fals
     P.banded = false;
     if (e.button !== 0 || e.pointerType !== 'mouse') return;
     const onCard = e.target.closest(card);
-    if (onCard ? !(e.ctrlKey || e.metaKey) : !free(e.target)) return;
+    if (onCard ? !(e.ctrlKey || e.metaKey || selecting()) : !free(e.target)) return; // with Select on, from a card too
     const el = host();
     const at = () => { const r = el.getBoundingClientRect(); return { x: d.x - r.left + el.scrollLeft, y: d.y - r.top + el.scrollTop }; };
-    const d = { x: e.clientX, y: e.clientY, base: e.ctrlKey || e.metaKey ? new Set(P.keys) : new Set(), band: null };
+    const d = { x: e.clientX, y: e.clientY, base: e.ctrlKey || e.metaKey || selecting() ? new Set(P.keys) : new Set(), band: null };
     d.start = at();
     const draw = () => {
       const r = el.getBoundingClientRect();
@@ -5244,6 +5244,40 @@ async function deleteWarning() {
   if (dlg.returnValue !== 'ok') return false;
   if ($('#ddQuiet').checked) saved.set('deleteWarned', true);
   return true;
+}
+
+// 🗑 Delete everything (Settings → Data & updates): the dialog says what goes, the tick unlocks the button, then the
+// server deletes it all (DELETE /api/history) and the page starts afresh, without what the form remembered either.
+const WORK_KEYS = ['theme', 'image', 'imageSource', 'extras', 'video', 'line', 'sheet', 'manual'];
+$('#wipeBtn').addEventListener('click', async () => {
+  const dlg = $('#wipeDlg');
+  const entries = await api('/api/history').catch(() => state.history || []);
+  const renders = entries.reduce((n, e) => n + e.variations.reduce((m, v) => m + (v.renders?.length || 0), 0), 0);
+  $('#wipeWhat').textContent = entries.length
+    ? `${entries.length} saved prompt${entries.length === 1 ? '' : 's'} and ${renders} picture${renders === 1 ? '' : 's'} and video${renders === 1 ? '' : 's'} made from them will be deleted for good.`
+    : 'Your saved prompts are empty already; what may be left of earlier work will be deleted for good.';
+  $('#wipeSure').checked = false;
+  $('#wipeGo').disabled = true;
+  dlg.returnValue = '';
+  dlg.showModal();
+  await new Promise(resolve => dlg.addEventListener('close', resolve, { once: true }));
+  if (dlg.returnValue !== 'ok') return;
+  $('#wipeBtn').disabled = true;
+  toast('🗑 Deleting everything…');
+  try {
+    const { prompts, renders: gone, left } = await api('/api/history', { method: 'DELETE', body: { confirm: 'everything' } });
+    for (const k of WORK_KEYS) localStorage.removeItem(`pm.${k}`);
+    sessionStorage.setItem('pm.wiped', `🗑️ Deleted everything: ${prompts} saved prompt${prompts === 1 ? '' : 's'}, ${gone} render${gone === 1 ? '' : 's'}.${left ? ` ${left}` : ''}`);
+    location.reload();
+  } catch (err) {
+    $('#wipeBtn').disabled = false;
+    toast(`Couldn't delete everything: ${err.message}`, true);
+  }
+});
+$('#wipeSure').addEventListener('change', e => { $('#wipeGo').disabled = !e.target.checked; });
+{
+  const note = sessionStorage.getItem('pm.wiped');
+  if (note) { sessionStorage.removeItem('pm.wiped'); setTimeout(() => toast(note, /couldn|may still/.test(note)), 600); }
 }
 
 // The page is closing: what was waiting to be deleted goes now.

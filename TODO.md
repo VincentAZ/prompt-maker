@@ -23,6 +23,12 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.59.0 — 🗑 Delete everything (Settings → Data & updates): every saved prompt and all it made, the dropped-in
+  pictures and videos, spoken lines, the assistant chat and jobs, in one pass, shredded, here and in ComfyUI, the logs
+  wiped; renders in the making are stopped; the setup stays. A dialog says how many go, a tick unlocks the button, no
+  undo. With Select on in Your renders and the Library, a drag from any card draws the picking box (a full grid had no
+  empty spot to start from). UI side: style the card and the dialog as you see fit (ids wipeCard, wipeDlg, wipeWhat,
+  wipeSure, wipeGo; the dialog is data-not-assistant, keep it so).
 - 1.58.2 — Create's Your renders, Prompt takes and Pipeline tabs stay in place while their results scroll, so switching
   views is always within reach even at the bottom of a long set of takes or pipeline steps. The error message sits above
   the tabs (its ✕ was under them), and what scrolls into view there stops below the tabs, not behind them.

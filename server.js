@@ -1223,6 +1223,37 @@ async function deleteTake(id) {
   return { ok: true, ...(left ? { left } : {}) };
 }
 
+// 🗑 Delete everything (Settings): every Saved prompts card with all it made, in one pass, the way deleteTake deletes
+// one: renders in the making are stopped first, then the cards, their files, the assistant's chats and jobs
+// (store.deleteAllHistory), the spoken lines' clips, ComfyUI's copies and jobs, and the other apps' logs.
+// Returns how many cards and renders went, and what couldn't be reached (left).
+async function deleteEverything() {
+  const settings = await store.getSettings();
+  for (const job of renderJobs.values()) if (!job.done) runs.get(job.runId)?.abort();
+  const before = await store.listHistory();
+  const renders = before.flatMap(e => e.variations.flatMap(v => v.renders || []));
+  const copies = await fingerprints(renders);
+  const all = await store.deleteAllHistory();
+  const gone = all.flatMap(e => e.variations.flatMap(v => v.renders || []));
+  for (const e of all) await voice.forgetLine(e.line?.file, []).catch(err => console.warn(`Couldn't remove a line's clip: ${err.message}`));
+  const texts = [...new Set(all.flatMap(e => e.variations.flatMap(v => v.versions.map(x => x.text))))];
+  const inputs = [...new Set([...all.flatMap(uploadNames), ...renderUploads(gone)])];
+  const notes = [await forgetInComfy(settings, { promptIds: gone.map(r => r.promptId), texts, copies, inputs, rest: [] })];
+  await sweepComfyLeftovers().catch(err => console.warn(`Couldn't sweep ComfyUI's input folder: ${err.message}`));
+  if (settings.logScrub !== false && all.length) {
+    const tails = store.phrasesOf(all.flatMap(e => [e.theme, e.line?.text, ...e.variations.flatMap(v => v.versions.map(x => x.text))]), { tails: true });
+    const since = Math.min(...all.map(e => Date.parse(e.createdAt) || 0)) - 864e5;
+    await scrubLogs(tails, { since }).catch(err => (console.warn(`Couldn't scrub LM Studio's logs: ${err.message}`), notes.push("LM Studio's logs couldn't be cleaned, so its server-logs folder may still quote your prompts.")));
+    if (!onThisComputer(settings.lmStudioUrl)) notes.push('LM Studio runs on another computer: its server logs there may still quote your prompts.');
+    const names = [...inputs.map(n => n.slice('prompt-maker_'.length)), ...gone.flatMap(r => (r.files || []).map(f => f.file))];
+    const dirs = await comfy.folders(settings.comfyUrl, { roots: [settings.comfyDir, settings.comfyLaunch?.dir], args: await comfyArgs(settings) }).catch(() => ({}));
+    await comfy.scrubLogs(dirs, [...tails, ...names]).catch(err => console.warn(`Couldn't scrub ComfyUI's logs: ${err.message}`));
+    await store.scrubTextFile(services.comfyLog(), [...tails, ...names]).catch(() => {});
+  }
+  const left = notes.filter(Boolean).join(' ');
+  return { ok: true, prompts: all.length, renders: gone.length, ...(left ? { left } : {}) };
+}
+
 const onThisComputer = raw => {
   try {
     return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(new URL(raw).hostname);
@@ -2047,6 +2078,11 @@ async function route(req, res) {
   }
 
   if (p === '/api/history' && m === 'GET') return sendJson(res, 200, await store.withPresentFiles(await store.listHistory()));
+  if (p === '/api/history' && m === 'DELETE') {
+    const body = await readBody(req);
+    if (body?.confirm !== 'everything') return sendJson(res, 400, { error: 'Deleting everything needs { "confirm": "everything" }.' });
+    return sendJson(res, 200, await deleteEverything());
+  }
   if ((match = p.match(/^\/api\/history\/([\w-]+)$/))) {
     const id = match[1];
     if (m === 'GET') {

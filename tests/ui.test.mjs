@@ -2687,6 +2687,20 @@ esac
     await press('Escape');
     eq(await count('#reelGrid > .reel-cell.picked'), 0, 'Esc lets go of them all');
     assert(!(await visible('#reelSel')), 'and the bar goes');
+    // With Select on, a plain drag from a card draws the box too: no empty spot needed in a full grid.
+    await click('#reelSelect');
+    {
+      const s0 = await at(0), s2 = await at(2);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: s0.x, y: s0.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: s0.x + ((s2.x - s0.x) * k) / 10, y: s0.y + ((s2.y - s0.y) * k) / 10 + 2, button: 'left', buttons: 1 });
+      assert(await js('!!document.querySelector(".pick-band") && !document.querySelector(".reel-ghost")'), 'with Select on, a drag from a card draws a box, it doesn\'t move the card');
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: s2.x, y: s2.y + 2, button: 'left', buttons: 0, clickCount: 1 });
+      await waitFor('!document.querySelector(".pick-band")', 'the box goes when you let go', 3000);
+      assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'it picks every card it touched');
+      assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
+    }
+    await click('#reelSelect');
+    eq(await count('#reelGrid > .reel-cell.picked'), 0, 'Done selecting lets go of them');
     const b0 = await at(0), b2 = await at(2);
     await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b0.x, y: b0.y, button: 'left', buttons: 1, clickCount: 1, modifiers: 2 });
     for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b0.x + ((b2.x - b0.x) * k) / 10, y: b0.y + ((b2.y - b0.y) * k) / 10 + 2, button: 'left', buttons: 1, modifiers: 2 });
@@ -6204,6 +6218,31 @@ esac
     })()`);
     eq(back, 'true,true,null,422', 'its own picture back, nothing from outside the images folder; a model\'s name alone isn\'t a recipe');
     await click('.manual-row .switch');
+  });
+
+  // Last: it empties the test app's work.
+  await test('settings: 🗑 Delete everything empties Saved prompts, renders, pictures, the chat and jobs; the setup stays', async () => {
+    const no = await fetch(`${APP}/api/history`, { method: 'DELETE' });
+    eq(no.status, 400, 'a delete without { confirm: "everything" } is refused');
+    const before = (await (await fetch(`${APP}/api/history`)).json()).length;
+    assert(before > 0, 'there is work to delete');
+    const models = (await (await fetch(`${APP}/api/models`)).json()).length;
+    await fetch(`${APP}/api/jobs/wipe-test`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'a test job', log: [] }) });
+    await js("localStorage.setItem('pm.theme', JSON.stringify('an idea typed in Create'))");
+    await click('#wipeBtn');
+    await waitFor('document.querySelector("#wipeDlg").open', 'the "Delete everything?" dialog');
+    assert((await text('#wipeWhat')).includes(`${before} saved prompt`), 'it says how many saved prompts go');
+    assert(await js('document.querySelector("#wipeGo").disabled'), 'the button waits for the tick');
+    await click('#wipeSure');
+    await click('#wipeGo');
+    await toastText('Deleted everything', 30000);
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, 0, 'Saved prompts is empty');
+    const left = d => fs.readdir(path.join(dataDir, d)).then(names => names.filter(n => !n.endsWith('.tmp')), () => []);
+    eq(`${(await left('renders')).length}|${(await left('images')).length}|${(await left('videos')).length}`, '0|0|0', 'no render, picture or motion video is left');
+    eq((await (await fetch(`${APP}/api/assistant/chat`)).json()).messages.length, 0, 'the assistant chat is empty');
+    eq((await (await fetch(`${APP}/api/jobs`)).json()).length, 0, 'and the jobs');
+    eq(await js("localStorage.getItem('pm.theme')"), null, 'the idea the form remembered goes too');
+    eq((await (await fetch(`${APP}/api/models`)).json()).length, models, 'the setup stays');
   });
 
   await test('no console errors', async () => {
