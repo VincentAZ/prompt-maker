@@ -1008,9 +1008,11 @@ esac
       eq(await top('#theme'), theme, 'the steps never moved');
       // A wide window: the steps and the takes scroll on their own, the page doesn't.
       assert(await js('document.documentElement.scrollHeight <= innerHeight + 1'), 'the page itself does not scroll');
+      const tabs = await top('.stage-tabs');
       await js('document.querySelector(".stage").scrollTop = 1e6');
       await sleep(100);
       eq(await top('#theme'), theme, 'scrolling the takes leaves the steps where they are');
+      eq(await top('.stage-tabs'), tabs, 'scrolling the takes leaves the results tabs where they are');
 
       // Fold a take, or a step, scrolled to the end: the header you clicked stays under the mouse.
       const take3Head = '.take:nth-child(3) > .take-head';

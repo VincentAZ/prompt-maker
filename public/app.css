@@ -602,8 +602,8 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 @keyframes blink { 50% { opacity: 0.35; } }
 
 /* ---------- stage (results) ---------- */
-.stage { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
-.stage-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--line-2); align-self: flex-start; max-width: 100%; }
+.stage { min-width: 0; display: flex; flex-direction: column; gap: 16px; scroll-padding-top: 60px; } /* what scrolls into view stops under the tabs, not behind them */
+.stage-tabs { position: sticky; top: 0; z-index: 7; flex: none; display: flex; gap: 4px; padding: 3px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--line-2); align-self: flex-start; max-width: 100%; }
 .stage-tabs [role="tab"] { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px; border: 0; border-radius: 11px; background: transparent; color: var(--text-2); font-weight: 700; font-size: 14px; white-space: nowrap; cursor: pointer; transition: background 0.15s, color 0.15s; }
 .stage-tabs [role="tab"]:hover { color: var(--text); background: rgb(36 76 57 / 5%); }
 .stage-tabs [role="tab"][aria-selected="true"] { background: var(--panel-solid); color: var(--text); box-shadow: 0 2px 10px -4px #000; }
@@ -685,7 +685,7 @@ dialog.modal.trim-dlg { width: min(1180px, calc(100vw - 32px)); }
 
 /* Lies over the top of the takes until it's closed (--eh: its height and the gap after it, set when it shows), so
    what's under it doesn't move down when it arrives. */
-.error-card { position: sticky; top: var(--stick-top, 0px); z-index: 6; margin-bottom: calc(-1 * var(--eh, 0px)); display: flex; gap: 14px; padding: 16px 18px; border-radius: var(--radius); background: color-mix(in srgb, rgb(255 90 110) 16%, var(--panel-solid)); border: 1px solid rgb(255 90 110 / 45%); box-shadow: var(--shadow); animation: rise 0.3s ease both; }
+.error-card { position: sticky; top: var(--stick-top, 0px); z-index: 8; margin-bottom: calc(-1 * var(--eh, 0px)); display: flex; gap: 14px; padding: 16px 18px; border-radius: var(--radius); background: color-mix(in srgb, rgb(255 90 110) 16%, var(--panel-solid)); border: 1px solid rgb(255 90 110 / 45%); box-shadow: var(--shadow); animation: rise 0.3s ease both; }
 @media (max-width: 900px) { .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); } }
 body.narrow .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); }
 .error-card .e-ico { font-size: 24px; line-height: 1.2; }
@@ -1753,6 +1753,7 @@ body.narrow .create-switch { display: flex; }
 body.narrow #view-create:not(.show-results) .stage, body.narrow #view-create.show-results .director { display: none; }
 body.narrow .create { min-height: 0; }
 body.narrow .stage { max-height: none; }
+body.narrow .stage-tabs { top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px) + 60px); }
 /* The switch is sticky, so what a switch scrolls to stops under it, not behind it. */
 body.narrow #stage, body.narrow #theme { scroll-margin-top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px) + 70px); }
 .create-switch { position: sticky; top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px)); z-index: 5; gap: 8px; padding: 10px 0; margin-bottom: 10px; background: var(--ink); }
@@ -1762,6 +1763,7 @@ body.narrow #stage, body.narrow #theme { scroll-margin-top: calc(var(--topbar-h,
   .create-switch { display: flex; }
   #view-create:not(.show-results) .stage, #view-create.show-results .director { display: none; }
   #view-create .stage { max-height: none; }
+  .stage-tabs { top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px) + 60px); }
   #stage, #theme { scroll-margin-top: calc(var(--topbar-h, 76px) + var(--banner-h, 0px) + 70px); }
 }
 @media (max-width: 760px) {

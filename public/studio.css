@@ -117,7 +117,7 @@ body.as-open:not(.as-over) main { margin-left: var(--sidebar-w); }
 .outcome-hint { font-size: 11px; flex-basis: 100%; }
 .studio-link { display: flex; justify-content: space-between; color: var(--hot); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
 .stage { gap: 16px; }
-.stage-tabs { align-self: stretch; border: 0; border-bottom: 1px solid var(--line); background: transparent; border-radius: 0; padding: 0; gap: 24px; min-height: 43px; }
+.stage-tabs { align-self: stretch; border: 0; border-bottom: 1px solid var(--line); background: var(--ink); border-radius: 0; padding: 0; gap: 24px; min-height: 43px; }
 .stage-tabs [role=tab] { padding: 6px 0 13px; font-size: 13px; font-weight: 450; border-radius: 0; border-bottom: 2px solid transparent; }
 .stage-tabs [role=tab][aria-selected=true] { background: transparent; border-bottom-color: var(--hot); color: var(--hot); box-shadow: none; }
 .stage-tabs [role=tab]:hover { background: transparent; color: var(--hot); }

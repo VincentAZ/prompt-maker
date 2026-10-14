@@ -66,7 +66,7 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 The light studio layout puts navigation in a sidebar and keeps your work beside a compact Create panel. **Library** holds artwork; **Saved prompts** holds your sessions. **Brains**, **Chains**, **Batches**, and **Jobs** each have their own page. Create’s **Pipeline** tab shows chain progress and lets you choose what continues; Settings groups its controls into clear sections. Existing prompts, renders, workflows, and preferences carry over. Saved prompts with a long shared opening show the words that distinguish them; hover to see the full opening.
 
-In Create’s **Your renders** tab, the gallery is the only scrolling area on the results side; the results tabs and gallery toolbar stay in place. **Prompt takes** and **Pipeline** retain their own scrolling.
+Create’s **Your renders**, **Prompt takes**, and **Pipeline** tabs stay in place while their results scroll. In **Your renders**, the gallery is the only scrolling area on the results side, so its toolbar stays in place too.
 
 Drag the divider between Create’s controls and results left or right to give either side more room. In the lightbox, drag the prompt box’s lower-left corner to change its width and height. Both sizes are remembered in your browser; double-click either handle to reset it. The handles also work with arrow keys.
 

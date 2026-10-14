@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.58.2 — Create's Your renders, Prompt takes and Pipeline tabs stay in place while their results scroll, so switching
+  views is always within reach even at the bottom of a long set of takes or pipeline steps. The error message sits above
+  the tabs (its ✕ was under them), and what scrolls into view there stops below the tabs, not behind them.
 - 1.58.1 — Rendering a take again with the same seed no longer fails with "ComfyUI returned 404 for /view…". ComfyUI
   skipped the job it had just done, Save node included, and named the file it saved last time, which Clean up had
   removed. Each job's end nodes carry a tag of their own now (comfy.tagRun), so the Save node runs again (from
