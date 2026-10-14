@@ -769,7 +769,17 @@ Search the cards by name and sort them by **Best fit**, **Last used** or **Name*
 
 ## Settings
 
-Choose a section at the left: **Services**, **Brain & prompting**, **Master instructions**, **Rendering**, **Privacy**, **Cloud Brains**, **Assistant**, or **Data & updates**. Edits stay in the form when you switch sections or pages; **Save** keeps them.
+### Appearance
+
+Use **Choose UI theme** (the half-circle icon in the header) or **Settings → Appearance** to choose **Sage**, **Sand**, **Ocean**, or **Midnight**. **Follow system** uses Sage when your device is in light mode and Midnight in dark mode, and follows changes automatically. Sage is the default.
+
+The colors change immediately; controls, drafts, selection and layout stay where they are. Your choice is remembered in this browser without clicking **Save settings**. If browser storage is blocked, switching still works for the current page; the next visit starts in Sage. Everything loads locally. The picker also works in the app’s saved offline copy.
+
+<img src="screenshots/themes.png" alt="The theme picker in Midnight, with previews of Sage, Sand, Ocean, Midnight, and Follow system" width="900">
+
+### Other settings
+
+Choose a section at the left: **Appearance**, **Services**, **Brain & prompting**, **Master instructions**, **Rendering**, **Privacy**, **Cloud Brains**, **Assistant**, or **Data & updates**. Edits stay in the form when you switch sections or pages; **Save** keeps them.
 
 Settings is a page of cards: **🖥️ Services**, **⬆ Updates**, **🗑 Delete everything**, **🔌 LM Studio**, **☁️ Cloud Brains**, **🎨 ComfyUI**, **🧠 How the Brain thinks**, **📜 Master instructions** and **✦ Assistant**. Choosing a section opens its controls; you can fold individual cards by clicking their headers. Settings also shows your data folder and the **version** you run (with the exact commit when installed with git); mention it when you report a problem.
 

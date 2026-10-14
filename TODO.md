@@ -23,6 +23,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.60.0 — Themes (the UI side's ui/themes): Sage (as before), Sand, Ocean, Midnight (dark) and Follow system, picked in
+  Settings → Appearance or from the top bar's ◐, applied at once and remembered in the browser (ui-theme.js, loaded
+  before the styles so a dark theme never flashes light; themes.css). Every fixed colour in the styles became a theme
+  colour. Merged with 1.58.2's sticky tabs (the error message stays above them).
 - 1.59.0 — 🗑 Delete everything (Settings → Data & updates): every saved prompt and all it made, the dropped-in
   pictures and videos, spoken lines, the assistant chat and jobs, in one pass, shredded, here and in ComfyUI, the logs
   wiped; renders in the making are stopped; the setup stays. A dialog says how many go, a tick unlocks the button, no

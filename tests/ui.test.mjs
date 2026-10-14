@@ -1765,6 +1765,11 @@ esac
     await js('document.documentElement.dataset.ready = ""');
     await cdp.send('Page.reload', {});
     await waitFor('document.querySelector("#bannerTitle")?.textContent === "Prompt Maker\'s server isn\'t running." && !document.querySelector("#banner").hidden', 'the offline page, with its banner', 10000);
+    await click('#uiThemeButton');
+    await click('#uiThemeDialog [data-ui-theme-choice="midnight"]');
+    eq(await js('document.documentElement.dataset.uiTheme'), 'midnight', 'the cached theme picker works offline');
+    await click('#uiThemeDialog [data-ui-theme-choice="sage"]');
+    await press('Escape');
     await shot('offline-page');
     await conditions(false);
     await waitFor('document.documentElement.dataset.ready === "1" && document.querySelector("#banner").hidden && document.querySelectorAll(".model-card").length > 0', 'reloaded for real once the server answers', 15000);
@@ -4535,7 +4540,8 @@ esac
 
   await test('cleanup: a copied render is deleted from ComfyUI\'s output folder and gets its own name', async () => {
     await click('.tabs button[data-view="settings"]');
-    assert(await visible('#sComfyDirField'), 'the folder field shows even with cleanup off (deleting from History uses it too)');
+    await click('[data-settings-tab="rendering"]');
+    assert(await visible('#sComfyDirField'), 'the folder field shows in Rendering even with cleanup off (deleting from History uses it too)');
     assert(/^Prompt Maker \d+\.\d+\.\d+/.test(await text('#sVersion')), 'Settings shows the version, for bug reports');
     await click('#sComfyCleanup');
     await waitFor(`document.querySelector('#sComfyDir').placeholder.includes(${q(path.join(comfyRoot, 'output'))})`, 'the output folder is found on its own');
@@ -6018,14 +6024,14 @@ esac
     await viewport(1440, 900);
   });
 
-  await test('viewer: the stars come first; ⇆ Compare puts two renders side by side, each with its stars', async () => {
+  await test('viewer: stars precede the resizable prompt box; ⇆ Compare puts two renders side by side, each with its stars', async () => {
     await click('.tabs button[data-view="gallery"]');
     await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length >= 2', 'at least two renders in the Library');
     eq(await js('[...document.querySelectorAll("#reelGrid .reel-cell .rate-bar")][0].querySelector("button").dataset.rate'), '1', 'on a card, the stars are in their natural order for the keyboard');
     assert(await js('document.querySelector("#reelGrid .rate-bar button").getBoundingClientRect().width >= 28'), 'and big enough to hit');
     await click('#reelGrid .reel-cell .rtile');
     await waitFor('!document.querySelector("#lightbox").hidden', 'viewer open');
-    eq(await js('[...document.querySelector("#lbInfo").children].map(e => e.className.split(" ")[0] || e.tagName).slice(0, 3).join(" ")'), 'lb-idea lb-rate lb-prompt', 'the idea (folded), then the stars, then the prompt');
+    eq(await js('[...document.querySelector("#lbInfo").children].map(e => e.className.split(" ")[0] || e.tagName).slice(0, 3).join(" ")'), 'lb-idea lb-rate lb-prompt-box', 'the idea (folded), then the stars, then the resizable prompt box');
     assert(!(await text('#lbInfo .lb-facts')).includes('—'), 'facts with nothing to say are left out');
     await click('#lbInfo [data-lb="compare"]');
     await waitFor('document.querySelector("#lbStage").classList.contains("pair") && document.querySelectorAll("#lbStage .lb-pane").length === 2', 'two side by side');
@@ -6091,7 +6097,9 @@ esac
     // Without a picture there's no person to keep: no sheet.
     ev = await events({ modelId: 'krea-2-character', variations: 1, theme: 'a lighthouse' });
     assert(!ev.some(e => e.type === 'sheet') && !ev.find(e => e.type === 'saved').entry.characterSheet, 'no picture, no sheet');
-    // On the page: the box shows under the picture and fills in at Generate.
+    // On the page: return from the viewer before using Create's model chooser.
+    if (await visible('#lightbox')) await press('Escape');
+    await click('.tabs button[data-view="create"]');
     await click('.model-card[data-id="krea-2-character"]');
     await setFiles('#imageInput', [fixture]);
     await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
@@ -6218,6 +6226,117 @@ esac
     })()`);
     eq(back, 'true,true,null,422', 'its own picture back, nothing from outside the images folder; a model\'s name alone isn\'t a recipe');
     await click('.manual-row .switch');
+  });
+
+  await test('UI themes: every palette fits desktop and phone without moving the workspace', async () => {
+    if (await visible('#lightbox')) await press('Escape');
+    await goto(`${APP}/#create`);
+    if (await visible('#assistant')) await click('#asClose');
+    await click('#tabRenders');
+    const themes = ['sage', 'sand', 'ocean', 'midnight'];
+    const geometry = () => js(`JSON.stringify([...document.querySelectorAll('button,input,select,textarea,details,#studioSidebar,#createForm,#stage,.topbar')].map(e => { const r = e.getBoundingClientRect(); return [e.id,e.className,r.x,r.y,r.width,r.height]; }).filter(r => r[4] > 0 && r[5] > 0))`);
+    for (const [width, height] of [[1440,1000],[1280,800],[390,844]]) {
+      await viewport(width, height);
+      await click('#uiThemeButton');
+      await waitFor('document.querySelector("#uiThemeDialog").open', 'theme picker');
+      await click('#uiThemeDialog [data-ui-theme-choice="sage"]');
+      const selectedPane = await js('document.querySelector(".stage-tabs [aria-selected=true]").id');
+      await press('Enter', { ctrl: true });
+      eq(await js('document.querySelector(".stage-tabs [aria-selected=true]").id'), selectedPane, 'theme dialog shields Create from its generation shortcut');
+      const before = await geometry();
+      const draft = await value('#theme');
+      for (const theme of themes) {
+        await click(`#uiThemeDialog [data-ui-theme-choice="${theme}"]`);
+        eq(await js('document.documentElement.dataset.uiTheme'), theme, 'palette applied');
+        eq(await geometry(), before, 'only colors change, no controls move');
+        const lowContrast = await js(`(() => {
+          const css = getComputedStyle(document.documentElement);
+          const lum = token => { const hex = css.getPropertyValue('--'+token).trim(); const c = [1,3,5].map(i => parseInt(hex.slice(i,i+2),16)/255).map(v => v<=.04045 ? v/12.92 : ((v+.055)/1.055)**2.4); return c[0]*.2126+c[1]*.7152+c[2]*.0722; };
+          const pairs = ['text','text-2','muted','hot','danger','warn','ok'].flatMap(fg => ['panel','panel-2','panel-3'].map(bg => [fg,bg]));
+          pairs.push(['on-hot','hot'], ['on-danger','danger'], ['on-ok','ok'], ['on-media','media-bg']);
+          return pairs.filter(([fg,bg]) => { const a=lum(fg), b=lum(bg); return !Number.isFinite(a+b) || (Math.max(a,b)+.05)/(Math.min(a,b)+.05)<4.5; });
+        })()`);
+        eq(lowContrast.length, 0, 'text and action colors stay readable: '+JSON.stringify(lowContrast));
+        assert(await js(`(() => {
+          const canvas=document.createElement('canvas'); canvas.width=canvas.height=1; const ctx=canvas.getContext('2d');
+          const lum=color=>{ctx.clearRect(0,0,1,1);ctx.fillStyle=color;ctx.fillRect(0,0,1,1);const c=[...ctx.getImageData(0,0,1,1).data].slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return c[0]*.2126+c[1]*.7152+c[2]*.0722;};
+          const contrast=(a,b)=>(Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+          return [...document.querySelectorAll('.model-card')].every(card=>{
+            const kind=card.querySelector('.mc-kind');
+            if(!kind) return true;
+            const label=contrast(lum(getComputedStyle(kind).color),lum(getComputedStyle(card).backgroundColor));
+            const check=getComputedStyle(card,'::after');
+            return label>=4.5 && (!card.classList.contains('active') || contrast(lum(check.color),lum(check.backgroundColor))>=4.5);
+          });
+        })()`), 'model identity colors never reduce label or selection contrast');
+        eq(await value('#theme'), draft, 'the idea draft is untouched');
+        eq(await js('getComputedStyle(document.documentElement).colorScheme'), theme === 'midnight' ? 'dark' : 'light', 'native controls follow the theme');
+        eq(await js('document.querySelector(\'meta[name="color-scheme"]\').content'), theme === 'midnight' ? 'dark' : 'light', 'browser color scheme follows');
+        eq(await js('document.querySelector(\'meta[name="theme-color"]\').content'), {sage:'#f8f8f4',sand:'#faf5ef',ocean:'#f2f7fa',midnight:'#151824'}[theme], 'browser chrome follows');
+        assert(await js(`(() => { const r = document.querySelector('#uiThemeDialog').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })()`), 'picker fits viewport');
+        assert(await js(`(() => { const a = document.querySelectorAll('#uiThemeDialog .ui-theme-option'); return a[0].getBoundingClientRect().top === a[1].getBoundingClientRect().top; })()`), 'palette previews stay in two columns');
+        await shot(`theme-picker-${theme}-${width}x${height}`);
+      }
+      await press('Escape');
+      eq(await js('document.activeElement.id'), 'uiThemeButton', 'Escape returns focus to the trigger');
+    }
+    await viewport(1440,1000);
+    await click('.tabs [data-view="settings"]');
+    await click('[data-settings-tab="appearance"]');
+    assert(await visible('#appearanceCard'), 'Appearance is reachable in Settings');
+    const dirty = await js('document.querySelector("#settingsDirty").hidden');
+    await click('#appearanceCard [data-ui-theme-choice="ocean"]');
+    eq(await js('document.querySelector("#settingsDirty").hidden'), dirty, 'browser appearance does not dirty server settings');
+    await goto(`${APP}/#settings`);
+    eq(await js('document.documentElement.dataset.uiTheme'), 'ocean', 'choice survives a reload');
+    eq(await js('document.querySelector(\'#appearanceCard [aria-pressed="true"]\').dataset.uiThemeChoice'), 'ocean', 'Settings reflects the saved choice');
+  });
+
+  await test('UI themes: system changes follow live and explicit choices stay fixed', async () => {
+    const scheme = async value => cdp.send('Emulation.setEmulatedMedia', { features: [{ name:'prefers-color-scheme', value }, {name:'prefers-reduced-motion',value:'reduce'}] });
+    try {
+      await scheme('light');
+      await click('#uiThemeButton');
+      await click('#uiThemeDialog [data-ui-theme-choice="system"]');
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sage', 'light system uses Sage');
+      await scheme('dark');
+      await waitFor('document.documentElement.dataset.uiTheme === "midnight"', 'live dark system');
+      await scheme('light');
+      await waitFor('document.documentElement.dataset.uiTheme === "sage"', 'live light system');
+      await scheme('dark');
+      await press('Escape');
+      await goto(`${APP}/#settings`);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'midnight', 'system preference restores on reload');
+      await click('#appearanceCard [data-ui-theme-choice="sand"]');
+      await scheme('light');
+      await sleep(100);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sand', 'explicit selection ignores OS changes');
+    } finally { await scheme('light'); }
+  });
+
+  await test('UI themes: missing, old and malformed choices fall back; blocked storage still works', async () => {
+    for (const raw of [null, '"old-dark"', '{broken', '42', '{"theme":"midnight"}']) {
+      await js(raw === null ? "localStorage.removeItem('pm.uiTheme')" : `localStorage.setItem('pm.uiTheme', ${q(raw)})`);
+      await goto(`${APP}/#settings`);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sage', 'invalid or missing preference is Sage');
+    }
+    // Install after the harness setup script so only application code sees blocked storage.
+    const block = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('Blocked for test', 'SecurityError'); } });` });
+    try {
+      await goto(`${APP}/#create`);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sage', 'boot works with blocked storage');
+      await click('#uiThemeButton');
+      await click('#uiThemeDialog [data-ui-theme-choice="midnight"]');
+      eq(await js('document.documentElement.dataset.uiTheme'), 'midnight', 'switching works in memory');
+      await press('Escape');
+      await click('.tabs [data-view="models"]');
+      assert(await visible('#view-models'), 'app navigation still works');
+    } finally {
+      await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: block.identifier });
+      await goto(`${APP}/#create`);
+      await js("localStorage.removeItem('pm.uiTheme')");
+      await goto(`${APP}/#create`);
+    }
   });
 
   // Last: it empties the test app's work.
