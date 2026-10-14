@@ -249,15 +249,17 @@ function outOfRoom(llm, maxTokens, reasoningChars) {
 // (nothing lost), { checked: true, fixed: [facts] } (put back) or { checked: true, drift: [facts] } (lost, and the
 // fix pass failed); null when the check itself failed or was skipped (nothing is claimed on the take). Through
 // complete(), never writeText(): a check that fails doesn't count against the Brain's record.
-async function keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt, text, instruction = null, opts }, { signal, onStatus }) {
-  if (settings.checkTheme === false || !params.theme) return null;
+// A refine of a ✍️ own-prompt take (manual) is never checked: its "theme" is the prompt as the user typed it, so
+// every refine would be put back to the old words, the very ones the refine was asked to change.
+async function keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt, text, instruction = null, manual = false, opts }, { signal, onStatus }) {
+  if (settings.checkTheme === false || !params.theme || manual) return null;
   try {
     onStatus?.('Checking it against your idea…');
     const check = buildCheckMessages({ theme: params.theme, text, role: params.imageRole, hasImage: Boolean(imageDataUrl), instruction, sheet: params.characterSheet });
     const room = llm.thinking === 'off' ? 500 : 1500; // a thinking Brain spends some of it thinking
     const out = await complete(settings, llm, { model: llm.id, messages: check, ...opts, temperature: 0.1, max_tokens: room }, { signal, onStatus });
     if (!out.text) return null; // out of room or empty: no claim either way
-    const drift = parseDrift(out.text, params.theme, text);
+    const drift = parseDrift(out.text, params.theme, text, instruction || '');
     if (!drift.length) return { text, kept: { checked: true } };
     const facts = drift.map(d => d.given);
     onStatus?.(`Putting back: ${facts.join(', ')}…`);
@@ -589,7 +591,7 @@ async function refine(req, res) {
     const text = cleanPrompt(raw);
     if (!text) throw brainFailure('empty', EMPTY_HINT);
     await recordRun(llm, looksRefused(text) ? 'refused' : 'ok', t0, llm.loaded !== false);
-    const kept = await keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt: imageDataUrl ? entry.source?.text : '', text, instruction, opts }, { signal: stream.signal, onStatus: t => stream.send({ type: 'status', text: t }) });
+    const kept = await keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt: imageDataUrl ? entry.source?.text : '', text, instruction, manual: entry.manual === true, opts }, { signal: stream.signal, onStatus: t => stream.send({ type: 'status', text: t }) });
     const final = kept?.text || text;
     const now = new Date().toISOString();
     const saved = await store.updateHistory(entry.id, e => {

@@ -11897,6 +11897,7 @@ const TOOL_IMPL = {
   },
 };
 
+const REPEATS_OK = new Set(['wait', 'job_status']); // calls that are meant to be made again with the same answer
 async function runTool(call) {
   let args = {};
   try {
@@ -12016,7 +12017,9 @@ async function askAssistant(text, pictures = []) {
   renderAssistantLog();
   try {
     let retried = false; // once per message: the Brain said the chat doesn't fit, so it was folded and asked again
-    for (let round = 0; round < 60 && !as.stopped; round++) {
+    const again = new Map(); // call (name + arguments) → { result, n }: the same call with the same answer, n times in a row
+    let circles = null; // the call the Brain kept repeating: the turn stops
+    for (let round = 0; round < 60 && !as.stopped && !circles; round++) {
       await foldChat();
       let done = null;
       let failed = null;
@@ -12045,10 +12048,24 @@ async function askAssistant(text, pictures = []) {
         const { _images, ...result } = broke ? { error: `Not run: ${broke} failed before it in the same step. Look at what the app holds now and go on from there.` } : await runTool(c);
         if (result.error && !broke) broke = c.name;
         if (_images) seen.push(..._images);
+        // Going in circles: the same call, the same answer, again and again (a Brain that says "let me click it" and
+        // looks at the screen once more instead). The second time it's told; the third time the turn stops, so it
+        // doesn't burn its 60 rounds and the Brain's room re-reading the screen. Waiting and job_status are meant to
+        // repeat.
+        if (!broke && !REPEATS_OK.has(c.name)) {
+          const key = `${c.name} ${c.arguments || '{}'}`;
+          const same = JSON.stringify(result);
+          const prev = again.get(key);
+          const n = prev?.result === same ? prev.n + 1 : 1;
+          again.set(key, { result: same, n });
+          if (n === 2) result.again = `You made this exact call before and got the same answer. Don't call it again: do the next step with what it shows (press, fill or choose a numbered control), or tell the user what's in the way.`;
+          if (n >= 3) circles = c.name;
+        }
         as.messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(result) });
         renderAssistantLog();
         saveChat(); // as it goes: a long turn (renders) leaves its log even if the page closes
       }
+      if (circles && !as.stopped) as.messages.push({ role: 'assistant', content: '', note: `⚠️ Stopped: the assistant asked the app the same thing three times (${circles}) and got the same answer each time. Say what to do next, or do it yourself on the page.` });
       // What look_at showed goes to the Brain as pictures (tool results can only be text).
       if (seen.length && !as.stopped) {
         as.messages.push({ role: 'user', auto: true, content: [

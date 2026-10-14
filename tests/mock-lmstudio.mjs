@@ -130,6 +130,10 @@ function assistantTurn(body) {
         { text: results.includes('Pressed “Save settings”') ? 'Saved: top P is 0.77.' : 'That failed.' },
       ];
     })()
+    // A Brain going in circles: it says it will click and looks at the screen again instead, every round.
+    : /circles/.test(said) ? { calls: [['see_screen', {}]], text: 'I see the switch. Let me click it.' }
+    // One that waits a few times for the same answer, as a render's wait does: never cut short.
+    : /patience/.test(said) ? (round < 4 ? { calls: [['wait', { seconds: 1 }]] } : { text: 'Done waiting.' })
     : /tag fallback/.test(said) ? [{ text: '<tool_call>{"name": "set_theme", "arguments": {"text": "from a tag"}}</tool_call>' }, { text: 'Theme set.' }]
     : [{ text: 'I can help with that.' }];
   return Array.isArray(script) ? script[Math.min(round, script.length - 1)] : script;

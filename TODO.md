@@ -23,6 +23,11 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.60.1 — A refine no longer gets undone by the theme check. Asked for "both hands", the Brain wrote them, and the
+  check put "his right hand" back, nine times over: a fact that shares a word with the instruction isn't a lost fact
+  (parseDrift), and a refine of a ✍️ own-prompt take isn't checked at all (its theme is the old prompt). The assistant
+  stops when it goes in circles: the same call with the same answer is told the second time and stops the turn the
+  third (a real Brain re-read the screen 35 times saying "let me click it"); wait and job_status may repeat.
 - 1.60.0 — Themes (the UI side's ui/themes): Sage (as before), Sand, Ocean, Midnight (dark) and Follow system, picked in
   Settings → Appearance or from the top bar's ◐, applied at once and remembered in the browser (ui-theme.js, loaded
   before the styles so a dark theme never flashes light; themes.css). Every fixed colour in the styles became a theme

@@ -14,6 +14,7 @@ import * as wfLib from '../lib/workflows.js';
 import * as modelsLib from '../lib/models.js';
 import * as videotools from '../lib/videotools.js';
 import * as comfyLib from '../lib/comfy.js';
+import { parseDrift } from '../lib/prompt.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const APP_PORT = Number(process.env.APP_PORT) || 5399;
@@ -1568,6 +1569,40 @@ esac
     await click('.tabs button[data-view="history"]');
     await waitFor('!!document.querySelector(".hcard")', 'cards');
     assert((await text('.hcard')).includes('✎ put back: a red dress'), 'Saved prompts says so');
+    // What a refine asked to change isn't a lost fact, whatever the checker says (it put "his right hand" back after
+    // "both hands" was asked for, nine times over, on 2026-10-14): a fact that shares a word with the instruction stays out.
+    const vader = 'his right hand pressed against the side of his head while his left hand holds out a sheet of paper. The text faces the camera.';
+    const both = 'Both hands are pressed against the sides of his helmet; the sheet lies flat on the console.';
+    const lost = JSON.stringify([{ given: 'his right hand pressed against the side of his head', written: 'both hands' }, { given: 'the text faces the camera', written: 'left out' }]);
+    eq(parseDrift(lost, vader, both).length, 2, 'without an instruction both facts count');
+    eq(parseDrift(lost, vader, both, 'both of his hands are pressed against the sides of his helmet').map(d => d.given).join('|'), 'the text faces the camera', 'the fact the refine is about is out, the other stays');
+    eq(parseDrift(lost, vader, both, 'HIS HEAD NEEDS TO BE IN HIS HANDS!!!').length, 1, 'shouting works too (hands meets hand)');
+    eq(parseDrift(lost, vader, both, 'Shorter').length, 2, 'an instruction about something else exempts nothing');
+    eq(parseDrift(JSON.stringify([{ given: 'a red dress', written: 'a blue gown' }]), 'a woman in a red dress at noon', 'a woman in a blue gown at golden hour', 'golden hour').length, 1, 'golden hour is not about the dress');
+    eq(parseDrift(JSON.stringify([{ given: 'a red dress', written: 'a blue gown' }]), 'a woman in a red dress at noon', 'a woman in a blue gown at noon', 'make the dress blue').length, 0, 'make the dress blue is');
+    // A ✍️ own-prompt take: its "idea" is the prompt as typed, so a refine of it isn't checked against it at all (the
+    // check would put the old words back, undoing the refine).
+    await click('.tabs button[data-view="create"]');
+    await click('.manual-row .switch');
+    await toastText('Your own prompt');
+    try {
+      await type('#theme', 'DRIFTTEST a woman in a red dress on a pier, as typed');
+      await click('#generateBtn'); // (no workflow yet at this point of the suite: Keep my prompt, no render)
+      await genDone();
+      await waitFor('!!document.querySelector(".take .refine input")', 'the take is there');
+      const brainCalls = mockCalls();
+      await type('.take .refine input', 'make the dress blue');
+      await press('Enter');
+      await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined');
+      eq(mockCalls(), brainCalls + 1, 'one Brain call: the refine itself, no check');
+      assert(!JSON.stringify(mock.log.at(-1).messages).includes('CHECK THE PROMPT'), 'the last call is the refine, not a check');
+      assert((await value('.take .prompt-text')).startsWith('Revised to be make the dress blue'), 'the refine stands as written');
+      assert(!(await text('.take .change')).includes('Checked') && !(await text('.take .change')).includes('Put back'), 'nothing claimed on a ✍️ refine');
+      assert(!(await history())[0].variations[0].versions[1].kept, 'nothing claimed on the saved version either');
+    } finally {
+      await click('.manual-row .switch');
+      await toastText('Brain writes the prompts again');
+    }
     // Back to the fixture's setting for the tests after this one (they count the mock's calls).
     await click('.tabs button[data-view="settings"]');
     await waitFor('document.querySelector("#sCheckTheme").checked', 'the switch shows on');
@@ -4457,6 +4492,35 @@ esac
     eq(JSON.stringify(after.resolutions), JSON.stringify(before.resolutions), 'all of it');
     await press('Escape');
     assert(await js('document.querySelector("#assistant").hidden && document.activeElement === document.querySelector("#askBtn")'), 'Esc closes it');
+  });
+
+  await test('assistant: going in circles stops after the third identical answer, with a word; waiting may repeat', async () => {
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 30000);
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const bad = () => js('[...document.querySelectorAll("#asLog .as-act.bad")].at(-1)?.textContent || ""');
+    await click('.tabs button[data-view="create"]');
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await waitFor('!document.querySelector("#assistant").hidden', 'panel open');
+    // The Brain says "let me click it" and looks at the screen again instead, round after round (a real Brain did, 35
+    // times, on 2026-10-14): the second time the answer tells it, the third time the turn stops and the chat says so.
+    const calls = mockCalls();
+    await type('#asInput', 'circles: switch my own prompt off');
+    await press('Enter');
+    await idle();
+    eq(mockCalls(), calls + 3, 'three rounds, not sixty');
+    const turn = mock.log.at(-1).messages;
+    const results = turn.slice(turn.findLastIndex(m => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('circles'))).filter(m => m.role === 'tool').map(m => m.content);
+    assert(results.length === 2 && !results[0].includes('exact call') && results[1].includes('You made this exact call before and got the same answer'), `the second answer told it: ${results[1].slice(-200)}`);
+    assert((await bad()).startsWith('⚠️ Stopped: the assistant asked the app the same thing three times (see_screen)'), `the chat says why it stopped: ${await bad()}`);
+    eq(await js('document.querySelectorAll("#asLog .as-act.bad").length'), 1, 'said once');
+    // Waiting is meant to be repeated (a render takes its time): four identical waits go through.
+    const before = mockCalls();
+    await type('#asInput', 'patience: wait for the render');
+    await press('Enter');
+    await idle();
+    eq(mockCalls(), before + 5, 'four waits and the answer');
+    assert((await bot()).startsWith('Done waiting.'), `it finished on its own: ${await bot()}`);
+    eq(await js('document.querySelectorAll("#asLog .as-act.bad").length'), 1, 'no new stop');
   });
 
   await test('assistant: a long task gets a plan it ticks off; a long chat folds into a note; an overflow folds and retries', async () => {
