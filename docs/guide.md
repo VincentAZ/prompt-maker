@@ -560,7 +560,7 @@ More options → Render settings has a **🎲 Seed** row for the picked workflow
 | Mode | What each render gets |
 |---|---|
 | 🎲 **Random** | A new random seed. The row shows the last one, and **🔒 Keep it** switches to Fixed with it. |
-| 🔒 **Fixed** | The same seed every time. (×2 renders in one go use the seed and the seed + 1.) |
+| 🔒 **Fixed** | The same seed every time. (×2 renders in one go use the seed and the seed + 1.) The same take rendered again with the same seed comes out the same: you get it as a new render in a moment, because ComfyUI remembers the picture and only saves it again. |
 | **＋1** | The seed, then one higher each render. |
 | **−1** | The seed, then one lower each render. |
 

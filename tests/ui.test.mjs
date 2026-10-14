@@ -4967,6 +4967,13 @@ esac
     assert(await js('document.querySelector("#motionBlock").hidden'), 'other models don\'t ask for a motion video');
   });
 
+  await test('comfy: each job tags its end nodes, so ComfyUI saves again a render it has just done (no 404 after Clean up)', async () => {
+    const g = { 1: { class_type: 'KSampler', inputs: { seed: 5, model: ['2', 0] } }, 2: { class_type: 'Loader', inputs: {} }, 9: { class_type: 'SaveImage', inputs: { images: ['1', 0], filename_prefix: 'x' } } };
+    const a = comfyLib.tagRun(g), b = comfyLib.tagRun(g);
+    assert(a[9].inputs.pm_run && a[9].inputs.pm_run !== b[9].inputs.pm_run, 'the Save node gets a new tag each job');
+    eq(`${a[1].inputs.pm_run}|${a[2].inputs.pm_run}|${a[9].inputs.filename_prefix}`, 'undefined|undefined|x', 'the rest is untouched, so ComfyUI still remembers it');
+    eq(g[9].inputs.pm_run, undefined, 'the workflow itself is left as it was');
+  });
   await test('workflows: a size picked goes past a node that only takes a shape (Krea Dual Resolution Selector) into what it fed', async () => {
     const w = {
       prompt: {

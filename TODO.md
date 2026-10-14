@@ -23,6 +23,10 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.58.1 — Rendering a take again with the same seed no longer fails with "ComfyUI returned 404 for /view…". ComfyUI
+  skipped the job it had just done, Save node included, and named the file it saved last time, which Clean up had
+  removed. Each job's end nodes carry a tag of their own now (comfy.tagRun), so the Save node runs again (from
+  ComfyUI's memory, instantly) and saves a new file.
 - 1.58.0 — The viewer's Open original prompt opens just the take the render came from, on its version, the render
   ringed; Show all takes above it brings the others back. Open all takes (a tick under the button, off by default,
   remembered in the browser) opens every take, scrolled to that one.
