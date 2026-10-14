@@ -62,9 +62,11 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 </div>
 
-## A new studio layout in 1.54
+## Studio layout and themes
 
-The light studio layout puts navigation in a sidebar and keeps your work beside a compact Create panel. **Library** holds artwork; **Saved prompts** holds your sessions. **Brains**, **Chains**, **Batches**, and **Jobs** each have their own page. Create’s **Pipeline** tab shows chain progress and lets you choose what continues; Settings groups its controls into clear sections. Existing prompts, renders, workflows, and preferences carry over. Saved prompts with a long shared opening show the words that distinguish them; hover to see the full opening.
+**New in 1.59: make the studio yours.** Choose Sage, Sand, Ocean, Midnight, or Follow system from the header’s theme button or **Settings → Appearance**. Colors change instantly, your layout stays put, and your choice is remembered in this browser. Everything works offline.
+
+The studio layout puts navigation in a sidebar and keeps your work beside a compact Create panel. **Library** holds artwork; **Saved prompts** holds your sessions. **Brains**, **Chains**, **Batches**, and **Jobs** each have their own page. Create’s **Pipeline** tab shows chain progress and lets you choose what continues; Settings groups its controls into clear sections. Existing prompts, renders, workflows, and preferences carry over. Saved prompts with a long shared opening show the words that distinguish them; hover to see the full opening.
 
 In Create’s **Your renders** tab, the gallery is the only scrolling area on the results side; the results tabs and gallery toolbar stay in place. **Prompt takes** and **Pipeline** retain their own scrolling.
 

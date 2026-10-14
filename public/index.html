@@ -3,11 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f8f8f4">
+  <script src="ui-theme.js"></script>
   <title>Prompt Maker</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="studio.css">
+  <link rel="stylesheet" href="themes.css">
   <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -37,6 +40,7 @@
       </div>
     </div>
     <button type="button" id="jobsBtn" class="renders-btn jobs-btn" title="Jobs: long tasks the assistant works through, and their logs" hidden><span class="rp-spin" aria-hidden="true">🗂</span><span class="rp-label">Job</span><em id="jobsCount"></em></button>
+    <button type="button" id="uiThemeButton" class="icon-btn" aria-label="Choose UI theme" title="Choose UI theme" aria-haspopup="dialog" aria-controls="uiThemeDialog" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M12 4a8 8 0 0 1 0 16"/></svg></button>
     <button type="button" id="askBtn" class="ask-btn" aria-expanded="false" aria-controls="assistant" title="Ask the assistant (Ctrl+K)"><span aria-hidden="true">✦</span><span class="ask-label">Ask the assistant</span></button>
     <div class="llm" id="llmBox">
       <span class="dot" id="llmDot"></span>
@@ -646,8 +650,14 @@
         <p class="eyebrow">Studio settings</p><h1>Make yourself at home.</h1>
         <p>Prompt Maker runs 100% offline: nothing leaves your machine, unless you choose a ☁️ cloud Brain.</p>
       </div>
-<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button type="button" data-settings-tab="services" aria-controls="settingsForm">Services</button><button type="button" data-settings-tab="prompting" aria-controls="settingsForm">Brain & prompting</button><button type="button" data-settings-tab="instructions" aria-controls="settingsForm">Master instructions</button><button type="button" data-settings-tab="rendering" aria-controls="settingsForm">Rendering</button><button type="button" data-settings-tab="privacy" aria-controls="settingsForm">Privacy</button><button type="button" data-settings-tab="cloud" aria-controls="settingsForm">Cloud Brains</button><button type="button" data-settings-tab="assistant" aria-controls="settingsForm">Assistant</button><button type="button" data-settings-tab="updates" aria-controls="settingsForm">Data & updates</button></nav>
+<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button type="button" data-settings-tab="appearance" aria-controls="settingsForm">Appearance</button><button type="button" data-settings-tab="services" aria-controls="settingsForm">Services</button><button type="button" data-settings-tab="prompting" aria-controls="settingsForm">Brain & prompting</button><button type="button" data-settings-tab="instructions" aria-controls="settingsForm">Master instructions</button><button type="button" data-settings-tab="rendering" aria-controls="settingsForm">Rendering</button><button type="button" data-settings-tab="privacy" aria-controls="settingsForm">Privacy</button><button type="button" data-settings-tab="cloud" aria-controls="settingsForm">Cloud Brains</button><button type="button" data-settings-tab="assistant" aria-controls="settingsForm">Assistant</button><button type="button" data-settings-tab="updates" aria-controls="settingsForm">Data & updates</button></nav>
       <form id="settingsForm" class="settings" autocomplete="off" novalidate>
+        <section class="card" id="appearanceCard" data-panel="set-appearance" data-settings-group="appearance">
+          <h2>Make the studio yours</h2>
+          <p class="hint">Choose a little atmosphere for your workspace.</p>
+          <div class="ui-theme-picker" data-ui-theme-picker role="group" aria-label="UI theme"></div>
+          <p class="hint">Applies instantly and stays saved in this browser. No need to click Save settings.</p>
+        </section>
         <section class="card" id="servicesCard" data-panel="set-services" data-settings-group="services">
           <h2>🖥️ Services</h2>
           <ul class="svc-list">
@@ -1087,5 +1097,10 @@
   <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
   <div id="dropOverlay" class="drop-overlay" hidden><div>Drop it like it's hot 🔥</div></div>
   <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="uiThemeDialog" class="modal" aria-labelledby="uiThemeTitle">
+    <header class="modal-head"><h2 id="uiThemeTitle">Make the studio yours</h2><span class="spacer"></span><button type="button" class="icon-btn" data-close-theme aria-label="Close theme picker">×</button></header>
+    <div class="modal-body"><div class="ui-theme-picker" data-ui-theme-picker role="group" aria-label="UI theme"></div><p class="hint ui-theme-help">Applies instantly and stays saved in this browser.</p></div>
+    <footer class="modal-foot"><button type="button" class="btn primary" data-close-theme>Done</button></footer>
+  </dialog>
 </body>
 </html>

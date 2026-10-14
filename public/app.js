@@ -1819,7 +1819,7 @@ function selectModel(id, { values } = {}) {
   renderModelChips();
   renderCreativeTask();
   if (m) saved.set(`taskModel.${modelTask(m)}`, m.id);
-  document.documentElement.style.setProperty('--m', '#244c39');
+  document.documentElement.style.setProperty('--m', 'var(--hot)');
   $('#modelDesc').textContent = m ? modelPurpose(m) : '';
   $('#modelDesc').hidden = !m;
   renderModelGuide(m);
@@ -5109,7 +5109,7 @@ async function saveEdit(card, { quiet = false } = {}) {
 $('#createForm').addEventListener('submit', e => { e.preventDefault(); showStageTab('takes'); generate(); });
 $('#stopBtn').addEventListener('click', stop);
 document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && isView('create') && !e.target.closest?.('.take, #assistant')) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && isView('create') && !e.target.closest?.('.take, #assistant, dialog')) {
     e.preventDefault();
     showStageTab('takes');
     generate();

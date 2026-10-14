@@ -1,8 +1,8 @@
 // Keeps a copy of the app's page, so it still opens when Prompt Maker's server is off. The page then shows
 // "Prompt Maker's server isn't running" with a Start button, and reconnects once the server is back.
 // Network first: while the server is up, every load is fresh (and refreshes the copy).
-const CACHE = 'prompt-maker-shell-v3';
-const SHELL = ['/', '/app.js', '/recipe.js', '/app.css', '/studio.css', '/fonts/studio-sans.ttf', '/icon.svg', '/fonts/bricolage.woff2', '/fonts/jetbrains-mono.woff2'];
+const CACHE = 'prompt-maker-shell-v4';
+const SHELL = ['/', '/app.js', '/recipe.js', '/app.css', '/studio.css', '/themes.css', '/ui-theme.js', '/fonts/studio-sans.ttf', '/icon.svg', '/fonts/bricolage.woff2', '/fonts/jetbrains-mono.woff2'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
