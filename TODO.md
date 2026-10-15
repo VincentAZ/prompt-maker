@@ -23,6 +23,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.61.0 — Select all, to delete in bulk: a **Select all** button in 🎞 Your renders / the Library and in Saved
+  prompts, and **🗑 Delete all N takes** over Prompt takes (8 s to undo). Ctrl+A works without first clicking an empty
+  spot in the grid (a full grid had almost none), and once a card is picked a drag from any card draws the box.
 - 1.60.1 — A refine no longer gets undone by the theme check. Asked for "both hands", the Brain wrote them, and the
   check put "his right hand" back, nine times over: a fact that shares a word with the instruction isn't a lost fact
   (parseDrift), and a refine of a ✍️ own-prompt take isn't checked at all (its theme is the old prompt). The assistant

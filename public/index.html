@@ -366,6 +366,7 @@
               <span id="reelCount" class="reel-count"></span>
               <span class="spacer"></span>
               <button type="button" id="reelSelect" class="btn small" aria-pressed="false">Select</button>
+              <button type="button" id="reelSelectAll" class="btn small" title="Pick every render shown (Ctrl+A), to download or delete them">Select all</button>
               <label id="reelZoom" class="reel-zoom" title="Picture size"><input type="range" id="reelSize" min="80" max="1000" step="10" value="160" aria-label="Picture size"></label>
               <button type="button" id="reelJoin" class="btn small" title="Join the videos shown here, in this order, into one video" hidden>🎬 Join</button>
               <button type="button" id="reelFull" class="btn small" aria-label="Full screen" title="Fill the window (Esc to go back)"><span class="ico" aria-hidden="true">⛶</span> <span class="lbl">Full screen</span></button>
@@ -435,6 +436,7 @@
         </div>
         <div id="historyFilters" class="filter-chips" role="group" aria-label="Filter by model"></div>
         <button type="button" id="historyFav" class="chip-btn" aria-pressed="false">Bookmarks</button>
+        <button type="button" id="historySelectAll" class="btn small" title="Pick every card shown (Ctrl+A), to delete them">Select all</button>
       </div>
       <div id="historyList" class="history-grid"></div>
       <div id="historySel" class="pick-bar fixed" role="toolbar" aria-label="Selected prompts" hidden><b id="historySelCount"></b><button type="button" id="historySelDelete" class="btn small danger" title="Deletes them for good: their prompts, images and renders, here and in ComfyUI. You get 8 seconds to undo">🗑 Delete</button><button type="button" id="historySelClear" class="btn small" title="Let go of the selection (Esc)">✕</button></div>

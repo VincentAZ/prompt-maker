@@ -3131,6 +3131,7 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
     ${entry.manual ? '<span class="via">✍️ your own prompt, word for word</span>' : via ? `<span class="via">${running ? 'rolling on' : 'written by'} ${esc(via)}${totalSecs ? ` in ${totalSecs.toFixed(1)}s` : ''}</span>` : ''}
     ${takes > 1 && (running || entry.id) && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn"${off}>🎨 Render all ${takes}</button>` : ''}
     ${takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn"${off}>📋 Copy all ${takes} takes</button>` : ''}
+    ${takes > 1 && (running || entry.id) ? `<button type="button" class="btn small danger" id="deleteAllTakesBtn" title="Deletes this whole set for good: all ${takes} takes, their renders, picture and videos, here and in ComfyUI. You get 8 seconds to undo"${off}>🗑 Delete all ${takes} takes</button>` : ''}
     ${entry.id && !entry.manual && m && !entry.chain ? `<button type="button" class="btn small" id="addTakeBtn" title="One more take for this set, written from the same idea, picture and settings, different from the ones here"${off}>＋ Add a take</button>` : ''}
     ${takes > 1 && (running || entry.id) && m ? `<form class="refine refine-all" id="refineAllForm"><span class="ra-label" aria-hidden="true">🔁 All ${takes} takes</span><input spellcheck="true" placeholder="Tweak them all at once… e.g. make it golden hour" aria-label="What should change in all ${takes} takes?"><button type="submit" title="Refine every take (Enter)" aria-label="Refine all ${takes} takes">➜</button></form>` : ''}`;
   head.hidden = false;
@@ -3142,6 +3143,7 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
     tweakWhenFree(e.currentTarget, () => refineAll(text).then(ok => { if (ok) input.value = ''; }));
   });
   $('#addTakeBtn')?.addEventListener('click', addTake);
+  $('#deleteAllTakesBtn')?.addEventListener('click', e => deleteAllTakes(entry, e.currentTarget));
   $('#srcLink')?.addEventListener('click', () => openSource(entry.source));
   $('#renderAllBtn')?.addEventListener('click', () => state.cards.forEach(c => { if (c.rb && !c.interrupted) startRender(c); }));
   $('#copyAllBtn')?.addEventListener('click', e => copyText(takesText(state.cards.filter(c => !c.interrupted).map(c => $('.prompt-text', c.el).value.trim())), e.currentTarget));
@@ -3480,6 +3482,7 @@ function renderReel() {
   ].filter(Boolean).join(' · ');
   $('#tabRenders').classList.toggle('busy', Boolean(rendering));
   $('#reelZoom').hidden = !open || none;
+  $('#reelSelectAll').hidden = !open || !items.length;
   const videosShown = items.filter(it => it.file.kind === 'video').length;
   $('#reelJoin').hidden = !open || videosShown < 2 || reelFilter.hidden;
   $('#reelJoin').textContent = `Join ${videosShown} videos`;
@@ -3760,7 +3763,7 @@ $('#reelGrid').addEventListener('keydown', () => { reelDropped = false; }, true)
 $('#reelGrid').addEventListener('pointerdown', e => {
   reelDropped = false; // a new press: the last drag's click isn't coming anymore
   const cell = e.target.closest('.reel-cell');
-  if (!cell || e.button !== 0 || reelDrag || reelSelecting || e.ctrlKey || e.metaKey || e.target.closest('.rate-bar, .rt-hide')) return;
+  if (!cell || e.button !== 0 || reelDrag || reelSelecting || reelPick.keys.size || e.ctrlKey || e.metaKey || e.target.closest('.rate-bar, .rt-hide')) return;
   const d = { cell, key: cell.dataset.key, pointer: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, touch: e.pointerType !== 'mouse' };
   reelDrag = d;
   if (d.touch) d.hold = setTimeout(() => startReelDrag(d), 400);
@@ -3938,10 +3941,11 @@ function cardPicker({ grid, card, host, edge, free, show, selecting = () => fals
     P.banded = false;
     if (e.button !== 0 || e.pointerType !== 'mouse') return;
     const onCard = e.target.closest(card);
-    if (onCard ? !(e.ctrlKey || e.metaKey || selecting()) : !free(e.target)) return; // with Select on, from a card too
+    const picking = selecting() || P.keys.size > 0; // with Select on, or once a card is picked: from a card too
+    if (onCard ? !(e.ctrlKey || e.metaKey || picking) : !free(e.target)) return;
     const el = host();
     const at = () => { const r = el.getBoundingClientRect(); return { x: d.x - r.left + el.scrollLeft, y: d.y - r.top + el.scrollTop }; };
-    const d = { x: e.clientX, y: e.clientY, base: e.ctrlKey || e.metaKey || selecting() ? new Set(P.keys) : new Set(), band: null };
+    const d = { x: e.clientX, y: e.clientY, base: e.ctrlKey || e.metaKey || picking ? new Set(P.keys) : new Set(), band: null };
     d.start = at();
     const draw = () => {
       const r = el.getBoundingClientRect();
@@ -4027,6 +4031,7 @@ $('#reelSelect').addEventListener('click', () => {
   $('#reelGrid').classList.toggle('selecting', reelSelecting);
   if (!reelSelecting) clearReelPicked(); else drawReelPicked();
 });
+$('#reelSelectAll').addEventListener('click', () => { reelPick.all(); announce(`${reelPickedRenders().length} selected`); });
 $('#reelCompare').addEventListener('click', () => {
   const items = reelItems.filter(it => reelPicked.has(reelKey(it)));
   if (items.length !== 2) return;
@@ -4090,7 +4095,7 @@ document.addEventListener('keydown', e => {
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && pick.keys.size) {
     e.preventDefault();
     $(del).click();
-  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && (isView('history') || e.target.closest?.('#reel'))) {
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && (isView('history') || $('#reelGrid').checkVisibility?.())) {
     e.preventDefault();
     pick.all();
   }
@@ -4302,6 +4307,23 @@ async function deleteTakeCard(card) {
   renderResults(fresh);
   if (isView('history')) renderHistory();
   toast(left ? `🗑️ Take deleted. ${left}` : `🗑️ Take deleted${renders ? ` with its ${renders} render${renders > 1 ? 's' : ''}` : ''}`, Boolean(left));
+}
+// 🗑 Delete all takes: the whole set goes, as a deleted Saved prompts card does (8 seconds to undo).
+async function deleteAllTakes(entry, btn) {
+  if (!entry.id) return;
+  if (state.busy) return toast('Hold on, a prompt is still being written.', true);
+  if (rendersNow.some(j => j.historyId === entry.id)) return toast('A take is still rendering: cancel its render first (✕ on its tile, or in the top bar).', true);
+  const n = entry.variations.length;
+  const go = () => {
+    renderResults(null);
+    deleteManySoon([{ id: entry.id, url: `/api/history/${entry.id}`, run: () => deleteEntryNow(entry, { quiet: true }) }], `${n} takes`, () => {
+      if (isView('history')) renderHistory();
+      if (!going.has(entry.id) && !state.entry && state.history.some(x => x.id === entry.id)) renderResults(entry); // ↶ Undo brings the takes back
+    });
+  };
+  if (!saved.get('deleteWarned', false)) { if (await deleteWarning()) go(); return; }
+  const rated = ratedIn(entry);
+  confirmClick(btn, rated ? `Sure? ${rated} rated render${rated > 1 ? 's' : ''} go too` : `Sure? ${n} takes go`, go);
 }
 // Delete → Sure? on the take itself, once the warning was ticked away.
 function confirmInline(card, renders) {
@@ -5388,6 +5410,7 @@ function renderHistory() {
   // Remember keyboard focus across the re-render.
   const focused = document.activeElement?.closest?.('.hcard') && document.activeElement.dataset.act
     ? { id: document.activeElement.closest('.hcard').dataset.id, act: document.activeElement.dataset.act } : null;
+  $('#historySelectAll').hidden = !items.length;
   if (!items.length) {
     const none = !state.history.length;
     list.innerHTML = `<div class="empty" style="grid-column:1/-1">
@@ -5461,6 +5484,7 @@ const historyPick = cardPicker({
 $('#historyList').addEventListener('click', historyPick.click, true);
 $('#view-history').addEventListener('pointerdown', historyPick.press);
 $('#historySelClear').addEventListener('click', historyPick.clear);
+$('#historySelectAll').addEventListener('click', () => { historyPick.all(); announce(`${historyPick.keys.size} selected`); });
 $('#historySelDelete').addEventListener('click', async e => {
   const list = state.history.filter(x => historyPick.keys.has(x.id) && !going.has(x.id));
   if (!list.length) return historyPick.clear();
