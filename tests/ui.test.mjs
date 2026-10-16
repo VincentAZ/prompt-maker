@@ -501,10 +501,13 @@ esac
   let appLog = '';
   // The app server (started again by the test of a restart mid-render; its log is kept across starts).
   const startApp = async () => {
-    app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: appEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Over IPC, so a restart the app does on its own (↻ Restart, a privacy level that takes one) comes back here
+    // for a fresh start, instead of a detached copy the suite can't stop.
+    app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: appEnv, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     const mark = appLog.length;
     app.stdout.on('data', d => { appLog += d; });
     app.stderr.on('data', d => { appLog += d; });
+    app.on('message', m => { if (m?.restart) app.once('exit', () => startApp().catch(err => console.log(`App did not come back: ${err.message}`))); });
     for (let i = 0; i < 80 && !appLog.slice(mark).includes('running at'); i++) await sleep(100);
     if (!appLog.slice(mark).includes('running at')) throw new Error(`App did not start:\n${appLog.slice(mark)}`);
   };
@@ -1242,23 +1245,39 @@ esac
     assert((await fs.readFile(pkexecLog, 'utf8')).includes('swapoff -a'), 'swap turned off again as part of it');
     assert((await text('#privacyLevelLine')).includes('Safer'), 'the card says so');
     assert(await js('document.querySelector("#sComfyRam").checked'), 'the ComfyUI switch in the form follows');
-    // Nothing stays: your work in memory, after a restart.
-    await click('#privacyLevelBtn');
-    await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog again');
-    await click('#privacyDlg input[value="ram"]');
-    await click('#privacyDlg button[value="ok"]');
-    await toastText('Restart Prompt Maker');
-    const sRam = await (await fetch(`${APP}/api/settings`)).json();
-    assert(sRam.privacyLevel === 'ram' && sRam.dataRam && !sRam.inMemory, 'set, not yet in effect');
-    assert((await text('#privacyLevelLine')).includes('after a restart'), 'the card says it takes a restart');
-    // Back to Safe.
-    await click('#privacyLevelBtn');
-    await waitFor('document.querySelector("#privacyDlg").open', 'the level dialog once more');
-    await click('#privacyDlg input[value="normal"]');
-    await click('#privacyDlg button[value="ok"]');
-    await toastText('Safe');
-    const sNormal = await (await fetch(`${APP}/api/settings`)).json();
-    assert(sNormal.privacyLevel === 'normal' && !sNormal.comfyRam && !sNormal.dataRam, 'the Safe switches');
+    // Nothing stays: your work in memory. Where it lives is read as Prompt Maker starts, so the switch restarts it
+    // on its own (no second click: a note asking for one was missed, and a render went to disk), and the page
+    // waits and comes back by itself.
+    const restartedInto = async (level, label) => {
+      await js('window.__beforeRestart = true');
+      await click('#privacyLevelBtn');
+      await waitFor('document.querySelector("#privacyDlg").open', `the level dialog (${label})`);
+      await click(`#privacyDlg input[value="${level}"]`);
+      await click('#privacyDlg button[value="ok"]');
+      await toastText('Restarting Prompt Maker');
+      await waitFor('!window.__beforeRestart', `the page came back on its own (${label})`, 20000);
+      // The new page, loaded and talking to the new server (its tabs show once its settings are in).
+      await waitFor(`document.readyState === 'complete' && !document.querySelector('.offline:not([hidden])') && (() => { const b = document.querySelector('.tabs button[data-view="settings"]'); return b && b.getBoundingClientRect().width > 0; })()`, `the page loaded again (${label})`, 20000);
+      await click('.tabs button[data-view="settings"]');
+      await waitFor('document.querySelector("#privacyLevelLine").textContent.includes("Level:")', 'the Privacy check card again');
+      return (await fetch(`${APP}/api/settings`)).json();
+    };
+    const sRam = await restartedInto('ram', 'Nothing stays');
+    assert(sRam.privacyLevel === 'ram' && sRam.dataRam && sRam.inMemory, `in memory, after the restart it did itself: ${JSON.stringify({ dataRam: sRam.dataRam, inMemory: sRam.inMemory })}`);
+    assert((await text('#privacyLevelLine')).includes('in memory for this session'), 'the card says so');
+    assert(!(await visible('#privacyRestart')), 'nothing left to restart for');
+    // Back to Safe: the same, the other way.
+    const sNormal = await restartedInto('normal', 'Safe');
+    assert(sNormal.privacyLevel === 'normal' && !sNormal.comfyRam && !sNormal.dataRam && !sNormal.inMemory, 'the Safe switches, in effect');
+    assert((await text('#privacyLevelLine')).includes('stays in the data folder'), 'the card says so');
+    // The level and the running session disagree (set by hand, or a restart that never came): the card says so,
+    // with ↻ Restart right there.
+    await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dataRam: true }) });
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelector("#privacyLevelLine").textContent.includes("after a restart")', 'the card says the restart is still to come');
+    assert(await visible('#privacyRestart'), '↻ Restart now, right there');
+    await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dataRam: false }) });
   });
 
   await test('🔒 a session in memory: History, renders and the chat live in RAM and go when Prompt Maker stops', async () => {

@@ -6524,6 +6524,8 @@ $('#sComfyAutostart').addEventListener('change', async e => {
 // Disk encryption, swap, hibernation, screen lock: what the computer does with your files below the app.
 async function loadPrivacy() {
   renderPrivacyLevel();
+  // Fresh from the server: the level may have changed from elsewhere (another window, the assistant) since this page loaded.
+  api('/api/settings').then(s => { Object.assign(state.settings, { dataRam: s.dataRam, inMemory: s.inMemory, privacyLevel: s.privacyLevel }); renderPrivacyLevel(); }).catch(() => {});
   $('#deleteWarnOff').hidden = !saved.get('deleteWarned', false);
   const st = await api('/api/privacy').catch(() => null);
   if (st) renderPrivacy(st);
@@ -6588,9 +6590,13 @@ async function privacyLevelDialog() {
     state.settings = r.settings;
     renderSettings();
     if (isView('settings')) { renderPrivacy(r.check); renderPrivacyLevel(); loadServices(); }
-    const notes = [...r.left, ...(r.restart ? ['Restart Prompt Maker for it to take effect: ↻ Restart now, in the Privacy check card.'] : [])];
-    toast(`🔒 ${LEVEL_NAMES[picked]}${notes.length ? `. ${notes.join(' ')}` : ''}`, r.left.length > 0);
-    $('#privacyRestart').hidden = !r.restart;
+    // Where your work lives is read as Prompt Maker starts: to or from "Nothing stays" restarts it here and now,
+    // instead of asking for a second click (a note in a toast was missed, and a render went to disk; 1.61.1).
+    if (r.restart) {
+      toast(`🔒 ${LEVEL_NAMES[picked]}. ↻ Restarting Prompt Maker so it takes effect… this page comes back on its own`);
+      return restartApp({ quiet: true });
+    }
+    toast(`🔒 ${LEVEL_NAMES[picked]}${r.left.length ? `. ${r.left.join(' ')}` : ''}`, r.left.length > 0);
   } catch (err) {
     toast(err.message, true);
   }
@@ -6602,8 +6608,13 @@ $('#privacyRestart').addEventListener('click', restartApp);
 function renderPrivacyLevel() {
   const s = state.settings;
   const name = LEVEL_NAMES[s.privacyLevel] || 'Safe';
-  const memory = s.inMemory ? ' Your work is in memory for this session.' : s.dataRam ? ' Your work goes to memory after a restart.' : ' Your work stays in the data folder until you delete it.';
+  // The level and the running session disagree (the level was switched and the restart didn't happen): say so,
+  // with the restart right there.
+  const stale = Boolean(s.dataRam) !== Boolean(s.inMemory);
+  const memory = s.inMemory ? (stale ? ' Your work is still in memory until a restart.' : ' Your work is in memory for this session.')
+    : stale ? ' Your work goes to memory after a restart; until then it lands in the data folder.' : ' Your work stays in the data folder until you delete it.';
   $('#privacyLevelLine').textContent = `Level: ${name}.${memory}`;
+  $('#privacyRestart').hidden = !stale;
 }
 
 $('#privacyList').addEventListener('click', async e => {
@@ -6708,14 +6719,14 @@ async function startComfyUi() {
 }
 
 // ↻ Restart Prompt Maker: the server starts again and this page waits for it, then reloads itself.
-async function restartApp() {
+async function restartApp({ quiet = false } = {}) { // quiet: the caller's toast already says why
   showView('settings');
   try { await api('/api/services/app/restart', { method: 'POST' }); } catch (err) { return toast(`Couldn't restart: ${friendly(err)}`, true); }
   state.stoppedAt = Date.now();
   Object.assign(state, { appDown: true, restarting: true });
   renderServicesDown();
   $('.svc[data-svc="app"] .svc-state').textContent = 'Restarting…';
-  toast('↻ Restarting Prompt Maker… this page comes back on its own');
+  if (!quiet) toast('↻ Restarting Prompt Maker… this page comes back on its own');
   const t0 = Date.now();
   await new Promise(r => setTimeout(r, 1500));
   while (Date.now() - t0 < 90000) {

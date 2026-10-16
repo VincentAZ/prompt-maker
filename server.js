@@ -2399,6 +2399,8 @@ function restartApp() {
     }
     server.close();
     server.closeAllConnections?.();
+    // Started by a parent that manages it (the test suite, over IPC): it starts us again, so no copy of ours escapes it.
+    if (process.send) return process.send({ restart: true }, () => setTimeout(() => process.exit(0), 200));
     spawn(process.execPath, [path.join(import.meta.dirname, 'server.js')], { cwd: import.meta.dirname, env: process.env, detached: true, stdio: 'ignore' }).unref();
     setTimeout(() => process.exit(0), 200);
   }, 300);

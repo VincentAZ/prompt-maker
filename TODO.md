@@ -23,6 +23,11 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.61.1 — Switching to or from "Nothing stays" restarts Prompt Maker on its own (the page waits and comes back),
+  instead of a note asking for a second click: the note was missed, the server kept the old level and a render went
+  to the data folder on disk (2026-10-16). The Privacy check card shows **↻ Restart now to apply** whenever the level
+  and the running session disagree. The test suite starts the app over IPC, so a restart the app does itself comes
+  back to the suite.
 - 1.61.0 — Select all, to delete in bulk: a **Select all** button in 🎞 Your renders / the Library and in Saved
   prompts, and **🗑 Delete all N takes** over Prompt takes (8 s to undo). Ctrl+A works without first clicking an empty
   spot in the grid (a full grid had almost none), and once a card is picked a drag from any card draws the box.
