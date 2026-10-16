@@ -1100,6 +1100,20 @@ esac
     await loadAgain();
   });
 
+  await test("LM Studio's scratch folder gone → put back, call made again, no error", async () => {
+    const tempDir = path.join(lmsHome, '.internal', 'temp');
+    await fs.rm(tempDir, { recursive: true, force: true });
+    mock.loseTemp(tempDir);
+    await type('#theme', 'TEMPTEST lighthouse at dusk');
+    await click('#generateBtn');
+    await genDone();
+    assert(await js('document.querySelector("#stageError").hidden'), 'no error shown');
+    eq(await count('.take .prompt-text:not([hidden])'), 1, 'the take came');
+    assert((await fs.stat(tempDir).catch(() => null))?.isDirectory(), 'the folder is back');
+    eq(mock.log.filter(b => b.messages.some(m => JSON.stringify(m.content).includes('TEMPTEST'))).length, 2, 'asked twice: once failed, once after the folder came back');
+    mock.loseTemp(null);
+  });
+
   await test('Ctrl+Enter generates (and the tab title shows progress)', async () => {
     await type('#theme', 'keyboard warrior portrait');
     await press('Enter', { ctrl: true });

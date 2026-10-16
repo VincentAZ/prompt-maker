@@ -6,6 +6,7 @@
 //   REFUSETEST → turns the job down
 //   DRIFTTEST → the check against the theme reports "a red dress" written as "a blue gown" (once)
 import http from 'node:http';
+import { existsSync } from 'node:fs';
 
 const MODELS = [
   { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b', config: { context_length: 32768 } }] },
@@ -143,6 +144,7 @@ export function startMock(port) {
   const log = [];
   let server;
   let overflowed = false; // "overflow once": the chat doesn't fit, once
+  let lostTemp = null; // "TEMPTEST": LM Studio's scratch folder is gone, until the app puts it back (set by the test)
 
   const handler = async (req, res) => {
     const json = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
@@ -163,6 +165,9 @@ export function startMock(port) {
     if (thinkingOver) body = { ...body, messages: body.messages.slice(0, -1) };
     const allText = body.messages.map(m => textOf(m.content)).join('\n');
     if (allText.includes('FAILTEST')) return json(500, { error: { message: 'Mock failure: the model crashed' } });
+    if (lostTemp && allText.includes('TEMPTEST') && !existsSync(lostTemp)) {
+      return json(400, { error: { message: `Failed to load model "mock-7b". Error: ENOENT: no such file or directory, mkdtemp '${lostTemp}/lmstudio-chat-template-XbR2DR'` } });
+    }
     if (body.tools && /overflow once/.test(allText) && !overflowed) {
       overflowed = true;
       return json(400, { error: { message: 'The number of tokens to keep from the initial prompt is greater than the context length' } });
@@ -268,6 +273,7 @@ export function startMock(port) {
   });
   return {
     log,
+    loseTemp: dir => { lostTemp = dir; },
     start: listen,
     stop: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }),
   };

@@ -911,6 +911,12 @@ The Brain was loaded in LM Studio with too little room for the assistant, which 
 </details>
 
 <details>
+<summary><b>"LM Studio error (400): Failed to load model … ENOENT … mkdtemp '…/.internal/temp/…'"</b></summary>
+
+LM Studio keeps a scratch folder inside its own data and writes a small file there each time it loads a model. The folder goes missing when LM Studio's background server is closed while the LM Studio app is open: the app then can't load any model until it is restarted. Prompt Maker puts the folder back on its own and asks LM Studio once more, so you shouldn't see this; if you still do, restart LM Studio.
+</details>
+
+<details>
 <summary><b>The Brain menu is empty right after starting LM Studio</b></summary>
 
 LM Studio takes a few seconds to index your models after its server starts. Prompt Maker keeps checking and fills the menu in on its own.

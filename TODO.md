@@ -5,12 +5,19 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Next
 
-1. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
+1. **"Nothing stays" leaves ComfyUI's log on disk** when the level is switched while a ComfyUI started from here is
+   already running: that ComfyUI keeps appending to `<data>/comfyui.log` (no prompts: start-up facts, "got prompt",
+   timings and the model file names it loaded) until it restarts, while the guide promises that file in memory
+   (seen 2026-10-16). Done = the level switch also restarts a ComfyUI started from here once nothing is rendering
+   (or offers to, with the reason), shreds the old disk log, and the Privacy check card says so while the gap is
+   open. Also on this machine right now: restart ComfyUI from Settings → Services, then shred
+   `~/.local/share/prompt-maker/comfyui.log` (the user said later).
+2. **Rebuild the release package** whenever a version ships: `packaging/deb/build.sh`, `packaging/deb/check.sh`,
    then attach to the GitHub release (`gh release create vX.Y.Z dist/prompt-maker_X.Y.Z_amd64.deb`). Latest:
    v1.53.1 (2026-10-12).
-2. **Windows installer** (on hold: other work first). After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
+3. **Windows installer** (on hold: other work first). After the Windows port: the same shape as the .deb (bundled Node, Start menu entry, first
    start sets up the rest). Consider a WebView/Electron wrapper then, so Windows gets an app window too.
-3. **App-name change** (on hold) (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
+4. **App-name change** (on hold) (see the discussion of 2026-10-07): if it happens, do it before the Windows port and before
    more users: repo, package name, data folder, service unit names, the `promptmaker://` link, the README.
 
 ## Ideas, not scheduled
@@ -23,6 +30,9 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.61.2 — LM Studio refused to load any model with "ENOENT … mkdtemp '…/.internal/temp/…'" after its background
+  server was closed while the desktop app was open (2026-10-09, 2026-10-16): its scratch folder was gone. Prompt
+  Maker now puts that folder back and asks once more, so the take comes instead of the error. Guide (Troubleshooting).
 - 1.61.1 — Switching to or from "Nothing stays" restarts Prompt Maker on its own (the page waits and comes back),
   instead of a note asking for a second click: the note was missed, the server kept the old level and a render went
   to the data folder on disk (2026-10-16). The Privacy check card shows **↻ Restart now to apply** whenever the level
