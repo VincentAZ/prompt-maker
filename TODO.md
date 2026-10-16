@@ -30,6 +30,14 @@ and what "done" looks like; done items move to the bottom with the version that 
 
 ## Done
 
+- 1.62.0 — **Room**, on each Brain's card: pick how many tokens the Brain can take at once (4k up to the model's
+  most) and Prompt Maker loads it again in LM Studio with that room (POST /api/lmstudio/room: every loaded copy
+  unloaded first, then LM Studio's load API with context_length; lms load on an older LM Studio). No more LM Studio
+  settings to find for a request that doesn't fit: the error points to the menu. Guide (Brains, Troubleshooting).
+- 1.61.3 — A prompt-writing request bigger than the Brain's room ("request (8433 tokens) exceeds the available
+  context size (8192 tokens)", 2026-10-16: Krea 2 RAW with Adult content on sends twenty adult examples along) is
+  fitted first: fewer example prompts go along, said in the status line; when it can't fit even without them, the
+  error says the numbers and the way out in plain words. Guide (Troubleshooting).
 - 1.61.2 — LM Studio refused to load any model with "ENOENT … mkdtemp '…/.internal/temp/…'" after its background
   server was closed while the desktop app was open (2026-10-09, 2026-10-16): its scratch folder was gone. Prompt
   Maker now puts that folder back and asks once more, so the take comes instead of the error. Guide (Troubleshooting).

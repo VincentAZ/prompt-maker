@@ -12,6 +12,9 @@ const MODELS = [
   { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b', config: { context_length: 32768 } }] },
   // Loaded with little room: ✦ Ask folds a long chat on it after a few rounds.
   { key: 'mock/small-room', display_name: 'Mock Small Room 8B', type: 'llm', params_string: '8B', max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/small-room', config: { context_length: 12288 } }] },
+  // Loaded with a small room (and one with almost none): a request that doesn't fit is refused like LM Studio does.
+  { key: 'mock/tiny-room', display_name: 'Mock Tiny Room 4B', type: 'llm', params_string: '4B', max_context_length: 32768, capabilities: { vision: false }, loaded_instances: [{ id: 'mock/tiny-room', config: { context_length: 7000 } }] },
+  { key: 'mock/no-room', display_name: 'Mock No Room 1B', type: 'llm', params_string: '1B', max_context_length: 1000, capabilities: { vision: false }, loaded_instances: [{ id: 'mock/no-room', config: { context_length: 1000 } }] },
   { key: 'mock/thinker', display_name: 'Mock Thinker 9B', type: 'llm', capabilities: { vision: true, reasoning: { allowed_options: ['off', 'on'], default: 'on' } }, loaded_instances: [] },
   { key: 'mock/fable', display_name: 'Mock Fable 27B', type: 'llm', capabilities: { vision: true }, loaded_instances: [] },
   { key: 'mock/text-only', display_name: 'Mock Text 7B', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
@@ -153,6 +156,24 @@ export function startMock(port) {
       if (req.headers.authorization === 'Bearer wrong-key') return json(401, { error: { message: 'bad key' } });
       return json(200, { data: MODELS.map(m => ({ id: m.key })) });
     }
+    // LM Studio's load API: a load adds a copy beside the ones loaded (so the app unloads first), with the room asked.
+    if (req.method === 'POST' && /^\/api\/v1\/models\/(load|unload)$/.test(req.url)) {
+      let raw = '';
+      for await (const c of req) raw += c;
+      const body = JSON.parse(raw || '{}');
+      if (req.url.endsWith('/unload')) {
+        const m = MODELS.find(x => (x.loaded_instances || []).some(i => i.id === body.instance_id));
+        if (!m) return json(404, { error: { type: 'model_not_found', message: `Instance ${body.instance_id} not found` } });
+        m.loaded_instances = m.loaded_instances.filter(i => i.id !== body.instance_id);
+        return json(200, { instance_id: body.instance_id });
+      }
+      const m = MODELS.find(x => x.key === body.model);
+      if (!m) return json(404, { error: { type: 'model_not_found', message: `Model ${body.model} not found in downloaded models` } });
+      const id = `${m.key}${m.loaded_instances?.length ? `:${m.loaded_instances.length + 1}` : ''}`;
+      (m.loaded_instances ||= []).push({ id, config: { context_length: body.context_length || 4096 } });
+      await sleep(300);
+      return json(200, { type: 'llm', instance_id: id, load_time_seconds: 0.3, status: 'loaded' });
+    }
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') return json(404, { error: 'not found' });
 
     let raw = '';
@@ -175,6 +196,14 @@ export function startMock(port) {
 
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    // The small-room Brains count the request (4 characters a token) and refuse one that doesn't fit, mid-stream.
+    const room = MODELS.find(m => m.key === body.model)?.loaded_instances?.[0]?.config?.context_length;
+    const tokens = Math.ceil(JSON.stringify(body.messages).length / 4);
+    if (room && room < 8192 && /tiny-room|no-room/.test(body.model) && tokens > room) {
+      send({ error: { message: `Engine protocol predict request returned 400: {"error":{"code":400,"message":"request (${tokens} tokens) exceeds the available context size (${room} tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":${tokens},"n_ctx":${room}}}` } });
+      res.end();
+      return;
+    }
     const slow = allText.includes('SLOWTEST') || (allText.includes('SLOWSECOND') && /VARIATION \d+ OF/.test(allText));
     let closed = false;
     res.on('close', () => { closed = true; });

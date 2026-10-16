@@ -5906,6 +5906,13 @@ function brainCard(m, fit, model, inUse, q = '') {
         </select>
         ${note ? `<span class="muted small">It ${esc(note)}.</span>` : ''}
       </div>
+      ${m.cloud ? '' : `<div><span class="k">Room</span>
+        <select data-act="room" aria-label="Room for ${esc(m.name)}" title="How many tokens it can take at once (its context length). Changing it loads the Brain again in LM Studio."${state.brainRoom ? ' disabled' : ''}>
+          ${m.contextLoaded ? '' : '<option value="" selected>LM Studio\'s default</option>'}
+          ${[...new Set([...ROOM_SIZES.filter(n => !m.context || n <= m.context), ...(m.contextLoaded ? [m.contextLoaded] : [])])].sort((a, b) => a - b).map(n => `<option value="${n}"${n === m.contextLoaded ? ' selected' : ''}>${k(n)} tokens</option>`).join('')}
+        </select>
+        ${state.brainRoom?.id === m.id ? `<span class="brain-room muted small">⏳ ${esc(state.brainRoom.status)}</span>` : m.context ? `<span class="muted small">up to ${k(m.context)}</span>` : ''}
+      </div>`}
       <div><span class="k">Speed</span>
         <span>${speed ? `about ${fmtSecs(speed.seconds)} per prompt <span class="muted">(${speed.from})</span>` : '<span class="muted">not measured yet</span>'}</span>
         ${fails ? `<span class="small warn-text">${esc(fails)}</span>` : ''}
@@ -5940,8 +5947,37 @@ $('#brainsPane').addEventListener('click', e => {
   else if (b.dataset.act === 'check') quickCheck(id);
   else if (b.dataset.act === 'stop') stopQuickCheck();
 });
+// The sizes the Room menu offers (tokens), up to what the Brain can take.
+const ROOM_SIZES = [4096, 8192, 16384, 32768, 65536, 131072];
+const roomLabel = n => (n >= 1000 ? `${Math.round(n / 1024)}k` : String(n));
+
+// Loads the Brain again with the room picked. One at a time, never during a run.
+async function setBrainRoom(m, room) {
+  if (state.brainRoom) return;
+  if (state.busy || state.chainActive) { renderBrains(); return toast('Wait for the current run to finish, then change the room.', true); }
+  state.brainRoom = { id: m.id, status: `Loading ${m.name} with room for ${roomLabel(room)} tokens…` };
+  renderBrains();
+  try {
+    const { llm } = await api('/api/lmstudio/room', { method: 'POST', body: { model: m.id, contextLength: room } });
+    Object.assign(m, llm);
+    toast(`🧠 ${m.name} now has room for ${roomLabel(m.contextLoaded || room)} tokens`);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    state.brainRoom = null;
+    renderBrains();
+    updateLlmDot();
+  }
+}
+
 $('#brainsPane').addEventListener('change', async e => {
   if (e.target.id === 'brainTarget') return renderBrains();
+  const roomSel = e.target.closest('select[data-act="room"]');
+  if (roomSel) {
+    const m = llmById(roomSel.closest('.brain')?.dataset.id);
+    if (m && roomSel.value) setBrainRoom(m, Number(roomSel.value));
+    return;
+  }
   const sel = e.target.closest('select[data-act="thinking"]');
   const m = llmById(sel?.closest('.brain')?.dataset.id);
   if (!m) return;

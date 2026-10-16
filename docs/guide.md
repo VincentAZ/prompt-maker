@@ -761,6 +761,7 @@ The **Brain** is the AI model in LM Studio that writes your prompts. Pick it fro
 Open **Models** and switch to **🧠 Brains** to see every model in LM Studio. Prompt Maker fills in each card on its own as you work:
 
 - **LM Studio's facts:** size, quantization, 👁 vision, 🛠 tool calling (which ✦ Ask uses), and the room it was loaded with (its context length), which ✦ Ask uses to know when to fold a long chat.
+- **Room:** how many tokens the Brain can take at once. Pick a size from the menu (4k up to what the model can take) and Prompt Maker loads the Brain again in LM Studio with that room; the card says *Loading …* meanwhile, and a toast says when it's done. A bigger room costs memory on your GPU. Pick more when a prompt-writing request doesn't fit (the error says the numbers) or when ✦ Ask folds the chat too often; a Brain at its most (*up to* equals its room) needs replacing by a bigger model instead.
 - **Thinking:** how *Thinking: Off* works on it (LM Studio's switch, Prompt Maker's workaround, or it thinks anyway). You can give a Brain **its own Thinking level**, which wins over Settings, e.g. Off for one that rambles and Low for one you like thinking a little.
 - **Speed:** seconds per prompt on your machine, from your own runs, plus how often it ran out of room, came back empty or refused.
 - **Record:** takes it wrote for image and video models, and how many you rendered or starred.
@@ -907,13 +908,19 @@ The model used up all its tokens, usually by thinking. Set **Thinking** to *Off*
 <details>
 <summary><b>The assistant answers "LM Studio error: The number of tokens to keep … is greater than the context length"</b></summary>
 
-The Brain was loaded in LM Studio with too little room for the assistant, which sends more along than writing a prompt does (about 12,000 tokens; small models often load with 8,192). The assistant folds earlier steps into a note before this happens, and once more when LM Studio reports it; if the message still shows, the Brain has too little room even for one turn. In LM Studio, open **My Models**, click the ⚙ next to the model and raise **Context Length** to 16,000 or more (32,000 is comfortable), then load it again. **Brains** shows the room each loaded Brain has. Writing prompts works either way.
+The Brain was loaded in LM Studio with too little room for the assistant, which sends more along than writing a prompt does (about 12,000 tokens; small models often load with 8,192). The assistant folds earlier steps into a note before this happens, and once more when LM Studio reports it; if the message still shows, the Brain has too little room even for one turn. On the **Brains** page, pick 16k or more from the Brain's **Room** menu (32k is comfortable): it loads the Brain again with that room. Writing prompts works either way.
 </details>
 
 <details>
 <summary><b>"LM Studio error (400): Failed to load model … ENOENT … mkdtemp '…/.internal/temp/…'"</b></summary>
 
 LM Studio keeps a scratch folder inside its own data and writes a small file there each time it loads a model. The folder goes missing when LM Studio's background server is closed while the LM Studio app is open: the app then can't load any model until it is restarted. Prompt Maker puts the folder back on its own and asks LM Studio once more, so you shouldn't see this; if you still do, restart LM Studio.
+</details>
+
+<details>
+<summary><b>"This request needs about … tokens and … has room for …"</b></summary>
+
+A Brain is loaded in LM Studio with a fixed amount of room (its context length), and a prompt-writing request has to fit in it: the instructions, the target model's guide, its example prompts (with Adult content on, the adult examples too, which can be twenty more) and your idea. Prompt Maker checks before asking: when the request is too big, it sends fewer example prompts along (the take's status line says so) and when it doesn't fit even without them, this message shows instead of LM Studio's own. Give the Brain more room on the **Brains** page (the **Room** menu on its card loads it again with the size you pick), or pick a Brain with more room there. A Brain already at the most it can take needs replacing by a bigger one.
 </details>
 
 <details>

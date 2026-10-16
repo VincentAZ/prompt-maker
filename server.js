@@ -7,7 +7,7 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import * as store from './lib/store.js';
-import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, scrubLogs } from './lib/lmstudio.js';
+import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, scrubLogs, setRoom } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
@@ -22,7 +22,7 @@ import { spawn } from 'node:child_process';
 import * as videotools from './lib/videotools.js';
 import * as rendermeta from './lib/rendermeta.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
-import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
+import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, fitToRoom, estimateTokens, tooBigMessage, OVERFLOW, ADULT_CONTENT, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
@@ -276,6 +276,26 @@ async function keepTheme(settings, llm, { model, params, imageDataUrl, brainVide
 
 // An error that counts against the Brain in its record ('room' or 'empty').
 const brainFailure = (outcome, message) => Object.assign(store.httpError(502, message), { outcome });
+
+// The room a local Brain was loaded with (null when unknown, or for a cloud Brain, which has plenty).
+const brainRoom = llm => (llm.cloud ? null : llm.contextLoaded || llm.context || null);
+
+// Builds a request that fits the Brain's room (fewer example prompts when it must, said in the status line), or
+// throws the plain-words error when it can't fit at all. build(model) makes the messages.
+function fitRequest(llm, model, build, onStatus) {
+  const room = brainRoom(llm);
+  if (!room) return build(model);
+  const fit = fitToRoom(model, room, build);
+  if (!fit.fits) throw brainFailure('room', tooBigMessage(llm, room, estimateTokens(fit.messages)));
+  if (fit.dropped) onStatus?.(`${llm.name} has room for ${room.toLocaleString('en-US')} tokens: fewer example prompts go along, so the request fits.`);
+  return fit.messages;
+}
+
+// LM Studio said the request didn't fit after all: the same plain words, with the numbers.
+const explainOverflow = (err, llm, messages) => {
+  if (OVERFLOW.test(err.message || '') && !llm.cloud && messages) err.message = tooBigMessage(llm, brainRoom(llm) || 'an unknown number of', estimateTokens(messages));
+  return err;
+};
 const EMPTY_HINT = 'The Brain returned an empty prompt. If it is a "thinking" model it may have used all its room thinking. Raise Max tokens in Settings or pick a non-thinking Brain.';
 const secondsSince = t0 => Math.round((Date.now() - t0) / 100) / 10;
 
@@ -454,6 +474,7 @@ async function generate(req, res) {
   const keeps = []; // per take: what the check against the theme found (null: not checked)
   const had = set ? set.variations.map(v => v.versions.at(-1).text) : []; // the set's takes: the new one differs from them
   const letGo = store.holdFiles([imageFile, ...images, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
+  let messages = null;
   try {
     if (model.characterSheet && imageDataUrl && !params.characterSheet) { // first, the person's traits from the image
       stream.send({ type: 'status', text: 'Writing the character sheet from your picture…' });
@@ -468,7 +489,7 @@ async function generate(req, res) {
       }
     }
     for (let index = 0; index < count; index++) {
-      const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: source?.text, video: brainVideo, extraImages: imageDataUrls }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] });
+      messages = fitRequest(llm, modelFor(model, settings), m => buildGenerateMessages(masterFor(settings), m, { ...params, sourcePrompt: source?.text, video: brainVideo, extraImages: imageDataUrls }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] }), text => stream.send({ type: 'status', text }));
       const t0 = Date.now();
       const warm = llm.loaded !== false;
       const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
@@ -488,6 +509,7 @@ async function generate(req, res) {
       stream.send({ type: 'done', index, text, ...(kept ? { kept: kept.kept } : {}) });
     }
   } catch (err) {
+    explainOverflow(err, llm, messages);
     if (err.outcome) await recordRun(llm, err.outcome);
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message, index: texts.length, partial: err.partial ? cleanPrompt(err.partial) : '' });
   }
@@ -580,8 +602,9 @@ async function refine(req, res) {
   const params = pickParams(entry, model, await store.listLooks());
 
   const stream = startStream(res, llm, 1, seesImages);
+  let messages = null;
   try {
-    const messages = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo, extraImages }, imageDataUrl, current, instruction);
+    messages = fitRequest(llm, modelFor(model, settings), m => buildRefineMessages(masterFor(settings), m, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo, extraImages }, imageDataUrl, current, instruction), text => stream.send({ type: 'status', text }));
     const t0 = Date.now();
     const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
       signal: stream.signal,
@@ -602,6 +625,7 @@ async function refine(req, res) {
     stream.send({ type: 'done', index: body.index, text: final, ...(kept ? { kept: kept.kept } : {}) });
     stream.send({ type: 'saved', entry: await store.withPresentFiles(saved) });
   } catch (err) {
+    explainOverflow(err, llm, messages);
     if (err.outcome) await recordRun(llm, err.outcome);
     if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
   }
@@ -1946,6 +1970,13 @@ async function route(req, res) {
   }
   if (p === '/api/brains/check' && m === 'POST') return checkBrain(req, res);
 
+  // Loads a Brain again with the room asked for (Models → Brains, the Room menu). Takes a while for a big model.
+  if (p === '/api/lmstudio/room' && m === 'POST') {
+    const body = await readBody(req);
+    const settings = await store.getSettings();
+    const llm = await setRoom(settings.lmStudioUrl, String(body.model || ''), body.contextLength);
+    return sendJson(res, 200, { llm });
+  }
   if (p === '/api/lmstudio/start' && m === 'POST') {
     const settings = await store.getSettings();
     await startServer(settings.lmStudioUrl);

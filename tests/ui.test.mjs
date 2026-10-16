@@ -1114,6 +1114,61 @@ esac
     mock.loseTemp(null);
   });
 
+  await test('a Brain with little room: fewer examples go along so the take fits; too little for any: plain words; more room from Brains', async () => {
+    // Krea 2 RAW gets thirty long example prompts (a playbook with its adult examples has twenty-five).
+    const before = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    const had = new Set((await (await fetch(`${APP}/api/history`)).json()).map(x => x.id));
+    const modelBefore = await js('document.querySelector(".model-card.active")?.dataset.id'); // (the tests after this one count Krea entries)
+    const examples = Array.from({ length: 30 }, (_, i) => `Example take ${i + 1}: ${'a long example prompt about light and texture, '.repeat(12)}`);
+    await fetch(`${APP}/api/models/krea2-raw`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...before, examples }) });
+    try {
+      await click('.model-card[data-id="krea2-raw"]');
+      await choose('#llmSelect', 'mock/tiny-room');
+      const calls = mock.log.length;
+      await type('#theme', 'ROOMTEST a lighthouse at dusk');
+      await click('#generateBtn');
+      await genDone();
+      assert(await js('document.querySelector("#stageError").hidden'), `no error shown (${await text('#stageError')})`);
+      eq(await count('.take .prompt-text:not([hidden])'), 1, 'the take came');
+      const sent = mock.log.slice(calls).find(b => JSON.stringify(b.messages).includes('ROOMTEST'));
+      const kept = (sent.messages[0].content.match(/^Example \d+:/gm) || []).length;
+      assert(kept > 0 && kept < 30, `fewer examples went along: ${kept} of 30`);
+      eq(mock.log.slice(calls).filter(b => JSON.stringify(b.messages).includes('ROOMTEST')).length, 1, 'fitted before asking: asked once');
+      // A Brain with room for nothing: the error says the numbers and the way out, in plain words.
+      await choose('#llmSelect', 'mock/no-room');
+      await type('#theme', 'ROOMTEST2 a lighthouse at dawn');
+      await click('#generateBtn');
+      await genDone();
+      const err = await text('#stageError');
+      assert(/needs about [\d,]+ tokens and Mock No Room 1B has room for 1,000, the most it can take\. Pick a Brain with more room/.test(err), `plain words with the numbers: ${err}`);
+      assert(!mock.log.slice(calls).some(b => JSON.stringify(b.messages).includes('ROOMTEST2')), 'not even asked: it could not fit');
+      // More room, from the Brain's card: the Room menu loads it again in LM Studio with the size picked.
+      await click('.tabs button[data-view="brains"]');
+      await js('document.querySelector("#brainsNew").open = true');
+      assert((await text('.brain[data-id="mock/tiny-room"]')).includes('room for 7k tokens'), 'the card says the room it has');
+      eq(await js('[...document.querySelectorAll(\'.brain[data-id="mock/no-room"] select[data-act="room"] option\')].map(o => o.value).join()'), '1000', 'a Brain at its most offers nothing bigger');
+      await choose('.brain[data-id="mock/tiny-room"] select[data-act="room"]', '32768');
+      await toastText('Mock Tiny Room 4B now has room for 32k tokens');
+      assert((await text('.brain[data-id="mock/tiny-room"]')).includes('room for 32k tokens'), 'the card shows the new room');
+      eq(await value('.brain[data-id="mock/tiny-room"] select[data-act="room"]'), '32768', 'the menu shows it too');
+      await click('.tabs button[data-view="create"]');
+      await choose('#llmSelect', 'mock/tiny-room');
+      await type('#theme', 'ROOMTEST3 a lighthouse at noon');
+      await click('#generateBtn');
+      await genDone();
+      assert(await js('document.querySelector("#stageError").hidden'), `no error with the bigger room (${await text('#stageError')})`);
+      const whole = mock.log.slice(calls).find(b => JSON.stringify(b.messages).includes('ROOMTEST3'));
+      eq((whole.messages[0].content.match(/^Example \d+:/gm) || []).length, 30, 'every example went along');
+    } finally {
+      await fetch(`${APP}/api/models/krea2-raw/reset`, { method: 'POST' });
+      await fetch(`${APP}/api/lmstudio/room`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'mock/tiny-room', contextLength: 7000 }) });
+      for (const e of (await (await fetch(`${APP}/api/history`)).json()).filter(x => !had.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+      await choose('#llmSelect', 'mock/vision-8b');
+      if (modelBefore) await click(`.model-card[data-id="${modelBefore}"]`);
+      await goto(`${APP}/#create`);
+    }
+  });
+
   await test('Ctrl+Enter generates (and the tab title shows progress)', async () => {
     await type('#theme', 'keyboard warrior portrait');
     await press('Enter', { ctrl: true });
@@ -1330,7 +1385,7 @@ esac
   await test('services: see what runs; start and stop ComfyUI and LM Studio from Settings', async () => {
     await click('.tabs button[data-view="settings"]');
     await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'ComfyUI shown running');
-    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('2 models loaded'), 'LM Studio running, with what it has loaded (the mock has two loaded Brains)');
+    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('4 models loaded'), 'LM Studio running, with what it has loaded (the mock has four loaded Brains)');
 
     // ComfyUI's folder (normally found on its own)
     const comfyDir = path.join(tmp, 'ComfyUI');
