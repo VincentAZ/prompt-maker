@@ -1,0 +1,6968 @@
+// End-to-end UI test: the real app server + a mock LM Studio + headless Chrome driven over the
+// DevTools protocol. Clicks are real mouse events, so a button hidden under something else fails.
+// Usage: node tests/ui.test.mjs [name-filter]   (several filters: "a|b")   Screenshots go to $SHOTS (default: /tmp/prompt-maker-ui).
+import { spawn, execFileSync } from 'node:child_process';
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import zlib from 'node:zlib';
+import { startMock } from './mock-lmstudio.mjs';
+import { startMockComfy, SAVED_WORKFLOW, OBJECT_INFO, MODEL_BYTES } from './mock-comfyui.mjs';
+import { convertUiWorkflow, pruneToOutputs } from '../lib/comfy-convert.js';
+import * as wfLib from '../lib/workflows.js';
+import * as modelsLib from '../lib/models.js';
+import * as videotools from '../lib/videotools.js';
+import * as comfyLib from '../lib/comfy.js';
+import { parseDrift } from '../lib/prompt.js';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const APP_PORT = Number(process.env.APP_PORT) || 5399;
+const MOCK_PORT = Number(process.env.MOCK_PORT) || 12399;
+const CDP_PORT = Number(process.env.CDP_PORT) || 9333;
+const COMFY_PORT = Number(process.env.COMFY_PORT) || 12488;
+const APP = `http://127.0.0.1:${APP_PORT}`;
+const OUT = process.env.SHOTS || path.join(os.tmpdir(), 'prompt-maker-ui');
+const FILTER = process.argv[2] || '';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let restartApp = null; // set in main(): stops the app server and starts it again on the same data folder
+
+// ---------- fixtures ----------
+
+function crc32(buf) {
+  let crc = ~0;
+  for (const byte of buf) {
+    crc ^= byte;
+    for (let k = 0; k < 8; k++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return ~crc >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+function makePng(w, h) {
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = y * (w * 3 + 1) + 1 + x * 3;
+      raw[o] = (x / w) * 255;
+      raw[o + 1] = 60 + (y / h) * 120;
+      raw[o + 2] = 200;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', ihdr), pngChunk('IDAT', zlib.deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))]);
+}
+
+// ---------- DevTools protocol ----------
+
+class Cdp {
+  constructor(ws) {
+    this.ws = ws;
+    this.id = 0;
+    this.pending = new Map();
+    this.handlers = new Map();
+    ws.addEventListener('message', ev => {
+      const msg = JSON.parse(ev.data);
+      if (msg.id) {
+        const p = this.pending.get(msg.id);
+        this.pending.delete(msg.id);
+        if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message}`)); else p.resolve(msg.result);
+      } else (this.handlers.get(msg.method) || []).forEach(fn => fn(msg.params));
+    });
+  }
+  static connect(url) {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url);
+      ws.addEventListener('open', () => resolve(new Cdp(ws)));
+      ws.addEventListener('error', reject);
+    });
+  }
+  send(method, params = {}) {
+    const id = ++this.id;
+    this.ws.send(JSON.stringify({ id, method, params }));
+    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject, method }));
+  }
+  on(method, fn) {
+    if (!this.handlers.has(method)) this.handlers.set(method, []);
+    this.handlers.get(method).push(fn);
+  }
+}
+
+let cdp;
+const problems = [];
+
+// If the page stops answering (stuck in a loop), pause it and report where, instead of hanging the run.
+async function frozenAt() {
+  const within = p => Promise.race([p, sleep(4000).then(() => null)]);
+  await within(cdp.send('Debugger.enable'));
+  const paused = new Promise(r => cdp.on('Debugger.paused', r));
+  await within(cdp.send('Debugger.pause'));
+  const p = await within(paused);
+  const where = p ? p.callFrames.slice(0, 8).map(f => `${f.functionName || '(anonymous)'}:${f.location.lineNumber + 1}`).join(' ← ') : 'not in JavaScript (the renderer is blocked)';
+  await within(cdp.send('Debugger.resume').catch(() => {}));
+  return where;
+}
+
+async function js(expr) {
+  const r = await Promise.race([
+    cdp.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
+    sleep(30000).then(async () => { throw new Error(`The page froze. Stuck in: ${await frozenAt()}`); }),
+  ]);
+  if (r.exceptionDetails) throw new Error(`JS error in test expression: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}\n  ${expr.slice(0, 200)}`);
+  return r.result.value;
+}
+const q = sel => JSON.stringify(sel);
+
+async function waitFor(expr, label, timeout = 8000) {
+  const t = Date.now();
+  let last;
+  for (;;) {
+    last = await js(expr).catch(e => { last = e.message; return null; });
+    if (last) return last;
+    if (Date.now() - t > timeout) throw new Error(`Timed out (${timeout}ms) waiting for ${label || expr}`);
+    await sleep(50);
+  }
+}
+
+const visible = sel => js(`(() => { const el = document.querySelector(${q(sel)}); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; })()`);
+const text = sel => js(`document.querySelector(${q(sel)})?.textContent.trim() ?? null`);
+const count = sel => js(`document.querySelectorAll(${q(sel)}).length`);
+const value = sel => js(`document.querySelector(${q(sel)})?.value ?? null`);
+
+async function click(sel) {
+  // Follow the new disclosure/navigation controls before exercising the existing feature.
+  // These remain real clicks; assertions about default visibility do not use this helper.
+  for (let disclosures = 0; disclosures < 12; disclosures++) {
+  const reveal = await js(`(() => {
+    const el = document.querySelector(${q(sel)});
+    if (!el) return '';
+    const options = document.querySelector('#createOptions');
+    if (options?.open && !el.closest('dialog') && !document.querySelector('dialog[open]:not(#createOptions)')) return '#doneCreateOptions';
+    if (el.closest('#createOptions')) {
+      if (!options.open) return '#openCreateOptions';
+      const pane = el.closest('[data-tune-pane]');
+      if (pane?.hidden) return '[data-tune-tab="' + pane.dataset.tunePane + '"]';
+    }
+    if (el.closest('.studio-sidebar') && innerWidth <= 760 && !document.body.classList.contains('nav-open')) return '#navToggle';
+    const view = el.closest('.view');
+    if (view && !view.classList.contains('active')) return '.tabs [data-view="' + view.id.slice(5) + '"]';
+    const settingsGroup = el.closest('[data-settings-group]');
+    if (settingsGroup && !settingsGroup.classList.contains('settings-visible')) return '[data-settings-tab="' + settingsGroup.dataset.settingsGroup + '"]';
+    if (el.closest('#pipelinePane') && document.querySelector('#pipelinePane').hidden) return '#tabPipeline';
+    if (el.closest('#modelsPane') && document.querySelector('#modelsPane').hidden) return '#customizeModels';
+    if (el.closest('.director') && getComputedStyle(document.querySelector('.director')).display === 'none') return '#showCreate';
+    if (el.closest('.stage') && getComputedStyle(document.querySelector('.stage')).display === 'none') return '#showResults';
+    if (el.closest('#rendersPane') && document.querySelector('#rendersPane').hidden) return '#tabRenders';
+    if (el.closest('#takesPane') && document.querySelector('#takesPane').hidden) return '#tabTakes';
+    let fold = el.closest('details:not([open])');
+    if (fold && fold.querySelector(':scope > summary')?.contains(el)) fold = fold.parentElement.closest('details:not([open])');
+    if (fold) return '#' + (fold.id || (fold.id = 'test-disclosure')) + ' > summary';
+    // A folded panel hides what's inside it, except its own header; folds nest (Settings holds Render and Writing).
+    let panel = el.closest('[data-panel].collapsed');
+    while (panel && panel.querySelector(':scope > .panel-toggle')?.contains(el)) panel = panel.parentElement?.closest('[data-panel].collapsed');
+    if (panel) return '[data-panel="' + panel.dataset.panel + '"] .collapse-btn';
+    if (el.closest('#reelFilterOptions') && !el.closest('#reelFilterOptions').offsetParent) return '#reelFilterToggle';
+    return '';
+  })()`);
+  if (!reveal || reveal === sel) break;
+  await click(reveal);
+  }
+  // Like a person: wait until the element holds still (async updates can move things for a moment).
+  let box;
+  for (let tries = 0; tries < 20; tries++) {
+    box = await locate(sel);
+    if (box.err) break;
+    await sleep(30);
+    const again = await locate(sel);
+    if (!again.err && Math.abs(again.x - box.x) < 1 && Math.abs(again.y - box.y) < 1) { box = again; break; }
+  }
+  if (box.err) throw new Error(`click(${sel}): ${box.err}`);
+  // A click is lost when the page redraws the element between press and release (a person would click again).
+  for (let attempt = 0; ; attempt++) {
+    const before = await js('window.__input?.clicks ?? -1');
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await cdp.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+    }
+    await sleep(40);
+    if (before < 0 || attempt === 1 || (await js('window.__input?.clicks ?? -1').catch(() => -1)) !== before) break; // -1: the page is changing (navigation)
+    console.log(`      (a click on ${sel} never reached the page: clicking again)`);
+    const again = await locate(sel);
+    if (again.err) throw new Error(`click(${sel}): ${again.err}`);
+    box = again;
+  }
+}
+
+// Where to click an element (its center), after scrolling it into view; or why it can't be clicked.
+function locate(sel) {
+  return js(`(() => {
+    const el = document.querySelector(${q(sel)});
+    if (!el) return { err: 'element not found' };
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return { err: 'element is not visible' };
+    if (el.disabled) return { err: 'element is disabled' };
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    if (!(hit === el || el.contains(hit))) {
+      const d = hit ? hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (typeof hit.className === 'string' && hit.className ? '.' + hit.className.trim().split(/\\s+/).join('.') : '') : 'nothing';
+      return { err: 'covered by ' + d };
+    }
+    return { x, y };
+  })()`);
+}
+
+async function type(sel, str, { clear = true } = {}) {
+  await click(sel);
+  if (clear) await js(`(() => { const el = document.querySelector(${q(sel)}); el.select?.(); })()`);
+  else await js(`(() => { const el = document.querySelector(${q(sel)}); el.selectionStart = el.selectionEnd = el.value.length; })()`);
+  if (clear && !str) {
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
+  } else {
+    await cdp.send('Input.insertText', { text: str });
+  }
+  await sleep(30);
+}
+
+async function press(key, { ctrl = false } = {}) {
+  const codes = { Enter: 13, Escape: 27, Delete: 46, ' ': 32, ArrowDown: 40, ArrowUp: 38 };
+  const base = { key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: codes[key], modifiers: ctrl ? 2 : 0 };
+  for (let attempt = 0; ; attempt++) {
+    const before = await js('window.__input?.keys ?? -1');
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+    if ((key === 'Enter' || key === ' ') && !ctrl) await cdp.send('Input.dispatchKeyEvent', { type: 'char', ...base, text: key === ' ' ? ' ' : '\r' });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+    await sleep(40);
+    if (before < 0 || attempt === 1 || (await js('window.__input?.keys ?? -1').catch(() => -1)) !== before) break; // -1: the page is changing (navigation)
+    console.log(`      (${key} never reached the page: pressing again)`);
+  }
+}
+
+async function choose(sel, val) {
+  await js(`(() => { const el = document.querySelector(${q(sel)}); el.value = ${q(val)}; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(80);
+}
+
+async function setFiles(sel, files) {
+  const { root } = await cdp.send('DOM.getDocument', { depth: 1 });
+  const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: sel });
+  await cdp.send('DOM.setFileInputFiles', { nodeId, files });
+}
+
+async function viewport(width, height, mobile = false) {
+  vp = { width, height, mobile };
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
+  await sleep(150);
+}
+
+let vp = { width: 1440, height: 900, mobile: false };
+async function shot(name, { full = false } = {}) {
+  if (full) {
+    // Grow the viewport to the page height so sticky elements render where they really sit.
+    const scrollY = await js('scrollY');
+    await js('scrollTo(0, 0)');
+    const h = await js('document.documentElement.scrollHeight');
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: vp.width, height: Math.min(h, 5000), deviceScaleFactor: 1, mobile: vp.mobile });
+    await sleep(200);
+    const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    await fs.writeFile(path.join(OUT, `${name}.png`), Buffer.from(data, 'base64'));
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: vp.width, height: vp.height, deviceScaleFactor: 1, mobile: vp.mobile });
+    await js(`scrollTo(0, ${scrollY})`);
+    await sleep(100);
+    return;
+  }
+  const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' });
+  await fs.writeFile(path.join(OUT, `${name}.png`), Buffer.from(data, 'base64'));
+}
+
+async function goto(url) {
+  const here = await js('location.href').catch(() => '');
+  await js('document.documentElement.dataset.ready = ""').catch(() => {});
+  // Only the #hash differs = no page load at all; go via a blank page so "after a reload" really means it.
+  if (here.split('#')[0] === url.split('#')[0]) {
+    await cdp.send('Page.navigate', { url: 'about:blank' });
+    await waitFor('location.href === "about:blank"', 'left the page');
+  }
+  await cdp.send('Page.navigate', { url });
+  await sleep(150);
+  await waitFor('document.documentElement.dataset.ready === "1"', 'app boot', 10000);
+}
+
+async function toastText(expected = '', timeout = 8000) {
+  return waitFor(`(() => { const t = document.querySelector("#toast"); return !t.hidden && t.textContent.includes(${q(expected)}) && t.textContent; })()`, `toast "${expected}"`, timeout);
+}
+async function reloadPage() {
+  await js('document.documentElement.dataset.ready = ""');
+  // Let DevTools navigate directly; evaluating location.reload() can destroy its own reply.
+  await cdp.send('Page.reload');
+  await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded', 15000);
+}
+const UNDO_WAIT = 14000; // a clicked delete waits 8 s for ↶ Undo before it happens
+
+const fileExists = p => fs.access(p).then(() => true, () => false);
+// Unfolds a collapsible panel (data-panel="key") if it's folded.
+// Opens a fold, and the folds it sits in (Settings holds Render and Writing): like a person, outermost first.
+const openPanel = async key => {
+  const target = await js(`(() => { const el = document.querySelector('[data-panel="${key}"]'); const view = el?.closest('.view'); return { view: view && !view.classList.contains('active') ? view.id.slice(5) : null, options: !!el?.closest('#createOptions'), pane: el?.closest('[data-tune-pane]')?.dataset.tunePane }; })()`);
+  if (target.view) await click(`.tabs [data-view="${target.view}"]`);
+  if (target.options) {
+    if (!(await js('document.querySelector("#createOptions").open'))) await click('#openCreateOptions');
+    if (target.pane) await click(`[data-tune-tab="${target.pane}"]`);
+  }
+  await js(`(() => { const el = document.querySelector('[data-panel="${key}"]'); const chain = []; for (let p = el; p; p = p.parentElement?.closest('[data-panel]')) chain.unshift(p); for (const p of chain) if (p.classList.contains('collapsed')) p._btn.click(); })()`);
+};
+
+function assert(cond, msg) { if (!cond) throw new Error(`Assertion failed: ${msg}`); }
+function eq(actual, expected, msg) { if (actual !== expected) throw new Error(`${msg}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`); }
+
+// ---------- harness ----------
+
+const results = [];
+async function test(name, fn) {
+  if (FILTER && !FILTER.split('|').some(f => name.includes(f)) && !['boot'].includes(name)) return;
+  const t = Date.now();
+  try {
+    await fn();
+    results.push({ name, ok: true, ms: Date.now() - t });
+    console.log(`  ✓ ${name} (${Date.now() - t}ms)`);
+  } catch (err) {
+    results.push({ name, ok: false, err: err.message });
+    console.log(`  ✗ ${name}\n      ${err.message}`);
+    const toasts = await js('(window.__toasts || []).slice(-4).map(t => `${((Date.now() - t.at) / 1000).toFixed(1)}s ago: ${t.text}`)').catch(() => []);
+    if (toasts?.length) console.log(`      last toasts: ${toasts.join(' | ')}`);
+    await shot(`FAIL-${name}`).catch(() => {});
+  }
+}
+
+async function main() {
+  await fs.rm(OUT, { recursive: true, force: true });
+  await fs.mkdir(OUT, { recursive: true });
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-test-'));
+  const dataDir = path.join(tmp, 'data');
+  await fs.mkdir(dataDir, { recursive: true });
+  // The app must never write into its own folder: remember how it looks now.
+  const shipped = {};
+  for (const f of await fs.readdir(path.join(ROOT, 'playbooks'))) shipped[f] = await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8');
+  const hadLegacyData = await fileExists(path.join(ROOT, 'data'));
+  const shippedChains = {};
+  for (const f of await fs.readdir(path.join(ROOT, 'chains'))) shippedChains[f] = await fs.readFile(path.join(ROOT, 'chains', f), 'utf8');
+  await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, comfyUrl: `http://127.0.0.1:${COMFY_PORT}`, llmModel: 'mock/vision-8b', checkTheme: false }));
+  const lmsMarker = path.join(tmp, 'lms-called');
+  const fakeLms = path.join(tmp, 'fake-lms');
+  await fs.writeFile(fakeLms, `#!/bin/sh\necho "$@" > ${JSON.stringify(lmsMarker)}\n`, { mode: 0o755 });
+  // Start-up setup goes to temp folders and a fake systemctl, never to your real app menu or services.
+  const xdgConfig = path.join(tmp, 'xdg-config');
+  const xdgData = path.join(tmp, 'xdg-data');
+  const systemctlLog = path.join(tmp, 'systemctl.log');
+  const fakeSystemctl = path.join(tmp, 'fake-systemctl');
+  await fs.writeFile(fakeSystemctl, `#!/bin/sh
+echo "$@" >> ${JSON.stringify(systemctlLog)}
+case "$*" in
+  *is-active*prompt-maker-comfyui*) if [ -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ]; then echo active; else echo inactive; exit 3; fi ;;
+  *"stop prompt-maker-comfyui"*) rm -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ;;
+  *--version*) echo "systemd 255" ;;
+  *is-enabled*) if [ -f ${JSON.stringify(path.join(tmp, 'enabled'))} ]; then echo enabled; else echo disabled; exit 1; fi ;;
+  *" enable "*) touch ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
+  *disable*) rm -f ${JSON.stringify(path.join(tmp, 'enabled'))} ;;
+esac
+`, { mode: 0o755 });
+  const systemdRunLog = path.join(tmp, 'systemd-run.log');
+  const fakeSystemdRun = path.join(tmp, 'fake-systemd-run');
+  await fs.writeFile(fakeSystemdRun, `#!/bin/sh\n[ "$1" = --version ] && exit 0\necho "$@" >> ${JSON.stringify(systemdRunLog)}\ntouch ${JSON.stringify(path.join(tmp, 'comfy-active'))}\n`, { mode: 0o755 });
+  const fixture = path.join(tmp, 'fixture.png');
+  await fs.writeFile(fixture, makePng(640, 400));
+  const portrait = path.join(tmp, 'portrait.png');
+  await fs.writeFile(portrait, makePng(400, 700));
+  const square = path.join(tmp, 'square.png');
+  await fs.writeFile(square, makePng(300, 300));
+
+  const mock = startMock(MOCK_PORT);
+  await mock.start();
+  const comfyRoot = path.join(tmp, 'ComfyUI');
+  for (const d of ['output', 'input', 'custom_nodes', 'models/checkpoints', 'models/loras/krea2']) await fs.mkdir(path.join(comfyRoot, d), { recursive: true });
+  // A five-second video for the mock to "render" when a prompt says MP4TEST (needs ffmpeg; without it, no video tests);
+  // longer than a short spoken line, so a lined clip gets cut to its line.
+  const clipFile = path.join(tmp, 'mock-clip.mp4');
+  const clip = await new Promise(resolve => {
+    const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x90:rate=24', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '5', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', clipFile], { stdio: 'ignore' });
+    p.on('error', () => resolve(null));
+    p.on('close', code => resolve(code === 0 ? fs.readFile(clipFile).catch(() => null) : null));
+  });
+  const comfy = startMockComfy(COMFY_PORT, { png: makePng(96, 96), root: comfyRoot, mp4: await clip });
+  // The clip with a recipe in its metadata, the way ComfyUI's Save Video keeps it.
+  const recipeClip = !(await clip) ? null : await new Promise(resolve => {
+    const out = path.join(tmp, 'with-recipe.mp4');
+    const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-i', clipFile, '-c', 'copy', '-movflags', 'use_metadata_tags', '-metadata', `prompt=${JSON.stringify({ 3: { class_type: 'KSampler', inputs: { seed: 7, steps: 20, cfg: 1, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['6', 0], latent_image: ['5', 0] } }, 4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'mock_model.safetensors' } }, 5: { class_type: 'EmptyLatentImage', inputs: { width: 160, height: 96, batch_size: 1 } }, 6: { class_type: 'CLIPTextEncode', inputs: { text: 'waves rolling in, video recipe', clip: ['4', 1] } }, 9: { class_type: 'SaveVideo', inputs: { video: ['3', 0] } } })}`, out], { stdio: 'ignore' });
+    p.on('error', () => resolve(null));
+    p.on('close', code => resolve(code === 0 ? fs.readFile(out) : null));
+  });
+  await comfy.start();
+  const apiWorkflowFile = path.join(tmp, 'mock-api.json');
+  const turbo = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
+  turbo['3'].inputs.cfg = 1; // a distilled/turbo-style workflow: CFG must stay 1
+  await fs.writeFile(apiWorkflowFile, JSON.stringify(turbo));
+  // A workflow that loads a LoRA of its own between the checkpoint and the sampler.
+  const loraWorkflowFile = path.join(tmp, 'mock-lora.json');
+  const withLora = pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO);
+  withLora['20'] = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'krea2/baked_in.safetensors', strength_model: 0.5, model: ['4', 0] }, _meta: { title: 'Baked-in LoRA' } };
+  withLora['3'].inputs.model = ['20', 0];
+  await fs.writeFile(loraWorkflowFile, JSON.stringify(withLora));
+  // A picture and a video that keep their recipe (ComfyUI's graph, as it ran), made with a workflow of their own: its
+  // LoRA at another strength, one LoRA added and one ComfyUI doesn't have, a seed, steps and a size. And A1111's text.
+  const recipeFlow = structuredClone(withLora);
+  recipeFlow['21'] = { ...recipeFlow['20'], _meta: { title: 'Its own LoRA' } };
+  delete recipeFlow['20'];
+  recipeFlow['3'].inputs.model = ['21', 0];
+  const recipeGraph = structuredClone(recipeFlow);
+  recipeGraph['21'].inputs.strength_model = 0.3;
+  recipeGraph.pm_lora_1 = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'krea2/film_grain.safetensors', strength_model: 0.6, model: ['4', 0] } };
+  recipeGraph.pm_lora_2 = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'krea2/gone.safetensors', strength_model: 1, model: ['pm_lora_1', 0] } };
+  recipeGraph['21'].inputs.model = ['pm_lora_2', 0];
+  Object.assign(recipeGraph['3'].inputs, { seed: 4242, steps: 33 });
+  Object.assign(recipeGraph['5'].inputs, { width: 640, height: 960 });
+  recipeGraph['6'].inputs.text = 'a lighthouse at dusk, recipe test';
+  const recipePng = path.join(tmp, 'with-recipe.png');
+  const plainPng = makePng(64, 96);
+  await fs.writeFile(recipePng, Buffer.concat([plainPng.subarray(0, -12), pngChunk('tEXt', Buffer.from(`prompt\0${JSON.stringify(recipeGraph)}`)), plainPng.subarray(-12)]));
+  const a1111Text = 'a red kite over the dunes, <lora:krea2/film_grain:0.7>\nNegative prompt: blurry\nSteps: 28, Sampler: DPM++ 2M, Schedule type: Karras, CFG scale: 6, Seed: 99, Size: 832x1216, Model: sd_xl_base_1.0';
+  // EXIF as A1111 writes it in a JPEG: UserComment, "UNICODE" then UTF-16 big-endian, in the Exif IFD.
+  const comment = Buffer.concat([Buffer.from('UNICODE\0'), Buffer.from(a1111Text, 'utf16le').swap16()]);
+  const tiff = Buffer.alloc(44);
+  tiff.write('II*\0', 0, 'latin1'); tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(1, 8); tiff.writeUInt16LE(0x8769, 10); tiff.writeUInt16LE(4, 12); tiff.writeUInt32LE(1, 14); tiff.writeUInt32LE(26, 18);
+  tiff.writeUInt16LE(1, 26); tiff.writeUInt16LE(0x9286, 28); tiff.writeUInt16LE(7, 30); tiff.writeUInt32LE(comment.length, 32); tiff.writeUInt32LE(44, 36);
+  const exif = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff, comment]);
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 255]), exif]);
+  // An image-to-video style workflow: same graph plus a Load Image node for the first frame.
+  const i2vWorkflowFile = path.join(tmp, 'mock-i2v.json');
+  // A workflow with two picture slots: the picture to edit and an optional "Another picture" (with a helper of its own).
+  const twoPicFile = path.join(tmp, 'mock-two-pics.json');
+  await fs.writeFile(twoPicFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'Picture to edit' } }, 12: { class_type: 'LoadImage', inputs: { image: 'example_2.png' }, _meta: { title: 'Another picture' } }, 13: { class_type: 'VAEEncode', inputs: { pixels: ['12', 0], vae: ['4', 2] }, _meta: { title: 'VAE Encode (another)' } } }));
+  await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
+
+  // A saved workflow whose checkpoint ComfyUI doesn't have yet, with the download link ComfyUI's templates carry.
+  const bigModelWorkflowFile = path.join(tmp, 'needs-big-model.json');
+  const bigModel = structuredClone(SAVED_WORKFLOW);
+  Object.assign(bigModel.nodes.find(n => n.type === 'CheckpointLoaderSimple'), { widgets_values: ['big_model.safetensors'], properties: { models: [{ name: 'big_model.safetensors', url: `http://127.0.0.1:${COMFY_PORT}/hf/big_model.safetensors`, directory: 'checkpoints' }] } });
+  await fs.writeFile(bigModelWorkflowFile, JSON.stringify(bigModel));
+  // The tests set up their own workflows: the starters count as added already (one test takes this back).
+  const starterModels = await fs.readdir(path.join(ROOT, 'workflows'));
+  const starterKeys = Object.fromEntries(await Promise.all(starterModels.map(async id => [id, (await fs.readdir(path.join(ROOT, 'workflows', id))).map(f => `${id}/${f}`)])));
+  await fs.writeFile(path.join(dataDir, 'starters.json'), JSON.stringify(starterKeys));
+
+  // A fake pkexec for the one-click ComfyUI set-up and updates: logs what it was asked to run as root.
+  const rootDir = path.join(tmp, 'root-steps');
+  await fs.mkdir(rootDir, { recursive: true });
+  const pkexecLog = path.join(rootDir, 'pkexec.log');
+  const fakePkexec = path.join(rootDir, 'pkexec');
+  await fs.writeFile(fakePkexec, `#!/bin/sh\necho "$@" >> ${JSON.stringify(pkexecLog)}\n`, { mode: 0o755 });
+
+  // A fake computer for the one-click ComfyUI set-up: git (makes a ComfyUI-shaped folder), python (venv copies
+  // itself, pip logs what it was asked for and "installs" torch), nvidia-smi (a card with a driver), no uv.
+  const setupDir = path.join(tmp, 'setup');
+  await fs.mkdir(setupDir, { recursive: true });
+  const gitLog = path.join(setupDir, 'git.log');
+  const fakeGit = path.join(setupDir, 'git');
+  await fs.writeFile(fakeGit, `#!/bin/sh
+echo "$@" >> ${JSON.stringify(gitLog)}
+[ "$1" = --version ] && { echo "git version 2.43.0"; exit 0; }
+if [ "$1" = clone ]; then for a in "$@"; do d="$a"; done; mkdir -p "$d/comfy" "$d/models/checkpoints"; echo 'print("comfy")' > "$d/main.py"; echo 'torch' > "$d/requirements.txt"; echo "Cloning into '$d'..."; exit 0; fi
+exit 1
+`, { mode: 0o755 });
+  const pipLog = path.join(setupDir, 'pip.log');
+  const fakePython = path.join(setupDir, 'python3');
+  await fs.writeFile(fakePython, `#!/bin/sh
+here="$(cd "$(dirname "$0")" && pwd)"
+case "$*" in
+  *"version_info"*) echo 3.12.9 ;;
+  *"import venv, ensurepip"*) exit 0 ;;
+  *"import torch"*) [ -f "$here/torch-ok" ] ;;
+  "-m venv "*) d="$3"; mkdir -p "$d/bin"; cp "$0" "$d/bin/python"; chmod +x "$d/bin/python" ;;
+  "-m pip install "*) echo "$@" >> ${JSON.stringify(pipLog)}; echo "Collecting $4"; sleep 1; echo "Downloading $4 (2.1 GB)"; sleep 1; case "$*" in *torch*) touch "$here/torch-ok";; esac; echo "Successfully installed $4" ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const fakeNvidiaSmi = path.join(setupDir, 'nvidia-smi');
+  await fs.writeFile(fakeNvidiaSmi, '#!/bin/sh\necho "NVIDIA GeForce RTX 4090, 580.65.06"\n', { mode: 0o755 });
+
+  // A fake LM Studio home: its server logs quote every request, and deleting from History must clean them.
+  const lmsHome = path.join(tmp, 'lmstudio-home');
+  await fs.mkdir(path.join(lmsHome, 'server-logs', '2026-10'), { recursive: true });
+  // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
+  const appEnv = { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_PKEXEC_BIN: fakePkexec, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none' };
+  let app = null;
+  let appLog = '';
+  // The app server (started again by the test of a restart mid-render; its log is kept across starts).
+  const startApp = async () => {
+    // Over IPC, so a restart the app does on its own (↻ Restart) comes back here
+    // for a fresh start, instead of a detached copy the suite can't stop.
+    app = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: appEnv, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const mark = appLog.length;
+    app.stdout.on('data', d => { appLog += d; });
+    app.stderr.on('data', d => { appLog += d; });
+    app.on('message', m => { if (m?.restart) app.once('exit', () => startApp().catch(err => console.log(`App did not come back: ${err.message}`))); });
+    for (let i = 0; i < 80 && !appLog.slice(mark).includes('running at'); i++) await sleep(100);
+    if (!appLog.slice(mark).includes('running at')) throw new Error(`App did not start:\n${appLog.slice(mark)}`);
+  };
+  restartApp = async () => {
+    const gone = new Promise(r => app.once('exit', r));
+    app.kill('SIGTERM');
+    await gone;
+    await startApp();
+  };
+  await startApp();
+
+  const chrome = spawn('google-chrome', [
+    '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${path.join(tmp, 'chrome')}`,
+    '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--remote-allow-origins=*',
+    '--window-size=1440,900', '--hide-scrollbars', 'about:blank',
+  ], { stdio: 'ignore' });
+
+  let target;
+  for (let i = 0; i < 60 && !target; i++) {
+    await sleep(150);
+    target = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`).then(r => r.json()).then(l => l.find(t => t.type === 'page')).catch(() => null);
+  }
+  if (!target) throw new Error('Chrome did not start');
+  cdp = await Cdp.connect(target.webSocketDebuggerUrl);
+  await Promise.all(['Page.enable', 'Runtime.enable', 'Log.enable', 'DOM.enable'].map(m => cdp.send(m)));
+  // Every toast, in order, with when it showed: there's one toast slot, and a later toast replaces the one before.
+  // And every click and key press that reached the page, so a lost one can be told apart from one the app ignored.
+  // The technical cards start folded for a new user; the tests work in them, so here they start open.
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (location.origin === ${JSON.stringify(APP)} && localStorage.getItem('pm.panels') === null) localStorage.setItem('pm.panels', JSON.stringify({ 'set-lmstudio': false, 'set-comfy': false, 'set-thinking': false, 'set-master': false, 'model-instructions': false, 'model-sizes': false, 'models-defaults': false, 'models-lengths': false }));` });
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__toasts = [];
+    window.__input = { clicks: 0, keys: 0 };
+    addEventListener('click', () => { window.__input.clicks++; }, true);
+    addEventListener('keydown', () => { window.__input.keys++; }, true);
+    document.addEventListener('DOMContentLoaded', () => {
+      const t = document.querySelector('#toast');
+      if (t) new MutationObserver(() => { if (!t.hidden) window.__toasts.push({ text: t.textContent, at: Date.now() }); }).observe(t, { attributes: true, attributeFilter: ['hidden'] });
+    });` });
+  // Reloading with unsaved Settings asks "Leave site?" (on purpose); the tests always leave.
+  cdp.on('Page.javascriptDialogOpening', () => cdp.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {}));
+  cdp.on('Runtime.exceptionThrown', p => problems.push(`exception: ${p.exceptionDetails.exception?.description || p.exceptionDetails.text}`));
+  cdp.on('Runtime.consoleAPICalled', p => { if (p.type === 'error' || p.type === 'warning') problems.push(`console.${p.type}: ${p.args.map(a => a.value ?? a.description).join(' ')}`); });
+  cdp.on('Log.entryAdded', ({ entry }) => {
+    // Deliberate negative tests produce 4xx/5xx from our own API; anything else is a real problem.
+    if (entry.level === 'error' && !(entry.source === 'network' && /\/api\//.test(entry.url || ''))) problems.push(`log: ${entry.text} ${entry.url || ''}`);
+  });
+  await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] }); // stable screenshots
+  await cdp.send('Browser.grantPermissions', { origin: APP, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] }).catch(() => {});
+  await viewport(1440, 900);
+
+  const mockCalls = () => mock.log.length;
+  const loadAgain = async () => {
+    await js('document.querySelector("#llmRefresh").click()');
+    await waitFor('document.querySelector("#banner").hidden && document.querySelector("#llmDot").classList.contains("ok")', 'reconnected');
+  };
+  const lastCall = () => mock.log.at(-1);
+  const genDone = () => waitFor('!document.querySelector("#generateBtn").classList.contains("cooking") && document.querySelector("#stopBtn").hidden', 'generation to finish', 15000);
+
+  console.log(`\nPrompt Maker UI tests → screenshots in ${OUT}\n`);
+
+  await test('boot', async () => {
+    await goto(`${APP}/`);
+    assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'Create view is active');
+    eq(await count('.model-card'), 12, 'model cards');
+    await waitFor('document.querySelector("#llmDot").classList.contains("ok")', 'LLM status dot to be green');
+    eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
+    assert(!(await visible('#banner')), 'offline banner hidden');
+    assert(await visible('#resultsEmpty'), 'empty state visible');
+    eq(await js('document.fonts.check("16px Studio")'), true, 'bundled display font loaded');
+    await shot('01-create-empty');
+  });
+
+  await test('creator experience: task first, optional details, model chooser and reachable results', async () => {
+    assert(!(await visible('#assistant')), 'Ask leaves room for the work by default');
+    eq(await count('#taskChoices .task-choice'), 6, 'Make is a row of available task buttons');
+    assert(await js('[...document.querySelectorAll("#taskChoices .task-choice")].every(b => b.querySelector("svg") && b.title && b.getAttribute("aria-label"))'), 'each task has an icon and an accessible tooltip');
+    assert(!(await js('document.querySelector("#quickModelChoice").open')), 'the quick model chooser starts folded');
+    await click('#quickModelChoice summary');
+    assert(await visible('#targetSelect'), 'opening Model reveals its chooser');
+    await click('#quickModelChoice summary');
+    assert(!(await js('document.querySelector("#modelChoice").open')), 'model choices start folded');
+    assert(!(await js('document.querySelector("#modelGuide").open')), 'the guide starts folded');
+    assert(!(await js('document.querySelector("#writingOptions").open')), 'precise dials start folded');
+    eq(await text('#genLabel'), 'Write prompt', 'review is the safe existing default');
+    assert(await visible('#resolution'), 'Size sits in view, next to Shape');
+    eq(await text('#resolution option:checked'), 'Standard · 1024×1024', 'it starts on the model\'s usual size, in plain words');
+    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '736×736|1024×1024|1248×1248|1440×1440|1760×1760|2048×2048|__custom', 'small to about 4 megapixels, all square, then your own');
+    await choose('#aspect', '16:9');
+    eq(await value('#resolution'), '1344×768', 'the size follows the shape, the model\'s own first');
+    await choose('#resolution', '1920×1088');
+    await choose('#aspect', '1:1');
+    eq(await value('#resolution'), '1440×1440', 'and keeps about the same size');
+    await choose('#resolution', '1024×1024');
+    await viewport(1280, 800);
+    assert(await js('document.querySelector("#theme").getBoundingClientRect().top < innerHeight - 150'), 'idea field is in the first laptop viewport');
+    await click('#taskChoices [data-task="edit"]');
+    assert((await text('#chosenModel')).includes('Edit'), 'the task chooses an editing model');
+    await click('#taskChoices [data-task="picture"]');
+    await click('#askBtn');
+    assert(await visible('#showResults'), 'laptop with Ask has workspace switching');
+    await click('#showResults');
+    assert(await visible('#resultsEmpty') && !(await visible('#theme')), 'results replace the long form');
+    await click('#showCreate');
+    assert(await visible('#theme'), 'one click returns to the idea');
+    await click('#askBtn');
+    await viewport(390, 844, true);
+    await click('#showResults');
+    assert(await visible('#resultsEmpty'), 'phone results are immediately reachable');
+    await click('#showCreate');
+    assert(await visible('#theme'), 'phone creation is reachable');
+    assert(await js('document.documentElement.scrollWidth <= innerWidth + 1'), 'no sideways scrolling');
+    await click('#generateBtn');
+    await waitFor('!document.querySelector("#stageError").hidden', 'validation feedback');
+    assert(await visible('#stageError'), 'phone validation is visible in Results');
+    await click('#stageError .x');
+    await click('#showCreate');
+    await viewport(1440, 900);
+    await click('.tabs [data-view="models"]');
+    assert(await visible('#modelCatalog'), 'Models starts as a chooser');
+    assert(!(await visible('#modelsPane')), 'editing is behind Customize');
+    eq(await count('[data-catalog-use]'), 12, 'every model can be chosen');
+    await click('[data-catalog-edit="krea2-raw"]');
+    assert(await visible('#modelsPane'), 'Customize opens the existing editor');
+    const description = await value('#mDesc');
+    await type('#mDesc', 'An unsaved description');
+    await click('#backToModels');
+    assert(await visible('#modelFormMsg'), 'returning to the catalog guards unsaved changes');
+    await click('#backToModels');
+    await click('[data-catalog-edit="krea2-raw"]');
+    eq(await value('#mDesc'), description, 'discarding restores the saved playbook');
+    await click('#backToModels');
+    await click('[data-catalog-use="krea2-raw"]');
+    assert(await visible('#theme'), 'Use this model returns to the idea');
+    await goto(`${APP}/#create`);
+    eq(await text('#chosenModel'), 'Krea 2 RAW', 'the selected model is remembered');
+  });
+
+  await test('workspace redesign: essentials fit, fine-tune stays separate and keyboard navigation works', async () => {
+    await goto(`${APP}/#create`);
+    await click('#taskChoices [data-task="picture"]');
+    for (const [width, height] of [[1440, 900], [1280, 800]]) {
+      await viewport(width, height);
+      await js('document.querySelector(".director-steps").scrollTop = 0; scrollTo(0, 0)');
+      const layout = await js(`(() => {
+        const steps = document.querySelector('.director-steps').getBoundingClientRect();
+        return ['#taskChoices', '#quickModelChoice', '#theme', '#aspect', '#resolution', '#varSeg', '#openCreateOptions'].map(sel => {
+          const r = document.querySelector(sel).getBoundingClientRect();
+          return { sel, top: r.top, bottom: r.bottom, visible: r.top >= steps.top && r.bottom <= steps.bottom + 1 };
+        });
+      })()`);
+      assert(layout.every(r => r.visible), `essential controls fit at ${width}×${height}: ${JSON.stringify(layout)}`);
+      assert(await js('document.querySelector("#generateBtn").getBoundingClientRect().bottom <= innerHeight'), 'main action stays in the viewport');
+    }
+    const height = await js('document.querySelector(".director-steps").scrollHeight');
+    await click('#openCreateOptions');
+    assert(await js('document.querySelector("#createOptions").matches(":modal")'), 'Fine-tune is a modal, with focus contained');
+    assert(await js('document.querySelector("#createOptions").getBoundingClientRect().width > 700'), 'details have room on a laptop');
+    await click('#tuneRender');
+    await press('End');
+    eq(await js('document.activeElement.id'), 'tuneWriting', 'End selects Writing');
+    assert(await visible('#temperature'), 'writing controls appear without nested folds');
+    await press('Home');
+    eq(await js('document.activeElement.id'), 'tuneRender', 'Home selects Rendering');
+    await click('#tuneLook');
+    assert(await visible('#lookRow'), 'looks are directly reachable');
+    await click('#lookAdd');
+    await click('#lkSave');
+    await toastText('name');
+    assert(await js('document.querySelector("#createOptions").contains(document.querySelector("#toast")) && document.querySelector("#toast").checkVisibility()'), 'validation feedback stays inside the modal');
+    await click('#lkCancel');
+    await press('Escape');
+    assert(!(await js('document.querySelector("#createOptions").open')), 'Escape closes Fine-tune');
+    eq(await js('document.activeElement.id'), 'openCreateOptions', 'focus returns to the opener');
+    eq(await js('document.querySelector(".director-steps").scrollHeight'), height, 'options do not extend the setup column');
+    // A desktop session may still remember Results as its narrow-screen pane.
+    await js('document.querySelector("#showResults").click()');
+    await click('#openCreateOptions');
+    await viewport(390, 844, true);
+    assert(await visible('#createOptions'), 'an open dialog stays visible when narrowing a results workspace');
+    await click('#tuneWriting');
+    assert(await js('document.querySelector("#createOptions").scrollWidth <= document.querySelector("#createOptions").clientWidth + 1'), 'Fine-tune fits a phone');
+    const calls = mockCalls();
+    await click('#temperature');
+    await press('Enter');
+    eq(mockCalls(), calls, 'Enter in Fine-tune never generates');
+    await click('#doneCreateOptions');
+    await viewport(1440, 900);
+    await click('label:has(#manualMode)');
+    await click('#openCreateOptions');
+    assert(!(await visible('#tuneLook')) && !(await visible('#tuneWriting')), 'word-for-word mode only offers controls it uses');
+    assert(await visible('#tuneRender'), 'rendering stays available');
+    await click('#doneCreateOptions');
+    await click('label:has(#manualMode)');
+    await goto(`${APP}/#create`);
+  });
+
+
+  await test('studio navigation: every page, mobile menu, settings sections and pipeline keyboard', async () => {
+    assert(await js('(() => { const ids = [...document.querySelectorAll("[id]")].map(el => el.id); return new Set(ids).size === ids.length; })()'), 'every control has a unique identity');
+    const pages = ['create', 'gallery', 'history', 'models', 'brains', 'voices', 'chains', 'batches', 'jobs', 'settings'];
+    for (const width of [1440, 900, 390]) {
+      await viewport(width, 900, width === 390);
+      for (const page of pages) {
+        await click(`.tabs [data-view="${page}"]`);
+        eq(await js('document.querySelector(".view.active").id'), `view-${page}`, `${page} opens at ${width}`);
+        assert(await js('document.documentElement.scrollWidth <= innerWidth + 1'), `${page} fits at ${width}`);
+      }
+    }
+    assert(await js('document.querySelector("#studioSidebar").inert'), 'closed mobile navigation cannot receive focus');
+    await click('#navToggle');
+    assert(await js('!document.querySelector("#studioSidebar").inert && document.querySelector("#studioSidebar").contains(document.activeElement)'), 'opening navigation focuses the current page');
+    await press('Escape');
+    eq(await js('document.activeElement.id'), 'navToggle', 'Escape returns focus to navigation');
+    await viewport(1440, 900);
+    assert(await js('!document.querySelector("#studioSidebar").inert'), 'desktop navigation is reachable again');
+    await click('[data-settings-tab="prompting"]');
+    const max = await value('#sMax');
+    await type('#sMax', '4096');
+    await click('[data-settings-tab="rendering"]');
+    assert(!(await visible('#sMax')), 'unselected settings are out of the way');
+    assert(await js('[...document.querySelectorAll("[data-settings-group]:not(.settings-visible)")].every(el => !el.getClientRects().length)'), 'only the selected Settings section is visible');
+    await click('.tabs [data-view="brains"]');
+    await click('.tabs [data-view="settings"]');
+    await click('[data-settings-tab="prompting"]');
+    eq(await value('#sMax'), '4096', 'unsaved settings survive section and page changes');
+    await type('#sMax', max);
+    await click('#settingsForm button[type="submit"]');
+    await click('.tabs [data-view="create"]');
+    await click('#tabRenders');
+    await press('End');
+    eq(await js('document.activeElement.id'), 'tabPipeline', 'End reaches Pipeline');
+    assert(await visible('#pipelinePane'), 'Pipeline is visible');
+    await press('Home');
+    eq(await js('document.activeElement.id'), 'tabRenders', 'Home reaches renders');
+    await click('#tabTakes');
+    await goto(`${APP}/#models/brains`);
+    assert(await js('document.querySelector("#view-brains").classList.contains("active")'), 'old Brains links still work');
+    await goto(`${APP}/#create`);
+  });
+
+  await test('validation: nothing to work with', async () => {
+    await type('#theme', '');
+    await click('#generateBtn');
+    assert(await visible('#stageError'), 'error card shown');
+    assert((await text('#stageError')).includes('Give me something'), 'friendly validation message');
+    await click('#stageError .x');
+    assert(!(await visible('#stageError')), 'error dismissed');
+  });
+
+  await test('surprise me and try chips fill the theme', async () => {
+    await click('#surpriseBtn');
+    assert((await value('#theme')).length > 10, 'surprise filled theme');
+    await click('#tryChips button');
+    assert((await value('#theme')).includes('beach'), 'try chip filled beach theme');
+  });
+
+  await test('clear empties the theme, undo brings it back', async () => {
+    const orig = await value('#theme');
+    await type('#theme', '');
+    assert(await js('document.querySelector("#themeClear").disabled'), 'nothing to clear: greyed out');
+    await type('#theme', 'a fox in the snow');
+    await click('#themeClear');
+    eq(await value('#theme'), '', 'theme cleared');
+    await click('#themeUndo');
+    eq(await value('#theme'), 'a fox in the snow', 'undo restored theme');
+    await type('#theme', orig);
+  });
+
+  await test('generate 2 takes (theme only)', async () => {
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="2"]');
+    eq(await text('#genLabel'), 'Write 2 prompts', 'button label');
+    await type('#theme', 'woman at beach with soda in her hand');
+    const before = mockCalls();
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'busy state');
+    eq(await text('#genLabel'), 'Line up another', 'while it cooks the button lines up the next one');
+    assert((await text('#outcomeHint')).includes('Writing prompt…'), 'and what is cooking shows above it');
+    await waitFor('[...document.querySelectorAll(".take .prompt-view")].some(v => !v.hidden)', 'streaming text');
+    await shot('02-streaming');
+    await genDone();
+    eq(await count('.take'), 2, 'two takes');
+    eq(await count('.take .prompt-text:not([hidden])'), 2, 'both takes finished');
+    eq(await text('.take:nth-child(1) .take-title'), 'Take 1', 'take title');
+    assert((await text('.take:nth-child(1) .meter')).includes('target'), 'word meter shows target');
+    assert((await text('#stageHead')).includes('Mock Vision 8B'), 'stage head names the brain');
+    eq(await text('#historyBadge'), '1', 'history badge');
+    eq(mockCalls() - before, 2, 'two LLM calls');
+    eq(mock.log.at(-1).reasoning_effort, 'none', 'thinking is off by default');
+    assert(JSON.stringify(mock.log.at(-1).messages).includes('VARIATION 2 OF 2'), 'second take asked for a different variation');
+    assert((await value('.take:nth-child(2) .prompt-text')).startsWith('Alternate take 2'), 'take 2 text');
+    await shot('03-two-takes', { full: true });
+  });
+
+  await test('refine with a quick chip + version paging', async () => {
+    await click('.take:nth-child(1) .refine input');
+    await click('.take:nth-child(1) .chips button[data-instr="Shorter"]');
+    await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v2/2"', 'v2/2');
+    assert((await value('.take:nth-child(1) .prompt-text')).startsWith('Revised to be shorter'), 'refined text shown');
+    assert((await text('.take:nth-child(1) .change')).includes('Shorter'), 'change label');
+    await click('.take:nth-child(1) .versions .prev');
+    eq(await text('.take:nth-child(1) .vlabel'), 'v1/2', 'paged back');
+    assert((await value('.take:nth-child(1) .prompt-text')).startsWith('A candid'), 'original text');
+    await click('.take:nth-child(1) .versions .next');
+    eq(await text('.take:nth-child(1) .vlabel'), 'v2/2', 'paged forward');
+    // A take filled while another tab is showing can't be measured: coming back to the takes measures it.
+    await click('#tabRenders');
+    const before = await value('.take:nth-child(1) .prompt-text');
+    await js(`(() => { const ta = document.querySelector('.take:nth-child(1) .prompt-text'); ta.style.height = '40px'; ta.value += ' More words.'.repeat(80); return 1; })()`);
+    await click('#tabTakes');
+    assert(await js(`(() => { const ta = document.querySelector('.take:nth-child(1) .prompt-text'); return ta.clientHeight >= ta.scrollHeight; })()`), 'the take fits its text after the tab switch');
+    await js(`(() => { document.querySelector('.take:nth-child(1) .prompt-text').value = ${JSON.stringify(before)}; return 1; })()`);
+  });
+
+  await test('refine an older version (no fake manual edit)', async () => {
+    await click('.take:nth-child(1) .versions .prev');
+    eq(await text('.take:nth-child(1) .vlabel'), 'v1/2', 'viewing v1');
+    await click('.take:nth-child(1) .refine input');
+    await click('.take:nth-child(1) .chips button[data-instr="More detailed"]');
+    await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v3/3"', 'v3/3 (not v4/4)');
+    assert((await text('.take:nth-child(1) .change')).includes('More detailed'), 'latest is the refine');
+  });
+
+  await test('refine by typing + Enter keeps focus', async () => {
+    await type('.take:nth-child(2) .refine input', 'make it golden hour');
+    await press('Enter');
+    await waitFor('document.querySelector(".take:nth-child(2) .vlabel")?.textContent === "v2/2"', 'take 2 v2/2');
+    eq(await value('.take:nth-child(2) .refine input'), '', 'refine input cleared');
+    assert(await js('document.activeElement === document.querySelector(".take:nth-child(2) .refine input")'), 'focus back in the tweak box');
+  });
+
+  await test('manual edit + save as version', async () => {
+    await type('.take:nth-child(1) .prompt-text', ' Extra sparkle.', { clear: false });
+    assert(await visible('.take:nth-child(1) .save-edit'), 'save edit button appears');
+    await click('.take:nth-child(1) .save-edit');
+    await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v4/4"', 'v4/4 after save');
+    assert((await text('.take:nth-child(1) .change')).includes('manual edit'), 'labelled as manual edit');
+  });
+
+  await test('unsaved edit survives paging', async () => {
+    await type('.take:nth-child(1) .prompt-text', ' Another line.', { clear: false });
+    await click('.take:nth-child(1) .versions .prev');
+    await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v4/5"', 'edit auto-saved as v5, now viewing v4');
+    await click('.take:nth-child(1) .versions .next');
+    assert((await value('.take:nth-child(1) .prompt-text')).endsWith('Another line.'), 'edit kept');
+  });
+
+  await test('copy + copy all', async () => {
+    await click('.take:nth-child(1) .copy');
+    await waitFor('document.querySelector(".take:nth-child(1) .copy").textContent.includes("Copied")', 'copied feedback');
+    const clip = await js('navigator.clipboard.readText().catch(() => null)');
+    if (clip !== null) assert(clip.endsWith('Another line.'), 'clipboard has take 1');
+    await click('#copyAllBtn');
+    await waitFor('document.querySelector("#copyAllBtn").textContent.includes("Copied")', 'copy all feedback');
+    const all = await js('navigator.clipboard.readText().catch(() => null)');
+    if (all !== null) assert(all.includes('--- Take 2 ---'), 'takes are clearly separated');
+  });
+
+  await test('image upload + animate on a video model', async () => {
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
+    assert(await visible('#roleBlock'), 'role picker visible');
+    assert(!(await visible('#roleBlock [data-value="animate"]')), 'no animate for image model');
+    // 640×400 (1.6) → Krea's closest ratio is 3:2, and the resolution follows.
+    eq(await value('#aspect'), '3:2', 'aspect matched to the image');
+    eq(await value('#resolution'), '1216×832', 'resolution matches the aspect');
+    assert(await visible('#aspectNote'), '"from image" note');
+    await toastText('aspect set to 3:2');
+    await click('.model-card[data-id="ltx-2-3"]');
+    // A video's first frame sets its shape: no LTX preset fits 1.6, so it gets the image's own ratio.
+    eq(await value('#aspect'), '8:5', 'LTX takes the image\'s own ratio');
+    eq(await text('#aspect option:checked'), 'Landscape · 8:5 🖼️', 'and says so');
+    eq(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).join("|")'), '928×576|1216×768|1600×992|1824×1152|2432×1504|3648×2272|__custom', 'its sizes and the ladder, drawn in that shape');
+    eq(await value('#resolution'), '1824×1152', 'the one nearest the 1080p it had');
+    assert(await visible('#aspectNote'), '"from image" note on the video model too');
+    assert(await visible('#roleBlock [data-value="animate"]'), 'animate for video model');
+    assert(await visible('#durationField'), 'duration shown for video');
+    eq(await js('document.querySelector("#duration").type'), 'number', 'Duration is a number box, seconds');
+    assert(Number(await value('#duration')) >= 1, `it starts at the model's first length: ${await value('#duration')}`);
+    await click('#roleBlock [data-value="animate"]');
+    assert((await text('#roleHint')).includes('frame one'), 'animate hint');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a gust of wind blows through');
+    await click('#generateBtn');
+    await waitFor('[...document.querySelectorAll(".take .status")].some(s => s.textContent.includes("Studying"))', '"Studying your image" status');
+    await genDone();
+    assert(JSON.stringify(lastCall().messages).includes('image_url'), 'image sent to the LLM');
+    assert(JSON.stringify(lastCall().messages).includes('role = \\"animate\\"'), 'animate role sent');
+    eq(await text('#historyBadge'), '2', 'history badge 2');
+    // 🎲 Surprise me with a first frame in: the Brain looks at the picture and the look, and keeps the words typed.
+    await click('#lookRow button[data-value="dreamy"]');
+    await type('#theme', 'playful woman');
+    const idea = 'she spins and laughs as the camera floats around her';
+    const asked = from => JSON.stringify(mock.log.slice(from).find(b => b.messages[0].content.startsWith('You suggest one surprising idea'))?.messages || '');
+    let from = mockCalls();
+    await click('#surpriseBtn');
+    await waitFor(`document.querySelector("#theme").value === ${JSON.stringify(idea)}`, 'the idea from the picture, unquoted');
+    const first = asked(from);
+    assert(first.includes('image_url') && first.includes('first frame') && first.includes('Dreamy') && first.includes('playful woman'), 'it saw the picture, the look and the words typed');
+    assert(await visible('#themeUndo'), 'the words typed are one click back');
+    from = mockCalls();
+    await click('#surpriseBtn');
+    await waitFor('!document.querySelector("#surpriseBtn").hasAttribute("aria-busy")', 'a second idea asked');
+    const second = asked(from);
+    assert(second.includes('Not one of these') && !second.includes('They wrote'), 'the next one differs and isn\'t built on the last idea');
+    // While the Brain looks, the button turns into Stop and the step's title line says what's happening (a blink alone was missed).
+    await type('#theme', 'SLOWTEST playful woman');
+    await click('#surpriseBtn');
+    await waitFor('!document.querySelector("#themeWorking").hidden && document.querySelector("#surpriseBtn").textContent.includes("Stop")', 'the button says Stop and the title line says it is looking');
+    assert(/^🎲 (Looking at your picture|Studying your image)…$/.test(await text('#themeWorking')), 'what it is doing, in words (the Brain\'s own status takes over the line)');
+    assert(!(await visible('#themeOpt')), 'the working line takes the place of "optional"');
+    await waitFor(`document.querySelector("#theme").value === ${JSON.stringify(idea)}`, 'the idea arrives');
+    assert(await js('document.querySelector("#themeWorking").hidden && document.querySelector("#surpriseBtn").textContent === "Surprise me" && !document.querySelector("#surpriseBtn").style.minWidth'), 'the line goes and the button is Surprise me again');
+    await click('#lookRow button[data-value=""]');
+    await shot('04-image-animate', { full: true });
+  });
+
+  await test('portrait image on a video model: its own shape; manual change wins; Krea snaps to a preset', async () => {
+    await setFiles('#imageInput', [portrait]);
+    await waitFor('document.querySelector("#aspect").value === "4:7"', 'portrait aspect: 400×700 is 4:7, not quite 9:16');
+    eq(await value('#resolution'), '1088×1920', 'portrait resolution of about the same size');
+    eq(await js('[...document.querySelectorAll("#aspect option")].filter(o => o.textContent.includes("🖼️")).length'), 1, 'only the new image\'s ratio is offered');
+    await choose('#aspect', '9:16');
+    eq(await value('#resolution'), '1080×1920', 'back on a preset: the preset sizes');
+    await choose('#aspect', '1:1');
+    eq(await value('#resolution'), '1440×1440', 'resolution follows a manual aspect change, about the same size');
+    await choose('#resolution', '__custom');
+    assert(await visible('#resCustom'), 'width and height boxes for your own size');
+    eq(await value('#resolution'), '1440×1440', 'still on the size in use until one is typed');
+    await type('#resW', '1000'); await type('#resH', '700');
+    await shot('04b-own-size');
+    await click('#resUse');
+    eq(await value('#resolution'), '1000×700', 'your own size is picked');
+    eq(await text('#resolution option:checked'), 'Your size: 1000×700', 'and says so');
+    eq(await value('#aspect'), '10:7', 'Shape turns to the size\'s own shape');
+    eq(await text('#aspect option:checked'), 'Landscape · 10:7 ✎', 'and says it is yours');
+    const dials = () => fetch(`${APP}/api/dials`).then(r => r.json()).then(d => d['ltx-2-3'] || {});
+    await waitFor(`fetch('/api/dials').then(r => r.json()).then(d => d['ltx-2-3']?.resolution === '1000×700')`, 'and remembered, in the data folder (every window, every restart)');
+    eq((await dials()).aspectRatio, '10:7', 'with its shape');
+    eq(await js('localStorage.getItem("pm.prefs.ltx-2-3")'), null, 'not in the browser');
+    await choose('#aspect', '16:9');
+    assert(await value('#resolution') !== '1000×700', 'another shape takes a size in that shape');
+    assert(!(await js('[...document.querySelectorAll("#aspect option")].map(o => o.value)')).includes('10:7'), 'and the typed shape leaves the menu');
+    await choose('#resolution', '1000×700');
+    eq(await value('#aspect'), '10:7', 'picking your size again brings its shape back');
+    await choose('#resolution', await js('document.querySelector("#resolution").options[0].value'));
+    assert(!(await visible('#resCustom')), 'boxes hide on a preset');
+    assert((await js('[...document.querySelectorAll("#resolution option")].map(o => o.value)')).includes('1000×700'), 'your size stays in the menu');
+    eq(JSON.stringify((await (await fetch(`${APP}/api/sizes`)).json())['ltx-2-3']), '["1000×700"]', 'kept in the data folder, so across sessions and browsers');
+    eq(await js('localStorage.getItem("pm.sizes.ltx-2-3")'), null, 'not in the browser');
+    await choose('#resolution', '1000×700');
+    assert(await visible('#resForget'), 'a size of yours can be forgotten');
+    await click('#resForget');
+    assert(!(await js('[...document.querySelectorAll("#resolution option")].map(o => o.value)')).includes('1000×700'), 'forgotten');
+    await choose('#aspect', '1:1');
+    assert(!(await visible('#aspectNote')), 'note cleared after a manual change');
+    const prefs = async () => { await sleep(400); return (await dials()).aspectRatio; }; // (saved a moment after the change)
+    eq(await prefs(), '1:1', 'a preset is remembered for the model');
+    await choose('#aspect', '4:7');
+    eq(await prefs(), '1:1', 'the image\'s own ratio is not: it belongs to the image');
+    await click('.model-card[data-id="krea2-raw"]');
+    eq(await value('#aspect'), '9:16', 'an image model snaps to its closest preset');
+    eq(await js('[...document.querySelectorAll("#aspect option")].some(o => o.textContent.includes("🖼️"))'), false, 'no own ratio offered there');
+    await click('.model-card[data-id="ltx-2-3"]');
+    eq(await value('#aspect'), '4:7', 'back on the video model: the image\'s shape again');
+    await choose('#aspect', '9:16');
+  });
+
+  await test('text-only brain warns and blocks images', async () => {
+    await choose('#llmSelect', 'mock/text-only');
+    await waitFor('!document.querySelector("#visionWarn").hidden', 'vision warning');
+    const before = mockCalls();
+    await click('#generateBtn');
+    assert((await text('#stageError')).includes("can't see images"), 'blocked with explanation');
+    eq(mockCalls(), before, 'no LLM call made');
+    await click('#imageClear');
+    assert(!(await visible('#visionWarn')), 'warning gone without image');
+    await click('#generateBtn');
+    await genDone();
+    eq(mockCalls(), before + 1, 'text-only generation works');
+    await choose('#llmSelect', 'mock/vision-8b');
+  });
+
+  await test('thinking model: loading + thinking statuses', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await choose('#sThinking', 'default');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+    await choose('#llmSelect', 'mock/thinker');
+    await type('#theme', 'a tiny dragon napping in a teacup');
+    await click('#generateBtn');
+    await waitFor('[...document.querySelectorAll(".take .status")].some(s => s.textContent.includes("Loading Mock Thinker"))', 'model loading status');
+    await waitFor('[...document.querySelectorAll(".take .status")].some(s => s.textContent.includes("Thinking"))', 'thinking status');
+    await shot('05-thinking');
+    await genDone();
+    eq(await count('.take .prompt-text:not([hidden])'), 1, 'thinking model finished');
+    await click('.tabs button[data-view="settings"]');
+    await choose('#sThinking', 'off');
+    await click('#settingsForm button[type="submit"]');
+    await click('.tabs button[data-view="create"]');
+    await choose('#llmSelect', 'mock/vision-8b');
+  });
+
+  await test('brain that ignores Thinking: Off is switched off another way, and remembered', async () => {
+    await choose('#llmSelect', 'mock/fable');
+    await type('#theme', 'a lighthouse in a storm');
+    const before = mockCalls();
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('.take .prompt-text:not([hidden])'), 1, 'prompt written');
+    eq(mockCalls(), before + 2, 'stopped once it started thinking, then asked again');
+    eq(mock.log.at(-2).messages.at(-1).role, 'user', 'first ask as usual');
+    assert(/^<think>\s*<\/think>/.test(lastCall().messages.at(-1).content), 'second ask starts with its thinking over');
+    await click('#generateBtn');
+    await genDone();
+    eq(mockCalls(), before + 3, 'next time it goes straight to the trick');
+    assert(/^<think>/.test(lastCall().messages.at(-1).content), 'remembered');
+    await waitFor('document.querySelector("#llmBox").title.includes("switches it off another way")', 'tooltip says how thinking is switched off');
+    await choose('#llmSelect', 'mock/vision-8b');
+    await click('#generateBtn');
+    await genDone();
+    eq(lastCall().messages.at(-1).role, 'user', 'a Brain that behaves gets no trick');
+  });
+
+  await test('empty output → clear error', async () => {
+    await type('#theme', 'EMPTYTEST scene');
+    await click('#generateBtn');
+    await genDone();
+    assert((await text('#stageError')).includes('ran out of room'), 'token-limit error title');
+    assert(await visible('#resultsEmpty'), 'empty state restored');
+  });
+
+  await test('server error → clear error', async () => {
+    await type('#theme', 'FAILTEST scene');
+    await click('#generateBtn');
+    await genDone();
+    assert((await text('#stageError')).includes('Mock failure'), 'server error surfaced');
+  });
+
+  await test('stop mid-stream (button and Esc)', async () => {
+    await type('#theme', 'SLOWTEST scene');
+    await click('#generateBtn');
+    await waitFor('[...document.querySelectorAll(".take .prompt-view")].some(v => !v.hidden)', 'streaming started', 8000);
+    await click('#stopBtn');
+    await genDone();
+    await toastText('Stopped');
+    assert(await visible('#resultsEmpty'), 'empty state after stop');
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'busy again');
+    await press('Escape');
+    await genDone();
+  });
+
+  await test('stop keeps takes that already finished', async () => {
+    await click('#varSeg button[data-value="3"]');
+    await type('#theme', 'SLOWSECOND stop test');
+    const badge = Number(await text('#historyBadge'));
+    await click('#generateBtn');
+    await waitFor('document.querySelector(".take:nth-child(1) .status")?.textContent.includes("Done")', 'take 1 done', 8000);
+    await waitFor('!document.querySelector(".take:nth-child(2) .prompt-view").hidden', 'take 2 streaming', 8000);
+    await click('#stopBtn');
+    await genDone();
+    eq(await count('.take'), 1, 'finished take kept, unfinished removed');
+    assert(await visible('.take .prompt-text'), 'kept take is editable');
+    await toastText('Kept 1');
+    eq(Number(await text('#historyBadge')), badge + 1, 'saved to history');
+    await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('nothing jumps: takes keep their size when written, folds keep their header, the steps stay put', async () => {
+    const top = sel => js(`Math.round(document.querySelector(${q(sel)}).getBoundingClientRect().top)`);
+    // Like a person, without scrolling first (click() does): presses the button where it is now.
+    const pressAt = async sel => {
+      const b = await js(`(() => { const r = document.querySelector(${q(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: b.x, y: b.y, button: 'left', clickCount: 1 });
+      await sleep(80);
+    };
+    try {
+      await click('#varSeg button[data-value="3"]');
+      await type('#theme', 'SLOWSECOND nothing jumps');
+      const theme = await top('#theme');
+      await click('#generateBtn');
+      await waitFor('document.querySelectorAll(".take").length === 3', 'three takes');
+      // While they're written, each take's buttons are there already, greyed out, and so is Copy all.
+      assert(await js('[...document.querySelectorAll(".take")].every(t => !t.querySelector(".refine").hidden && t.querySelector(".refine").classList.contains("writing") && !t.querySelector(".refine").inert && t.querySelector(".chips").inert)'), 'tweak box (dimmed, but you can type) and chips show greyed out while writing');
+      assert(await js('[...document.querySelectorAll(".take .meter")].every(m => !m.hidden && m.textContent.includes("words"))'), 'the word meter is there, greyed, before a word arrives');
+      assert(await js('[...document.querySelectorAll(".take .prompt-well")].every(w => parseFloat(getComputedStyle(w).minHeight) > 150)'), 'each prompt box holds the height its text is expected to need');
+      eq(await js('document.querySelector("#copyAllBtn")?.disabled'), true, 'Copy all shows greyed out while writing');
+      await waitFor('!document.querySelector(".take:nth-child(3) .prompt-view").hidden && document.querySelector(".take:nth-child(2) .status").textContent.includes("Done")', 'take 3 being written', 15000);
+      await sleep(150);
+      const take3 = await top('.take:nth-child(3)');
+      await genDone();
+      const moved = (await top('.take:nth-child(3)')) - take3;
+      assert(Math.abs(moved) <= 6, `take 3 stays where it was when the takes are done (moved ${moved}px)`);
+      assert(await js('[...document.querySelectorAll(".take")].every(t => !t.querySelector(".refine").inert)'), 'and their buttons work');
+      eq(await top('#theme'), theme, 'the steps never moved');
+      // A wide window: the steps and the takes scroll on their own, the page doesn't.
+      if (await js('document.documentElement.scrollHeight > innerHeight + 1')) console.log('      overflow layout:', await js(`JSON.stringify({h:innerHeight,y:scrollY,chrome:getComputedStyle(document.documentElement).getPropertyValue('--create-chrome-h'),els:['body','main','.create-heading','.create','.director','.director-steps','.stage','body > .scroll-floor'].map(s=>{const e=document.querySelector(s),r=e.getBoundingClientRect(),c=getComputedStyle(e);return {s,top:r.top,bottom:r.bottom,h:r.height,scroll:e.scrollHeight,display:c.display,margin:c.margin,padding:c.padding}})})`));
+      assert(await js('document.documentElement.scrollHeight <= innerHeight + 1'), `the page itself does not scroll (${await js('document.documentElement.scrollHeight - innerHeight')}px overflow)`);
+      const tabs = await top('.stage-tabs');
+      await js('document.querySelector(".stage").scrollTop = 1e6');
+      await sleep(100);
+      eq(await top('#theme'), theme, 'scrolling the takes leaves the steps where they are');
+      eq(await top('.stage-tabs'), tabs, 'scrolling the takes leaves the results tabs where they are');
+
+      // Fold a take, or a step, scrolled to the end: the header you clicked stays under the mouse.
+      const take3Head = '.take:nth-child(3) > .take-head';
+      // A take can be taller than the studio stage. Bring its header into view before clicking it.
+      await js(`document.querySelector(${q(take3Head)}).scrollIntoView({ block: 'nearest' })`);
+      await sleep(100);
+      const takeHead = await top(take3Head);
+      await pressAt(`${take3Head} .collapse-btn`);
+      assert(await js('document.querySelector(".take:nth-child(3)").classList.contains("collapsed")'), 'take 3 folded');
+      eq(await top(take3Head), takeHead, 'the folded take\'s header stays put');
+      await pressAt(`${take3Head} .collapse-btn`);
+      await openPanel('create-image');
+      await js('document.querySelector(".director-steps").scrollTop = 1e6');
+      await sleep(100);
+      const dialsHead = '[data-panel="create-image"] > .step-head';
+      await js(`document.querySelector(${q(dialsHead)}).scrollIntoView({ block: 'center' })`);
+      const stepHead = await top(dialsHead);
+      await pressAt(`${dialsHead} .collapse-btn`);
+      assert(await js('document.querySelector(\'[data-panel="create-image"]\').classList.contains("collapsed")'), 'optional image step folded');
+      eq(await top(dialsHead), stepHead, 'the folded step\'s header stays put');
+    } finally {
+      await openPanel('create-dials');
+      await click('#varSeg button[data-value="1"]');
+    }
+  });
+
+  await test('steady takes: nothing under a take moves while it is written, finished or refined', async () => {
+    const probe = `window.__tops = []; window.__cls = [];
+      window.__po = new PerformanceObserver(l => { for (const e of l.getEntries()) if (!e.hadRecentInput) __cls.push({ v: +e.value.toFixed(4), at: Math.round(e.startTime), src: e.sources.map(s => s.node?.id || s.node?.className || s.node?.nodeName) }); });
+      __po.observe({ type: 'layout-shift' });
+      window.__samp = setInterval(() => __tops.push(['.take:nth-child(3)', '#reel', '.generate-bar'].map(s => { const el = document.querySelector(s); return el && !el.hidden ? Math.round(el.getBoundingClientRect().top) : null; })), 100); true`;
+    const stopProbe = () => js('clearInterval(__samp); __po.disconnect(); ({ tops: __tops, cls: __cls })');
+    const spread = (tops, i) => { const v = tops.map(t => t[i]).filter(x => x != null); return v.length ? Math.max(...v) - Math.min(...v) : 0; };
+    const shifts = cls => cls.reduce((n, e) => n + e.v, 0);
+    const before = new Set((await (await fetch(`${APP}/api/history`)).json()).map(e => e.id));
+    try {
+      await click('#varSeg button[data-value="3"]');
+      await type('#theme', 'SLOWSECOND steady takes');
+      await click('#generateBtn');
+      await waitFor('!document.querySelector(".take:nth-child(2) .prompt-view")?.hidden', 'take 2 being written', 15000);
+      await sleep(400); // the stage's own scroll to the top is over
+      await js(probe);
+      await waitFor('document.querySelector(".take:nth-child(2) .status").textContent.includes("Done")', 'take 2 done', 30000);
+      await sleep(300);
+      const w = await stopProbe();
+      assert(w.tops.length >= 20, `sampled while writing (${w.tops.length})`);
+      assert(spread(w.tops, 0) <= 2, `take 3 stays put while take 2 is written and finished (moved ${spread(w.tops, 0)}px)`);
+      assert(spread(w.tops, 1) <= 2, `Your renders stays put (moved ${spread(w.tops, 1)}px)`);
+      assert(spread(w.tops, 2) <= 2, `the main button stays put (moved ${spread(w.tops, 2)}px)`);
+      assert(shifts(w.cls) < 0.02, `no layout shift while writing: ${JSON.stringify(w.cls)}`);
+      await genDone();
+      // A refine: the box keeps its height while the new text replaces the old one.
+      const h = await js('document.querySelector(".take:nth-child(1) .prompt-well").offsetHeight');
+      const take1 = await js('Math.round(document.querySelector(".take:nth-child(1)").getBoundingClientRect().top)');
+      await js(probe.replace('100)', '25)'));
+      await js('document.querySelector(".take:nth-child(1) .chips button[data-instr=\\"Shorter\\"]").click()'); // (click() would scroll it into view first)
+      await waitFor('document.querySelector(".take:nth-child(1) .vlabel")?.textContent === "v2/2"', 'refined');
+      await sleep(200);
+      const r = await stopProbe();
+      assert(spread(r.tops, 0) <= 2, `take 3 stays put during a refine (moved ${spread(r.tops, 0)}px)`);
+      assert((await js('document.querySelector(".take:nth-child(1) .prompt-well").offsetHeight')) >= h, 'the refined take is no shorter');
+      eq(await js('Math.round(document.querySelector(".take:nth-child(1)").getBoundingClientRect().top)'), take1, 'take 1 itself stays put');
+      assert(shifts(r.cls.filter(e => e.at > 600)) < 0.02, `no layout shift during the refine: ${JSON.stringify(r.cls)}`);
+    } finally {
+      await click('#varSeg button[data-value="1"]');
+      // (Leave Saved prompts as the tests after this one expect it.)
+      for (const e of (await (await fetch(`${APP}/api/history`)).json()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+      await goto(`${APP}/#create`);
+    }
+  });
+
+  await test('LM Studio dies mid-answer → friendly error, partial kept', async () => {
+    await type('#theme', 'SLOWTEST dropout');
+    await click('#generateBtn');
+    await waitFor('[...document.querySelectorAll(".take .prompt-view")].some(v => !v.hidden)', 'streaming', 8000);
+    await mock.stop();
+    await genDone();
+    assert((await text('#stageError')).includes('dropped out'), 'friendly mid-answer error');
+    assert(await visible('.take.interrupted .prompt-text'), 'partial text kept');
+    assert((await text('.take.interrupted .status')).includes('Cut off'), 'marked as cut off');
+    await mock.start();
+    await loadAgain();
+  });
+
+  await test("LM Studio's scratch folder gone → put back, call made again, no error", async () => {
+    const tempDir = path.join(lmsHome, '.internal', 'temp');
+    await fs.rm(tempDir, { recursive: true, force: true });
+    mock.loseTemp(tempDir);
+    await type('#theme', 'TEMPTEST lighthouse at dusk');
+    await click('#generateBtn');
+    await genDone();
+    assert(await js('document.querySelector("#stageError").hidden'), 'no error shown');
+    eq(await count('.take .prompt-text:not([hidden])'), 1, 'the take came');
+    assert((await fs.stat(tempDir).catch(() => null))?.isDirectory(), 'the folder is back');
+    eq(mock.log.filter(b => b.messages.some(m => JSON.stringify(m.content).includes('TEMPTEST'))).length, 2, 'asked twice: once failed, once after the folder came back');
+    mock.loseTemp(null);
+  });
+
+  await test('a Brain with little room: fewer examples go along so the take fits; too little for any: plain words; more room from Brains', async () => {
+    // Krea 2 RAW gets thirty long example prompts (to exercise context trimming).
+    const before = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    const had = new Set((await (await fetch(`${APP}/api/history`)).json()).map(x => x.id));
+    const modelBefore = await js('document.querySelector(".model-card.active")?.dataset.id'); // (the tests after this one count Krea entries)
+    const examples = Array.from({ length: 30 }, (_, i) => `Example take ${i + 1}: ${'a long example prompt about light and texture, '.repeat(12)}`);
+    await fetch(`${APP}/api/models/krea2-raw`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...before, examples }) });
+    try {
+      await click('.model-card[data-id="krea2-raw"]');
+      await choose('#llmSelect', 'mock/tiny-room');
+      const calls = mock.log.length;
+      await type('#theme', 'ROOMTEST a lighthouse at dusk');
+      await click('#generateBtn');
+      await genDone();
+      assert(await js('document.querySelector("#stageError").hidden'), `no error shown (${await text('#stageError')})`);
+      eq(await count('.take .prompt-text:not([hidden])'), 1, 'the take came');
+      const sent = mock.log.slice(calls).find(b => JSON.stringify(b.messages).includes('ROOMTEST'));
+      const kept = (sent.messages[0].content.match(/^Example \d+:/gm) || []).length;
+      assert(kept > 0 && kept < 30, `fewer examples went along: ${kept} of 30`);
+      eq(mock.log.slice(calls).filter(b => JSON.stringify(b.messages).includes('ROOMTEST')).length, 1, 'fitted before asking: asked once');
+      // A Brain with room for nothing: the error says the numbers and the way out, in plain words.
+      await choose('#llmSelect', 'mock/no-room');
+      await type('#theme', 'ROOMTEST2 a lighthouse at dawn');
+      await click('#generateBtn');
+      await genDone();
+      const err = await text('#stageError');
+      assert(/needs about [\d,]+ tokens and Mock No Room 1B has room for 1,000, the most it can take\. Pick a Brain with more room/.test(err), `plain words with the numbers: ${err}`);
+      assert(!mock.log.slice(calls).some(b => JSON.stringify(b.messages).includes('ROOMTEST2')), 'not even asked: it could not fit');
+      // More room, from the Brain's card: the Room menu loads it again in LM Studio with the size picked.
+      await click('.tabs button[data-view="brains"]');
+      await js('document.querySelector("#brainsNew").open = true');
+      assert((await text('.brain[data-id="mock/no-room"]')).includes('room for 1k tokens'), 'the card says the room it has (the Brain asked last, loaded alone)');
+      eq(await js('[...document.querySelectorAll(\'.brain[data-id="mock/no-room"] select[data-act="room"] option\')].map(o => o.value).join()'), '1000', 'a Brain at its most offers nothing bigger');
+      await choose('.brain[data-id="mock/tiny-room"] select[data-act="room"]', '32768');
+      await toastText('Mock Tiny Room 4B now has room for 32k tokens');
+      assert((await text('.brain[data-id="mock/tiny-room"]')).includes('room for 32k tokens'), 'the card shows the new room');
+      eq(await value('.brain[data-id="mock/tiny-room"] select[data-act="room"]'), '32768', 'the menu shows it too');
+      await click('.tabs button[data-view="create"]');
+      await choose('#llmSelect', 'mock/tiny-room');
+      await type('#theme', 'ROOMTEST3 a lighthouse at noon');
+      await click('#generateBtn');
+      await genDone();
+      assert(await js('document.querySelector("#stageError").hidden'), `no error with the bigger room (${await text('#stageError')})`);
+      const whole = mock.log.slice(calls).find(b => JSON.stringify(b.messages).includes('ROOMTEST3'));
+      eq((whole.messages[0].content.match(/^Example \d+:/gm) || []).length, 30, 'every example went along');
+    } finally {
+      await fetch(`${APP}/api/models/krea2-raw/reset`, { method: 'POST' });
+      await fetch(`${APP}/api/lmstudio/room`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'mock/tiny-room', contextLength: 7000 }) });
+      for (const e of (await (await fetch(`${APP}/api/history`)).json()).filter(x => !had.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+      await choose('#llmSelect', 'mock/vision-8b');
+      if (modelBefore) await click(`.model-card[data-id="${modelBefore}"]`);
+      await goto(`${APP}/#create`);
+    }
+  });
+
+  await test('one Brain at a time: asking a Brain unloads the others, and it comes back with the room it had', async () => {
+    mock.resetLoaded();
+    eq(mock.loadedKeys().length, 4, 'four loaded, as the mock starts');
+    try {
+      await choose('#llmSelect', 'mock/fable');
+      await type('#theme', 'ALONETEST a kite over a dune');
+      await click('#generateBtn');
+      await genDone();
+      eq(await count('.take .prompt-text:not([hidden])'), 1, 'the take came');
+      eq(mock.loadedKeys().join(), 'mock/fable', 'only the Brain asked is loaded now: the four others went first');
+      // A Brain loaded again gets the room it had when it went.
+      await choose('#llmSelect', 'mock/tiny-room');
+      await type('#theme', 'ALONETEST a kite over a dune');
+      await click('#generateBtn');
+      await genDone();
+      eq(mock.loadedKeys().join(), 'mock/tiny-room', 'the next Brain alone in turn');
+      eq(mock.roomOf('mock/tiny-room'), 7000, 'with the room it had before it was unloaded');
+    } finally {
+      mock.resetLoaded();
+      await choose('#llmSelect', 'mock/vision-8b');
+    }
+  });
+
+  await test('Ctrl+Enter generates (and the tab title shows progress)', async () => {
+    await type('#theme', 'keyboard warrior portrait');
+    await press('Enter', { ctrl: true });
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'started by Ctrl+Enter');
+    await waitFor('document.title.startsWith("✍️")', 'title shows progress');
+    await genDone();
+    eq(await count('.take .prompt-text:not([hidden])'), 1, 'result from Ctrl+Enter');
+  });
+
+  await test('LM Studio offline → banner, error, recovery', async () => {
+    await mock.stop();
+    await click('#llmRefresh');
+    await waitFor('!document.querySelector("#banner").hidden', 'offline banner');
+    assert(await js('document.querySelector("#llmDot").classList.contains("bad")'), 'red dot');
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#stageError") && !document.querySelector("#stageError").hidden', 'error card');
+    assert((await text('#stageError')).includes('LM Studio'), 'offline error');
+    await shot('06-offline');
+    // "Start it" runs `lms server start`; the fake lms records the call and we bring the mock back.
+    await click('#bannerStart');
+    for (let i = 0; i < 50 && !(await fs.stat(lmsMarker).catch(() => null)); i++) await sleep(100);
+    eq((await fs.readFile(lmsMarker, 'utf8')).trim(), `server start --port ${MOCK_PORT}`, 'lms called with the right port');
+    await mock.start();
+    await waitFor('document.querySelector("#banner").hidden', 'banner cleared after start', 12000);
+    assert(await js('document.querySelector("#llmDot").classList.contains("ok")'), 'green dot again');
+    await toastText('LM Studio is back');
+  });
+
+  await test('reconnects on its own when LM Studio comes back', async () => {
+    await mock.stop();
+    await click('#llmRefresh');
+    await waitFor('!document.querySelector("#banner").hidden', 'offline banner');
+    await mock.start();
+    await waitFor('document.querySelector("#banner").hidden', 'auto-reconnected without clicking', 9000);
+  });
+
+  await test("app server gone → its own banner, no LM Studio button, reconnects on its own", async () => {
+    // The page can't reach Prompt Maker's server (stopped, or the computer restarted).
+    await js('window.realFetch = window.fetch; window.fetch = () => Promise.reject(new TypeError("Failed to fetch"))');
+    await click('#llmRefresh');
+    await waitFor('!document.querySelector("#banner").hidden', 'banner');
+    eq(await text('#bannerTitle'), "Prompt Maker's server isn't running.", 'says what is really down');
+    assert((await text('#bannerLong')).includes('app menu') && !(await text('#bannerLong')).includes('start.sh'), 'says how to start it, by clicking');
+    assert(!(await visible('#bannerStart')), "no Start button: there's nothing to ask");
+    await js('window.fetch = window.realFetch');
+    await toastText('Prompt Maker is back');
+    assert(await js('document.querySelector("#banner").hidden'), 'banner gone without clicking');
+    assert(await js('!document.querySelector("#bannerStart").hidden'), 'the LM Studio button is back for next time');
+  });
+
+  await test('start-up: start with the computer from Settings; the offline banner can start the app', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector("#startupOpts").hidden', 'start-up switches');
+    assert(!(await js('document.querySelector("#sAutostart").checked')), 'off at first');
+    await click('#sAutostart');
+    await toastText('starts with your computer');
+    const unit = await fs.readFile(path.join(xdgConfig, 'systemd', 'user', 'prompt-maker.service'), 'utf8');
+    assert(unit.includes(`ExecStart="${process.execPath}"`) && unit.includes('server.js') && unit.includes('Restart=on-failure') && unit.includes('server start'), 'service: runs the app, restarts it, turns on LM Studio');
+    const desktop = await fs.readFile(path.join(xdgData, 'applications', 'prompt-maker.desktop'), 'utf8');
+    assert(desktop.includes('Name=Prompt Maker') && desktop.includes('MimeType=x-scheme-handler/promptmaker;') && desktop.includes('start.sh" %u'), 'app-menu entry and the start link');
+    // Its own icon: in the icon theme under the entry's name, and the window tied to the entry, so no generic gear.
+    assert(desktop.includes('Icon=prompt-maker\n') && desktop.includes('StartupWMClass=prompt-maker'), 'the entry names the themed icon and the window class');
+    for (const f of ['256x256/apps/prompt-maker.png', '32x32/apps/prompt-maker.png', 'scalable/apps/prompt-maker.svg']) assert(await fileExists(path.join(xdgData, 'icons', 'hicolor', f)), `the icon is installed: ${f}`);
+    // On Wayland the browser names the window itself ("brave-127.0.0.1__-Default"): start.sh gives the window that
+    // name (--class) and points the entry's StartupWMClass at it, so the dock shows the icon there too (1.68.5).
+    {
+      const sh = (cmd) => execFileSync('bash', ['-c', `set -e; URL=http://127.0.0.1:5317; source <(sed -n '/^wm_class()/,/^}/p; /^name_entry()/,/^}/p' start.sh); ${cmd}`], { cwd: ROOT, env: { ...process.env, XDG_DATA_HOME: xdgData }, encoding: 'utf8' }).trim();
+      eq(sh('wm_class /usr/bin/brave-browser'), 'brave-127.0.0.1__-Default', 'the name Brave gives the window');
+      eq(sh('wm_class /usr/bin/google-chrome'), 'chrome-127.0.0.1__-Default', 'and Chrome');
+      eq(sh('wm_class /usr/bin/firefox'), 'prompt-maker', 'another browser: the plain name');
+      sh('name_entry brave-127.0.0.1__-Default');
+      assert((await fs.readFile(path.join(xdgData, 'applications', 'prompt-maker.desktop'), 'utf8')).includes('StartupWMClass=brave-127.0.0.1__-Default\n'), 'the entry follows the browser in use');
+      sh('name_entry prompt-maker'); // back, for the checks below
+    }
+    assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user enable prompt-maker.service'), 'starts at login');
+    assert(!(await visible('#settingsDirty')), 'the switch saves on its own');
+    assert((await text('#sAutostartHint')).includes('comes back on its own'), 'says what it does');
+    assert(unit.includes(`ConditionPathExists=${path.join(ROOT, 'server.js')}`), 'does nothing once this copy is gone');
+    assert(desktop.includes(`TryExec=${path.join(ROOT, 'start.sh')}`), 'the menu entry hides itself once this copy is gone');
+    assert(!(await visible('#sSetupElsewhere')), 'set up for this copy: nothing to say');
+
+    // The package was removed: the setup points at a folder that's gone. Settings says so; one click points it here.
+    const unitPath = path.join(xdgConfig, 'systemd', 'user', 'prompt-maker.service');
+    await fs.writeFile(unitPath, unit.replaceAll(ROOT, '/opt/prompt-maker-gone/app').replace(`ExecStart="${process.execPath}"`, 'ExecStart="/opt/prompt-maker-gone/node/bin/node"'));
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector("#sSetupElsewhere").hidden', 'removed-copy notice');
+    assert((await text('#sSetupElsewhere')).includes("been removed") && (await text('#sSetupElsewhere')).includes('/opt/prompt-maker-gone/app'), 'says where, plainly');
+    await click('#sSetupRepair');
+    await toastText('Set up for this copy');
+    const fixed = await fs.readFile(unitPath, 'utf8');
+    assert(fixed.includes(`WorkingDirectory=${ROOT}`) && fixed.includes(`ExecStart="${process.execPath}"`) && !fixed.includes('prompt-maker-gone'), 'points here again');
+    assert(await js('document.querySelector("#sAutostart").checked'), 'still starts with the computer');
+    assert(!(await visible('#sSetupElsewhere')), 'notice gone');
+
+    // With the server gone, the banner now has a button that starts it.
+    await js('window.realFetch = window.fetch; window.fetch = () => Promise.reject(new TypeError("Failed to fetch"))');
+    await click('#llmRefresh');
+    await waitFor('!document.querySelector("#banner").hidden', 'banner');
+    assert(await visible('#bannerLaunch'), 'Start Prompt Maker button');
+    eq(await js('document.querySelector("#bannerLaunch").getAttribute("href")'), 'promptmaker://start', 'opens the start link');
+    assert((await text('#bannerLong')).includes('Click Start'), 'tells you to click it');
+    await js('window.fetch = window.realFetch');
+    await toastText('Prompt Maker is back');
+
+    await click('#sAutostart');
+    await toastText("won't start with your computer");
+    assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user disable prompt-maker.service'), 'off at login');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('services: see what runs; start and stop ComfyUI and LM Studio from Settings', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'ComfyUI shown running');
+    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('1 model loaded'), 'LM Studio running, with what it has loaded (one Brain: the app unloads the others before asking one)');
+
+    // ComfyUI's folder (normally found on its own)
+    const comfyDir = path.join(tmp, 'ComfyUI');
+    await fs.mkdir(path.join(comfyDir, 'comfy'), { recursive: true });
+    await fs.writeFile(path.join(comfyDir, 'main.py'), '');
+    await type('#sComfyFolder', comfyDir);
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+
+    // Started some other way (here: not a ComfyUI process at all), it's left alone, with a clear message.
+    await click('.svc[data-svc="comfy"] [data-act="comfy-stop"]');
+    await toastText('not as a program Prompt Maker can stop');
+
+    // Off → ▶ Start runs it from its folder, in the background, and the page waits for it to answer.
+    await comfy.stop();
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector(\'[data-act="comfy-start"]\').hidden', 'Start button when off');
+    assert((await text('#svcComfyHow')).includes(comfyDir), 'says where it starts from');
+    await click('[data-act="comfy-start"]');
+    await toastText('Starting ComfyUI');
+    const started = await fs.readFile(systemdRunLog, 'utf8');
+    assert(started.includes('--unit=prompt-maker-comfyui.service') && started.includes(`--working-directory=${comfyDir}`) && started.includes('main.py') && started.includes(`--port ${COMFY_PORT}`), `runs main.py in its folder on the right port: ${started}`);
+    assert(!started.includes('--output-directory'), 'its own folders, as usual');
+    assert(started.includes(`StandardOutput=append:${path.join(dataDir, 'comfyui.log')}`) && started.includes('StandardError=append:'), `its output goes to comfyui.log in the data folder, not the system journal: ${started}`);
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Starting")', 'shown starting');
+    await comfy.start(); // ComfyUI answers
+    await toastText('ComfyUI is running');
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'shown running');
+
+    // ■ Stop stops what Prompt Maker started.
+    await click('[data-act="comfy-stop"]');
+    await comfy.stop(); // it goes away
+    await toastText('ComfyUI is off');
+    assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user stop prompt-maker-comfyui.service'), 'stopped its service');
+    await comfy.start();
+
+    // LM Studio: unload everything, server off.
+    await click('[data-act="lms-stop"]');
+    for (let i = 0; i < 80 && (await fs.readFile(lmsMarker, 'utf8').catch(() => '')).trim() !== 'server stop'; i++) await sleep(100);
+    eq((await fs.readFile(lmsMarker, 'utf8')).trim(), 'server stop', 'lms server stop, after unloading');
+
+    // Stopping Prompt Maker (or everything) asks for a second click first.
+    await click('#stopAllBtn');
+    eq(await text('#stopAllBtn'), 'Click again to stop everything', 'asks to confirm');
+    await type('#sComfyFolder', '');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('🎨 one-click ComfyUI set-up: not on this computer → Set up: fetched, its Python, PyTorch for the card, its packages, started', async () => {
+    // Point ComfyUI's folder at a place with nothing in it: as on a fresh computer, there's no ComfyUI to start.
+    const fresh = path.join(tmp, 'fresh', 'ComfyUI');
+    await click('.tabs button[data-view="settings"]');
+    await type('#sComfyFolder', fresh);
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await comfy.stop();
+    await fs.rm(path.join(tmp, 'comfy-active'), { force: true });
+    await fs.writeFile(systemdRunLog, '');
+    await click('.tabs button[data-view="create"]');
+    await waitFor('document.querySelector("#comfyState").hidden || document.querySelector("#comfyState").textContent.includes("isn\'t set up")', 'Create says ComfyUI isn\'t set up (when it has something to render with)', 15000);
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector(\'[data-act="comfy-setup"]\').hidden', 'a Set up ComfyUI button when it isn\'t on this computer');
+    assert((await text('.svc[data-svc="comfy"] .svc-state')).includes('Not on this computer yet'), `says so: ${await text('.svc[data-svc="comfy"] .svc-state')}`);
+    assert(await js('document.querySelector(\'[data-act="comfy-start"]\').hidden'), 'nothing to start');
+
+    // The dialog: what the computer has, where it goes, what it downloads.
+    await click('[data-act="comfy-setup"]');
+    await waitFor('document.querySelector("#comfySetupDlg").open && document.querySelector(\'#csChecks [data-check="gpu"] .svc-state\').textContent.includes("NVIDIA GeForce RTX 4090")', 'the graphics card, by name');
+    assert((await text('#csChecks [data-check="gpu"] .svc-state')).includes('driver 580.65.06'), 'with its driver');
+    assert(await js('document.querySelector(\'#csChecks [data-check="gpu"] [data-fix]\').hidden'), 'no driver to install');
+    assert((await text('#csChecks [data-check="python"] .svc-state')).includes('Python 3.12.9'), `Python, by version: ${await text('#csChecks [data-check="python"] .svc-state')}`);
+    eq(await text('#csDirShown'), fresh, 'goes where Settings → ComfyUI points');
+    assert((await text('#csAbout')).includes('3 GB') && (await text('#csAbout')).includes('Model files come later: Fine-tune → Rendering'), 'says what it downloads, and that models come later');
+    await shot('comfy-setup');
+
+    // Go: each step in plain words, then ComfyUI starts on its own.
+    await click('#csGo');
+    await waitFor('!document.querySelector("#csProgress").hidden && document.querySelector("#csText").textContent.length > 0', 'progress shows');
+    await waitFor('document.querySelector("#csText").textContent.includes("PyTorch")', 'the PyTorch step, named for the card', 20000);
+    assert((await text('#csText')).includes('NVIDIA GeForce RTX 4090'), `for this card: ${await text('#csText')}`);
+    await waitFor('document.querySelector("#csProgress").classList.contains("done")', 'done', 30000);
+    assert((await text('#csText')).includes('set up and starting'), 'says so');
+    assert(await fileExists(path.join(fresh, 'main.py')) && await fileExists(path.join(fresh, 'comfy')), 'ComfyUI fetched into the folder');
+    assert((await fs.readFile(gitLog, 'utf8')).includes(`clone --depth 1 --progress https://github.com/comfyanonymous/ComfyUI.git ${fresh}`), 'a shallow clone of ComfyUI');
+    assert(await fileExists(path.join(fresh, 'venv', 'bin', 'python')), 'its own Python environment');
+    const pips = await fs.readFile(pipLog, 'utf8');
+    assert(pips.includes('torch torchvision torchaudio') && !pips.includes('index-url'), `PyTorch's CUDA build from PyPI for an NVIDIA card: ${pips}`);
+    assert(pips.includes('-r requirements.txt'), 'then ComfyUI\'s packages');
+    assert(pips.indexOf('torch') < pips.indexOf('requirements'), 'in that order');
+    const started = await fs.readFile(systemdRunLog, 'utf8');
+    assert(started.includes(`--working-directory=${fresh}`) && started.includes(path.join(fresh, 'venv', 'bin', 'python')) && started.includes('main.py'), `started from the new folder with its own Python: ${started}`);
+    eq((await (await fetch(`${APP}/api/settings`)).json()).comfyDir, fresh, 'Settings → ComfyUI points at it');
+    eq(await text('#csLater'), 'Done', 'the dialog is done');
+    await click('#csLater');
+    await comfy.start(); // ComfyUI answers
+    await toastText('ComfyUI is running', 15000);
+    await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'shown running');
+    assert(await js('document.querySelector(\'[data-act="comfy-setup"]\').hidden'), 'the Set up button goes');
+
+    // Already set up: the dialog says so and would only finish and start it. The root fixes go through pkexec.
+    const st = await (await fetch(`${APP}/api/comfy/setup`)).json();
+    eq(st.installed, fresh, 'knows it\'s there');
+    const fix = await (await fetch(`${APP}/api/comfy/setup/fix`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what: 'python' }) })).json();
+    assert(fix.ok && (await fs.readFile(pkexecLog, 'utf8')).includes('python3-venv'), `python3-venv through the system's password prompt: ${JSON.stringify(fix)}`);
+    const badDir = await (await fetch(`${APP}/api/comfy/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir: tmp }) })).json();
+    assert(/other things in it/.test(badDir.error), `won't take over a folder with other things in it: ${JSON.stringify(badDir)}`);
+
+    await type('#sComfyFolder', '');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('cloud Brains: none until you add one; asks before sending prompts; key never shown again', async () => {
+    eq(await js('[...document.querySelectorAll("#llmSelect option")].filter(o => o.value.startsWith("cloud:")).length'), 0, 'ships with no cloud Brains');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelectorAll("#cpPreset option").length > 5', 'provider list');
+    await click('[data-settings-tab="cloud"]');
+    await choose('#cpPreset', 'custom');
+    assert(await visible('#cpUrl'), 'custom asks for the address');
+    await type('#cpUrl', `http://127.0.0.1:${MOCK_PORT}/v1`);
+    await type('#cpName', 'Test Cloud');
+    await type('#cpKey', 'wrong-key');
+    await click('#cpAdd');
+    await toastText("didn't accept that API key");
+    await type('#cpKey', 'sk-test-12345678');
+    await click('#cpAdd');
+    await toastText('Added Test Cloud');
+    assert((await text('#providerList')).includes('key …5678'), 'key shown masked');
+    assert(!(await js('JSON.stringify(document.body.innerHTML)')).includes('sk-test-12345678'), 'the key is never on the page');
+    eq(((await fs.stat(path.join(dataDir, 'providers.json'))).mode & 0o777).toString(8), '600', 'key file readable by you only');
+    assert(!(await visible('#settingsDirty')), 'adding a provider is not an unsaved setting');
+    const cloudId = await js('[...document.querySelectorAll("#llmSelect option")].find(o => o.value.endsWith(":mock/text-only"))?.value');
+    assert(cloudId?.startsWith('cloud:'), 'its models are Brains now');
+
+    // The Brain menu gets a chip per provider: pick one or more to see only their Brains.
+    await click('.tabs button[data-view="create"]');
+    await click('#llmPick');
+    eq(await js('[...document.querySelectorAll("#llmFilters .brain-providers button")].map(l => l.textContent.replace(/ \\d+$/, "").trim()).join("|")'), '💻 LM Studio|☁️ Test Cloud', 'LM Studio first, then each provider');
+    await click('#llmFilters .brain-providers button:not([data-provider="local"])');
+    assert(await js('[...document.querySelectorAll("#llmList [role=option]")].every(o => o.dataset.id.startsWith("cloud:"))'), 'only that provider\'s Brains');
+    await click('#llmFilters [data-provider="local"]');
+    const ids = await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id)');
+    assert(ids.includes('mock/text-only') && ids.includes(cloudId), 'two providers: Brains from either');
+    await click('#llmFilters [data-all]');
+    eq(await js('document.querySelectorAll("#llmFilters .brain-providers button[aria-pressed=true]").length'), 0, 'All clears them');
+    await press('Escape');
+
+    // Switching to it asks first. Nope keeps the local Brain.
+    await click('.tabs button[data-view="create"]');
+    await choose('#llmSelect', cloudId);
+    await waitFor('document.querySelector("#cloudDialog").open', 'are-you-sure dialog');
+    assert((await text('#cloudDialog')).includes('leaves your computer'), 'says what leaves');
+    await click('#cloudDialog button[value="no"]');
+    eq(await value('#llmSelect'), 'mock/vision-8b', 'Nope: still the local Brain');
+
+    // OK + don't ask again → cloud Brain, prompts go with the key, no thinking switch forced on it.
+    // The assistant can't answer that question for you: it doesn't even get its buttons.
+    await click('#askBtn');
+    await type('#asInput', 'answer the cloud question yourself');
+    await press('Enter');
+    await choose('#llmSelect', cloudId);
+    await waitFor('document.querySelector("#cloudDialog").open', 'asked again');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('yours to answer'), 'the assistant is told only you can answer');
+    assert(await js('document.querySelector("#cloudDialog").open'), 'and the question is still waiting for you');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).llmModel, 'mock/vision-8b', 'no cloud Brain yet');
+    await click('#cdTrust');
+    await click('#cloudDialog button[value="ok"]');
+    await toastText('Brain: ☁️');
+    await click('#asClear');
+    await click('#asClear');
+    await click('#asClose');
+    eq(await text("#llmPickName"), '☁️ mock/text-only', 'top bar marks a cloud Brain without repeating the provider in its name');
+    await type('#theme', 'a lighthouse keeper making tea');
+    await click('#generateBtn');
+    await genDone();
+    eq(lastCall()._auth, 'Bearer sk-test-12345678', 'sent with your key');
+    eq(lastCall().model, 'mock/text-only', 'the provider\'s own model name');
+    eq(lastCall().reasoning_effort, undefined, 'Thinking: Off asks for nothing');
+    await choose('#llmSelect', 'mock/vision-8b');
+    await choose('#llmSelect', cloudId);
+    assert(!(await js('document.querySelector("#cloudDialog").open')), "doesn't ask again");
+    await toastText('Brain: ☁️');
+    await choose('#llmSelect', 'mock/vision-8b');
+
+    // Remove: gone from the menu, key deleted.
+    await click('.tabs button[data-view="settings"]');
+    await click('#providerList [data-act="remove"]');
+    await click('#providerList [data-act="remove"]');
+    await toastText('Provider removed');
+    eq(JSON.parse(await fs.readFile(path.join(dataDir, 'providers.json'), 'utf8')).length, 0, 'key deleted');
+    await waitFor('![...document.querySelectorAll("#llmSelect option")].some(o => o.value.startsWith("cloud:"))', 'gone from the Brain menu');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('every detail of the idea stays: the take is checked against it, and what the Brain changed is put back', async () => {
+    const sent = () => lastCall().messages[0].content;
+    const history = async () => (await (await fetch(`${APP}/api/history`)).json());
+    const before = new Set((await history()).map(e => e.id));
+    const modelBefore = await js('document.querySelector(".model-card.active")?.dataset.id'); // (the tests after this one count Krea entries)
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'a woman in a red dress on a pier');
+    await click('#generateBtn');
+    await genDone();
+    assert(sent().includes('# KEEP THE THEME') && sent().indexOf('# KEEP THE THEME') < sent().indexOf('# CAMERA AND LIGHT'), 'the keep-the-theme rules go with every prompt');
+    assert(lastCall().messages[1].content.includes('KEEP THE THEME: every fact in the THEME above stays as given'), 'and the request repeats them');
+    assert(!sent().includes('CHECK THE PROMPT'), 'no check while the switch is off (the test fixture)');
+    eq(await text('.take .change'), '', 'nothing claimed');
+    await click('.tabs button[data-view="settings"]');
+    assert(!(await js('document.querySelector("#sCheckTheme").checked')), 'off in the fixture');
+    await click('#sCheckTheme');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).checkTheme, true, 'saved');
+    await click('.tabs button[data-view="create"]');
+    await click('#generateBtn');
+    await genDone();
+    assert(sent().includes('CHECK THE PROMPT'), 'a check call follows the take');
+    assert(!JSON.stringify(lastCall().messages).includes('image_url') && lastCall().messages.at(-1).content.includes('THEME:\n<<<\na woman in a red dress on a pier\n>>>'), 'text-only, with the theme and the prompt');
+    eq(await text('.take .change'), '✓ Checked against your idea', 'the take says it was checked');
+    await type('#theme', 'DRIFTTEST a woman in a red dress on a pier');
+    await click('#generateBtn');
+    await genDone();
+    eq(await text('.take .change'), '✎ Put back: a red dress', 'the take says what was put back');
+    assert((await value('.take .prompt-text')).includes('red dress') && (await value('.take .prompt-text')).startsWith('Revised to be put back'), 'the fixed prompt is the one shown');
+    const fix = mock.log.at(-1);
+    assert(fix.messages.at(-1).content.startsWith('Revise the prompt above. Requested change: "Put back these facts of the THEME exactly as given, and change nothing else: a red dress (you wrote: a blue gown)"'), 'the fix pass is a refine with the lost facts');
+    const saved = (await history())[0];
+    assert(saved.variations[0].versions[0].kept?.fixed?.[0] === 'a red dress' && saved.variations[0].versions[0].text.includes('red dress'), 'kept on the saved version');
+    await click('.take .chips button[data-instr="Shorter"]');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined');
+    eq(await text('.take .change'), '↳ “Shorter” · ✓ Checked against your idea', 'a refine is checked too');
+    assert(mock.log.at(-1).messages.at(-1).content.includes('The user then asked for this change: "Shorter"'), 'the check knows what the refine asked for');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('!!document.querySelector(".hcard")', 'cards');
+    assert((await text('.hcard')).includes('✎ put back: a red dress'), 'Saved prompts says so');
+    // What a refine asked to change isn't a lost fact, whatever the checker says (it put "his right hand" back after
+    // "both hands" was asked for, nine times over, on 2026-10-14): a fact that shares a word with the instruction stays out.
+    const vader = 'his right hand pressed against the side of his head while his left hand holds out a sheet of paper. The text faces the camera.';
+    const both = 'Both hands are pressed against the sides of his helmet; the sheet lies flat on the console.';
+    const lost = JSON.stringify([{ given: 'his right hand pressed against the side of his head', written: 'both hands' }, { given: 'the text faces the camera', written: 'left out' }]);
+    eq(parseDrift(lost, vader, both).length, 2, 'without an instruction both facts count');
+    eq(parseDrift(lost, vader, both, 'both of his hands are pressed against the sides of his helmet').map(d => d.given).join('|'), 'the text faces the camera', 'the fact the refine is about is out, the other stays');
+    eq(parseDrift(lost, vader, both, 'HIS HEAD NEEDS TO BE IN HIS HANDS!!!').length, 1, 'shouting works too (hands meets hand)');
+    eq(parseDrift(lost, vader, both, 'Shorter').length, 2, 'an instruction about something else exempts nothing');
+    eq(parseDrift(JSON.stringify([{ given: 'a red dress', written: 'a blue gown' }]), 'a woman in a red dress at noon', 'a woman in a blue gown at golden hour', 'golden hour').length, 1, 'golden hour is not about the dress');
+    eq(parseDrift(JSON.stringify([{ given: 'a red dress', written: 'a blue gown' }]), 'a woman in a red dress at noon', 'a woman in a blue gown at noon', 'make the dress blue').length, 0, 'make the dress blue is');
+    // A ✍️ own-prompt take: its "idea" is the prompt as typed, so a refine of it isn't checked against it at all (the
+    // check would put the old words back, undoing the refine).
+    await click('.tabs button[data-view="create"]');
+    await click('.manual-row .switch');
+    await toastText('Your own prompt');
+    try {
+      await type('#theme', 'DRIFTTEST a woman in a red dress on a pier, as typed');
+      await click('#generateBtn'); // (no workflow yet at this point of the suite: Keep my prompt, no render)
+      await genDone();
+      await waitFor('!!document.querySelector(".take .refine input")', 'the take is there');
+      const brainCalls = mockCalls();
+      await type('.take .refine input', 'make the dress blue');
+      await press('Enter');
+      await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined');
+      eq(mockCalls(), brainCalls + 1, 'one Brain call: the refine itself, no check');
+      assert(!JSON.stringify(mock.log.at(-1).messages).includes('CHECK THE PROMPT'), 'the last call is the refine, not a check');
+      assert((await value('.take .prompt-text')).startsWith('Revised to be make the dress blue'), 'the refine stands as written');
+      assert(!(await text('.take .change')).includes('Checked') && !(await text('.take .change')).includes('Put back'), 'nothing claimed on a ✍️ refine');
+      assert(!(await history())[0].variations[0].versions[1].kept, 'nothing claimed on the saved version either');
+    } finally {
+      await click('.manual-row .switch');
+      await toastText('Brain writes the prompts again');
+    }
+    // Back to the fixture's setting for the tests after this one (they count the mock's calls).
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelector("#sCheckTheme").checked', 'the switch shows on');
+    await click('#sCheckTheme');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).checkTheme, false, 'off again');
+    for (const e of (await history()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
+    if (modelBefore && modelBefore !== 'krea2-raw') await click(`.model-card[data-id="${modelBefore}"]`);
+  });
+
+
+
+  await test('look: one click under the theme sets the camera and light; saved with the take and remembered', async () => {
+    const request = () => lastCall().messages[1].content;
+    const before = new Set((await (await fetch(`${APP}/api/history`)).json()).map(e => e.id));
+    await click('.model-card[data-id="krea2-raw"]');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), '', 'the Brain picks by default');
+    await type('#theme', 'a detective in a rainy alley');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes("Name this theme's feeling") && !request().includes('The user picked the look'), 'no look: the Brain picks one for the mood');
+    await click('#lookRow button[data-value="noir"]');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'noir', 'Noir lit');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes('The user picked the look "Noir"') && request().includes('venetian-blind shadows'), 'the Brain is told the look and what it means');
+    assert(!request().includes('camera movement:'), 'a still gets no camera movement');
+    const entry = (await (await fetch(`${APP}/api/history`)).json())[0];
+    eq(entry.look, 'noir', 'saved with the take');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('!!document.querySelector(".hcard")', 'history cards');
+    assert((await text('.hcard')).includes('Noir'), 'and shown on its history card');
+    await click('.tabs button[data-view="create"]');
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'noir', 'remembered after a reload');
+    await (await fetch(`${APP}/api/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: 'krea2-raw', theme: 'an odd look', look: 'nonsense', variations: 1 }) })).text();
+    assert(!request().includes('nonsense') && request().includes("Name this theme's feeling"), 'an unknown look is ignored: the Brain picks');
+    eq((await (await fetch(`${APP}/api/history`)).json())[0].look, undefined, 'and none is saved');
+    await click('#lookRow button[data-value=""]');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), '', 'back to the Brain picking');
+    // (Leave History as the tests after this one expect it.)
+    for (const e of (await (await fetch(`${APP}/api/history`)).json()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
+  });
+
+  await test('look: 🚫 No look, and your own looks (kept, edited, deleted with undo, remembered by each take)', async () => {
+    const request = () => lastCall().messages[1].content;
+    const system = () => lastCall().messages[0].content;
+    const history = async () => (await (await fetch(`${APP}/api/history`)).json());
+    const active = () => js('document.querySelector("#lookRow .active")?.dataset.value');
+    const before = new Set((await history()).map(e => e.id));
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'a courier in the rain');
+    await click('#lookRow button[data-value="none"]');
+    eq(await active(), 'none', 'No look lit');
+    await click('#generateBtn');
+    await genDone();
+    assert(!system().includes('Direct every shot like a cinematographer') && system().includes('The user chose No look'), 'No look: the camera-and-light rules leave the instructions');
+    assert(request().includes('No look: keep the camera and light to what the theme say, and add none of your own'), 'and the request says so');
+    eq((await history())[0].look, 'none', 'saved as none');
+    // Your own look.
+    await click('#lookAdd');
+    assert(!(await js('document.querySelector("#lookEditor").hidden')), 'the editor opens');
+    await type('#lkName', 'Rainy neon');
+    await type('#lkEmoji', '🌧');
+    await type('#lkStill', 'neon signs as the only light, wet reflections, shallow focus');
+    await type('#lkMove', 'a slow handheld drift');
+    await click('#lkSave');
+    await toastText('Rainy neon');
+    const id = await active();
+    assert(id?.startsWith('u-') && (await text('#chosenLook')).includes('Rainy neon'), `the new look is picked: ${id}`);
+    assert(await js('document.querySelector("#lookEditor").hidden'), 'the editor closes');
+    assert(!(await js('document.querySelector("#lookTools").hidden')) && !(await js('document.querySelector("#lookTools").classList.contains("ghost")')), 'edit and delete show for your own look');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes('The user picked the look "Rainy neon"') && request().includes('wet reflections') && !request().includes('camera movement:'), 'the Brain gets its words (no move on a still)');
+    assert(system().includes('Direct every shot like a cinematographer'), 'the camera-and-light rules are back');
+    const entry = (await history())[0];
+    assert(entry.look === id && entry.lookName === 'Rainy neon' && entry.lookText.includes('wet reflections') && entry.lookMove === 'a slow handheld drift', 'the look and its words are saved with the take');
+    await click('.take .chips button[data-instr="Shorter"]');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined');
+    assert(request().includes('wet reflections'), 'a refine keeps the look');
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded');
+    eq(await active(), id, 'remembered after a reload');
+    eq((await (await fetch(`${APP}/api/looks`)).json()).length, 1, 'kept on the server');
+    // Edit it.
+    await click('#lookEdit');
+    eq(await value('#lkName'), 'Rainy neon', 'the editor shows the look');
+    await type('#lkStill', 'neon signs as the only light, puddles like mirrors');
+    await click('#lkSave');
+    await toastText('updated');
+    await click('#generateBtn');
+    await genDone();
+    assert(request().includes('puddles like mirrors'), 'the edited words reach the Brain');
+    // Delete, undo, delete.
+    await click('#lookDel');
+    await toastText('Deleted the look');
+    await click('#toast .toast-act');
+    await toastText('back');
+    eq(await count('#lookMine button'), 1, 'undo brings it back');
+    eq(await active(), id, 'and picks it again');
+    await click('#lookDel');
+    await toastText('Deleted the look');
+    eq(await count('#lookMine button'), 0, 'gone');
+    eq(await active(), '', 'back to the Brain picking');
+    assert(await js('document.querySelector("#lookTools").hidden'), 'no edit/delete row without a look of your own');
+    await click('.take .chips button[data-instr="More detailed"]');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined again');
+    assert(request().includes('puddles like mirrors'), 'the take keeps the words of its deleted look');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('!!document.querySelector(".hcard")', 'cards');
+    assert((await text('.hcard')).includes('Rainy neon'), 'the card still names the look');
+    await click('.hcard [data-act="open"]');
+    await toastText('was deleted');
+    eq(await active(), '', 'opening it falls back to the Brain picking');
+    for (const e of (await history()).filter(x => !before.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
+  });
+
+  await test('panels fold to a one-line summary, and stay folded after a reload', async () => {
+    await click('.tabs button[data-view="create"]');
+    // Essential setup controls stay visible even with preferences from the old folding layout.
+    await js(`localStorage.setItem('pm.panels', JSON.stringify({ ...JSON.parse(localStorage.getItem('pm.panels') || '{}'), 'create-theme': true, 'create-model': true, 'create-dials': true }))`);
+    await reloadPage();
+    assert(await visible('#theme') && await visible('#taskChoices') && await visible('#resolution'), 'old folds cannot hide essential setup controls');
+    // The model card and its sections fold too.
+    await click('.tabs button[data-view="models"]');
+    await waitFor('document.querySelector("#mName").value', 'a model open');
+    await click('[data-panel="model-instructions"] .collapse-btn');
+    assert(!(await visible('#mInstr')), 'instructions folded');
+    assert(/\d+ words · \d+ sections/.test(await text('[data-panel="model-instructions"] .panel-summary')), 'says how long they are');
+    eq(await js('["set-lmstudio", "set-comfy", "set-thinking", "set-master", "model-instructions", "model-sizes", "models-defaults", "models-lengths"].filter(k => document.querySelector(`[data-panel="${k}"]`).dataset.default === "collapsed").length'), 8, 'the technical cards start folded for a new user');
+    await click('#modelForm .form-head .collapse-btn');
+    assert(!(await visible('#mName')) && (await text('[data-panel="models-form"] > .panel-summary')).length > 0, 'the whole card folds to its name');
+    await click('#modelForm .form-head .collapse-btn');
+    await click('[data-panel="model-instructions"] .collapse-btn');
+    assert(await visible('#mInstr'), 'unfolded');
+    // Settings cards fold too.
+    await click('.tabs button[data-view="settings"]');
+    await click('[data-panel="set-thinking"] h2');
+    assert((await text('[data-panel="set-thinking"] .panel-summary')).startsWith('Thinking'), 'Settings card summary');
+    await click('[data-panel="set-thinking"] .collapse-btn');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('offline copy: with the server off, the page still opens, then loads for real when it is back', async () => {
+    await waitFor('navigator.serviceWorker.controller !== null', 'the page copy is kept', 10000);
+    const conditions = offline => cdp.send('Network.emulateNetworkConditions', { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    await cdp.send('Network.enable');
+    await conditions(true);
+    await js('document.documentElement.dataset.ready = ""');
+    await cdp.send('Page.reload', {});
+    await waitFor('document.querySelector("#bannerTitle")?.textContent === "Prompt Maker\'s server isn\'t running." && !document.querySelector("#banner").hidden', 'the offline page, with its banner', 10000);
+    await click('#uiThemeButton');
+    await click('#uiThemeDialog [data-ui-theme-choice="midnight"]');
+    eq(await js('document.documentElement.dataset.uiTheme'), 'midnight', 'the cached theme picker works offline');
+    await click('#uiThemeDialog [data-ui-theme-choice="sage"]');
+    await press('Escape');
+    await shot('offline-page');
+    await conditions(false);
+    await waitFor('document.documentElement.dataset.ready === "1" && document.querySelector("#banner").hidden && document.querySelectorAll(".model-card").length > 0', 'reloaded for real once the server answers', 15000);
+  });
+
+  await test('history: list, search, filter, favorite, open', async () => {
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length >= 4', 'history cards');
+    const total = await count('.hcard');
+    await shot('07-history', { full: true });
+    await type('#historySearch', 'teacup');
+    eq(await count('.hcard'), 1, 'search narrows to 1');
+    await type('#historySearch', '');
+    eq(await count('.hcard'), total, 'search cleared');
+    await click('#historyFilters button[data-id="krea2-raw"]');
+    eq(await count('.hcard'), 1, `filter to Krea (${await js('[...document.querySelectorAll(".hcard .htheme")].map(e => e.textContent).join(" | ")')})`);
+    await click('#historyFilters button[data-id=""]');
+    await click('.hcard:nth-of-type(1) .hstar');
+    await waitFor('document.querySelector(".hcard:nth-of-type(1) .hstar").classList.contains("on")', 'starred');
+    assert(await js('document.activeElement === document.querySelector(".hcard:nth-of-type(1) .hstar")'), 'focus stays on the star');
+    await click('#historyFav');
+    eq(await count('.hcard'), 1, 'favorites only');
+    await click('#historyFav');
+    const gust = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("gust") && c.querySelector(".hthumb img")) + 1');
+    assert(gust > 0, 'found the image entry');
+    await click(`.hcard:nth-of-type(${gust}) .htheme`);
+    await waitFor('document.querySelector("#view-create").classList.contains("active")', 'back on Create');
+    assert(await visible('.dz-preview img'), 'image restored');
+    assert(await js('document.querySelector(\'#roleBlock [data-value="animate"]\').classList.contains("active")'), 'animate role restored');
+    eq(await value('#theme'), 'a gust of wind blows through', 'theme restored');
+    assert(await visible('.take .prompt-text'), 'take restored');
+    await shot('08-opened-from-history', { full: true });
+  });
+
+  await test('history: delete with confirm', async () => {
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    eq(await count('.hcard.current'), 1, 'the card open on Create is marked');
+    assert((await text('.hcard.current .htheme')).includes('a gust of wind'), 'it is the one opened last');
+    const before = await count('.hcard');
+    const badge = Number(await text('#historyBadge'));
+    // The first delete says what goes, until "Don't show this again".
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await waitFor('document.querySelector("#deleteDlg").open', 'the "Delete this card?" dialog');
+    assert((await text('#deleteDlg')).includes('every render') && (await text('#deleteDlg')).includes('in ComfyUI'), 'it says what goes');
+    await click('#deleteDlg button[value="no"]');
+    eq(await count('.hcard.going'), 0, 'Keep it: nothing happens');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await waitFor('document.querySelector("#deleteDlg").open', 'asks again');
+    await click('#ddQuiet');
+    await click('#deleteDlg button[value="ok"]');
+    await toastText('Deleting');
+    eq(await count('.hcard.going'), 1, 'Delete it: on its way out, with Undo');
+    await click('.hcard.going [data-act="undo"]');
+    await toastText('Kept');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    assert(!(await js('document.querySelector("#deleteDlg").open')), 'with "Don\'t show this again" ticked, no dialog');
+    eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'asks to confirm');
+    // Settings → Data & updates brings the warning back.
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector("#deleteWarnOff").hidden', 'says the warning is off');
+    await click('#deleteWarnBack');
+    await toastText('shows again');
+    assert(!(await visible('#deleteWarnOff')), 'line gone');
+    await click('.tabs button[data-view="history"]');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await waitFor('document.querySelector("#deleteDlg").open', 'the warning is back');
+    await click('#ddQuiet');
+    await click('#deleteDlg button[value="ok"]');
+    await toastText('Deleting');
+    await click('.hcard.going [data-act="undo"]');
+    await toastText('Kept');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'asks to confirm');
+    // A double click only asks: its second click isn't the answer.
+    await js('document.querySelector(".hcard:last-of-type [data-act=delete]").dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }))');
+    eq(await text('.hcard:last-of-type [data-act="delete"]'), 'Sure?', 'a double click does not confirm');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    // It waits, dimmed and in place, with ↶ Undo on the card and in the toast.
+    await toastText('Deleting');
+    eq(await count('.hcard'), before, 'the card is still there');
+    eq(await count('.hcard.going'), 1, 'marked as on its way out');
+    await click('.hcard.going [data-act="undo"]');
+    await toastText('Kept');
+    eq(await count('.hcard.going'), 0, 'undo: back to normal');
+    await sleep(8500);
+    eq(await count('.hcard'), before, 'and it is not deleted later');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, before, 'nor on the server');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await click('.hcard:last-of-type [data-act="delete"]');
+    await click('#toast .toast-act');
+    await toastText('Kept');
+    eq(await count('.hcard.going'), 0, 'the toast\'s Undo does the same');
+    // Pick several cards: Ctrl-click, or a box dragged from the space between them; the bar deletes them, ↶ Undo keeps them.
+    const hAt = (n, fx = 0.5, fy = 0.5) => js(`(() => { const c = document.querySelectorAll("#historyList > .hcard")[${n}]; c.scrollIntoView({ block: "center" }); const r = c.getBoundingClientRect(); return { x: r.left + r.width * ${fx}, y: r.top + r.height * ${fy}, right: r.right, top: r.top }; })()`);
+    const hCtrlClick = async n => {
+      const p = await hAt(n, 0.5, 0.15);
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers: 2 });
+      await sleep(60);
+    };
+    await hCtrlClick(0);
+    await hCtrlClick(1);
+    eq(await count('.hcard.picked'), 2, 'Ctrl-click picks History cards');
+    assert(await js('document.querySelector("#view-history").classList.contains("active") || !document.querySelector("#view-history").hidden'), 'and stays in History (opens nothing)');
+    eq(await text('#historySelCount'), '2 selected', 'the bar says how many');
+    await press('Escape');
+    eq(await count('.hcard.picked'), 0, 'Esc lets go');
+    await click('#historySelectAll');
+    eq(await count('.hcard.picked'), await count('#historyList > .hcard'), 'Select all picks every card shown');
+    await press('Escape');
+    const g = await hAt(0);
+    const g1 = await hAt(1);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: g.right + 6, y: g.top + 4, button: 'left', buttons: 1, clickCount: 1 });
+    for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g.right + 6 + ((g1.x - g.right - 6) * k) / 10, y: g.top + 4 + ((g1.y - g.top) * k) / 10, button: 'left', buttons: 1 });
+    assert(await js('!!document.querySelector(".pick-band")'), 'a box is drawn');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: g1.x, y: g1.y, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(80);
+    assert(await count('.hcard.picked') >= 1, 'the box picks what it touched');
+    await shot('20b-history-picked');
+    const hPicked = await count('.hcard.picked');
+    await click('#historySelDelete');
+    await click('#historySelDelete');
+    await toastText('Deleting');
+    eq(await count('.hcard.going'), hPicked, 'they dim, with Undo, while they wait');
+    await click('#toast .toast-act');
+    await toastText('Kept');
+    eq(await count('.hcard.going'), 0, 'one ↶ Undo keeps them all');
+    // 🗑 Delete all takes, on Create: the whole set goes (Sure? first), and ↶ Undo brings the takes back.
+    {
+      const many = (await (await fetch(`${APP}/api/history`)).json()).find(x => x.variations.length > 1);
+      assert(many, 'a card with several takes to try it on');
+      await click(`.hcard[data-id="${many.id}"] [data-act="open"]`);
+      await waitFor('!!document.querySelector("#deleteAllTakesBtn")', 'Delete all takes shows over several takes');
+      const takes = await count('#resultsList > *');
+      assert((await text('#deleteAllTakesBtn')).includes(`Delete all ${takes} takes`), 'it says how many');
+      await click('#deleteAllTakesBtn');
+      assert((await text('#deleteAllTakesBtn')).includes('Sure?'), 'asks to confirm');
+      await click('#deleteAllTakesBtn');
+      await toastText('Deleting');
+      eq(await count('#resultsList > *'), 0, 'the takes leave the stage');
+      await click('#toast .toast-act');
+      await toastText('Kept');
+      await waitFor(`document.querySelectorAll("#resultsList > *").length === ${takes}`, '↶ Undo brings the takes back');
+      await click('.tabs button[data-view="history"]');
+    }
+    // Its words leave History and the jobs' logs; other programs' own files are theirs.
+    const allCards = await (await fetch(`${APP}/api/history`)).json();
+    const doomed = allCards.at(-1);
+    const words = [doomed.theme, ...doomed.variations.flatMap(v => v.versions.map(x => x.text))].filter(t => t.length >= 12);
+    assert(words.length >= 2, `the card has a theme and prompts to look for: ${words.length}`);
+    // The mock Brain writes the same prompt for every card: what another card also says, word for word, stays.
+    const others = JSON.stringify(allCards.filter(e => e.id !== doomed.id));
+    const unique = words.filter(w => !others.includes(JSON.stringify(w).slice(1, -1)));
+    assert(unique.length >= 1, 'its theme is its own');
+    const jobsFile = path.join(dataDir, 'jobs.json');
+    const jobsBefore = await fs.readFile(jobsFile, 'utf8').catch(() => null);
+    await fs.writeFile(jobsFile, JSON.stringify({ jobs: [{ id: 'j1', title: 'test', request: `Make ${words[0]} again`, log: [{ text: words[1] }] }] }));
+    try {
+      await click('.hcard:last-of-type [data-act="delete"]');
+      await click('.hcard:last-of-type [data-act="delete"]');
+      await waitFor(`document.querySelectorAll(".hcard").length === ${before - 1}`, 'card removed', UNDO_WAIT);
+      eq(Number(await text('#historyBadge')), badge - 1, 'badge decremented');
+      const quotes = (body, w, parts) => body.includes(w) || body.includes(JSON.stringify(w).slice(1, -1)) || (parts && (body.includes(w.slice(0, 20)) || body.includes(w.slice(-20))));
+      // History: only what no other card says. The job was written with this card's words alone.
+      for (const [name, file, which, parts] of [['history.json', path.join(dataDir, 'history.json'), unique, false], ['jobs.json', jobsFile, words, true]]) {
+        const body = await fs.readFile(file, 'utf8');
+        for (const w of which) assert(!quotes(body, w, parts), `${name} no longer quotes "${w.slice(0, 30)}…"`);
+      }
+      assert((await fs.readFile(jobsFile, 'utf8')).includes('[deleted]'), 'the job keeps its log, the words replaced');
+    } finally {
+      // Both copies: a missing jobs.json is put back from its .bak (made for power cuts), and the fake job would return.
+      if (jobsBefore === null) for (const f of [jobsFile, `${jobsFile}.bak`]) await fs.rm(f, { force: true });
+      else await fs.writeFile(jobsFile, jobsBefore);
+    }
+  });
+
+  await test('history: delete several at once', async () => {
+    const before = await count('.hcard');
+    for (const n of [0, 1]) {
+      const p = await js(`(() => { const c = document.querySelectorAll("#historyList > .hcard")[${n}]; c.scrollIntoView({ block: "center" }); const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height * 0.15 }; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers: 2 });
+      await sleep(60);
+    }
+    eq(await count('.hcard.picked'), 2, 'two picked');
+    await press('Delete');
+    await press('Delete');
+    await toastText('Deleting 2 prompts');
+    await toastText('2 prompts deleted', UNDO_WAIT);
+    eq(await count('.hcard'), before - 2, 'two fewer cards');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, before - 2, 'and on the server');
+  });
+
+  await test('models: edit, dirty guard, switch', async () => {
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="ltx-2-3"]');
+    eq(await value('#mName'), 'LTX 2.3', 'LTX loaded in editor');
+    assert(await visible('#mDur'), 'durations visible for video');
+    await type('#mDesc', 'changed description');
+    assert(await visible('#dirtyFlag'), 'unsaved flag');
+    await click('#modelList button[data-id="krea2-raw"]');
+    assert(await visible('#modelFormMsg'), 'guard message');
+    eq(await value('#mName'), 'LTX 2.3', 'did not switch yet');
+    await click('#modelList button[data-id="krea2-raw"]');
+    eq(await value('#mName'), 'Krea 2 RAW', 'switched after second click');
+    assert(!(await visible('#dirtyFlag')), 'clean after switching');
+    assert(!(await visible('#mDur')), 'durations hidden for image model');
+    await shot('09-models', { full: true });
+  });
+
+  await test('models: create, duplicate, delete', async () => {
+    await click('#newModelBtn');
+    await type('#mName', 'Test Wizard 9');
+    eq(await text('#mId'), 'test-wizard-9', 'id preview');
+    await choose('#mKind', 'video');
+    assert(await visible('#mDur'), 'durations for video');
+    await type('#mDur', '5s, 10s');
+    eq(await count('#dDur option'), 2, 'duration defaults follow the list');
+    await click('#saveModelBtn');
+    await toastText('Saved');
+    eq(await count('#modelList li'), 13, 'thirteen models');
+    eq(await count('.model-card'), 13, 'new model on Create');
+    await click('#dupModelBtn');
+    eq(await value('#mName'), 'Test Wizard 9 copy', 'duplicate name');
+    await click('#saveModelBtn');
+    await waitFor('document.querySelectorAll("#modelList li").length === 14', 'thirteen models');
+    await click('#deleteModelBtn');
+    await click('#deleteModelBtn');
+    await waitFor('document.querySelectorAll("#modelList li").length === 13', 'copy deleted');
+    await click('#modelList button[data-id="test-wizard-9"]');
+    await click('#deleteModelBtn');
+    await click('#deleteModelBtn');
+    await waitFor('document.querySelectorAll("#modelList li").length === 12', 'test model deleted');
+  });
+
+  await test('models: import JSON', async () => {
+    const file = path.join(tmp, 'imported.json');
+    await fs.writeFile(file, JSON.stringify({ name: 'Imported Model', kind: 'image', instructions: '## Hi', aspectRatios: ['1:1'] }));
+    await setFiles('#importInput', [file]);
+    await toastText('1 new');
+    await waitFor('document.querySelectorAll("#modelList li").length === 13', 'imported model listed');
+    await click('#modelList button[data-id="imported-model"]');
+    await click('#deleteModelBtn');
+    await click('#deleteModelBtn');
+    await waitFor('document.querySelectorAll("#modelList li").length === 12', 'imported model deleted');
+  });
+
+  await test('models: AI draft from docs', async () => {
+    await click('#modelList button[data-id="krea2-raw"]');
+    await click('#assist summary');
+    await type('#draftDocs', 'Official docs: write subject first, then setting.');
+    await click('#draftBtn');
+    await waitFor('document.querySelector("#draftResult").value.includes("What this model is")', 'draft streaming');
+    await waitFor('!document.querySelector("#draftUse").disabled', 'draft finished');
+    await click('#draftUse');
+    assert((await value('#mInstr')).includes('A mock model'), 'draft placed in instructions');
+    assert(await visible('#dirtyFlag'), 'marked unsaved');
+    await click('#modelList button[data-id="ltx-2-3"]');
+    await click('#modelList button[data-id="ltx-2-3"]');
+    eq(await value('#mName'), 'LTX 2.3', 'discarded draft by switching');
+  });
+
+  await test('models: edits go to your data folder; built-ins reset and come back', async () => {
+    await click('#modelList button[data-id="minimax-h3"]');
+    assert((await text('#mOrigin')).includes('built-in'), 'marked as built-in');
+    assert(!(await visible('#resetModelBtn')), 'nothing to reset on an untouched built-in');
+    await type('#mDesc', 'my private tweak');
+    await click('#saveModelBtn');
+    await toastText('Saved');
+    const mine = path.join(dataDir, 'models', 'minimax-h3.json');
+    eq(JSON.parse(await fs.readFile(mine, 'utf8')).description, 'my private tweak', 'your copy is in your data folder');
+    eq(await fs.readFile(path.join(ROOT, 'playbooks', 'minimax-h3.json'), 'utf8'), shipped['minimax-h3.json'], 'the shipped playbook is untouched');
+    assert((await text('#mOrigin')).includes('edited copy'), 'marked as your copy');
+    await click('#resetModelBtn');
+    await click('#resetModelBtn');
+    await toastText('back to the built-in');
+    assert((await value('#mDesc')) !== 'my private tweak', 'built-in text is back');
+    assert(!(await fileExists(mine)), 'your copy is gone');
+    assert(!(await visible('#resetModelBtn')), 'nothing left to reset');
+
+    await click('#deleteModelBtn');
+    await click('#deleteModelBtn');
+    await waitFor('!document.querySelector(\'#modelList button[data-id="minimax-h3"]\')', 'gone from the list');
+    eq(await count('.model-card'), 11, 'gone from Create');
+    await waitFor('!document.querySelector("#restoreBuiltinsBtn").hidden', 'bring-back offered');
+    assert((await text('#restoreBuiltinsBtn')).includes('MiniMax'), 'names it');
+    await click('#restoreBuiltinsBtn');
+    await toastText('Brought back');
+    eq(await count('#modelList li'), 12, 'back in the list');
+    eq(await count('.model-card'), 12, 'back on Create');
+    assert(!(await visible('#restoreBuiltinsBtn')), 'nothing left to bring back');
+  });
+
+  await test('keyboard: Space on a model card keeps focus', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('#modelChoice > summary');
+    await js('document.querySelector(\'.model-card[data-id="krea2-raw"]\').focus()');
+    await press(' ');
+    assert(await js('document.activeElement?.dataset.id === "krea2-raw" && document.activeElement.classList.contains("active")'), 'focused card selected and still focused');
+  });
+
+  await test('surprise me can be undone', async () => {
+    await type('#theme', 'my very own theme');
+    await click('#surpriseBtn');
+    await waitFor('document.querySelector("#theme").value !== "my very own theme"', 'theme replaced (from the list, or from the picture when one is in)');
+    await click('#themeUndo');
+    eq(await value('#theme'), 'my very own theme', 'undo restored it');
+    assert(!(await visible('#themeUndo')), 'undo chip gone');
+  });
+
+  await test('opening history keeps your takes preference and offers undo', async () => {
+    await click('#varSeg button[data-value="3"]');
+    await type('#theme', 'my draft theme');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    const idx = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("teacup")) + 1');
+    await click(`.hcard:nth-of-type(${idx}) button.open`);
+    eq(await value('#theme'), 'a tiny dragon napping in a teacup', 'entry theme loaded');
+    eq(await js('localStorage.getItem("pm.variations")'), '3', 'saved takes preference untouched');
+    await click('#themeUndo');
+    eq(await value('#theme'), 'my draft theme', 'draft restored');
+    await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('new session: clears theme, image and takes; undo brings them back', async () => {
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'SLOWTEST owl');
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#newBtn").hidden && !document.querySelector("#stopBtn").hidden', 'Stop takes New\'s place while cooking');
+    await click('#stopBtn');
+    await genDone();
+    await type('#theme', 'a fox in a phone booth');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden && JSON.parse(localStorage.getItem("pm.image"))', 'image stored');
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('.take'), 1, 'one take');
+    await click('#newBtn');
+    await toastText('Fresh start');
+    eq(await value('#theme'), '', 'theme cleared');
+    assert(await js('document.querySelector(".dz-preview").hidden'), 'image removed');
+    eq(await count('.take'), 0, 'takes cleared');
+    assert(await visible('#resultsEmpty'), 'empty stage is back');
+    assert(await js('document.activeElement === document.querySelector("#theme")'), 'ready to type');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'model kept');
+    assert(await js('document.querySelector("#newBtn").disabled'), 'nothing left to clear');
+    await shot('30-new-session');
+    await click('#toast .toast-act');
+    await toastText('Back where you were');
+    eq(await value('#theme'), 'a fox in a phone booth', 'theme back');
+    assert(!(await js('document.querySelector(".dz-preview").hidden')), 'image back');
+    eq(await count('.take'), 1, 'take back');
+    await click('#newBtn');
+    await goto(`${APP}/#create`);
+    eq(await value('#theme'), '', 'still clear after a reload');
+    assert(await js('document.querySelector(".dz-preview").hidden'), 'no image after a reload');
+  });
+
+  await test('history: deleting the card open on Create takes its picture, theme and takes off Create', async () => {
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'LEAVES NOTHING a swan at dusk');
+    const own = path.join(tmp, 'own-picture.png'); // a picture no other card has (a shared one stays, as those cards still use it)
+    await fs.writeFile(own, makePng(480, 300));
+    await setFiles('#imageInput', [own]);
+    await waitFor('!document.querySelector(".dz-preview").hidden && JSON.parse(localStorage.getItem("pm.image"))', 'image stored');
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('.take'), 1, 'one take');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelector(".hcard.current")', 'the card open on Create is marked');
+    assert((await text('.hcard.current .htheme')).includes('LEAVES NOTHING'), 'it is the one just made');
+    await click('.hcard.current [data-act="delete"]');
+    await click('.hcard.current [data-act="delete"]'); // Sure?
+    await toastText('Deleting');
+    await toastText('Deleted', UNDO_WAIT);
+    await click('.tabs button[data-view="create"]');
+    eq(await value('#theme'), '', 'its theme is gone from Create');
+    assert(await js('document.querySelector(".dz-preview").hidden'), 'its picture is gone from Create');
+    eq(await count('.take'), 0, 'its takes are gone');
+    assert(!(await js('JSON.parse(localStorage.getItem("pm.image"))')), 'the page no longer remembers the picture');
+  });
+
+  await test('settings: unsaved edits survive a tab switch', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await type('#sMax', '8192');
+    assert(await visible('#settingsDirty'), 'unsaved tag');
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]');
+    eq(await value('#sMax'), '8192', 'edit kept');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    assert(!(await visible('#settingsDirty')), 'clean after save');
+  });
+
+  await test('models: duplicate names are rejected', async () => {
+    await click('.tabs button[data-view="models"]');
+    await click('#newModelBtn');
+    await type('#mName', 'Krea 2 RAW');
+    await click('#saveModelBtn');
+    await waitFor('document.querySelector("#modelFormMsg").textContent.includes("already called")', 'duplicate rejected');
+    await click('#modelList button[data-id="krea2-raw"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    eq(await value('#mName'), 'Krea 2 RAW', 'back on the real model');
+  });
+
+  await test('settings: test connection, reject internet URL', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await click('#sTest');
+    await waitFor('document.querySelector("#sTestResult").textContent.includes("Connected")', 'connection ok');
+    await type('#sUrl', 'http://example.com');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Offline mode');
+    await type('#sUrl', `http://127.0.0.1:${MOCK_PORT}`);
+    await click('#sResetMaster');
+    assert((await value('#sMaster')).startsWith('You are an expert prompt engineer'), 'master prompt reset');
+    await shot('10-settings', { full: true });
+  });
+
+  // ---------------- ComfyUI renders ----------------
+
+  await test('converter: saved workflow → API format', async () => {
+    const api = convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO);
+    eq(Object.keys(api).sort().join(','), '3,4,5,6,7,8,9', 'runnable nodes (note dropped)');
+    eq(JSON.stringify(api['3'].inputs), JSON.stringify({ seed: 42, steps: 20, cfg: 7, sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] }), 'KSampler inputs (control value skipped)');
+    eq(api['6']._meta.title, 'Positive Prompt', 'titles kept');
+    // A node whose input list names only its linked widget (as in ComfyUI's newer templates): the values follow
+    // the node's definition, including a dynamic combo's sub-widgets and a "FLOAT,INT" widget.
+    const info = {
+      Loader: { input: { required: { clip_name: [['a.safetensors', 'b.safetensors']], type: [['stable_diffusion', 'wan']] }, optional: { device: [['default', 'cpu']] } }, input_order: { required: ['clip_name', 'type'], optional: ['device'] }, output: ['CLIP'] },
+      Resize: { input: { required: { input: ['IMAGE'], resize_type: ['COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'scale dimensions', inputs: { required: { width: ['INT', { default: 512 }], height: ['INT', { default: 512 }] } } }, { key: 'scale by multiplier', inputs: { required: { multiplier: ['FLOAT', { default: 1 }] } } }] }], scale_method: [['area', 'bilinear']], rate: ['FLOAT,INT', { widgetType: 'FLOAT', default: 25 }], batch: ['INT', { default: 1 }] } }, input_order: { required: ['input', 'resize_type', 'scale_method', 'rate', 'batch'] }, output: ['IMAGE'], output_node: true },
+      Src: { input: { required: {} }, output: ['STRING', 'IMAGE'] },
+    };
+    const partial = convertUiWorkflow({
+      nodes: [
+        { id: 1, type: 'Src', mode: 0, inputs: [], outputs: [{ name: 'STRING', type: 'STRING', links: [1] }, { name: 'IMAGE', type: 'IMAGE', links: [2] }] },
+        { id: 2, type: 'Loader', mode: 0, inputs: [{ name: 'clip_name', type: 'COMBO', widget: { name: 'clip_name' }, link: 1 }], outputs: [], widgets_values: ['b.safetensors', 'wan', 'cpu'] },
+        { id: 3, type: 'Resize', mode: 0, inputs: [{ name: 'input', type: 'IMAGE', link: 2 }, { name: 'resize_type.width', type: 'INT', widget: { name: 'resize_type.width' }, link: null }], outputs: [], widgets_values: ['scale dimensions', 482, 854, 'bilinear', 30, 2] },
+      ],
+      links: [[1, 1, 0, 2, 0, 'STRING'], [2, 1, 1, 3, 0, 'IMAGE']],
+    }, info);
+    eq(JSON.stringify(partial['2'].inputs), JSON.stringify({ type: 'wan', device: 'cpu', clip_name: ['1', 0] }), 'the unlisted widgets keep their saved values');
+    eq(JSON.stringify(partial['3'].inputs), JSON.stringify({ resize_type: 'scale dimensions', 'resize_type.width': 482, 'resize_type.height': 854, scale_method: 'bilinear', rate: 30, batch: 2, input: ['1', 1] }), 'dynamic sub-widgets and FLOAT,INT widgets in order');
+  });
+
+  await test('settings: ComfyUI connection', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await click('#sComfyTest');
+    await waitFor('document.querySelector("#sComfyResult").textContent.includes("Connected to ComfyUI 0.38.0-mock")', 'ComfyUI connected');
+    assert((await text('#sComfyResult')).includes('Mock GPU (8 GB)'), 'GPU shown');
+  });
+
+  await test('workflows: add from the ComfyUI library (auto setup)', async () => {
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    assert((await text('#wfList')).includes('No workflows yet'), 'empty state');
+    await click('#addWorkflowBtn');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await waitFor('!!document.querySelector(\'#wfSaved button[data-path="Mock T2I.json"]\')', 'saved workflows listed');
+    eq(await count('#wfSaved button'), 1, 'hidden files skipped');
+    await shot('20-wf-pick');
+    await click('#wfSaved button[data-path="Mock T2I.json"]');
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapPrompt select'), '6|text', 'prompt → positive encoder, not the negative');
+    eq(await value('#mapWidth'), '5|width', 'width');
+    eq(await value('#mapHeight'), '5|height', 'height');
+    assert((await text('#optSeedLabel')).includes('1 seed input'), 'seed found');
+    await shot('21-wf-setup');
+    await click('#wfSave');
+    await toastText('is ready');
+    assert(!(await js('document.querySelector("#wfDialog").open')), 'dialog closed');
+    eq(await count('#wfList .wf-row'), 1, 'listed');
+    eq(await js('[...document.querySelectorAll("#wfList .wf-maps span.on")].map(s => s.textContent.trim()).join(",")'), '✍️ Prompt,📐 Size,🎲 Seed', 'mapping chips');
+    assert((await text('#modelList button[data-id="krea2-raw"]')).includes('🎨 1'), 'count in model list');
+  });
+
+  let renderedText = '';
+  await test('render: a take becomes an image, live', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a lighthouse at dusk');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .render-bar .rb-go")', 'render bar');
+    renderedText = await value('.take .prompt-text');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'running tile');
+    await waitFor('/\\d+%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'live progress %');
+    await shot('22-rendering');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'finished image', 10000);
+    await toastText('render ready');
+    eq(comfy.prompts.length, before + 1, 'one prompt queued');
+    const sent = comfy.prompts.at(-1).prompt;
+    eq(sent['6'].inputs.text, renderedText, 'take text injected');
+    eq(sent['7'].inputs.text, 'blurry, low quality, watermark', 'negative untouched');
+    assert(sent['5'].inputs.width % 16 === 0 && sent['5'].inputs.height % 16 === 0 && sent['5'].inputs.width >= 512, 'size set from the take');
+    assert(Number.isInteger(sent['3'].inputs.seed) && sent['3'].inputs.seed !== 42, 'fresh seed');
+    await shot('23-rendered', { full: true });
+  });
+
+  await test('render: ⚙ on a take sets its own size, seed, steps and LoRA strengths, for its renders only', async () => {
+    // A size typed in step ④ (then step ④ put back as it was).
+    const [aspect0, res0] = [await value('#aspect'), await value('#resolution')];
+    await choose('#resolution', '__custom');
+    await type('#resW', '1000'); await type('#resH', '700');
+    await click('#resUse');
+    await waitFor('document.querySelector("#resolution").value === "1000×700"', 'your size picked');
+    await choose('#aspect', aspect0); await choose('#resolution', res0);
+    await click('.take .rb-tune');
+    await waitFor('!!document.querySelector(".take .rb-panel .rb-params")', 'the take\'s settings open');
+    assert((await text('.take .rb-panel')).includes('same as your Create settings'), 'nothing of its own yet');
+    eq(await js('[...document.querySelectorAll(".take .rb-panel .rb-size option")].find(o => o.value === "1000×700")?.textContent'), 'Your size: 1000×700', 'your sizes are offered for a take too');
+    await choose('.take .rb-panel .rb-size', '1000×700');
+    await waitFor('document.querySelector(".take .rb-panel .rb-aspect")?.value === "10:7" && document.querySelector(".take .rb-panel .rb-size").value === "1000×700"', 'with their shape');
+    await choose('#resolution', '1000×700');
+    await click('#resForget');
+    await choose('#aspect', aspect0); await choose('#resolution', res0);
+    await js('document.querySelector(".take .rb-panel .rb-size").selectedIndex = 0; document.querySelector(".take .rb-panel .rb-size").dispatchEvent(new Event("change", { bubbles: true }))');
+    const picked = await value('.take .rb-panel .rb-size');
+    await click('.take .rb-panel .rb-seedmode button[data-value="fixed"]');
+    await type('.take .rb-panel .rb-seedval', '4242');
+    await js('document.querySelector(".take .rb-panel .rb-seedval").dispatchEvent(new Event("change", { bubbles: true }))');
+    const steps = '.take .rb-panel .rb-params [data-kind="steps"] input';
+    await type(steps, '7');
+    await js(`document.querySelector(${JSON.stringify(steps)}).dispatchEvent(new Event("change", { bubbles: true }))`);
+    assert((await text('.take .rb-settings')).includes('own sampler settings') && (await text('.take .rb-settings')).includes(picked), 'the line under the bar says so');
+    assert((await text('.take .rb-seed')).includes('4242'), 'the seed chip shows the take\'s seed');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running") && !!document.querySelector(".take .rtile img")', 'rendered', 15000);
+    for (const t = Date.now(); comfy.prompts.length <= before && Date.now() - t < 5000;) await sleep(50);
+    const sent = comfy.prompts.at(-1).prompt;
+    eq(sent['3'].inputs.steps, 7, 'the take\'s steps');
+    eq(sent['3'].inputs.seed, 4242, 'the take\'s seed');
+    const [w, h] = picked.split('×').map(Number);
+    assert(Math.abs(sent['5'].inputs.width - w) <= 16 && Math.abs(sent['5'].inputs.height - h) <= 16, `the take's size (${sent['5'].inputs.width}×${sent['5'].inputs.height} for ${picked})`);
+    eq((await fetch(`${APP}/api/workflows`).then(r => r.json())).find(f => f.name === 'Mock T2I')?.settings.steps, 20, 'step ⑤\'s workflow keeps its own steps');
+    await click('.take .rb-panel .rb-same');
+    await toastText('Create size and render settings');
+    assert(!(await text('.take .rb-settings')).includes('own sampler'), 'back to step ⑤\'s');
+    // Step ④'s size, changed after the prompt was written, is what the take renders at (its ⚙ shows it).
+    const stepWas = await value('#resolution');
+    const other = await js('[...document.querySelectorAll("#resolution option")].map(o => o.value).find(v => v !== document.querySelector("#resolution").value && v !== "__custom")');
+    await choose('#resolution', other);
+    await waitFor(`document.querySelector(".take .rb-panel .rb-size")?.value === ${JSON.stringify(other)}`, 'the take follows step ④\'s size');
+    await choose('#resolution', stepWas);
+    await click('.take .rb-tune');
+    await waitFor('document.querySelector(".take .rb-panel").hidden', 'folded away');
+    // The render this made goes (newest first: the first tile), so the tests after count what they counted before.
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden && document.querySelector("#lbInfo").textContent.includes("4242")', 'the lightbox shows it');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
+    // Waiting to be deleted: greyed out, the seconds left and ↶ Undo on it, in the viewer and on the take.
+    await waitFor('document.querySelector("#lbStage").classList.contains("going") && /Deleting in \\d+ s/.test(document.querySelector("#lbStage .going-left")?.textContent || "")', 'the viewer greys it and counts down');
+    assert(await visible('#lbStage .going-over [data-undo]'), 'with ↶ Undo on it');
+    assert(await js('!!document.querySelector(".take .rcell.going .going-over [data-undo]")'), 'the take\'s tile too');
+    await click('#lbStage .going-over [data-undo]');
+    await toastText('Kept');
+    await waitFor('!document.querySelector("#lbStage").classList.contains("going") && !document.querySelector(".take .rcell.going")', 'Undo keeps it');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
+    await toastText('Render deleted', UNDO_WAIT);
+    await press('Escape');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 1', 'its render gone from the take');
+  });
+
+  await test('render: lightbox', async () => {
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox open');
+    assert((await text('#lbInfo')).includes('Mock T2I'), 'workflow shown');
+    assert(await js('document.querySelector("#lbInfo .lb-idea-text").getBoundingClientRect().height < 3 * parseFloat(getComputedStyle(document.querySelector("#lbInfo .lb-idea-text")).lineHeight)'), 'the idea starts folded to two lines');
+    eq(await js('getComputedStyle(document.querySelector("#lbInfo .lb-idea-text")).fontWeight'), '400', 'not bold');
+    await click('#lbInfo .lb-idea-btn');
+    assert(await js('document.querySelector("#lbInfo .lb-idea").classList.contains("open")'), '▸ opens it');
+    await click('#lbInfo .lb-idea-btn');
+    assert((await text('#lbInfo .lb-prompt')) === renderedText, 'prompt shown');
+    assert(await visible('#lbStage img'), 'image shown');
+    await shot('24-lightbox');
+    await press('Escape');
+    assert(await js('document.querySelector("#lightbox").hidden'), 'Esc closes');
+    // The picture is fitted inside a stage-wide element: a click on it stays, one on the dark beside it closes.
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden && document.querySelector("#lbStage img")?.naturalWidth', 'lightbox open again');
+    const pic = await js(`(() => { const el = document.querySelector('#lbStage img'), r = el.getBoundingClientRect();
+      const k = Math.min(r.width / el.naturalWidth, r.height / el.naturalHeight), w = el.naturalWidth * k;
+      return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, side: r.left + (r.width - w) / 2 - 12 }; })()`);
+    const clickAt = async (x, y) => { for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }); };
+    await clickAt(pic.cx, pic.cy);
+    assert(!(await js('document.querySelector("#lightbox").hidden')), 'a click on the picture keeps it open');
+    assert(pic.side > 80, 'there is a dark band beside the picture');
+    await clickAt(pic.side, pic.cy);
+    await waitFor('document.querySelector("#lightbox").hidden', 'a click beside the picture closes it');
+  });
+
+  await test('seed: random, keep it, fixed, ×2, +1, −1, the setup and the lightbox agree', async () => {
+    await openPanel('create-render-adv');
+    const seedOf = (k = -1) => comfy.prompts.at(k).prompt['3'].inputs.seed;
+    const renderOnce = async n => {
+      const before = await count('.take .rtile img');
+      await click('.take .rb-go');
+      await waitFor(`document.querySelectorAll(".take .rtile img").length === ${before + n} && !document.querySelector(".take .rtile.running")`, 'rendered', 12000);
+    };
+    await waitFor('!document.querySelector("#wfpSeed").hidden', 'a seed row in step 5');
+    assert(await js('document.querySelector(\'#wfpSeed [data-value="random"]\').classList.contains("active")'), 'random by default');
+    const last = seedOf();
+    await waitFor(`document.querySelector("#wfpSeed .seed-last")?.textContent.includes("${last}")`, 'it shows the last seed');
+    eq(await text('.take .rb-seed'), '🎲 Random seed', 'and the take says random');
+    await shot('27-seed-random');
+    await click('#wfpSeed [data-act="keep"]');
+    await waitFor(`document.querySelector("#wfpSeed .seed-val")?.value === "${last}"`, 'kept: fixed at the last seed');
+    eq(await text('.take .rb-seed'), `🔒 Seed ${last}`, 'the take shows it');
+    await click('.take .rb-count button[data-value="2"]');
+    eq(await text('.take .rb-seed'), `🔒 Seeds ${last}–${last + 1}`, 'with ×2 the take says which seeds');
+    await renderOnce(2);
+    eq(seedOf(-2), last, 'first render uses the fixed seed');
+    eq(seedOf(-1), last + 1, '×2 in one go: the second steps by one');
+    await click('.take .rb-count button[data-value="1"]');
+    await renderOnce(1);
+    eq(seedOf(), last, 'fixed stays fixed');
+
+    await click('#wfpSeed [data-value="increment"]');
+    await type('#wfpSeed .seed-val', '1000');
+    await press('Enter');
+    await waitFor('document.querySelector("#wfpSeed .dn-hint").textContent.includes("Next render: 1000, then 1001")', 'it says what comes next');
+    await shot('28-seed-increment');
+    await renderOnce(1);
+    eq(seedOf(), 1000, 'increment starts at the seed');
+    await waitFor('document.querySelector("#wfpSeed .seed-val").value === "1001"', 'then moves up by one');
+    await renderOnce(1);
+    eq(seedOf(), 1001, 'the next render uses the next seed');
+    await click('#wfpSeed [data-value="decrement"]');
+    await renderOnce(1);
+    eq(seedOf(), 1002, 'decrement starts where increment left off');
+    await waitFor('document.querySelector("#wfpSeed .seed-val").value === "1001"', 'then moves down by one');
+
+    await openPanel('create-render');
+    await click('#wfpSettings');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'setup open');
+    eq(await value('#optSeedMode'), 'decrement', 'the setup shows the same mode');
+    eq(await value('#samplerCtl .sp-field[data-key="3|seed"] input'), '1001', 'and the same next seed');
+    await click('#wfClose');
+
+    await click('#wfpSeed [data-value="random"]');
+    await renderOnce(1);
+    const fresh = seedOf();
+    assert(fresh < 1000 || fresh > 1002, 'random again');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="seed"]');
+    await toastText('now renders with seed');
+    await press('Escape');
+    await waitFor(`document.querySelector("#wfpSeed .seed-val")?.value === "${fresh}"`, 'the render\'s seed is now fixed');
+    await click('#wfpSeed [data-value="random"]');
+  });
+
+  await test('workflow sampler settings: see them, change them, lock CFG 1', async () => {
+    assert((await text('.take .rb-settings')).includes('euler · normal'), 'render bar shows the sampler');
+    assert((await text('.take .rb-settings')).includes('20 steps') && (await text('.take .rb-settings')).includes('CFG 7'), 'steps and CFG shown');
+    await openPanel('create-render');
+    await click('#wfpSettings');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'settings open from Create');
+    const field = k => `#samplerCtl .sp-field[data-key="3|${k}"]`;
+    eq(await value(`${field('steps')} input`), '20', 'steps shown');
+    eq(await value(`${field('cfg')} input`), '7', 'cfg shown');
+    eq(await value(`${field('sampler_name')} select`), 'euler', 'sampler shown');
+    eq(await value(`${field('scheduler')} select`), 'normal', 'scheduler shown');
+    assert(await js(`document.querySelector('${field('seed')} input').disabled`), 'seed field idle while randomized');
+    await type(`${field('cfg')} input`, '5');
+    await type(`${field('steps')} input`, '12');
+    await choose(`${field('sampler_name')} select`, 'dpmpp_2m');
+    assert(await js(`document.querySelector('${field('cfg')}').classList.contains('edited')`), 'edited fields are marked');
+    await shot('26-sampler-settings');
+    await click('#wfSave');
+    await toastText('Workflow updated');
+    await waitFor('document.querySelector(".take .rb-settings").textContent.includes("dpmpp_2m")', 'summary updated');
+    assert((await text('.take .rb-settings')).includes('12 steps') && (await text('.take .rb-settings')).includes('CFG 5'), 'new values in summary');
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    const ks = comfy.prompts.at(-1).prompt['3'].inputs;
+    eq(`${ks.cfg}/${ks.steps}/${ks.sampler_name}/${ks.scheduler}`, '5/12/dpmpp_2m/normal', 'ComfyUI got the new settings');
+  });
+
+  await test('render: cancel mid-render', async () => {
+    await type('#theme', 'SLOWRENDER harbor at night');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-go")', 'render bar');
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    await click('.take .rtile.running .rt-cancel');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'tile gone', 8000);
+    await toastText('Render stopped');
+  });
+
+  await test('render: ComfyUI crashing mid-render ends it instead of leaving it stuck', async () => {
+    await type('#theme', 'COMFYCRASH rooftop');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-go")', 'render bar');
+    await click('.take .rb-go');
+    await waitFor('document.querySelector("#stageError") && !document.querySelector("#stageError").hidden', 'error card', 15000);
+    assert((await text('#stageError')).includes('ComfyUI stopped'), 'crash explained');
+    eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left rendering');
+  });
+
+  await test('render: ComfyUI error is explained', async () => {
+    await type('#theme', 'COMFYFAIL scene');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-go")', 'render bar');
+    await click('.take .rb-go');
+    await waitFor('document.querySelector("#stageError") && !document.querySelector("#stageError").hidden', 'error card', 8000);
+    assert((await text('#stageError')).includes('Mock sampler exploded'), 'ComfyUI error surfaced');
+    assert(await visible('.take .rtile.failed'), 'failed tile');
+  });
+
+  await test('render: ComfyUI offline → clear message, reconnects', async () => {
+    await comfy.stop();
+    await click('.take .rb-go');
+    await waitFor('document.querySelector("#stageError") && document.querySelector("#stageError").textContent.includes("reach ComfyUI")', 'offline error', 8000);
+    await waitFor('document.querySelector(".take .rb-status")?.textContent.includes("offline")', 'offline badge');
+    assert(await visible('#stageError .e-comfy'), 'the message has ▶ Start ComfyUI');
+    await comfy.start();
+    await waitFor('!document.querySelector(".take .rb-status")?.textContent.includes("offline")', 'reconnected on its own', 9000);
+    await toastText('ComfyUI is connected');
+    await waitFor('document.querySelector("#stageError").hidden', 'the message goes once ComfyUI answers');
+  });
+
+  await test('viewer: Open original prompt opens just that take, its render ringed; Open all takes opens every take', async () => {
+    // A prompt with two takes, one render each, from before this session.
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8'));
+    const when = '2026-01-03T10:00:00.000Z';
+    const take = n => ({ versions: [{ text: `two takes, take ${n}`, createdAt: when }], renders: [{ id: `two-takes-r${n}`, versionIndex: 0, text: `two takes, take ${n}`, workflowName: 'Mock', files: [{ file: `two-takes_${n}.png`, kind: 'image', name: `take${n}.png` }], createdAt: when }] });
+    await fs.writeFile(path.join(dataDir, 'renders', 'two-takes_1.png'), makePng(48, 48));
+    await fs.writeFile(path.join(dataDir, 'renders', 'two-takes_2.png'), makePng(48, 48));
+    all.push({ id: 'two-takes', createdAt: when, favorite: false, modelId: 'krea2-raw', modelName: 'Krea 2 RAW', modelKind: 'image', theme: 'a kite over the dunes', aspectRatio: '1:1', variations: [take(1), take(2)] });
+    await fs.writeFile(file, JSON.stringify(all));
+    const second = '#reelGrid .reel-cell[data-file="two-takes_2.png"] .rtile';
+    await click('.tabs button[data-view="gallery"]'); // (the page fetches History again when the Library opens)
+    await waitFor(`!!document.querySelector('${second}')`, 'the second take\'s render is in the Library');
+    await click(second);
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer');
+    eq(await js('document.querySelector(\'[data-lb="openall"]\').checked'), false, 'Open all takes starts unticked');
+    await click('[data-lb="open"]');
+    await waitFor('document.querySelector("#view-create").classList.contains("active") && document.querySelectorAll(".take").length === 2', 'back on Create with the prompt');
+    eq(await count('.take:not([hidden])'), 1, 'just the take it came from');
+    assert(await visible('.take[aria-label="Take 2"] .rtile.seen'), 'that render is ringed on its take');
+    eq(await text('.take-only span'), 'Showing take 2 of 2', 'says which take');
+    await click('.take-only button');
+    await waitFor('document.querySelectorAll(".take:not([hidden])").length === 2 && !document.querySelector(".take-only")', 'Show all takes brings the other back');
+    // Ticked, it opens every take, with that one ringed.
+    await click('.tabs button[data-view="gallery"]');
+    await click(second);
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer again');
+    await click('[data-lb="openall"]');
+    await click('[data-lb="open"]');
+    await waitFor('document.querySelector("#view-create").classList.contains("active") && document.querySelectorAll(".take:not([hidden])").length === 2', 'every take on the stage');
+    assert(!(await visible('.take-only')) && await visible('.take[aria-label="Take 2"] .rtile.seen'), 'no "showing take" line; the render still ringed');
+    // (Unticked again, so the next tests find it as shipped.)
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer from the stage');
+    eq(await js('document.querySelector(\'[data-lb="openall"]\').checked'), true, 'the tick is remembered');
+    await click('[data-lb="openall"]');
+    await press('Escape');
+    // As it was: the two-take prompt gone again (off the stage first: the grid shows the stage's entry too).
+    await click('#newBtn');
+    await waitFor('!document.querySelector(".take")', 'the stage is clear');
+    await fs.writeFile(file, JSON.stringify(all.filter(e => e.id !== 'two-takes')));
+    await fs.rm(path.join(dataDir, 'renders', 'two-takes_1.png'));
+    await fs.rm(path.join(dataDir, 'renders', 'two-takes_2.png'));
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor(`!document.querySelector('${second}')`, 'its renders leave the Library with it');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('gallery: every render, in Your renders\' grid, opens back into Create', async () => {
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('document.querySelector("#galleryHome #reel") && document.querySelectorAll("#reelGrid .reel-cell").length >= 3', 'Your renders moved into the Library');
+    eq(await text('#galleryCount'), String(await count('#reelGrid .reel-cell')), 'count');
+    assert(!(await visible('#reelToggle')) && !(await visible('#reelGrip')), 'always open, as tall as the window');
+    await shot('25-gallery', { full: true });
+    await click('#reelKinds [data-kind=""]');
+    await click('#reelGrid .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="open"]');
+    await waitFor('document.querySelector("#view-create").classList.contains("active")', 'back on Create');
+    eq(await value('#theme'), 'a lighthouse at dusk', 'entry restored');
+    await waitFor('document.querySelectorAll(".take .rtile img").length >= 3', 'renders restored with the take');
+  });
+
+  await test('render: rate from the lightbox and Your renders, find it in the Library', async () => {
+    const rated = async () => (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.rating);
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb-rate="2"]');
+    await shot('24a-lightbox-rating');
+    await waitFor('document.querySelector(\'[data-lb-rate="2"]\').getAttribute("aria-pressed") === "true"', 'rated very good');
+    eq((await rated()).map(r => r.rating).join(), '2', 'saved on the render');
+    await press('3');
+    await waitFor('document.querySelector(\'[data-lb-rate="3"]\').getAttribute("aria-pressed") === "true"', 'key 3: excellent');
+    await press('Escape');
+    // Your renders shows every render, with its rating; its stars rate in place.
+    await waitFor('document.querySelectorAll("#reel .reel-cell").length >= 3 && !!document.querySelector(\'#reel .reel-cell[data-rating="3"]\')', 'the box shows the renders, rated');
+    eq(await count('#reel .reel-cell[data-rating="3"] .rate-bar button.on'), 3, 'three lit stars');
+    await js('document.querySelector(\'#reel .reel-cell[data-rating="0"]\').classList.add("rate-me")');
+    await click('#reel .reel-cell.rate-me [data-rate="1"]');
+    await waitFor('document.querySelectorAll(\'#reel .reel-cell[data-rating="1"]\').length === 1', 'rated pretty good from the box');
+    eq((await rated()).map(r => r.rating).sort().join(), '1,3', 'both saved');
+    await click('#reel .reel-cell[data-rating="1"] [data-rate="1"]');
+    await waitFor('!document.querySelector(\'#reel .reel-cell[data-rating="1"]\')', 'clicking the lit star takes it off');
+    await js('document.querySelector("#reel").scrollIntoView()');
+    await js('document.querySelector(\'#reel .reel-cell[data-rating="0"]\').dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))');
+    await shot('24b-your-renders');
+    // Its filters: only the excellent one, then all again.
+    await click('#reelRated button[data-min="3"]');
+    await waitFor('document.querySelectorAll("#reel .reel-cell").length === 1 && !!document.querySelector(\'#reel .reel-cell[data-rating="3"]\')', '★★★ only');
+    assert((await text('#reelCount')).startsWith('1 of '), `the count says so: ${await text('#reelCount')}`);
+    await click('#reelRated button[data-min="3"]');
+    await waitFor('document.querySelectorAll("#reel .reel-cell").length >= 3', 'all again');
+    await click('#reel .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'a render opens in the lightbox');
+    await press('Escape');
+    await click('.tabs button[data-view="gallery"]');
+    await click('#reelRated button[data-min="2"]');
+    await waitFor('document.querySelectorAll("#galleryHome .reel-cell").length === 1 && !!document.querySelector(\'#galleryHome .reel-cell[data-rating="3"]\')', 'very good and up: only the excellent one');
+    await click('#galleryHome .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb-rate="3"]');
+    // Rated out of ★★ & up, the only one shown leaves what's browsed, so the viewer closes.
+    await waitFor('document.querySelector("#lightbox").hidden', 'rating taken off: it left, and the viewer closed');
+    await toastText('it no longer fits your filters');
+    eq((await rated()).length, 0, 'no rating left');
+    await click('#reelRated button[data-min="2"]');
+    await click('#reelKinds button[data-kind=""]');
+    await click('#reelGrid .reel-cell:nth-of-type(2) .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await press('ArrowRight');
+    await press('Escape');
+    eq(await count('#reelGrid .reel-cell.seen'), 1, 'the Library marks the render you looked at last');
+    assert(await js('document.querySelector("#reelGrid .reel-cell:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
+    assert(await js('document.activeElement === document.querySelector("#reelGrid .reel-cell.seen .rtile")'), 'and focus is back on it');
+    await click('.tabs button[data-view="create"]');
+    await waitFor('document.querySelector("#view-create #reel") && !document.querySelector("#reelGrid .reel-cell.seen")', 'back on Create, the same box, unmarked');
+  });
+
+  await test('your renders: every render, from before start-up too, in one grid; filters, drag to arrange, height, picture size, full screen', async () => {
+    // (The page fetches History again when the Library opens; a filter click redraws the box right away.)
+    const refetch = async () => {
+      await click('.tabs button[data-view="gallery"]');
+      await click('.tabs button[data-view="create"]');
+      await click('#reelKinds button[data-kind=""]');
+    };
+    // A render made before Prompt Maker last started shows too (only 🕘 This session leaves it out).
+    await fs.writeFile(path.join(dataDir, 'renders', 'earlier-run_0.png'), makePng(48, 64));
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8'));
+    const old = '2026-01-02T10:00:00.000Z';
+    all.push({ id: 'earlier-run', createdAt: old, favorite: false, modelId: 'krea2-raw', modelName: 'Krea 2 RAW', modelKind: 'image', theme: 'a paper boat on a puddle', aspectRatio: '3:4', variations: [{ versions: [{ text: 'a paper boat on a puddle', createdAt: old }], renders: [{ id: 'earlier-r', versionIndex: 0, text: 'a paper boat on a puddle', workflowName: 'Mock', files: [{ file: 'earlier-run_0.png', kind: 'image', name: 'boat.png' }], createdAt: old }] }] });
+    await fs.writeFile(file, JSON.stringify(all));
+    await refetch();
+    const boat = 'document.querySelector(\'#reel .reel-cell[data-file="earlier-run_0.png"]\')';
+    await waitFor(`!!${boat}`, 'a render from before start-up is in Your renders');
+    assert(await js('document.querySelectorAll("#reel .reel-cell").length === document.querySelectorAll("#reelGrid > .reel-cell").length'), 'one grid, not a row per run');
+    await waitFor(`Math.abs(${boat}.querySelector('.rtile').getBoundingClientRect().width / ${boat}.querySelector('.rtile').getBoundingClientRect().height - 0.75) < 0.02`, 'its card has the picture\'s shape');
+    assert(/paper boat/.test(await text('#reel .reel-cell[data-file="earlier-run_0.png"] .rt-under b')) && /Krea 2 RAW/.test(await text('#reel .reel-cell[data-file="earlier-run_0.png"] .rt-under span')), 'a caption under it: the idea\'s first words and the model');
+    await click('#reelSession');
+    await waitFor(`!${boat} && document.querySelectorAll("#reel .reel-cell").length > 0`, '🕘 This session leaves it out');
+    await click('#reelSession');
+    await type('#reelFind', 'paper boat');
+    await waitFor(`!!${boat} && document.querySelectorAll("#reel .reel-cell").length === 1`, 'find it by the words of its prompt');
+    await type('#reelFind', 'no such words anywhere');
+    await waitFor('!document.querySelector("#reelEmpty").hidden && !document.querySelector("#reel .reel-cell")', 'nothing matches: it says so');
+    await click('#reelEmpty [data-reel="all"]');
+    await waitFor(`!!${boat} && document.querySelector("#reelFind").value === ""`, 'Show everything clears the filters');
+
+    // Drag a card past two others: it lands there, opens nothing, and the order is saved. Shift+← moves it back one.
+    // Use small thumbnails so all three drag targets are visible together in the narrower studio stage.
+    await js('(() => { const s = document.querySelector("#reelSize"); s.value = 160; s.dispatchEvent(new Event("input")); })()');
+    const keys = () => js('[...document.querySelectorAll("#reelGrid > .reel-cell")].map(c => c.dataset.key)');
+    const [k0, k1, k2] = await keys();
+    await js('document.querySelector("#reelBody").scrollTop = 0; document.querySelector("#reel").scrollIntoView({ block: "start" })');
+    const at = n => js(`(() => { const r = document.querySelectorAll("#reelGrid > .reel-cell")[${n}].getBoundingClientRect(); return { x: r.left + r.width * 0.7, y: r.top + r.height / 2 }; })()`); // (right half: it goes after)
+    const from = await at(0);
+    const to = await at(2);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let k = 1; k <= 12; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x + ((to.x - from.x) * k) / 12, y: from.y + ((to.y - from.y) * k) / 12, button: 'left', buttons: 1 });
+    assert(await js('!!document.querySelector(".reel-ghost") && document.querySelector("#reel").classList.contains("sorting")'), 'the card is carried while dragging');
+    await shot('24c-your-renders-dragging');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 });
+    // (Headless Chrome now and then drops the release right after a screenshot: a mouse move with no button down, as a hand would make, ends the drag too.)
+    if (!(await waitFor('!document.querySelector(".reel-ghost")', 'the card is let go', 1500).catch(() => false))) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: to.x + 1, y: to.y, button: 'none', buttons: 0 });
+    await waitFor('!document.querySelector(".reel-ghost")', 'the card is let go');
+    await sleep(100);
+    eq((await keys()).slice(0, 3).join(), [k1, k2, k0].join(), 'over a card\'s right half, it lands after it');
+    const after = await js('JSON.stringify({ viewerOpen: !document.querySelector("#lightbox").hidden, stillCarried: !!document.querySelector(".reel-ghost"), sorting: document.querySelector("#reel").classList.contains("sorting") })');
+    eq(after, '{"viewerOpen":false,"stillCarried":false,"sorting":false}', 'dropping it opens nothing, and the card is let go');
+    await waitFor(`(async () => { const o = (await (await fetch('/api/render-order')).json()).order; return o.indexOf(${q(k0)}) > o.indexOf(${q(k2)}) && o.indexOf(${q(k2)}) >= 0; })()`, 'the order is saved');
+    await js(`document.querySelector('#reelGrid > .reel-cell[data-key="${k0}"] .rtile').focus()`);
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, modifiers: 8 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, modifiers: 8 });
+    eq((await keys()).slice(0, 3).join(), [k1, k0, k2].join(), 'Shift+← moves it back one place');
+    assert(await js(`document.activeElement === document.querySelector('#reelGrid > .reel-cell[data-key="${k0}"] .rtile')`), 'and it keeps the focus');
+    assert(await visible('#reelNewest'), '↺ Newest first shows once you have your own order');
+    await click('#reelNewest');
+    await click('#reelNewest');
+    eq((await keys()).slice(0, 3).join(), [k0, k1, k2].join(), '↺ Newest first puts them back');
+    await waitFor('(async () => (await (await fetch("/api/render-order")).json()).order.length === 0)()', 'and forgets your order');
+    assert(!(await visible('#reelNewest')), 'and the button goes');
+
+    // Pick several: Ctrl-click, then a box dragged with Ctrl from a card; the bar deletes them, with ↶ Undo.
+    const cell = n => `#reelGrid > .reel-cell:nth-child(${n + 1})`;
+    const ctrlClick = async n => {
+      // Undo can restore the grid at a different scroll position. Bring the first
+      // cards back into view and keep the click clear of their rating controls.
+      const p = await js(`(() => {
+        document.querySelector('#reelBody').scrollTop = 0;
+        const tile = document.querySelectorAll('#reelGrid > .reel-cell .rtile')[${n}];
+        const r = tile.getBoundingClientRect();
+        const x = r.left + r.width * .15, y = r.top + r.height * .2;
+        return { x, y, hit: tile.contains(document.elementFromPoint(x, y)) };
+      })()`);
+      assert(p.hit, 'the card is visible and clear of its rating controls');
+      for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers: 2 });
+      await sleep(60);
+    };
+    await ctrlClick(0);
+    await ctrlClick(1);
+    eq(await count('#reelGrid > .reel-cell.picked'), 2, 'Ctrl-click picks cards');
+    assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
+    assert((await visible('#reelSel')) && (await text('#reelSelCount')) === '2 selected', 'the bar says how many');
+    await ctrlClick(1);
+    eq(await count('#reelGrid > .reel-cell.picked'), 1, 'Ctrl-click again lets one go');
+    await press('Escape');
+    eq(await count('#reelGrid > .reel-cell.picked'), 0, 'Esc lets go of them all');
+    assert(!(await visible('#reelSel')), 'and the bar goes');
+    // With Select on, a plain drag from a card draws the box too: no empty spot needed in a full grid.
+    await click('#reelSelect');
+    {
+      const s0 = await at(0), s2 = await at(2);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: s0.x, y: s0.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: s0.x + ((s2.x - s0.x) * k) / 10, y: s0.y + ((s2.y - s0.y) * k) / 10 + 2, button: 'left', buttons: 1 });
+      assert(await js('!!document.querySelector(".pick-band") && !document.querySelector(".reel-ghost")'), 'with Select on, a drag from a card draws a box, it doesn\'t move the card');
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: s2.x, y: s2.y + 2, button: 'left', buttons: 0, clickCount: 1 });
+      await waitFor('!document.querySelector(".pick-band")', 'the box goes when you let go', 3000);
+      assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'it picks every card it touched');
+      assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
+    }
+    await click('#reelSelect');
+    eq(await count('#reelGrid > .reel-cell.picked'), 0, 'Done selecting lets go of them');
+    // Select all picks every card shown; so does Ctrl+A, without first clicking into the grid.
+    assert(await visible('#reelSelectAll'), 'Select all shows over a grid of renders');
+    await click('#reelSelectAll');
+    eq(await count('#reelGrid > .reel-cell.picked'), await count('#reelGrid > .reel-cell'), 'Select all picks every card shown');
+    await press('Escape');
+    await js('document.activeElement?.blur(); document.body.focus()');
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+    eq(await count('#reelGrid > .reel-cell.picked'), await count('#reelGrid > .reel-cell'), 'Ctrl+A picks them all with the focus outside the grid');
+    await press('Escape');
+    // Once a card is picked, a plain drag from another card adds to the pick, it doesn't carry the card.
+    await ctrlClick(0);
+    {
+      const s1 = await at(1), s2 = await at(2);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: s1.x, y: s1.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: s1.x + ((s2.x - s1.x) * k) / 10, y: s1.y + ((s2.y - s1.y) * k) / 10 + 2, button: 'left', buttons: 1 });
+      assert(await js('!!document.querySelector(".pick-band") && !document.querySelector(".reel-ghost")'), 'with a card picked, a drag from a card draws a box');
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: s2.x, y: s2.y + 2, button: 'left', buttons: 0, clickCount: 1 });
+      await waitFor('!document.querySelector(".pick-band")', 'the box goes when you let go', 3000);
+      assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'and adds what it touched to the pick');
+      assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
+    }
+    await press('Escape');
+    const b0 = await at(0), b2 = await at(2);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b0.x, y: b0.y, button: 'left', buttons: 1, clickCount: 1, modifiers: 2 });
+    for (let k = 1; k <= 10; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b0.x + ((b2.x - b0.x) * k) / 10, y: b0.y + ((b2.y - b0.y) * k) / 10 + 2, button: 'left', buttons: 1, modifiers: 2 });
+    assert(await js('!!document.querySelector(".pick-band") && !document.querySelector(".reel-ghost")'), 'Ctrl-drag draws a box, it doesn\'t carry the card');
+    // Capture after release: headless Chrome can lose pointer-up immediately after a screenshot.
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b2.x, y: b2.y + 2, button: 'left', buttons: 0, clickCount: 1, modifiers: 2 });
+    await waitFor('!document.querySelector(".pick-band")', 'the box goes when you let go', 3000);
+    assert(await count('#reelGrid > .reel-cell.picked') >= 3, 'it picks every card it touched');
+    assert(!(await js('!document.querySelector("#lightbox").hidden')), 'and opens nothing');
+    const picked = await count('#reelGrid > .reel-cell.picked');
+    await shot('24e-your-renders-picked');
+    await click('#reelSelDelete');
+    await click('#reelSelDelete');
+    await toastText('Deleting');
+    eq(await count('#reelGrid > .reel-cell.going'), picked, 'they dim while they wait');
+    await click('#toast .toast-act');
+    await toastText('Kept');
+    eq(await count('#reelGrid > .reel-cell.going'), 0, '↶ Undo keeps them all');
+    const total = await count('#reelGrid > .reel-cell');
+    await ctrlClick(0);
+    await ctrlClick(1);
+    await press('Delete');
+    await press('Delete');
+    await toastText('Deleting 2 renders');
+    await toastText('2 renders deleted', UNDO_WAIT);
+    await waitFor(`document.querySelectorAll("#reelGrid > .reel-cell").length === ${total - 2}`, 'two fewer, after the 8 s');
+
+    // On a wide window the grid fills the stage beside the steps (renders scroll inside it): no bottom edge to drag.
+    assert(!(await visible('#reelGrip')), 'no grip on a wide window: the box fills the stage');
+    assert(await js('(() => { const b = document.querySelector("#reelBody").getBoundingClientRect(); const s = document.querySelector("#stage").getBoundingClientRect(); return Math.abs(b.bottom - s.bottom) < 24 && b.height > 200; })()'), 'the grid reaches the bottom of the stage');
+    assert(!(await visible('#reelTitle')) && (await text('#tabRenders')).includes('Your renders'), 'the tab is its title');
+
+    // ⛶ Full screen fills the window; 🔍 makes pictures as big as the box. The lightbox opens over it; Esc goes back.
+    await click('#reelFull');
+    assert(await js('(() => { const r = document.querySelector("#reel").getBoundingClientRect(); return r.top === 0 && r.left === 0 && r.bottom === innerHeight; })()'), 'full screen fills the window');
+    assert(await js('document.querySelector("#reel").contains(document.elementFromPoint(100, 100))'), 'full screen artwork covers the studio sidebar');
+    await js('(() => { const s = document.querySelector("#reelSize"); s.value = s.max; s.dispatchEvent(new Event("input")); })()');
+    const tall = await js('document.querySelector("#reel .reel-cell").getBoundingClientRect().height');
+    assert(tall > 600, `at its biggest, a picture fills the height: ${tall}px`);
+    await shot('24d-your-renders-full-screen');
+    await click('#reel .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'the lightbox opens over it');
+    await press('Escape');
+    assert(await js('document.querySelector("#lightbox").hidden && document.querySelector("#reel").classList.contains("full")'), 'Esc closes the lightbox first');
+    await press('Escape');
+    assert(!(await js('document.querySelector("#reel").classList.contains("full")')), 'then leaves full screen');
+    assert(await js('document.querySelector("#reel .reel-cell").getBoundingClientRect().height <= document.querySelector("#reelBody").offsetHeight'), 'back in the box, pictures fit its height');
+
+    // As it was: the usual sizes, and the earlier render gone again.
+    await js('localStorage.removeItem("pm.reelSize"); localStorage.removeItem("pm.reelHeight"); dispatchEvent(new Event("resize"))');
+    await fs.writeFile(file, JSON.stringify(all.filter(e => e.id !== 'earlier-run')));
+    await fs.rm(path.join(dataDir, 'renders', 'earlier-run_0.png'));
+    await refetch();
+    await waitFor(`!${boat}`, 'the earlier render leaves with its entry');
+  });
+
+  await test('gallery: video tiles show a still of their first frame, and play on hover; the lightbox keeps your sound', async () => {
+    const mp4 = path.join(dataDir, 'renders', 'poster-test_0.mp4');
+    const made = await new Promise(resolve => {
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=12', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '1', '-pix_fmt', 'yuv420p', '-shortest', mp4], { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', code => resolve(code === 0));
+    });
+    if (!made) return console.log('      (skipped: ffmpeg not installed)');
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8'));
+    all.unshift({ id: 'poster-test', createdAt: new Date().toISOString(), favorite: false, modelId: 'ltx-2-3', modelName: 'LTX 2.3', modelKind: 'video', theme: 'a test pattern', variations: [{ versions: [{ text: 'a test pattern', createdAt: new Date().toISOString() }], renders: [{ id: 'poster-r', versionIndex: 0, text: 'a test pattern', workflowName: 'Mock', files: [{ file: 'poster-test_0.mp4', kind: 'video', name: 'test.mp4' }], createdAt: new Date().toISOString() }] }] });
+    await fs.writeFile(file, JSON.stringify(all));
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('/^data:image\\/jpeg/.test(document.querySelector(\'#reelGrid video[src*="poster-test_0.mp4"]\')?.getAttribute("poster") || "")', 'the video tile got its still', 15000);
+    eq(await js('document.querySelector(\'#reelGrid video[src*="poster-test_0.mp4"]\').preload'), 'none', 'the video itself loads only when played');
+    // The lightbox plays it with sound, and the next one with the sound you left this one at.
+    await js('localStorage.removeItem("pm.lbSound")');
+    const lbVid = '#lbStage video[src*="poster-test_0.mp4"]';
+    const openLb = async () => {
+      await click('#reelGrid .reel-cell:has(video[src*="poster-test_0.mp4"]) .rtile');
+      await waitFor(`document.querySelector('${lbVid}')?.paused === false`, 'the lightbox plays the video', 10000);
+    };
+    await openLb();
+    eq(await js(`document.querySelector('${lbVid}').muted`), false, 'with sound the first time');
+    await js(`(v => { v.volume = 0.4; v.muted = true; })(document.querySelector('${lbVid}'))`);
+    await waitFor('JSON.parse(localStorage.getItem("pm.lbSound") || "{}").muted === true', 'muting is remembered');
+    await press('Escape');
+    await openLb();
+    eq(await js(`(v => v.muted + ' ' + v.volume)(document.querySelector('${lbVid}'))`), 'true 0.4', 'opens muted, at the volume you left');
+    await js(`document.querySelector('${lbVid}').muted = false`);
+    await press('Escape');
+    await openLb();
+    eq(await js(`document.querySelector('${lbVid}').muted`), false, 'sound back on, and it stays on');
+    await press('Escape');
+    await fs.writeFile(file, JSON.stringify(all.slice(1)));
+    await fs.rm(mp4);
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('viewer: a closed video stops; the tile it was opened from keeps its still until you move to another', async () => {
+    const mp4 = path.join(dataDir, 'renders', 'still-test_0.mp4');
+    const made = await new Promise(resolve => {
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=12', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '3', '-pix_fmt', 'yuv420p', '-shortest', mp4], { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', code => resolve(code === 0));
+    });
+    if (!made) return console.log('      (skipped: ffmpeg not installed)');
+    const file = path.join(dataDir, 'history.json');
+    const all = JSON.parse(await fs.readFile(file, 'utf8').catch(() => '[]'));
+    const stamp = new Date().toISOString();
+    all.unshift({ id: 'still-test', createdAt: stamp, favorite: false, modelId: 'ltx-2-3', modelName: 'LTX 2.3', modelKind: 'video', theme: 'a still pattern', variations: [{ versions: [{ text: 'a still pattern', createdAt: stamp }], renders: [{ id: 'still-r', versionIndex: 0, text: 'a still pattern', workflowName: 'Mock', files: [{ file: 'still-test_0.mp4', kind: 'video', name: 'still.mp4' }], createdAt: stamp }] }] });
+    await fs.writeFile(file, JSON.stringify(all));
+    await click('.tabs button[data-view="gallery"]');
+    const tile = '#reelGrid video[src*="still-test_0.mp4"]';
+    await waitFor(`!!document.querySelector('${tile}')`, 'the tile', 15000);
+    const lbVid = '#lbStage video[src*="still-test_0.mp4"]';
+    await click(`#reelGrid .reel-cell:has(video[src*="still-test_0.mp4"]) .rtile`); // (the pointer stays on the tile)
+    await waitFor(`document.querySelector('${lbVid}')?.paused === false`, 'the viewer plays it', 10000);
+    await js(`window.__closed = document.querySelector('${lbVid}')`);
+    await press('Escape');
+    await sleep(500);
+    eq(await js('window.__closed.paused && !window.__closed.isConnected && !window.__closed.getAttribute("src")'), true, 'the closed video is stopped and let go');
+    eq(await js(`document.querySelector('${tile}').paused`), true, 'the tile under the pointer stays still');
+    const r = await js(`(r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2, out: r.bottom + 40 }))(document.querySelector('${tile}').getBoundingClientRect())`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x + 3, y: r.y + 3 }); // a nudge on the same tile
+    await sleep(300);
+    eq(await js(`document.querySelector('${tile}').paused`), true, 'and still after a nudge');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.out });
+    await sleep(100);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y });
+    await waitFor(`document.querySelector('${tile}').paused === false`, 'back on the tile, it plays as hovering does', 3000);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.out });
+    await js('delete window.__closed');
+    await fs.writeFile(file, JSON.stringify(all.slice(1)));
+    await fs.rm(mp4);
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('render: a render that lands takes its own tile\'s place (take and Your renders) and never switches the tab', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'SLOWRENDER two lanterns on a jetty');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile.running").length === 2', 'two running tiles, in order');
+    const order = () => js('(() => { const r = document.querySelector(".take .rtile.running"); const box = r?.parentElement; return box ? [...box.children].map(c => c.classList.contains("running") ? "run" : "done").join(",") : "none"; })()');
+    await waitFor('(() => { const r = document.querySelector(".take .rtile.running"); const box = r?.parentElement; return box && box.children.length === 2 && !box.children[0].classList.contains("running") && box.children[1].classList.contains("running"); })()', 'the first render landed in the first tile, the second still runs in the second', 15000).catch(async e => { throw new Error(`${e.message} (tiles: ${await order()})`); });
+    assert(await js('document.querySelector("#rendersPane").hidden'), 'the takes stay on screen: no switch to Your renders');
+    assert(await js('document.querySelector("#tabRenders").classList.contains("fresh")'), 'the Your renders tab gets a dot instead');
+    const grid = await js('[...document.querySelector("#reelGrid").children].slice(0, 3).map(c => c.classList.contains("reel-job") ? (c.classList.contains("waiting") ? "wait" : "live") : "card").join(",")');
+    assert(/^live,card/.test(grid), `Your renders: the run keeps its first tile, the landed render fills the second: ${grid}`);
+    await waitFor('!document.querySelector(".take .rtile.running")', 'both done', 20000);
+    eq(await order(), 'none', '(no running tiles left)');
+    eq(await count('.take .rtile'), 2, 'two renders on the take');
+  });
+
+  await test('render: delete from the lightbox', async () => {
+    const before = await count('.take .rtile img');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
+    await toastText('Render deleted', UNDO_WAIT);
+    await press('Escape');
+    eq(await count('.take .rtile img'), before - 1, 'one fewer');
+  });
+
+  await test('lightbox: use a render as the next input image', async () => {
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="use"]');
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'render became the input image');
+    await toastText('Render set as your image');
+    assert(await visible('#roleBlock'), 'image modes offered');
+    await click('#imageClear');
+  });
+
+  await test('render: a page reload doesn\'t stop it; the page picks it up, and ✕ Cancel still works', async () => {
+    const reload = async () => {
+      await reloadPage();
+    };
+    await type('#theme', 'SLOWRENDER lanterns on a river');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="1"]');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    await reload();
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'the running render is back on the stage');
+    await toastText('still going');
+    eq(await value('#theme'), 'SLOWRENDER lanterns on a river', 'with its take');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'and it finishes', 15000);
+    eq(comfy.prompts.length, before + 1, 'one job, not restarted');
+    eq(await count('.take .rtile img'), 1, 'one render, shown once');
+
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running again');
+    await reload();
+    await waitFor('!!document.querySelector(".take .rtile.running .rt-cancel")', 'back, with Cancel');
+    await click('.take .rtile.running .rt-cancel');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'cancelled', 8000);
+    await toastText('Render stopped');
+    eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
+    eq(await count('.take .rtile img'), 1, 'no render from the cancelled job');
+  });
+
+  await test('render: a restart of Prompt Maker mid-render doesn\'t lose it; it lands on its take', async () => {
+    await type('#theme', 'VERYSLOWRENDER a kite over the harbor');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="1"]');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    const entryId = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'VERYSLOWRENDER a kite over the harbor').id;
+    eq(Object.keys(await fs.readFile(path.join(dataDir, 'rendering.json'), 'utf8').then(JSON.parse)).length, 1, 'the render is noted while ComfyUI has it');
+    assert(!(await fs.readFile(path.join(dataDir, 'rendering.json'), 'utf8')).includes('kite'), 'by its ids, without the prompt\'s words');
+    await restartApp();
+    await waitFor(`fetch('/api/renders').then(r => r.json()).then(l => l.length === 1)`, 'picked up again after the restart', 10000);
+    await reloadPage();
+    await waitFor('document.documentElement.dataset.ready === "1"', 'page back');
+    await waitFor(`fetch('/api/history/${entryId}').then(r => r.json()).then(e => (e.variations[0].renders || []).length === 1)`, 'it lands on its take', 20000);
+    eq(comfy.prompts.length, before + 1, 'one job in ComfyUI, not sent again');
+    eq(JSON.stringify(JSON.parse(await fs.readFile(path.join(dataDir, 'rendering.json'), 'utf8'))), '{}', 'and its note goes');
+    await waitFor('document.querySelector("#rendersBtn").hidden', 'nothing left rendering');
+  });
+
+  await test('rendering now: the top bar shows every render still going; open one, cancel one', async () => {
+    assert(!(await visible('#rendersBtn')), 'no pill while nothing renders');
+    await type('#theme', 'SLOWRENDER paper cranes in the wind');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('/[1-9]\\d*%/.test(document.querySelector(".take .rtile.running .rt-pct")?.textContent || "")', 'running');
+    await waitFor('!document.querySelector("#rendersBtn").hidden', 'the pill shows');
+    eq(await text('#rendersCount'), '2', 'it counts the renders left');
+    await click('#newBtn'); // the take (and its live tiles) leave the stage
+    await waitFor('!document.querySelector(".take")', 'stage cleared');
+    await click('#rendersBtn');
+    await waitFor('document.querySelectorAll("#rendersList .rp-row").length === 1', 'the panel lists it');
+    assert((await text('#rendersList .rp-row')).includes('paper cranes'), 'by its theme');
+    await waitFor('/Render [12] of 2/.test(document.querySelector("#rendersList .rp-stage").textContent)', 'with its progress');
+    await shot('40-rendering-now');
+    await click('#rendersList [data-rp="open"]');
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'Open brings the take back, rendering live');
+    eq(await value('#theme'), 'SLOWRENDER paper cranes in the wind', 'its take');
+    await click('#rendersBtn');
+    await click('#rendersList [data-rp="cancel"]');
+    await waitFor('document.querySelector("#rendersBtn").hidden', 'cancelled: the pill goes', 10000);
+    await waitFor('!document.querySelector(".take .rtile.running")', 'and the live tiles stop');
+    eq((await (await fetch(`${APP}/api/renders`)).json()).length, 0, 'nothing left running');
+  });
+
+  await test('assistant: closed by default, sees the renders and says which it likes; ratings; asks before deleting', async () => {
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    // With no choice saved, Ask leaves room for the work.
+    // (ready is cleared first, so the wait below can't be met by the page that's going away)
+    await js('localStorage.removeItem("pm.assistantOpen")');
+    await reloadPage();
+    assert(!(await visible('#assistant')), 'the assistant starts closed');
+    await click('#askBtn');
+    try {
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a red balloon over the rooftops');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'a render to look at', 10000);
+
+    await type('#asInput', 'Which of these renders do you like best?');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('take 1, render 1'), `it gives an opinion: ${await bot()}`);
+    assert(await count('#asLog .as-seen img') >= 1, 'the chat shows what it looked at');
+    const sent = JSON.stringify(lastCall().messages);
+    assert(/data:image\/jpeg;base64,/.test(sent), 'the Brain got the pictures');
+
+    // Renders you made, found by what they show (not just the newest ones).
+    await type('#asInput', 'show me my renders of the red balloon over rooftops');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Found them') && (await bot()).includes('red balloon'), `it finds renders by the words of their prompt: ${await bot()}`);
+    await type('#asInput', 'show me my renders of a purple elephant skating');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('None of your renders'), `and says so when none match: ${await bot()}`);
+
+    await type('#asInput', 'rate the first one excellent');
+    await press('Enter');
+    await idle();
+    assert((await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join("|")')).includes('Rated excellent'), 'rated');
+    const fav = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).filter(r => r.rating === 3);
+    assert(fav.length >= 1, 'saved as excellent');
+
+    await type('#asInput', 'pick the best one for a poster');
+    await press('Enter');
+    await idle();
+    const picked = await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join("|")');
+    assert(picked.includes('Picked') && picked.includes('the light is softer'), `it looks, picks one and says why: ${picked}`);
+    assert(await js('!document.querySelector("#dropzone .dz-preview").hidden && !!document.querySelector("#roleBlock .role.active[data-value=reference]")'), 'and puts it in step 3 as the reference');
+    await js('document.querySelector("#imageClear").click()');
+    assert(/reads better\. Rated ★★(★)?\. Step 3/.test(picked), `and rates it (never lower than it was): ${picked}`);
+
+    // Judging: every unrated render gets a rating for the purpose; a clear failure is hidden, with the reason.
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length >= 3 && !document.querySelector(".take .rtile.running")', 'two more renders', 15000);
+    await type('#asInput', 'judge the renders for a poster');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Rated 1 of 2 (1 ★★★)') && (await bot()).includes('hid 1 that failed') && (await bot()).includes('warped hands'), `rates them, hides the failure and says why: ${await bot()}`);
+    const judged = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => (v.renders || []).map(r => ({ ...r, entry: e.id }))));
+    const gone = judged.filter(r => r.hidden);
+    eq(gone.length, 1, 'one hidden, none deleted');
+    eq(judged.filter(r => r.rating === 3).length, 2, 'the one rated before kept its rating, the good one got ★★★');
+    await fetch(`${APP}/api/history/${gone[0].entry}/renders/${gone[0].id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hidden: false }) });
+
+    const before = (await (await fetch(`${APP}/api/history`)).json()).length;
+    await type('#asInput', 'delete this prompt');
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'it asks on screen first');
+    await click('#asLog [data-confirm="no"]');
+    await idle();
+    assert((await bot()).includes('kept it'), 'and keeps it when you say no');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, before, 'nothing deleted');
+    await waitFor('!!document.querySelector("#asLog .as-msg.bot")', 'saved');
+    await sleep(300);
+    assert(!(await fs.readFile(path.join(dataDir, 'assistant.json'), 'utf8')).includes('data:image'), 'pictures it saw aren\'t saved to disk');
+    } finally {
+      if (await visible('#assistant')) {
+        await click('#asClear'); // a fresh conversation for the tests after this
+        await click('#asClear');
+        await click('#asClose');
+      }
+    }
+  });
+
+  await test('history: opening a card puts back everything it was made with, render setup too', async () => {
+    const flows = async () => (await fetch(`${APP}/api/workflows`)).json();
+    const picked = await js('document.querySelector(".take .rb-wf")?.selectedOptions[0]?.textContent || ""');
+    const flow = (await flows()).find(f => f.modelId === 'krea2-raw' && f.name === picked);
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'fixed', value: 4242 } }) });
+    await reloadPage();
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a glass of lemonade on a porch');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-count button[data-value="2"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered ×2', 10000);
+    // Change the setup: random seed, ×1, another prompt.
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'random' } }) });
+    await reloadPage();
+    await type('#theme', 'something else entirely');
+    await click('.tabs button[data-view="history"]');
+    await waitFor(`[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("a glass of lemonade"))`, 'the card');
+    const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("a glass of lemonade")) + 1`);
+    await click(`.hcard:nth-of-type(${n}) [data-act="open"]`);
+    await waitFor('document.querySelector("#theme").value === "a glass of lemonade on a porch"', 'the theme is back');
+    await waitFor('document.querySelector(".take .rb-count .active")?.dataset.value === "2"', 'renders per take back to ×2');
+    const seed = (await flows()).find(f => f.id === flow.id).seed;
+    eq(seed.mode, 'fixed', 'the seed mode is back');
+    eq(seed.value, 4242, 'and the seed');
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seedPatch: { mode: 'random' } }) });
+  });
+
+  await test('render all takes at once', async () => {
+    await click('#varSeg button[data-value="2"]');
+    await type('#theme', 'twin lighthouses');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector("#renderAllBtn")', 'render-all button');
+    const before = comfy.prompts.length;
+    await click('#renderAllBtn');
+    await waitFor(`document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")`, 'both takes rendered', 12000);
+    eq(comfy.prompts.length, before + 2, 'one render per take');
+    await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('shared render panel: selected takes, differing settings, reset and empty selection', async () => {
+    assert(await js('document.querySelector(".shared-render-body").hidden'), 'collapsed by default');
+    await click('.shared-toggle');
+    await waitFor('!!document.querySelector("#sharedRender .rb-params")', 'shared editor');
+    await click('.shared-take[data-index="1"]');
+    await waitFor('!!document.querySelector("#sharedRender .rb-params")', 'selected editor');
+    const steps = '#sharedRender [data-kind="steps"] input';
+    await type(steps, '7');
+    await js(`document.querySelector(${JSON.stringify(steps)}).dispatchEvent(new Event('change', { bubbles: true }))`);
+    await click('.shared-take[data-index="1"]');
+    await waitFor('!!document.querySelector("#sharedRender .rb-params")', 'both selected');
+    // Re-enter the displayed value: it must reach the second take even if the first already has it.
+    await js(`document.querySelector(${JSON.stringify(steps)}).dispatchEvent(new Event('change', { bubbles: true }))`);
+    const before = comfy.prompts.length;
+    await click('#sharedRender .rb-go');
+    await waitFor(`document.querySelectorAll(".take .rtile img").length === 4 && !document.querySelector(".take .rtile.running")`, 'selected renders', 15000);
+    eq(comfy.prompts.length, before + 2, 'both selected takes rendered');
+    assert(comfy.prompts.slice(-2).every(p => p.prompt['3'].inputs.steps === 7), 'same edit reaches differing takes');
+    await click('.shared-take[data-index="1"]');
+    await waitFor('!!document.querySelector("#sharedRender .rb-same")', 'reset available');
+    await click('#sharedRender .rb-same');
+    assert(!(await text('.take:nth-child(1) .rb-settings')).includes('own sampler'), 'selected take reset');
+    assert((await text('.take:nth-child(2) .rb-settings')).includes('own sampler'), 'unselected take unchanged');
+    await click('.shared-take[data-index="0"]');
+    assert((await text('#sharedRender')).includes('Select a take above'), 'empty selection explained');
+    await click('.shared-take[data-index="0"]');
+    await click('.shared-take[data-index="1"]');
+    await waitFor('!!document.querySelector("#sharedRender .rb-same")', 'both available');
+    await click('#sharedRender .rb-same');
+    // Documentation uses only the isolated test data; remove every prompt and seed from view.
+    await js(`document.querySelectorAll('.prompt-text, #theme').forEach(e => e.value = ''); document.querySelectorAll('.rb-seedval').forEach(e => e.value = '0'); document.querySelectorAll('.renders').forEach(e => e.hidden = true);`);
+    await js(`document.querySelector('#theme').placeholder = 'Describe your idea…'; document.querySelectorAll('.toast').forEach(e => e.remove());`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1100, deviceScaleFactor: 1, mobile: false });
+    await sleep(200);
+    await shot('shared-render');
+    await cdp.send('Emulation.setDeviceMetricsOverride', { ...vp, deviceScaleFactor: 1 });
+    await click('.shared-toggle');
+  });
+
+  await test('creator review: output totals, saved preference, Library selection and narrow filters', async () => {
+    await click('.tabs [data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg [data-value="4"]');
+    await js('localStorage.setItem("pm.autoRender.krea2-raw", "false")');
+    await goto(`${APP}/#create`);
+    eq(await text('#genLabel'), 'Write 4 prompts', 'existing review preference is preserved');
+    await click('#reviewFirst');
+    await click('#wfpRenders button[data-value="2"]');
+    eq(await text('#genLabel'), 'Make 8 images', 'four variations times two renders is explicit');
+    await goto(`${APP}/#create`);
+    eq(await text('#genLabel'), 'Make 8 images', 'direct creation is remembered');
+    await click('#reviewFirst');
+    await click('#varSeg [data-value="1"]');
+    await click('#wfpRenders button[data-value="1"]');
+    await click('.tabs [data-view="gallery"]');
+    if (await visible('#reelFilterClear')) await click('#reelFilterClear');
+    const candidates = await js('[...document.querySelectorAll("#reelGrid .reel-cell")].slice(0,3).map(c => c.dataset.key)');
+    assert(candidates.length === 3, 'at least three candidates');
+    await click('#reelSelect');
+    assert(await js('document.querySelector("#reelCompare").disabled'), 'comparison requires two');
+    await click('#reelGrid .reel-cell:nth-child(1) .rtile');
+    await click('#reelGrid .reel-cell:nth-child(3) .rtile');
+    eq(await text('#reelSelCount'), '2 selected', 'nonadjacent choices selected');
+    await click('#reelCompare');
+    eq(await count('#lbStage .lb-pane'), 2, 'two large comparison panes');
+    assert((await text('#lbStage')).includes('Pin on the left'), 'pinning is explicit');
+    await viewport(390, 844, true);
+    assert(await js('[...document.querySelectorAll("#lbStage .lb-pane")].every(e => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })'), 'both comparison panes fit on a phone');
+    await viewport(1440, 900);
+    await press('Escape');
+    // ⬇ Download: the two picked come as one .zip holding both files, as they are.
+    eq(await text('#reelSelCount'), '2 selected', 'still picked after comparing');
+    await click('#reelSelDownload');
+    await toastText('Downloading 2 renders as one .zip');
+    const zip = await js(`(async () => {
+      const files = [...document.querySelectorAll("#reelGrid .reel-cell.picked")].map(c => c.dataset.file);
+      const r = await fetch("/api/renders/download", { method: "POST", body: new URLSearchParams({ files: JSON.stringify([...files, "../settings.json"]) }) });
+      const b = new Uint8Array(await r.arrayBuffer());
+      const sizes = await Promise.all(files.map(f => fetch("/renders/" + encodeURIComponent(f)).then(x => x.arrayBuffer()).then(x => x.byteLength)));
+      const text = new TextDecoder().decode(b);
+      return { status: r.status, type: r.headers.get("content-type"), named: r.headers.get("content-disposition"), magic: b[0] === 0x50 && b[1] === 0x4b && b[2] === 3 && b[3] === 4,
+        length: b.length, sizes, names: files.map(f => text.includes(f.split("/").pop())), settings: text.includes("settings.json") };
+    })()`);
+    eq(zip.status, 200, 'the zip is served');
+    eq(zip.type, 'application/zip', 'as a zip');
+    assert(/attachment; filename="prompt-maker-2-renders-/.test(zip.named), 'saved under a plain name');
+    assert(zip.magic && zip.names.every(Boolean), 'a zip with both files in it');
+    assert(zip.length > zip.sizes[0] + zip.sizes[1], 'the files whole');
+    assert(!zip.settings, 'nothing from outside the renders folder');
+    await click('#reelSelect');
+    // Browsing ★★★ in the full-screen view, one rated ★★ leaves it (↶ Undo puts it back).
+    const rated = await js('[...document.querySelectorAll("#reelGrid .reel-cell:not([data-rating=\'1\']):not([data-rating=\'2\']):not([data-rating=\'3\'])")].slice(0, 2).map(c => (c.querySelector(".rate-bar [data-rate=\'3\']").click(), c.dataset.key))');
+    await waitFor(`${JSON.stringify(rated)}.every(k => document.querySelector(\`#reelGrid .reel-cell[data-key="\${k}"]\`)?.dataset.rating === "3")`, 'two rated excellent');
+    const before3 = await js('document.querySelectorAll("#reelGrid .reel-cell[data-rating=\'3\']").length');
+    await click('#reelRated button[data-min="3"]');
+    eq(await count('#reelGrid .reel-cell'), before3, 'only the excellent ones');
+    await click('#reelGrid .reel-cell:nth-child(1) .rtile');
+    assert((await text('#lbInfo')).includes(`1 of ${before3}`), 'browsing the excellent ones');
+    await press('2');
+    await toastText('it no longer fits your filters');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("1 of ${before3 - 1}")`, 'it left what is browsed');
+    await click('#toast .toast-act');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("1 of ${before3}")`, 'Undo puts it back');
+    // Browsed on first, rated with the side panel's stars: it leaves too.
+    await press('ArrowRight');
+    await click('[data-lb-rate="2"]');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("of ${before3 - 1}")`, 'browsed to and rated out: it left');
+    await click('#toast .toast-act');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("2 of ${before3}")`, 'Undo puts it back where it was');
+    // In ⇆ Compare, the one browsed beside the pinned one leaves when its stars rate it out; the pinned one stays.
+    await click('[data-lb="compare"]');
+    await click('#lbStage [data-side="right"] [data-rate="1"]');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("of ${before3 - 1}")`, 'rated out in Compare: it left');
+    await click('#toast .toast-act');
+    await waitFor(`document.querySelector("#lbInfo").textContent.includes("of ${before3}")`, 'Undo puts it back');
+    await press('Escape');
+    eq(await count('#reelGrid .reel-cell'), before3, 'still excellent after Undo');
+    await click('#reelRated button[data-min="3"]');
+    for (const k of rated) await js(`document.querySelector('#reelGrid .reel-cell[data-key="${k}"] .rate-bar [data-rate="3"]').click()`);
+    await waitFor(`${JSON.stringify(rated)}.every(k => document.querySelector(\`#reelGrid .reel-cell[data-key="\${k}"]\`)?.dataset.rating === "0")`, 'ratings taken off again');
+    await viewport(390, 844, true);
+    assert(await visible('#reelFind'), 'search remains visible');
+    await js('if (document.querySelector("#reelFilterToggle").getAttribute("aria-expanded") === "true") document.querySelector("#reelFilterToggle").click()'); // (opened earlier to reach a chip)
+    assert(!(await visible('#reelFilterOptions')), 'the filters fold behind the Filters button');
+    await click('#reelFilterToggle');
+    assert(await visible('#reelFilterOptions'), 'Filters reveals all choices');
+    await type('#reelFind', 'lighthouse');
+    assert((await text('#reelFilterToggle')).includes('1'), 'active filter count');
+    await click('#reelFilterClear');
+    eq(await value('#reelFind'), '', 'clear removes the query');
+    await viewport(1440, 900);
+    // The finer filters: when, shape, not rated, and the menus of what the renders were made with.
+    const shown = await count('#reelGrid .reel-cell');
+    if (await js('document.querySelector("#reelFilterToggle").getAttribute("aria-expanded") === "true"')) await click('#reelFilterToggle');
+    assert(!(await visible('#reelWhen')), 'the finer filters wait under Filters');
+    await click('#reelFilterToggle');
+    assert(await visible('#reelWhen'), 'Filters opens them');
+    const today = await js('[...document.querySelectorAll("#reelGrid .reel-cell .rt-cap span")].filter(s => /\\d:\\d\\d/.test(s.textContent)).length'); // (a card made today shows its time, an older one its date)
+    await click('#reelWhen [data-when="today"]');
+    eq(await count('#reelGrid .reel-cell'), today, 'the ones made today');
+    await click('#reelWhen [data-when="older"]');
+    const older = await count('#reelGrid .reel-cell');
+    assert(older <= shown - today && (await js('[...document.querySelectorAll("#reelGrid .reel-cell .rt-cap span")].every(s => !/\\d:\\d\\d/.test(s.textContent))')), 'none of the older ones was made today');
+    await click('#reelWhen [data-when="older"]');
+    eq(await count('#reelGrid .reel-cell'), shown, 'a second click lets go of the filter');
+    const landscape = await js('[...document.querySelectorAll("#reelGrid .reel-cell")].filter(c => c.getBoundingClientRect().width > c.getBoundingClientRect().height * 1.05).length');
+    await click('#reelShape [data-shape="landscape"]');
+    eq(await count('#reelGrid .reel-cell'), landscape, 'only the wide ones');
+    await click('#reelUnrated');
+    assert((await text('#reelFilterToggle')).includes('2'), 'two filters on');
+    assert(await js('[...document.querySelectorAll("#reelGrid .reel-cell .rate-bar .on")].length === 0'), 'none of them rated');
+    await click('#reelRated button[data-min="1"]');
+    eq(await js('document.querySelector("#reelUnrated").getAttribute("aria-pressed")'), 'false', 'a star filter lets go of Not rated');
+    assert(await visible('#reelWorkflow') || (await count('#reelWorkflow option')) < 3, 'the workflow menu shows once there is a choice');
+    const seed = await js('document.querySelector("#reelGrid .reel-cell .rt-meta, #reelGrid .reel-cell .rt-cap")?.textContent.match(/seed (\\d+)/)?.[1] || ""');
+    await click('#reelFilterClear');
+    if (seed) {
+      await type('#reelFind', seed);
+      assert((await count('#reelGrid .reel-cell')) >= 1 && (await count('#reelGrid .reel-cell')) < shown, 'search finds a seed');
+      await click('#reelFilterClear');
+    }
+    eq(await count('#reelGrid .reel-cell'), shown, 'all back');
+    await viewport(1440, 900);
+    await click('.tabs [data-view="create"]');
+  });
+
+  await test('batches: named, each its own count and prompts; run one or all in order; Stop; saved', async () => {
+    await openPanel('create-settings');
+    await openPanel('create-render');
+    await openPanel('create-render-batch');
+    assert(await visible('#batchBox'), 'Batch shows once the model has a workflow');
+    eq(await value('#batchPick'), '', 'no batch at first');
+
+    // A new batch: you name it, pick how many images and how its prompts work.
+    await click('#batchAdd');
+    eq(await js('document.activeElement.classList.contains("b-name")'), true, 'ready to be named');
+    await type('#batchList li:nth-child(1) .b-name', 'Hero shots');
+    await press('Enter');
+    await type('#batchList li:nth-child(1) .b-count input', '4');
+    await press('Enter');
+    eq(await text('#batchList li:nth-child(1) .b-count span'), 'images', 'counted in images for an image model');
+    await click('#batchList li:nth-child(1) [data-mode="same"]');
+    eq(await text('#batchPick option:checked'), '🎞 Hero shots · 4 images, one prompt', 'picked, and says what it is');
+    eq(await text('#genLabel'), 'Make 4 images', 'the button promises the total output');
+    eq(await text('#genCost'), '🎞 4 images, one prompt', 'what it will do');
+    assert(await js('[...document.querySelectorAll("#varSeg button")].every(b => b.disabled)'), 'Takes are set by the batch');
+    assert(!(await visible('#wfpAutoRow')) && !(await visible('#wfpRenders')), 'a batch always renders and counts its own: no auto-render switch, no renders per take');
+    await js('document.querySelector("#renderStep").scrollIntoView({ block: "center" })');
+    await shot('batch');
+
+    // One prompt, four renders, a new seed each; the History entry carries the batch's name.
+    await type('#theme', 'a paper boat in the rain');
+    let before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('/Hero shots/.test(document.querySelector("#outcomeHint").textContent)', 'progress above the button');
+    await genDone();
+    eq(await count('.take'), 1, 'one prompt written');
+    eq(await count('.take .rtile img'), 4, 'rendered four times');
+    let sent = comfy.prompts.slice(before);
+    eq(sent.length, 4, 'four renders queued');
+    eq(new Set(sent.map(p => p.prompt['6'].inputs.text)).size, 1, 'all of the same prompt');
+    eq(new Set(sent.map(p => p.prompt['3'].inputs.seed)).size, 4, 'a new seed each');
+    await toastText('“Hero shots” done: 4 images');
+    assert((await text('#stageHead')).includes('🎞 Hero shots'), 'the takes say which batch they came from');
+
+    // A second batch with its own choice: a different prompt each.
+    await click('#batchAdd');
+    await type('#batchList li:nth-child(2) .b-name', 'Explore');
+    await press('Enter');
+    await type('#batchList li:nth-child(2) .b-count input', '3');
+    await press('Enter');
+    await click('#batchList li:nth-child(2) [data-mode="different"]');
+    eq(await js('[...document.querySelectorAll("#batchList [data-mode].active")].map(b => b.dataset.mode).join("|")'), 'same|different', 'each batch keeps its own choice');
+
+    // All batches, one after another: each its own takes and History entry.
+    await choose('#batchPick', '*');
+    eq(await text('#genLabel'), 'Make 7 images', 'the button totals every batch');
+    eq(await text('#genCost'), '🎞 2 batches · 7 images', 'how much in all');
+    before = comfy.prompts.length;
+    await click('#generateBtn');
+    await genDone();
+    sent = comfy.prompts.slice(before);
+    eq(sent.length, 7, '4 + 3 renders');
+    eq(new Set(sent.slice(4).map(p => p.prompt['6'].inputs.text)).size, 3, '“Explore”: a different prompt each');
+    eq(await count('.take'), 3, 'the stage shows the last batch');
+    await toastText('All 2 batches done: 7 images');
+    const tagged = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).slice(0, 2).map(e => e.batch).join('|');
+    eq(tagged, 'Explore|Hero shots', 'one History entry per batch, named after it');
+
+    // Stop: what's running is cancelled, nothing new starts, finished renders stay.
+    await type('#batchList li:nth-child(2) .b-count input', '8');
+    await press('Enter');
+    await choose('#batchPick', await js('document.querySelector("#batchList li:nth-child(2)").dataset.id'));
+    before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('!!document.querySelector(".take .rtile.running")', 'the batch started rendering', 15000);
+    await click('#stopBtn');
+    await genDone();
+    assert(comfy.prompts.length - before < 8, 'the rest never started');
+    await toastText('Batch stopped');
+
+    // Saved: still there after a reload. Delete, with undo.
+    await goto(`${APP}/#create`);
+    eq(await js('[...document.querySelectorAll("#batchList .b-name")].map(i => i.value).join("|")'), 'Hero shots|Explore', 'batches are saved');
+    eq(await text('#genLabel'), 'Make 8 images', 'and so is the pick');
+    await openPanel('create-render-batch');
+    await click('#batchList li:nth-child(2) .b-del');
+    eq(await count('#batchList li'), 1, 'deleted');
+    eq(await value('#batchPick'), '', 'its pick went with it');
+    // The other batch changes before the undo: that change stays.
+    await js('(() => { const i = document.querySelector("#batchList li .b-count input"); i.value = "7"; i.dispatchEvent(new Event("change", { bubbles: true })); })()');
+    await click('#toast .toast-act');
+    await waitFor('document.querySelectorAll("#batchList li").length === 2', 'undo brings it back');
+    eq(await js('[...document.querySelectorAll("#batchList .b-name")].map(i => i.value).join("|")'), 'Hero shots|Explore', 'where it was');
+    eq(await value('#batchList li .b-count input'), '7', 'and what changed meanwhile is kept');
+    await choose('#batchPick', '');
+    eq(await text('#genLabel'), 'Write prompt', 'no batch: prompt review again');
+    assert(!(await js('document.querySelector("#varSeg button").disabled')), 'Takes are yours again');
+  });
+
+  await test('history cards show the latest render', async () => {
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    const idx = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("a lighthouse at dusk")) + 1');
+    assert(await js(`!!document.querySelector('.hcard:nth-of-type(${idx}) .hthumb img[src^="/renders/"]')`), 'render as the thumbnail');
+    assert(/\d+ renders/.test(await text(`.hcard:nth-of-type(${idx}) .hthumb .tag`)), 'render count');
+  });
+
+  await test('brains: cards, records, suggestions, own Thinking level, Quick check', async () => {
+    // a refusal counts against the Brain
+    await click('.tabs button[data-view="create"]');
+    await type('#theme', 'REFUSETEST a quiet harbor');
+    await click('#generateBtn');
+    await genDone();
+
+    // the picker suggests Brains for the model on Create, with the reason
+    const group = await js('document.querySelector("#llmSelect optgroup")?.label');
+    assert(group.startsWith('Suggested for'), `first group is the suggestions (got "${group}")`);
+    assert(await js('[...document.querySelectorAll("#llmSelect optgroup:first-of-type option")].some(o => o.value === "mock/vision-8b" && /rendered/.test(o.textContent))'), 'the Brain you rendered with is suggested, saying why');
+
+    await click('.tabs button[data-view="models"]');
+    await click('.tabs button[data-view="brains"]');
+    await waitFor('document.querySelector(\'.brain[data-id="mock/vision-8b"]\')?.textContent.includes("refused 1×")', 'Brain cards, with the refusal counted');
+    eq(await js('location.hash'), '#brains', 'own address');
+    assert(await visible('#modelsPane') === false, 'model editor hidden');
+    eq(await js('document.querySelector("#brainList .brain").dataset.id'), 'mock/vision-8b', 'the Brain in use comes first');
+    const card = await text('.brain[data-id="mock/vision-8b"]');
+    assert(card.includes('per prompt'), 'speed from your runs');
+    assert(/\d+ rendered/.test(card), 'record from History');
+    assert(card.includes('8B · Q4_K_M · 6.2 GB') && card.includes('🛠 tools'), "LM Studio's facts");
+    assert((await text('.brain[data-id="mock/fable"]')).includes('switches it off another way'), 'thinking behavior learned earlier');
+    assert(!(await js('document.querySelector("#brainsNew").hidden')), 'unused Brains are folded away');
+    assert(await js('!!document.querySelector("#brainListNew .brain[data-id=\\"mock/fresh\\"]")'), 'the never-used Brain is in the fold');
+
+    // a Brain's own Thinking level wins over Settings
+    await choose('.brain[data-id="mock/thinker"] select[data-act="thinking"]', 'default');
+    await toastText("Thinking Model's default");
+    await click('.brain[data-id="mock/thinker"] button[data-act="use"]');
+    await toastText('Brain: Mock Thinker 9B');
+    assert((await js('document.querySelector("#llmBox").title')).includes("Thinking: Model's default (this Brain's own setting)"), 'tooltip shows its own level');
+    await click('.tabs button[data-view="create"]');
+    await type('#theme', 'a paper boat on a pond');
+    await click('#generateBtn');
+    await genDone();
+    eq(lastCall().reasoning_effort, undefined, 'its own level was used');
+    await click('.tabs button[data-view="models"]');
+    await choose('.brain[data-id="mock/thinker"] select[data-act="thinking"]', '');
+    await toastText('follows Settings (Off)');
+    await click('.brain[data-id="mock/vision-8b"] button[data-act="use"]');
+    await toastText('Brain: Mock Vision 8B');
+
+    // Quick check: loads the Brain, writes an image and a video prompt; text-only Brains skip the image test
+    await js('document.querySelector("#brainsNew").open = true');
+    const before = mockCalls();
+    await click('.brain[data-id="mock/fresh"] button[data-act="check"]');
+    await toastText('Mock Fresh 3B passed the Quick check');
+    eq(mock.loadedKeys().join(), 'mock/fresh', 'loaded first, alone');
+    eq(mockCalls(), before + 2, 'then an image and a video prompt');
+    const fresh = await text('#brainList .brain[data-id="mock/fresh"]');
+    assert(fresh && /✓ image .*✓ video/.test(fresh) && !fresh.includes('sees images'), 'results on its card, out of the fold');
+    await click('.brain[data-id="mock/vision-8b"] button[data-act="check"]');
+    await toastText('Mock Vision 8B · Q4_K_M passed the Quick check');
+    assert((await text('.brain[data-id="mock/vision-8b"]')).includes('✓ sees images'), 'vision test passed');
+    await shot('brains');
+    await click('.tabs button[data-view="models"]');
+    eq(await js('location.hash'), '#models', 'back to the model editor');
+  });
+
+  await test('brain picker: find a Brain and reverse use, name and rating sorts; Brains page search', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('#llmPick');
+    assert(await visible('#llmMenu'), 'menu opens');
+    eq(await js('document.activeElement.id'), 'llmSearch', 'focus in the search box');
+    await type('#llmSearch', 'think');
+    eq(await count('#llmList [role="option"]'), 1, 'narrowed to one');
+    eq(await text('#llmList [role="option"] mark'), 'Think', 'match highlighted');
+    await press('Enter');
+    await toastText('Brain: Mock Thinker 9B');
+    assert(!(await visible('#llmMenu')), 'closed after picking');
+    eq(await value('#llmSelect'), 'mock/thinker', 'Brain set');
+    eq(await text('#llmPickName'), 'Mock Thinker 9B', 'button shows it');
+
+    // words in any order, arrow keys move the highlight
+    await click('#llmPick');
+    await type('#llmSearch', '8b vision');
+    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id).join()'), 'mock/vision-8b', 'every word must match');
+    await type('#llmSearch', 'mock');
+    await press('ArrowDown');
+    eq(await js('document.querySelector("#llmList .active").dataset.i'), '1', 'arrow moves the highlight');
+    await type('#llmSearch', 'vision');
+    await press('Enter');
+    await toastText('Brain: Mock Vision 8B');
+
+    // last used: the Brain that just wrote comes first
+    await type('#theme', 'a kite over the dunes');
+    await click('#generateBtn');
+    await genDone();
+    mock.resetLoaded(); // four loaded again, as the mock starts (the app leaves one Brain loaded)
+    await click('#llmRefresh');
+    await toastText('models found in LM Studio');
+    await click('#llmPick');
+    await choose('#llmSort', 'recent');
+    eq(await js('[...document.querySelectorAll("#llmList .grp")].map(g => g.textContent).join("|")'), 'In use|Last used|Not used yet', 'the Brain in use on top, then grouped by use');
+    eq(await js('document.querySelector("#llmList .grp + [role=option]").dataset.id'), 'mock/vision-8b', 'in use: the current Brain');
+    assert((await text('#llmList [data-id="mock/vision-8b"] .d')).includes('Used just now'), 'says when');
+    await type('#llmSearch', 'mo');
+    await shot('brain-picker');
+    await type('#llmSearch', '');
+    await click('#llmSortDirection');
+    assert((await text('#llmSortDirection')).includes('Oldest first'), 'the direction button reverses Last used to oldest first');
+    assert((await text('#llmList .grp')).includes('In use'), 'the Brain in use stays easy to reach when reversed');
+    assert((await text('#llmList')).includes('First used'), 'the used Brains are grouped as First used');
+    await choose('#llmSort', 'name');
+    const names = await js('[...document.querySelectorAll("#llmList .grp:last-of-type ~ [role=option]")].map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
+    eq(names.join('|'), [...names].sort((a, b) => a.localeCompare(b)).join('|'), 'A to Z');
+    eq(await text('#llmSortDirection'), '↑ A–Z', 'the active direction is visible');
+    await click('#llmSortDirection');
+    const reverseNames = await js('[...document.querySelectorAll("#llmList .grp:last-of-type ~ [role=option]")].map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
+    eq(reverseNames.join('|'), [...names].reverse().join('|'), 'clicking Name again sorts Z to A');
+    eq(await text('#llmSortDirection'), '↓ Z–A', 'the reverse direction is visible');
+    await choose('#llmSort', 'smart');
+    // Filters: any number at once, with counts; All clears them.
+    await click('#llmFilters [data-trait="vision"]');
+    assert(await js('[...document.querySelectorAll("#llmList [role=option]")].every(o => [...o.querySelectorAll(".d span")].some(s => s.textContent === "Vision"))'), 'vision only');
+    assert(!(await js('!!document.querySelector(\'#llmList [data-id="mock/text-only"]\')')), 'text-only Brains hidden');
+    assert(/Vision \d+/.test(await text('#llmFilters [data-trait="vision"]')), 'with a count');
+    await click('#llmFilters [data-trait="loaded"]');
+    eq(await js('[...document.querySelectorAll("#llmFilters [aria-pressed=true]")].map(b => b.dataset.trait).join("|")'), 'vision|loaded', 'two at once');
+    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id).join("|")'), 'mock/vision-8b|mock/small-room', 'only Brains that are both (the small-room Brain is loaded and sees too)');
+    eq(await js('document.querySelector("#llmFilters").scrollWidth <= document.querySelector("#llmFilters").clientWidth'), true, 'the filters wrap instead of running off the menu');
+    await click('#llmFilters [data-all]');
+    eq(await js('document.querySelectorAll("#llmFilters [data-trait][aria-pressed=true]").length'), 0, 'All clears them');
+    // Faces on every row (😞 😐 🙂 🤩): click one to rate the Brain in the list, without picking it; the same face again removes it.
+    eq(await count('#llmList [data-id="mock/text-only"] .llm-faces button'), 4, 'each Brain row has four faces');
+    await click('#llmList [data-id="mock/text-only"] [data-rate="2"]');
+    await waitFor(`fetch('/api/llms').then(r=>r.json()).then(r=>r.models.find(m=>m.id==='mock/text-only').rating===2)`, 'the star saves the rating');
+    assert(await visible('#llmMenu'), 'rating keeps the menu open');
+    eq(await value('#llmSelect'), 'mock/vision-8b', 'rating does not pick the Brain');
+    eq(await count('#llmList [data-id="mock/text-only"] .llm-faces button.on'), 1, 'that face lit');
+    eq(await js('document.querySelector(\'#llmList [data-id="mock/text-only"] .llm-faces button.on\').textContent'), '🙂', 'the smile');
+    await click('#llmList [data-id="mock/text-only"] [data-rate="-1"]');
+    await waitFor(`fetch('/api/llms').then(r=>r.json()).then(r=>r.models.find(m=>m.id==='mock/text-only').rating===-1)`, 'Poor is its own rating, not the same as none');
+    eq(await js('document.querySelector(\'#llmList [data-id="mock/text-only"] .llm-faces button.on\').textContent'), '😞', 'the sad face');
+    await click('#llmList [data-id="mock/text-only"] [data-rate="2"]');
+    await waitFor(`fetch('/api/llms').then(r=>r.json()).then(r=>r.models.find(m=>m.id==='mock/text-only').rating===2)`, 'back to Good');
+    eq(await js('document.activeElement.id'), 'llmSearch', 'focus back in the search box');
+    await click('#llmList [data-id="mock/text-only"] [data-rate="2"]');
+    await waitFor(`fetch('/api/llms').then(r=>r.json()).then(r=>r.models.find(m=>m.id==='mock/text-only').rating===0)`, 'the same star again removes the rating');
+    eq(await count('#llmList [data-id="mock/text-only"] .llm-faces button.on'), 0, 'no face lit');
+    await press('Escape');
+    assert(!(await visible('#llmMenu')), 'Esc closes');
+
+    // Models → Brains: search and sort
+    await click('.tabs button[data-view="models"]');
+    await click('.tabs button[data-view="brains"]');
+    await type('#brainSearch', 'fresh');
+    eq(await js('[...document.querySelectorAll("#brainList .brain")].map(b => b.dataset.id).join()'), 'mock/fresh', 'search narrows the cards');
+    await type('#brainSearch', 'zzz');
+    assert((await text('#brainsEmpty')).includes('No Brain matches'), 'says when nothing matches');
+    await type('#brainSearch', '');
+    await click('.brain-sort button[data-sort="name"]');
+    const cards = await js('[...document.querySelectorAll("#brainList .brain .brain-name")].map(n => n.textContent)');
+    eq(cards.join('|'), [...cards].sort((a, b) => a.localeCompare(b)).join('|'), 'cards A to Z, none folded');
+    assert(await js('document.querySelector("#brainsNew").hidden'), 'no fold when sorted by name');
+    await click('.brain-sort button[data-sort="name"]');
+    const reverseCards = await js('[...document.querySelectorAll("#brainList .brain .brain-name")].map(n => n.textContent)');
+    eq(reverseCards.join('|'), [...cards].reverse().join('|'), 'cards reverse to Z to A');
+    await click('.brain-sort button[data-sort="fit"]');
+    await click('.tabs button[data-view="models"]');
+  });
+
+  await test('workflows: upload an API file, pick between two, export, delete', async () => {
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    await click('#addWorkflowBtn');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [apiWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapPrompt select'), '6|text', 'mapped from an API file too');
+    assert(await js('document.querySelector(\'#samplerCtl .sp-field[data-key="3|cfg"] input\').disabled'), 'CFG 1 is locked');
+    await click('#samplerCtl .sp-field[data-key="3|cfg"] .sp-unlock');
+    assert(!(await js('document.querySelector(\'#samplerCtl .sp-field[data-key="3|cfg"] input\').disabled')), 'unlocks on request');
+    await type('#wfName', 'Uploaded API flow');
+    await click('#wfSave');
+    await toastText('is ready');
+    eq(await count('#wfList .wf-row'), 2, 'two workflows');
+    await click('#wfList .wf-row:nth-child(2) [data-act="export"]');
+    await toastText('Workflow exported');
+    await click('#wfList .wf-row:nth-child(2) [data-act="delete"]');
+    await click('#wfList .wf-row:nth-child(2) [data-act="delete"]');
+    await waitFor('document.querySelectorAll("#wfList .wf-row").length === 1', 'deleted');
+  });
+
+  await test('create: pick, add, edit and delete workflows without leaving Create', async () => {
+    const picked = () => js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent');
+    const optionId = name => js(`[...document.querySelectorAll("#wfpSelect option")].find(o => o.textContent === ${q(name)})?.value`);
+    const setupOpen = () => waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'workflow setup open');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await openPanel('create-render');
+    assert(await visible('#wfpBox'), 'picker shown');
+    eq(await count('#wfpSelect option'), 1, 'one workflow');
+    eq(await picked(), 'Mock T2I', 'it is picked');
+    assert((await text('#wfpSettings')).includes('dpmpp_2m'), 'its sampler settings are shown');
+    assert((await text('#comfyState')).includes('ComfyUI ready'), 'ComfyUI status');
+
+    await click('#wfpAdd');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    assert((await text('#wfDialogTitle')).includes('Krea 2 RAW'), 'adds to the model picked on Create');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [apiWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    await type('#wfName', 'Turbo flow');
+    await click('#wfSave');
+    await toastText('is ready');
+    assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'still on Create');
+    eq(await count('#wfpSelect option'), 2, 'two workflows');
+    eq(await picked(), 'Turbo flow', 'the new one is picked');
+    assert((await text('#wfpSettings')).includes('CFG 1 🔒'), 'its settings are shown');
+    const mockId = await optionId('Mock T2I');
+    const turboId = await optionId('Turbo flow');
+
+    await type('#theme', 'a paper boat in a gutter stream');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rb-wf")', 'render bar');
+    eq(await value('.take .rb-wf'), turboId, 'the take uses the picked workflow');
+    await choose('#wfpSelect', mockId);
+    eq(await value('.take .rb-wf'), mockId, 'the take follows the picker');
+    assert((await text('.take .rb-settings')).includes('dpmpp_2m'), 'and so do its settings');
+    await choose('.take .rb-wf', turboId);
+    eq(await value('#wfpSelect'), turboId, 'the picker follows the take');
+    await choose('#wfpSelect', mockId);
+
+    await click('#wfpEdit');
+    await setupOpen();
+    eq(await value('#wfName'), 'Mock T2I', 'editing the picked workflow');
+    assert(await visible('#wfDelete'), 'delete offered while editing');
+    await type('#samplerCtl .sp-field[data-key="3|steps"] input', '9');
+    await shot('31-wf-edit-from-create');
+    await click('#wfSave');
+    await toastText('Workflow updated');
+    await waitFor('document.querySelector("#wfpSettings").textContent.includes("9 steps")', 'picker shows the new steps');
+    assert((await text('.take .rb-settings')).includes('9 steps'), 'the take shows them too');
+    await click('#wfpSettings');
+    await setupOpen();
+    await waitFor('document.activeElement?.closest("#samplerCtl")', 'settings chips jump to the sampler'); // on the next frame
+    await click('#wfClose');
+
+    await choose('#wfpSelect', turboId);
+    await click('#wfpEdit');
+    await setupOpen();
+    await click('#wfDelete');
+    await click('#wfDelete');
+    await toastText('Workflow removed');
+    assert(!(await js('document.querySelector("#wfDialog").open')), 'dialog closed');
+    eq(await count('#wfpSelect option'), 1, 'one left');
+    eq(await value('.take .rb-wf'), mockId, 'the take falls back to the one left');
+
+    await click('#renderStep .switch');
+    assert(await js('document.querySelector("#wfpAuto").checked'), 'auto-render on');
+    await toastText('Auto-render on');
+    let before = comfy.prompts.length;
+    await type('#theme', 'a red kite over the dunes');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered with no click', 10000);
+    eq(comfy.prompts.length, before + 1, 'one render queued by itself');
+    eq(comfy.prompts.at(-1).prompt['6'].inputs.text, await value('.take .prompt-text'), 'the new take was sent');
+    // Renders per take sits under the switch: ×2 renders each new take twice, and the take's Render bar starts there.
+    await openPanel('create-render');
+    assert(await visible('#wfpRenders'), 'renders per take shows with a workflow, no chain needed');
+    await click('#wfpRenders button[data-value="2"]');
+    before = comfy.prompts.length;
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'two renders with no click', 12000);
+    eq(comfy.prompts.length, before + 2, 'two renders queued by themselves');
+    eq(await js('document.querySelector(".take .rb-count .active")?.dataset.value'), '2', 'the Render bar starts at ×2');
+    await click('#wfpRenders button[data-value="1"]');
+    await click('.take .rb-count button[data-value="1"]');
+    before = comfy.prompts.length;
+    await click('.take .refine input');
+    await click('.take .chips button');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 3 && !document.querySelector(".take .rtile.running")', 'refined take rendered too', 12000);
+    eq(comfy.prompts.length, before + 1, 'refining renders again');
+    await shot('32-auto-render', { full: true });
+    await click('#renderStep .switch');
+    assert(!(await js('document.querySelector("#wfpAuto").checked')), 'auto-render off again');
+
+    await viewport(390, 844, true);
+    await sleep(200);
+    eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');
+    await shot('33-picker-phone', { full: true });
+    await viewport(1440, 900);
+
+    await click('.model-card[data-id="ltx-2-3"]');
+    assert(await visible('#wfpEmpty'), 'a model with no workflows gets the add prompt');
+    assert(!(await visible('#wfpBox')), 'and no picker');
+    assert((await text('#wfpEmpty')).includes('videos'), 'video wording');
+    await click('#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    assert((await text('#wfDialogTitle')).includes('LTX'), 'adds to LTX');
+    await click('#wfClose');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('create: your own prompt, word for word, with no Brain', async () => {
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(!(await js('document.querySelector("#manualMode").checked')), 'off by default');
+    eq(await text('[data-panel="create-theme"] h2'), 'Your idea', 'the Brain writes from your idea');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
+    assert(await visible('#roleBlock'), 'the Brain asks how to use the image');
+    await click('.manual-row .switch');
+    await toastText('Your own prompt');
+    eq(await text('[data-panel="create-theme"] h2'), 'Your prompt', 'step 2 is your prompt now');
+    assert(!(await visible('#roleBlock')) && !(await visible('#roleHint')), 'the image goes in as it is: no role to pick');
+    assert(!(await visible('#surpriseBtn')) && !(await visible('#lengthField')) && !(await visible('#tempField')), 'the Brain\'s dials step aside');
+    assert(!(await visible('#wfpAutoRow')) && !(await visible('#wfpRenders')), 'no auto-render switch: your own prompt always renders, Takes counts them');
+    assert(!(await visible('#chainStep')), 'no chain: its steps are written by the Brain');
+    eq(await text('#takesLabel'), 'Pictures', 'Variations becomes the number of finished outputs');
+    await click('#varSeg button[data-value="2"]');
+    eq(await text('#genLabel'), 'Make 2 images', 'the button says what it makes');
+    const prompt = 'masterpiece, (red kite:1.3) over dunes, 35mm — keep EXACTLY as typed';
+    await type('#theme', prompt);
+    const calls = mockCalls();
+    const before = comfy.prompts.length;
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered twice with no click', 15000);
+    eq(mockCalls(), calls, 'no Brain was asked');
+    eq(await count('.take'), 1, 'one take');
+    eq(await value('.take .prompt-text'), prompt, 'the take is your text');
+    eq(comfy.prompts.length, before + 2, 'two renders');
+    eq(comfy.prompts.at(-1).prompt['6'].inputs.text, prompt, 'ComfyUI got it word for word');
+    assert((await text('#stageHead')).includes('your own prompt'), 'the stage says who wrote it');
+    assert(!(await text('.take .meter')).includes('target'), 'no Brain length target to meet');
+    eq(await text('.take .rb-count .active'), '×2', 'the take shows the renders it got');
+    const entry = (await js('fetch("/api/history").then(r => r.json())'))[0];
+    assert(entry.manual && entry.imageFile && !entry.llmModel, 'History keeps it as yours, with the image');
+    await shot('33a-own-prompt', { full: true });
+
+    await click('.manual-row .switch');
+    await toastText('Brain writes the prompts again');
+    assert(await js('!document.querySelector("#tempField").hidden') && await visible('#roleBlock') && !(await js('document.querySelector("#chainStep").hidden')), 'writing options are restored under More options, and image and chain controls return');
+    eq(await text('#takesLabel'), 'Takes', 'prompt takes again');
+    await click('#imageClear');
+    await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('step 3: a workflow with two picture slots grows a second slot; both go to the Brain and the render, an empty optional one is left out', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await openPanel('create-render');
+    await click((await visible('#wfpAdd')) ? '#wfpAdd' : '#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [twoPicFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapImage'), '11|image', 'the first Load Image is the picture');
+    await type('#wfName', 'Mock 2 pics');
+    await click('#wfSave');
+    await toastText('is ready');
+    await waitFor('!document.querySelector("#extraSlots").hidden', 'a second slot shows');
+    eq(await count('#extraSlots .xslot'), 1, 'one extra slot');
+    assert((await text('#extraSlots .xslot-label')).includes('Another picture') && (await text('#extraSlots .xslot-label')).includes('optional'), 'named by the node, optional');
+    if (!(await visible('.dz-preview'))) { await setFiles('#imageInput', [fixture]); await waitFor('!document.querySelector(".dz-preview").hidden', 'first picture'); }
+    await setFiles('#extraSlots .xslot input[type="file"]', [fixture]);
+    await waitFor('document.querySelector("#extraSlots .xslot").classList.contains("filled")', 'the second picture is in');
+    await toastText('Another picture added');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'two pictures together');
+    await click('#generateBtn');
+    await genDone();
+    const sent = lastCall().messages.findLast(m => m.role === 'user' && Array.isArray(m.content));
+    eq(sent.content.filter(p => p.type === 'image_url').length, 2, 'the Brain got both pictures');
+    assert(sent.content.find(p => p.type === 'text').text.includes('MORE PICTURES') && sent.content.find(p => p.type === 'text').text.includes('Another picture'), 'and was told what the second is');
+    let entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    eq(entry.theme, 'two pictures together', 'saved');
+    assert(entry.images?.[0] && entry.imageSlots?.length === 2, 'with the second picture and the slots');
+    const uploads = comfy.uploads.length;
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running") && !!document.querySelector(".take .rtile img")', 'rendered', 15000);
+    for (const t = Date.now(); comfy.prompts.length <= before && Date.now() - t < 5000;) await sleep(50);
+    let p = comfy.prompts.at(-1).prompt;
+    assert(comfy.uploads.length >= uploads + 2, 'both pictures uploaded');
+    assert(p['11'].inputs.image.startsWith('prompt-maker_') && p['12'].inputs.image.startsWith('prompt-maker_') && p['13'], 'both slots filled in the workflow');
+    // The optional slot emptied: the render leaves its node, and its helper, out.
+    await click('#extraSlots .xslot [data-act="clear"]');
+    await waitFor('!document.querySelector("#extraSlots .xslot").classList.contains("filled")', 'slot empty again');
+    await click('#generateBtn');
+    await genDone();
+    entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    assert(!entry.images?.length, 'no extra picture saved');
+    const before2 = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running") && !!document.querySelector(".take .rtile img")', 'rendered again', 15000);
+    for (const t = Date.now(); comfy.prompts.length <= before2 && Date.now() - t < 5000;) await sleep(50);
+    p = comfy.prompts.at(-1).prompt;
+    assert(p['11'] && !p['12'] && !p['13'], 'the empty slot and its helper are left out');
+    // Tidy up: the workflow goes, the first picture too.
+    await click('#wfpEdit');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfDelete").hidden', 'editing it');
+    await click('#wfDelete');
+    await click('#wfDelete');
+    await waitFor('!document.querySelector("#wfDialog").open', 'deleted');
+    await waitFor('document.querySelector("#extraSlots").hidden', 'slots gone with the workflow');
+    await click('#imageClear');
+  });
+
+  await test('chain: animate a still (first frame at full quality, linked both ways)', async () => {
+    await click('.model-card[data-id="ltx-2-3"]');
+    await click('#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [i2vWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#mapImage'), '11|image', 'the Load Image node takes the frame');
+    await type('#wfName', 'Mock I2V');
+    await click('#wfSave');
+    await toastText('is ready');
+    assert((await text('#wfpWarn')).includes('needs an input image'), 'warns that this workflow wants a frame');
+
+    await click('.model-card[data-id="krea2-raw"]');
+    await type('#theme', 'a lighthouse keeper on the rocks');
+    await click('#generateBtn');
+    await genDone();
+    const stillText = await value('.take .prompt-text');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rcell .rt-next") && !document.querySelector(".take .rtile.running")', 'still rendered, with Animate', 10000);
+
+    await click('.take .rcell .rt-next');
+    await waitFor('document.querySelector(".model-card.active")?.dataset.id === "ltx-2-3" && !document.querySelector(".dz-preview").hidden && !document.querySelector("#dzSource").hidden', 'still loaded as the first frame');
+    await toastText('Ready to animate');
+    assert((await text('#dzSource')).startsWith('🔗 From Krea 2 RAW · take 1 · seed'), 'the image says where it came from');
+    eq(await js('document.querySelector("#roleBlock .role.active")?.dataset.value'), 'animate', 'animate is picked');
+    eq(await value('#theme'), '', 'the theme is free for the motion');
+    assert(await visible('#themeUndo'), 'the still\'s theme can come back');
+    assert((await js('document.querySelector("#theme").placeholder')).startsWith('What happens?'), 'the box asks what happens');
+    assert(!(await visible('#wfpWarn')), 'the image-to-video workflow fits');
+    await shot('34-animate-ready', { full: true });
+
+    await type('#theme', 'the keeper raises a lantern');
+    await click('#generateBtn');
+    await genDone();
+    const asked = JSON.stringify(mock.log.at(-1).messages);
+    assert(asked.includes('PREVIOUS STEP') && asked.includes(stillText.slice(0, 60)), 'the LLM gets the still\'s prompt as context');
+    assert((await text('#srcLink')).includes('from Krea 2 RAW · take 1'), 'results link back to the still');
+    const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'the keeper raises a lantern');
+    eq(entry.source.text, stillText, 'the link keeps the still\'s prompt');
+    assert(/\.png$/.test(entry.source.file), 'the link points at the original render');
+
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'video rendered', 10000);
+    eq(comfy.uploads.at(-1), `prompt-maker_${entry.source.file}`, 'ComfyUI got the original render, not the smaller copy');
+    eq(comfy.prompts.at(-1).prompt['11'].inputs.image, `prompt-maker_${entry.source.file}`, 'and it went into the first-frame input');
+    await shot('35-animated', { full: true });
+
+    await click('#srcLink');
+    await waitFor('document.querySelector("#theme").value === "a lighthouse keeper on the rocks"', 'back on the still');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'with its model');
+
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    assert(await js('[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("the keeper raises a lantern") && c.querySelector(".hsrc")?.textContent.includes("from Krea 2 RAW"))'), 'History shows the link');
+    await click('.tabs button[data-view="create"]');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert(await visible('[data-lb="animate"]'), 'the lightbox offers Animate this');
+    await press('Escape');
+  });
+
+  await test('workflows: edits made in ComfyUI are noticed and pulled in, setup kept', async () => {
+    const setupOpen = () => waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'workflow setup open');
+    await click('.model-card[data-id="krea2-raw"]');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Mock T2I', 'the ComfyUI workflow is picked');
+    assert(!(await visible('#wfpStale')), 'up to date at first');
+    const id = await value('#wfpSelect');
+    comfy.editSaved(w => { w.nodes.find(n => n.id === 7).widgets_values[0] = 'ugly, deformed'; return w; });
+    await js('window.dispatchEvent(new Event("focus"))'); // coming back from the ComfyUI tab
+    await waitFor('!document.querySelector("#wfpStale").hidden', 'noticed the edit made in ComfyUI');
+    assert((await text('#wfpStale')).includes('was changed in ComfyUI'), 'says what happened');
+    assert(await visible('.take .rb-stale'), 'the take\'s render bar says so too');
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    assert((await text('#wfList')).includes('changed in ComfyUI'), 'Models shows it too');
+    await click('.tabs button[data-view="create"]');
+    await shot('36-wf-changed');
+    await click('#wfpStale button');
+    await toastText('updated');
+    assert(!(await visible('#wfpStale')), 'notice gone');
+    const w = await (await fetch(`${APP}/api/workflows/${id}`)).json();
+    eq(w.prompt['7'].inputs.text, 'ugly, deformed', 'the new version is in');
+    eq(JSON.stringify(w.mapping.prompt), JSON.stringify([{ node: '6', input: 'text' }]), 'prompt spot kept');
+    eq(w.overrides['3|steps'], 9, 'sampler tweaks kept');
+
+    await type('#theme', 'a quiet harbor at dawn');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    eq(comfy.prompts.at(-1).prompt['7'].inputs.text, 'ugly, deformed', 'ComfyUI got the updated workflow');
+    eq(comfy.prompts.at(-1).prompt['3'].inputs.steps, 9, 'with your tweaks');
+
+    // The prompt node got a new id in ComfyUI: that part of the setup can't be kept, so the setup opens for a check.
+    comfy.editSaved(wf => {
+      wf.nodes.find(n => n.id === 6).id = 16;
+      wf.links.forEach(l => { if (l[1] === 6) l[1] = 16; if (l[3] === 6) l[3] = 16; });
+      return wf;
+    });
+    await click('#wfpEdit');
+    await setupOpen();
+    eq(await text('#wfRefresh'), '↻ Update from ComfyUI', 'manual update offered');
+    await click('#wfRefresh');
+    await waitFor('!!document.querySelector("#wfWarnings .wf-note")', 'update note');
+    assert((await text('#wfWarnings .wf-note')).includes('Couldn\'t keep where the prompt went'), 'explains what needs a check');
+    eq(await value('#mapPrompt select'), '16|text', 'a new spot was picked for the prompt');
+    await shot('37-wf-updated-review');
+    await click('#wfSave');
+    await toastText('Workflow updated');
+    await click('#wfpEdit');
+    await setupOpen();
+    await click('#wfRefresh');
+    await waitFor('document.querySelector("#wfWarnings .wf-note")?.textContent.includes("Already up to date")', 'nothing new');
+    await click('#wfClose');
+  });
+
+  await test('chains: build one in Chains, pick the stills, continue to video', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="2"]');
+    eq(await count('.chain-card'), 0, 'no Then steps yet');
+    await click('#chainBox [data-act="add"]');
+    eq(await count('.chain-card'), 1, 'a Then step');
+    eq(await value('.chain-card [data-f="modelId"]'), 'ltx-2-3', 'a video model by default');
+    eq(await value('.chain-card [data-f="use"]'), 'animate', 'the still becomes the first frame');
+    eq(await js('document.querySelector(".chain-card [data-f=workflowId]").selectedOptions[0].textContent'), 'Mock I2V', 'an image-to-video workflow is picked');
+    assert(await js('document.querySelector(\'.chain-gate button[data-gate="pick"]\').classList.contains("active")'), 'you pick by default');
+    eq(await text('#genLabel'), 'Run all steps', 'the button describes the chain');
+    eq(await text('#genCost'), '⛓ 2 stills → you pick → videos', 'it says what it will make');
+    await click('.tabs [data-view="create"]');
+    await openPanel('create-render');
+    assert((await visible('#wfpRenders')) && !(await visible('#wfpAutoRow')), 'step 5 asks for renders per take instead');
+    await type('.chain-card [data-f="direction"]', 'a calm sea');
+    eq(await js('[document.querySelector(\'.chain-card [data-f="duration"]\').type, document.querySelector(\'.chain-card [data-f="duration"]\').min, document.querySelector(\'.chain-card [data-f="duration"]\').max].join()'), 'range,1,20', 'duration is a 1–20 s slider');
+    await js(`(() => { const r = document.querySelector('.chain-card [data-f="duration"]'); r.value = 7; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    eq(await text('.chain-card .cc-dur output'), '7s', 'the slider shows its seconds');
+    assert((await text('.chain-card .cc-title small')).endsWith('7s'), 'and the step\'s summary too');
+    await type('#theme', 'a lighthouse in a storm');
+    await shot('38-chain-built', { full: true });
+    const before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('!document.querySelector("#runStrip").hidden', 'run strip');
+    await waitFor('document.querySelectorAll(".take .rt-pick").length === 2', 'two stills to pick from', 20000);
+    eq(comfy.prompts.length, before + 2, 'each take rendered once');
+    assert((await text('#runStrip .rs-status')).includes('Pick'), 'waiting for you');
+    assert(await js('document.querySelector(\'#runStrip [data-act="continue"]\').disabled'), 'nothing picked yet');
+    await click('.take .rt-pick');
+    eq(await text('#runStrip [data-act="continue"]'), 'Continue ▶ 1', 'one picked');
+    await type('.chain-card [data-f="direction"]', 'the waves crash against the rocks'); // decided after seeing the stills
+    await shot('39-chain-pick', { full: true });
+    await click('#runStrip [data-act="continue"]');
+    await waitFor('document.querySelectorAll("#runStrip .rs-step:last-child .rs-chip").length === 1', 'step 2 started', 15000);
+    await waitFor('document.querySelector("#runStrip .rs-status")?.textContent.includes("Done")', 'chain done', 20000);
+    await toastText('Chain done');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'the form still shows step 1');
+    assert((await text('#stageHead')).includes('LTX 2.3') && (await text('#srcLink')).includes('from Krea 2 RAW'), 'the stage shows the video step, linked to its still');
+    const asked = JSON.stringify(mock.log.at(-1).messages);
+    assert(asked.includes('THEME: the waves crash against the rocks') && asked.includes('PREVIOUS STEP'), 'step 2 got the direction as changed while picking, and the still\'s prompt');
+    const all = await (await fetch(`${APP}/api/history`)).json();
+    const root = all.find(e => e.chain?.step === 0 && e.theme === 'a lighthouse in a storm');
+    const child = all.find(e => e.chain?.runId === root.chain.runId && e.chain.step === 1);
+    eq(root.chain.steps.length, 2, 'the run remembers its steps');
+    eq(child.source.entryId, root.id, 'step 2 links to step 1');
+    eq(child.duration, '7s', 'step 2 rendered at the slider\'s duration');
+    eq(comfy.uploads.at(-1), `prompt-maker_${child.source.file}`, 'the original still went to ComfyUI');
+    await shot('40-chain-done', { full: true });
+    await click('.take .refine input');
+    await click('.take .chips button');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'refined the video prompt');
+    await click('#runStrip .rs-step:first-child .rs-chip');
+    await waitFor('document.querySelector("#stageHead")?.textContent.includes("Krea 2 RAW")', 'step 1 back on stage');
+    assert(await js('[...document.querySelectorAll(".take .rt-pick")].some(b => b.textContent.includes("Used"))'), 'the still that went on is marked');
+    await click('#runStrip .rs-step:last-child .rs-chip');
+    await waitFor('document.querySelector(".take .vlabel")?.textContent === "v2/2"', 'the run kept the refined version');
+  });
+
+  await test('chains: the Brain picks the best still, and only it goes on', async () => {
+    await click('.chain-gate button[data-gate="brain"]');
+    await click('#varSeg button[data-value="2"]');
+    await click('#wfpRenders button[data-value="2"]');
+    eq(await text('#genCost'), '⛓ 4 stills → 🧠 the best one → 1 video', 'four stills, one video');
+    const before = comfy.prompts.length;
+    await type('#theme', 'a hot air balloon at dawn');
+    await click('#generateBtn');
+    await toastText('the Brain picked take 1', 30000);
+    await waitFor('document.querySelector("#runStrip .rs-status")?.textContent.includes("Done")', 'ran straight through', 30000);
+    eq(comfy.prompts.length, before + 5, 'four stills and one video, no clicks');
+    const all = await (await fetch(`${APP}/api/history`)).json();
+    const root = all.find(e => e.chain?.step === 0 && e.theme === 'a hot air balloon at dawn');
+    const kids = all.filter(e => e.chain?.runId === root.chain.runId && e.chain.step === 1);
+    eq(kids.length, 1, 'one still went on');
+    eq(kids[0].source.renderId, root.variations[0].renders[1].id, 'the one the Brain named (number 2 of 4)');
+    await click('#wfpRenders button[data-value="1"]');
+    await click('.chain-gate button[data-gate="pick"]');
+    // ☐ Let AI choose sets every step's gate at once, and the default for steps added later.
+    assert(!(await js('document.querySelector(\'#chainBox [data-act="brain-all"]\').checked')), 'Let AI choose is off while you pick');
+    await click('#chainBox [data-act="brain-all"]');
+    assert(await js('[...document.querySelectorAll(".chain-gate")].every(g => g.querySelector(\'[data-gate="brain"]\').classList.contains("active"))'), 'on: the AI picks at every step');
+    eq(await js('JSON.parse(localStorage.getItem("pm.chain")).steps.every(st => st.gate === "brain")'), true, 'and it is kept with the chain');
+    await click('#chainBox [data-act="brain-all"]');
+    assert(await js('[...document.querySelectorAll(".chain-gate")].every(g => g.querySelector(\'[data-gate="pick"]\').classList.contains("active"))'), 'off: back to you picking');
+  });
+
+  await test('chains: auto runs straight through; save, reload, load, export, delete', async () => {
+    await click('.chain-gate button[data-gate="auto"]');
+    await click('#varSeg button[data-value="1"]');
+    eq(await text('#genCost'), '⛓ 1 still → 1 video', 'auto goes the whole way');
+    await click('#chainBox [data-act="save"]');
+    await type('.chain-save input', 'My still to video');
+    await press('Enter');
+    await toastText('Saved the chain');
+    eq(await js('document.querySelector(".cr-item.on button")?.textContent'), 'My still to video', 'listed and active');
+    const before = comfy.prompts.length;
+    await type('#theme', 'a fox in the snow');
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#runStrip .rs-status")?.textContent.includes("Done")', 'ran straight through', 25000);
+    eq(comfy.prompts.length, before + 2, 'one still and one video, no clicks');
+    await goto(`${APP}/#create`);
+    eq(await count('.chain-card'), 1, 'the chain being built survives a reload');
+    eq(await text('#genLabel'), 'Run all steps', 'still a chain');
+    await click('.chain-card [data-act="remove"]');
+    eq(await count('.chain-card'), 0, 'step removed');
+    eq(await text('#genLabel'), 'Write prompt', 'back to a single step');
+    await click('.cr-item button[data-recipe="my-still-to-video"]');
+    await toastText('is set up');
+    eq(await count('.chain-card'), 1, 'loading the chain brings its step back');
+    assert((await value('.chain-card [data-f="direction"]')).includes('waves'), 'with its settings');
+    assert(await js('document.querySelector(\'.chain-gate button[data-gate="auto"]\').classList.contains("active")'), 'and its gate');
+    assert(await visible('.cr-item button[data-recipe="still-to-video"]'), 'the starter chains are there too');
+    await click('.cr-item.on [data-act="export"]');
+    await toastText('Exported');
+    await click('.cr-item.on [data-act="delete-recipe"]');
+    await click('.cr-item.on [data-act="delete-recipe"]');
+    await toastText('Deleted the chain');
+    assert(!(await js('!!document.querySelector(\'[data-recipe="my-still-to-video"]\')')), 'gone from the list');
+    eq(await count('.chain-card'), 1, 'its steps stay in the form');
+  });
+
+  await test('chains: starter chains find your workflows; History reopens a run', async () => {
+    await click('.cr-item button[data-recipe="still-to-video"]');
+    eq(await count('.chain-card'), 1, 'one Then step');
+    eq(await js('document.querySelector(".chain-card [data-f=workflowId]").selectedOptions[0]?.textContent'), 'Mock I2V', 'the starter chain found your image-to-video workflow');
+    eq(await text('#genCost'), '⛓ 2 stills → you pick → videos', 'two stills, then you pick');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    const idx = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("a lighthouse in a storm") && c.querySelector(".tag.chain")) + 1');
+    assert(idx > 0, 'the run is in History, marked as a chain');
+    await click(`.hcard:nth-of-type(${idx}) button.open`);
+    await waitFor('!document.querySelector("#runStrip").hidden', 'run reopened');
+    eq(await count('#runStrip .rs-step'), 2, 'both steps');
+    eq(await count('#runStrip .rs-chip'), 2, 'the still and the video');
+    eq(await value('#theme'), 'a lighthouse in a storm', 'the form gets step 1 back');
+    assert(await js('[...document.querySelectorAll(".chain-card [data-f=direction]")].some(t => t.value.includes("waves"))'), 'and the chain as it ran');
+    await click('#tabPipeline');
+    assert(await visible('#runStrip [data-act="continue"]'), 'a finished run can still send another still on');
+    await click('#resultsList .take:nth-of-type(2) .rt-pick');
+    await click('#runStrip [data-act="continue"]');
+    await waitFor('document.querySelectorAll("#runStrip .rs-step:last-child .rs-chip").length === 2 && document.querySelector("#runStrip .rs-status").textContent.includes("Done")', 'a second video from the other still', 20000);
+    await click('#runStrip .rs-step:first-child .rs-chip');
+    await waitFor('document.querySelectorAll(".take .rt-pick").length === 2 && [...document.querySelectorAll(".take .rt-pick")].every(b => b.textContent.includes("Used"))', 'both stills now marked as used');
+    await viewport(390, 844, true);
+    await sleep(200);
+    eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');
+    await shot('41-chain-phone', { full: true });
+    await viewport(1440, 900);
+    await click('#runStrip [data-act="close"]');
+    assert(!(await visible('#runStrip')), 'closed');
+    while (await count('.chain-card')) await click('.chain-card [data-act="remove"]');
+  });
+
+  await test('LoRAs: the workflow\'s own and yours, from the model\'s folder, with strengths', async () => {
+    await openPanel('create-render-adv');
+    const lora = sel => `#wfpLoras ${sel}`;
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#wfpAdd');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [loraWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    await type('#wfName', 'Mock LoRA flow');
+    await click('#wfSave');
+    await toastText('is ready');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Mock LoRA flow', 'picked');
+    eq(await count(lora('.lora-row')), 1, 'the workflow\'s own LoRA is listed');
+    assert((await text(lora('.lora-row'))).includes('baked_in') && (await text(lora('.lora-row'))).includes('in workflow'), 'named, and marked as part of the workflow');
+    eq(await value(lora('.lora-row .lr-num')), '0.50', 'at the workflow\'s strength');
+    await type(lora('[data-key="20"] .lr-num'), '0.8');
+    await press('Enter');
+    await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-reset')}')`, 'changed, with ↺ to go back');
+
+    await click(lora('[data-act="lora-add"]'));
+    await waitFor(`document.querySelectorAll('${lora('.lp-list button')}').length > 0`, 'the LoRA list');
+    eq(await value(lora('.lp-folder')), 'krea2', 'the model\'s folder is picked for you');
+    eq(await js(`[...document.querySelectorAll('${lora('.lp-list button')}')].map(b => b.dataset.lora).join(',')`), 'krea2/detail_slider.safetensors,krea2/film_grain.safetensors', 'only Krea LoRAs, minus the one already in');
+    await type(lora('.lp-search'), 'grain');
+    eq(await count(lora('.lp-list button')), 1, 'search narrows it');
+    await click(lora('.lp-list button'));
+    eq(await count(lora('.lora-row')), 2, 'added');
+    eq(await js(`[document.querySelector('${lora('.lr-range')}').min, document.querySelector('${lora('.lr-range')}').max].join()`), '-5,5', 'the slider spans −5 to 5');
+    await type(lora('[data-key="+0"] .lr-num'), '100');
+    await press('Enter');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(await value('#wfpSelect'))})?.loras.added[0]?.strength === 100)`, 'a typed 100 is kept as 100');
+    eq(`${await value(lora('[data-key="+0"] .lr-num'))}|${await value(lora('[data-key="+0"] .lr-range'))}`, '100.00|5', 'the box shows it, the slider sits at its end');
+    await type(lora('[data-key="+0"] .lr-num'), '-0.5');
+    await press('Enter');
+    await waitFor('document.querySelector("#wfpSettings").textContent.includes("2 LoRAs")', 'the chips count them');
+    await js('document.querySelector("#wfpLoras").scrollIntoView({ block: "center" })');
+    await shot('42-loras');
+
+    await type('#theme', 'a portrait in window light');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    let p = comfy.prompts.at(-1).prompt;
+    eq(p['20'].inputs.strength_model, 0.8, 'the workflow\'s LoRA re-weighted');
+    eq(p.pm_lora_1?.inputs.lora_name, 'krea2/film_grain.safetensors', 'yours went in');
+    eq(p.pm_lora_1.inputs.strength_model, -0.5, 'at your strength');
+    eq(JSON.stringify(p.pm_lora_1.inputs.model), '["4",0]', 'right after the model loader');
+    eq(JSON.stringify(p['20'].inputs.model), '["pm_lora_1",0]', 'feeding the rest of the chain');
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert((await text('#lbInfo')).includes('baked_in 0.80, film_grain -0.50'), 'the lightbox lists the LoRAs it used');
+    await press('Escape');
+
+    await click(lora('[data-key="20"] .switch'));
+    await waitFor(`document.querySelector('${lora('[data-key="20"]')}').classList.contains('off')`, 'switched off');
+    const id = await value('#wfpSelect');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)})?.loras.tweaks['20']?.on === false)`, 'saved');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered again', 10000);
+    p = comfy.prompts.at(-1).prompt;
+    assert(!p['20'], 'switched off: left out of the render entirely');
+    eq(JSON.stringify(p['3'].inputs.model), '["pm_lora_1",0]', 'the sampler gets your LoRA straight');
+
+    await goto(`${APP}/#create`);
+    eq(await count(lora('.lora-row')), 2, 'kept after a reload');
+    assert(await js(`document.querySelector('${lora('[data-key="20"]')}').classList.contains('off')`), 'still off');
+    await click('.model-card[data-id="ltx-2-3"]');
+    await click(lora('[data-act="lora-add"]'));
+    await waitFor(`document.querySelectorAll('${lora('.lp-list button')}').length > 0`, 'the LTX list');
+    eq(await value(lora('.lp-folder')), 'LTX_2.3', 'LTX gets its own folder');
+    eq(await js(`[...document.querySelectorAll('${lora('.lp-list button')}')].map(b => b.dataset.lora).join(',')`), 'LTX_2.3/motion_boost.safetensors', 'and only its LoRAs');
+    await press('Escape');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('LoRAs: a newer version in the folder is offered, one click swaps it; a missing one offers the version you have', async () => {
+    const lora = sel => `#wfpLoras ${sel}`;
+    const loras = OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0];
+    const id = await value('#wfpSelect');
+    const flowOf = () => js(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)}).loras)`);
+    const before = await flowOf();
+    loras.push('krea2/baked_in_v2.safetensors', 'krea2/baked_in_v3.safetensors', 'krea2/film_grain-000800.safetensors');
+    try {
+      await goto(`${APP}/#create`);
+      await openPanel('create-render-adv');
+      await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-newer')}')`, 'the newest version is offered');
+      eq(await text(lora('[data-key="20"] .lr-newer')), '🆕 v3', 'the newest, not just any newer one');
+      assert(!(await js(`document.querySelector('${lora('[data-key="+0"] .lr-newer')}')`)), 'a training step is no version of a LoRA without one');
+      const h = await js(`document.querySelector('${lora('[data-key="20"]')}').offsetHeight`);
+      await click(lora('[data-key="20"] .lr-newer'));
+      await toastText('Now using baked_in_v3');
+      assert((await text(lora('[data-key="20"] .lr-name'))).includes('baked_in_v3') && (await text(lora('[data-key="20"] .lr-name'))).includes('in place of baked_in'), 'it says what it replaced');
+      eq(await js(`document.querySelector('${lora('[data-key="20"]')}').offsetHeight`), h, 'the row keeps its height');
+      await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)}).loras.tweaks['20']?.name === 'krea2/baked_in_v3.safetensors')`, 'saved on the workflow');
+      eq((await flowOf()).tweaks['20'].strength, before.tweaks['20'].strength, 'same strength');
+      if (await js(`document.querySelector('${lora('[data-key="20"]')}').classList.contains('off')`)) await click(lora('[data-key="20"] .switch'));
+      if (!(await js('!!document.querySelector(".take .rb-go")'))) {
+        await type('#theme', 'a portrait in window light');
+        await click('#generateBtn');
+        await genDone();
+      }
+      const v3file = path.join(comfyRoot, 'models/loras/krea2/baked_in_v3.safetensors');
+      await fs.writeFile(v3file, 'aaa');
+      await click('.take .rb-go');
+      await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
+      eq(comfy.prompts.at(-1).prompt['20'].inputs.lora_name, 'krea2/baked_in_v3.safetensors', 'the render loads the new file');
+      // A LoRA switched in step ⑤ shows in an open take's ⚙ at once; one the take changed itself stays as the take has it.
+      await click('.take .rb-tune');
+      await waitFor('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"]:not(.off)\')', 'the take shows it on');
+      await click(lora('[data-key="20"] .switch'));
+      await waitFor('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"].off\')', 'switched off in step ⑤: off in the take too');
+      await click(lora('[data-key="20"] .switch'));
+      await waitFor('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"]:not(.off)\')', 'and on again');
+      await click('.take .rb-panel .rb-lora[data-key="20"] .switch');
+      await click(lora('[data-key="20"] .switch'));
+      await click(lora('[data-key="20"] .switch'));
+      await sleep(500);
+      assert(await js('!!document.querySelector(\'.take .rb-panel .rb-lora[data-key="20"].off\')'), 'the take\'s own choice stays');
+      await click('.take .rb-panel .rb-same');
+      await click('.take .rb-tune');
+
+      // The render remembers the file it used; replaced under the same name, the lightbox says so.
+      const made = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => v.renders || [])).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+      eq(made.loras.find(l => l.name === 'krea2/baked_in_v3.safetensors')?.file?.size, 3, 'the file it used is recorded');
+      // A ComfyUI on another computer: its model list says the same (also for a file named without its subfolder).
+      const remote = await comfyLib.loraFilesOverApi(`http://127.0.0.1:${COMFY_PORT}`, ['krea2/baked_in_v3.safetensors', 'baked_in_v3.safetensors', 'krea2/nope.safetensors']);
+      eq(`${remote['krea2/baked_in_v3.safetensors']?.size}|${remote['baked_in_v3.safetensors']?.size}|${remote['krea2/nope.safetensors']}`, '3|3|undefined', 'ComfyUI\'s model list gives sizes too');
+      assert(Math.abs(remote['krea2/baked_in_v3.safetensors'].mtime - made.loras.find(l => l.name === 'krea2/baked_in_v3.safetensors').file.mtime) <= 1000, 'and the same date');
+      await fs.writeFile(v3file, 'bbbbbb');
+      await click('.take .rtile');
+      await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+      await waitFor('document.querySelector("#lbInfo").textContent.includes("baked_in_v3 0.80 ⚠️ file changed since")', 'the replaced file is flagged');
+      await press('Escape');
+
+      // A file that's gone: the notice offers the version you have.
+      await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: { tweaks: { 20: { on: true, strength: 0.8, name: 'krea2/baked_in_v9.safetensors' } }, added: ${JSON.stringify(before.added)} } }) })`);
+      await goto(`${APP}/#create`);
+      await openPanel('create-render-adv');
+      await waitFor('!!document.querySelector("#wfpModels [data-act=mm-swap]")', 'the missing LoRA offers another version', 10000);
+      eq(await text('#wfpModels [data-act=mm-swap]'), 'Use v3', 'the newest one you have');
+      await click('#wfpModels [data-act=mm-swap]');
+      await waitFor('document.querySelector("#wfpModels").hidden', 'nothing missing any more', 10000);
+      eq((await flowOf()).tweaks['20'].name, 'krea2/baked_in_v3.safetensors', 'swapped');
+
+      // The assistant swaps versions too.
+      await click(lora('[data-key="20"] .lr-reset'));
+      await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-newer')}')`, 'back to the workflow\'s file');
+      await click('#askBtn');
+      await type('#asInput', 'use the newest baked_in');
+      await press('Enter');
+      await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+      const said = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+      assert(said.includes('baked_in_v3 in place of baked_in'), `the assistant swaps it: ${said}`);
+      eq((await flowOf()).tweaks['20'].name, 'krea2/baked_in_v3.safetensors', 'saved');
+      await click('#asClear');
+      await click('#asClear');
+      await click('#asClose');
+
+      // ↺ goes back to the workflow's own file; ✕ keeps it for good.
+      await click(lora('[data-key="20"] .lr-reset'));
+      await waitFor(`!!document.querySelector('${lora('[data-key="20"] .lr-newer')}')`, 'offered again');
+      await click(lora('[data-key="20"] .lr-newer-skip'));
+      assert(!(await js(`document.querySelector('${lora('[data-key="20"] .lr-newer')}')`)), 'not offered after ✕');
+      await goto(`${APP}/#create`);
+      await openPanel('create-render-adv');
+      await waitFor(`document.querySelectorAll('${lora('.lora-row')}').length === 2`, 'reloaded');
+      await sleep(500);
+      assert(!(await js(`document.querySelector('${lora('[data-key="20"] .lr-newer')}')`)), 'still not offered after a reload');
+    } finally {
+      loras.splice(loras.indexOf('krea2/baked_in_v2.safetensors'), 3);
+      await fs.rm(path.join(comfyRoot, 'models/loras/krea2/baked_in_v3.safetensors'), { force: true });
+      await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: ${JSON.stringify({ tweaks: before.tweaks, added: before.added })} }) })`);
+      await goto(`${APP}/#create`);
+    }
+  });
+
+  await test('queue: line up Generates while one cooks; each keeps its setup; Stop, ✕, hold and carry on', async () => {
+    const lora = sel => `#wfpLoras ${sel}`;
+    const setGrain = async v => { await type(lora('[data-key="+0"] .lr-num'), v); await press('Enter'); };
+    const comfyCount = async (n, label) => {
+      for (const t = Date.now(); comfy.prompts.length < n;) {
+        if (Date.now() - t > 15000) throw new Error(`Timed out waiting for ${label}`);
+        await sleep(50);
+      }
+    };
+    await openPanel('create-render');
+    await openPanel('create-render-adv');
+    await click('#varSeg button[data-value="1"]');
+    if (!(await js('document.querySelector("#wfpAuto").checked'))) await click('#wfpAutoRow');
+    assert(await js('document.querySelector("#wfpAuto").checked'), 'auto-render on');
+
+    await setGrain('0.3');
+    await type('#theme', 'SLOWTEST first in line');
+    const before = comfy.prompts.length;
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#generateBtn").classList.contains("cooking")', 'cooking');
+    assert(!(await js('document.querySelector("#generateBtn").disabled')), 'the button stays live while it cooks');
+    eq(await text('#genLabel'), 'Line up another', 'and says it lines the next one up');
+    assert(!(await visible('#lineBox')), 'nothing in line yet');
+
+    // Queued with its own setup: a different LoRA strength and theme.
+    await setGrain('0.9');
+    await type('#theme', 'a queued harbor');
+    await click('#generateBtn');
+    await toastText('In line');
+    assert((await text('#genCost')).includes('1 waiting'), 'the button counts the line');
+    eq(await count('#lineList li'), 1, 'one waiting');
+    assert((await text('#lineList li')).includes('a queued harbor'), 'listed by its theme');
+    assert((await text('#lineList li')).includes('Krea 2 RAW'), 'and what it is');
+
+    // Ctrl+Enter queues too; pressing it twice on the same form queues it once.
+    await type('#theme', 'FAILTEST queued');
+    await press('Enter', { ctrl: true });
+    await press('Enter', { ctrl: true });
+    await waitFor('document.querySelectorAll("#lineList li").length === 2', 'the second in line');
+    await sleep(300);
+    eq(await count('#lineList li'), 2, 'a double press queues it once');
+    await type('#theme', 'a queued lighthouse');
+    await press('Enter', { ctrl: true });
+    await waitFor('document.querySelectorAll("#lineList li").length === 3', 'the third in line');
+
+    // ✕ takes one out; ↶ Undo puts it back where it was.
+    await click('#lineList li:nth-child(2) .ln-del');
+    eq(await count('#lineList li'), 2, 'taken out');
+    await click('#toast .toast-act');
+    await waitFor('document.querySelectorAll("#lineList li").length === 3', 'put back');
+    assert((await text('#lineList li:nth-child(2)')).includes('FAILTEST'), 'in its old place');
+
+    await click('#queueClear');
+    await click('#queueClear');
+    assert(await js('document.querySelector("#lineBox").hidden'), 'Clear hides the emptied queue');
+    assert(!(await text('#genCost')).includes('waiting'), 'no queued work remains');
+    await click('#toast .toast-act');
+    await waitFor('document.querySelectorAll("#lineList li").length === 3', 'undo restores the whole queue');
+
+    // Setting up the next one doesn't touch those waiting.
+    await setGrain('0.1');
+    await type('#theme', 'typed after queueing');
+    await shot('queue');
+
+    // ■ Stop stops only the one cooking; the line carries on.
+    await click('#stopBtn');
+    await toastText('3 more in line');
+    await comfyCount(before + 1, 'the harbor render');
+    let p = comfy.prompts.at(-1).prompt;
+    assert(p['6'].inputs.text.includes('a queued harbor'), 'the queued theme was written and rendered');
+    eq(p.pm_lora_1?.inputs.strength_model, 0.9, 'with the LoRA strength it was queued with, not today\'s');
+
+    // A failure puts the line on hold, so the rest don't fail the same way.
+    await waitFor('document.querySelector("#lineBox").classList.contains("held")', 'on hold after the failure', 15000);
+    assert((await text('#lineHead')).includes('On hold'), 'says so');
+    eq(await count('#lineList li'), 1, 'the last one still waiting');
+    assert((await text('#stageError')).length > 0, 'the reason is on the stage');
+    await click('#lineGo');
+    await waitFor('document.querySelector("#lineBox").hidden', 'line empty', 15000);
+    await genDone();
+    await comfyCount(before + 2, 'the lighthouse render');
+    p = comfy.prompts.at(-1).prompt;
+    assert(p['6'].inputs.text.includes('a queued lighthouse'), 'the last one ran');
+    eq(p.pm_lora_1?.inputs.strength_model, 0.9, 'also as it was queued');
+    eq(await value('#theme'), 'typed after queueing', 'the form is as you left it');
+    const themes = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).slice(0, 2).map(e => e.theme).join('|');
+    eq(themes, 'a queued lighthouse|a queued harbor', 'each its own History entry, in order');
+    await waitFor('!document.querySelector(".take .rtile.running")', 'renders done', 10000);
+    assert(!(await js('document.querySelector("#generateBtn").classList.contains("cooking")')) && (await text('#genLabel')) !== 'Line up another', 'the button is itself again when nothing is cooking');
+
+    await setGrain('-0.5');
+    await click('#wfpAutoRow');
+  });
+
+  await test('assistant: sets up a shot, generates, adds a LoRA, explains; failures are safe', async () => {
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const acts = () => js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join(" | ")');
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    await click('#askBtn');
+    await waitFor('!document.querySelector("#assistant").hidden && document.activeElement === document.querySelector("#asInput")', 'panel open, ready to type');
+    assert(await visible('.as-hello'), 'a hello with starters');
+    await type('#asInput', 'Set up a 9:16 shot of a surfer at golden hour, 2 takes');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('All set'), 'it says what it did');
+    eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'model set');
+    eq(await value('#theme'), 'a surfer at golden hour', 'theme written');
+    eq(await value('#aspect'), '9:16', 'aspect set');
+    eq(await js('document.querySelector("#varSeg .active")?.dataset.value'), '2', 'takes set');
+    const a = await acts();
+    assert(a.includes('Model → Krea 2 RAW') && a.includes('Theme → “a surfer at golden hour”') && a.includes('aspect 9:16'), `each step shows: ${a}`);
+    assert(lastCall().messages[0].content.includes('"theme": "a surfer at golden hour"') && lastCall().tools.length > 20, 'the brain sees the app and its tools');
+    await shot('43-assistant');
+
+    await type('#asInput', 'go');
+    await press('Enter');
+    await idle();
+    eq(await count('#resultsList .take'), 2, 'two takes written');
+    assert((await bot()).includes('ready'), 'and it says so');
+
+    await type('#asInput', 'add the detail lora at 0.6');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('Added LoRA detail_slider at 0.60'), 'found the LoRA by part of its name');
+    assert((await text('#wfpLoras')).includes('detail_slider'), 'it\'s in step 5');
+
+    // Paste a picture into the message box: it goes with the message, and the Brain sees it.
+    await js(`(async () => {
+      const c = document.createElement('canvas'); c.width = 64; c.height = 64; const g = c.getContext('2d'); g.fillStyle = '#f0a'; g.fillRect(0, 0, 64, 64);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], 'pasted.png', { type: 'image/png' }));
+      document.querySelector('#asInput').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    })()`);
+    await waitFor('document.querySelectorAll("#asAttach img").length === 1', 'the pasted picture shows above the box');
+    assert(await js('document.querySelector("#dropzone .dz-preview").hidden'), 'and not in step 3');
+    await type('#asInput', 'what do you think of this picture?');
+    await press('Enter');
+    await idle();
+    assert(await js('!!document.querySelector("#asLog .as-msg.me .as-pics img")'), 'the picture is in your message');
+    const sent = lastCall().messages.findLast(m => m.role === 'user' && Array.isArray(m.content));
+    assert(sent && sent.content.some(p => p.type === 'image_url' && p.image_url.url.startsWith('data:image/jpeg')), 'the Brain got it, as a JPEG');
+    assert(!(await visible('#asAttach')), 'the strip is empty again');
+    eq(await count('#asLog .as-msg.bot'), await count('#asLog .as-msg.bot .as-copy'), 'every reply has a copy button');
+    await js('[...document.querySelectorAll("#asLog .as-msg.bot .as-copy")].at(-1).click()');
+    await waitFor('[...document.querySelectorAll("#asLog .as-msg.bot .as-copy")].at(-1).textContent.includes("Copied")', 'copied feedback');
+
+    await type('#asInput', 'how do I add a LoRA?');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Add LoRA'), 'answers from the guide');
+
+    await type('#asInput', 'switch to the bogus model');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('There\'s no model called “nonexistent”'), 'a failing tool is shown, nothing breaks');
+    assert((await bot()).includes('no model by that name'), 'and it tells you');
+
+    await type('#asInput', 'switch to ltx then krea');
+    await press('Enter');
+    await idle();
+    const amb = await acts();
+    assert(amb.includes('could be Krea 2') && amb.includes('Krea 2 RAW Edit'), `a name that fits two models is an error, not a guess: ${amb}`);
+    assert(amb.includes('Not run: set_model failed'), `the rest of that step is not run: ${amb}`);
+    assert((await value('#theme')) !== 'after a failure', 'the theme was left alone');
+    assert((await bot()).includes('which?'), 'and it asks');
+
+    await type('#asInput', 'make three ltx videos');
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'more than a couple of videos in one turn are asked on screen');
+    assert((await text('#asLog .as-confirm')).includes('3 videos'), 'it says how many');
+    await click('#asLog [data-confirm="no"]');
+    await idle();
+    assert((await acts()).includes('said no to 3'), 'the Brain is told you said no');
+    assert((await bot()).includes('no videos'), 'and it stops there');
+    assert(JSON.parse(await fs.readFile(path.join(dataDir, 'assistant.json'), 'utf8')).messages.some(m => m.role === 'tool' && m.content.includes('said no to 3')), 'the chat was saved as it went');
+
+    await type('#asInput', 'tag fallback please');
+    await press('Enter');
+    await idle();
+    eq(await value('#theme'), 'from a tag', 'tool calls written as text work too');
+
+    await type('#asInput', 'broken template please');
+    await press('Enter');
+    await idle();
+    eq(await value('#theme'), 'from the written tools', 'a Brain whose chat template breaks on tools gets them in writing');
+    assert((await acts()).includes('Theme → “from the written tools”'), 'the step shows');
+    const log = await text('#asLog');
+    assert((await bot()).includes('long way round') && log.includes('On it.') && !log.includes('Done, it is set') && !log.includes('tool_call'), `only what it said before the call and after it ran shows: ${log.slice(-200)}`);
+    const written = lastCall();
+    assert(!written.tools && written.messages[0].content.includes('- set_theme:') && written.messages.every(m => m.role !== 'tool'), 'it was asked again with the tools described, calls and results as text');
+    // That is remembered for this Brain: the next turn goes in writing straight away instead of failing first.
+    const brainsFile = path.join(dataDir, 'brains.json');
+    const noted = JSON.parse(await fs.readFile(brainsFile, 'utf8'));
+    assert(Object.values(noted).some(b => b.toolsInWriting), 'the Brain is noted as one that takes its tools in writing');
+    const callsBefore = mockCalls();
+    await type('#asInput', 'broken template please');
+    await press('Enter');
+    await idle();
+    assert(mock.log.slice(callsBefore).every(c => !c.tools), 'no request with tools was tried first this time');
+    for (const b of Object.values(noted)) delete b.toolsInWriting; // (the tests after this one script a Brain that takes tools)
+    await fs.writeFile(brainsFile, JSON.stringify(noted));
+
+    // Written calls that come out a little off are still read; one cut off mid-way is left out, not shown as text.
+    const { fallbackToolCalls, cleanMessages } = await import(path.join(ROOT, 'lib', 'assistant.js'));
+    const read = t => fallbackToolCalls(t).toolCalls.map(c => `${c.name} ${c.arguments}`).join(' | ');
+    eq(read('<tool_call>\n```json\n{"name":"generate","arguments":{}}\n```\n</tool_call>'), 'generate {}', 'in a code fence');
+    eq(read('<tool_call>{"name":"set_theme","arguments":"{\\"text\\":\\"x\\"}"}</tool_call>'), 'set_theme {"text":"x"}', 'arguments written as a text');
+    eq(read('<tool_call>[{"name":"set_model","arguments":{"name":"krea"}},{"name":"generate","arguments":{}}]</tool_call>'), 'set_model {"name":"krea"} | generate {}', 'several in one tag');
+    eq(read('<|tool_call>call:set_theme{text:<|"|>a "quoted" cat\nwith: a colon<|"|>,takes:2}<tool_call|>'), 'set_theme {"text":"a \\"quoted\\" cat\\nwith: a colon","takes":2}', 'Gemma\'s own form, with quotes and a line break in the text');
+    eq(read('<tool_call>{"name":"write_file","arguments":{"path":"~/a.txt","text":"use </tool_call> to end"}}</tool_call>'), 'write_file {"path":"~/a.txt","text":"use </tool_call> to end"}', 'a closing tag inside the text');
+    eq(read('<tool_call>{"name":"list_folder","arguments":{"folder":"C:\\Users\\vince\\Pictures"}}</tool_call>'), 'list_folder {"folder":"C:\\\\Users\\\\vince\\\\Pictures"}', 'a Windows path with single backslashes');
+    const cut = fallbackToolCalls('Let me do it.\n<tool_call>{"name":"set_theme","arguments":{"text":"a very long');
+    assert(cut.cutOff && cut.text === 'Let me do it.' && !cut.toolCalls.length, 'cut off mid-call: only the words before it are kept');
+    eq(fallbackToolCalls('To call a tool I write <tool_call> and then JSON.').toolCalls.length, 0, 'a mention of the tag in a sentence is not a call');
+    // A long tool result keeps its end too.
+    const long = `${'a'.repeat(20000)} THE-END`;
+    const kept = cleanMessages([{ role: 'user', content: 'x' }, { role: 'assistant', content: '', tool_calls: [{ id: 'c1', function: { name: 'read_file', arguments: '{}' } }] }, { role: 'tool', tool_call_id: 'c1', content: long }]).at(-1).content;
+    assert(kept.length < 8200 && kept.endsWith('THE-END') && kept.includes('characters left out here'), 'start and end kept, and it says what was left out');
+
+    await type('#asInput', 'fewer steps please');
+    await press('Enter');
+    await idle();
+    assert((await bot()).includes('Steps set to 12') && (await text('#wfpSettings')).includes('12 steps'), `sampler steps changed, and step 5 shows it: ${await text('#wfpSettings')}`);
+    const flowId = await value('#wfpSelect');
+    const tweaked = await (await fetch(`${APP}/api/workflows/${flowId}`)).json();
+    const steps = Object.entries(tweaked.overrides).filter(([k]) => k.endsWith('|steps'));
+    eq(JSON.stringify(steps.map(([, v]) => v)), '[12]', 'saved with the workflow');
+    await fetch(`${APP}/api/workflows/${flowId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overridePatch: Object.fromEntries(steps.map(([k]) => [k, null])) }) });
+
+    const topP = (await (await fetch(`${APP}/api/settings`)).json()).topP;
+    await type('#asInput', 'use the screen to set top p to 0.77');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('Pressed “Save settings”') && (await bot()).includes('0.77'), `it found the box and the button on screen: ${await acts()}`);
+    eq((await (await fetch(`${APP}/api/settings`)).json()).topP, 0.77, 'and the setting is saved');
+    await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topP }) });
+
+    await goto(`${APP}/#create`);
+    await waitFor('!document.querySelector("#assistant").hidden', 'left open, it opens again with the app');
+    await waitFor('document.querySelectorAll("#asLog .as-msg.me").length === 13', 'the conversation is still there after a reload');
+    await viewport(390, 844, true);
+    await sleep(200);
+    eq(await js('document.documentElement.scrollWidth - innerWidth'), 0, 'no sideways scroll on a phone');
+    eq(await js('Math.round(document.querySelector("#assistant").getBoundingClientRect().width)'), 390, 'full width on a phone');
+    await shot('44-assistant-phone');
+    await viewport(1440, 900);
+    await click('#asClear');
+    await click('#asClear');
+
+    // 💻 Using this computer: off until you switch it on; deleting asks first.
+    const ask = async words => { await type('#asInput', words); await press('Enter'); await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000); };
+    await ask('make it a noir look');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'noir', `the assistant sets the look: ${await bot()}`);
+    await ask('use no look');
+    eq(await js('document.querySelector("#lookRow .active")?.dataset.value'), 'none', `the assistant sets No look: ${await bot()}`);
+    await click('#lookRow button[data-value=""]');
+    eq(await js('fetch("/api/computer/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{\\"command\\":\\"echo hi\\"}" }).then(r => r.status)'), 403, 'commands are refused while it\'s off');
+    await ask('run: echo hello-there');
+    assert((await bot()).includes('Settings'), `it says where to allow it: ${await bot()}`);
+    await click('.tabs button[data-view="settings"]');
+    await js('document.querySelector("#sComputer").click()');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await ask('run: echo hello-there');
+    assert((await bot()).includes('hello-there'), `it runs a command: ${await bot()}`);
+    const victim = path.join(tmp, 'keep-me.txt');
+    await fs.writeFile(victim, 'x');
+    await type('#asInput', `run: rm ${victim}`);
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'deleting asks on screen first');
+    await click('#asLog [data-confirm="no"]');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert(await fs.access(victim).then(() => true, () => false), 'and nothing goes when you say no');
+    // However the command is dressed up, and for what replaces a file too.
+    for (const cmd of [`/bin/rm ${victim}`, `bash -c "rm ${victim}"`, `cp /etc/hostname ${victim}`, `mv ${victim} ${victim}.gone`, `echo gone > ${victim}`, `curl -X DELETE ${APP}/api/history/x`]) {
+      await type('#asInput', `run: ${cmd}`);
+      await press('Enter');
+      await waitFor('!!document.querySelector("#asLog .as-confirm")', `asks first: ${cmd}`);
+      await click('#asLog [data-confirm="no"]');
+      await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    }
+    eq(await fs.readFile(victim, 'utf8'), 'x', 'the file is as it was');
+    await js('document.querySelector("#sComputer").click()');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('#asClear');
+    await click('#asClear');
+    await click('.tabs button[data-view="create"]');
+    assert(await visible('.as-hello'), 'cleared');
+    // It can write a playbook for you, and undo it.
+    const before = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    await type('#asInput', 'fix the playbook for krea');
+    await press('Enter');
+    await idle();
+    assert((await acts()).includes('Saved the Krea 2 RAW'), 'saved, and says what changed');
+    let after = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    eq(after.description, 'Edited by the assistant', 'the playbook changed');
+    eq(after.instructions.trim(), before.instructions.trim(), 'fields it was not given stay');
+    // It can't throw your edited playbook away by pressing ↺ Reset twice: the "Sure?" is yours to answer.
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea2-raw"]');
+    await waitFor('!document.querySelector("#resetModelBtn").hidden', 'the edited playbook can be reset');
+    await type('#asInput', 'reset the playbook yourself');
+    await press('Enter');
+    await waitFor('!!document.querySelector("#asLog .as-confirm")', 'the second press asks you first');
+    assert((await text('#asLog .as-confirm')).includes('Reset to built-in'), `it says which button: ${await text('#asLog .as-confirm')}`);
+    await click('#asLog [data-confirm="no"]');
+    await idle();
+    assert((await bot()).includes('left your playbook alone'), `nothing was reset: ${await bot()}`);
+    eq((await (await fetch(`${APP}/api/models/krea2-raw`)).json()).description, 'Edited by the assistant', 'your edit is still there');
+    await type('#asInput', 'undo that');
+    await press('Enter');
+    await idle();
+    after = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
+    eq(after.description, before.description, 'undo puts it back');
+    eq(JSON.stringify(after.resolutions), JSON.stringify(before.resolutions), 'all of it');
+    await press('Escape');
+    assert(await js('document.querySelector("#assistant").hidden && document.activeElement === document.querySelector("#askBtn")'), 'Esc closes it');
+  });
+
+  await test('assistant: going in circles stops after the third identical answer, with a word; waiting may repeat', async () => {
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 30000);
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const bad = () => js('[...document.querySelectorAll("#asLog .as-act.bad")].at(-1)?.textContent || ""');
+    await click('.tabs button[data-view="create"]');
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await waitFor('!document.querySelector("#assistant").hidden', 'panel open');
+    // The Brain says "let me click it" and looks at the screen again instead, round after round (a real Brain did, 35
+    // times, on 2026-10-14): the second time the answer tells it, the third time the turn stops and the chat says so.
+    const calls = mockCalls();
+    await type('#asInput', 'circles: switch my own prompt off');
+    await press('Enter');
+    await idle();
+    eq(mockCalls(), calls + 3, 'three rounds, not sixty');
+    const turn = mock.log.at(-1).messages;
+    const results = turn.slice(turn.findLastIndex(m => m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('circles'))).filter(m => m.role === 'tool').map(m => m.content);
+    assert(results.length === 2 && !results[0].includes('exact call') && results[1].includes('You made this exact call before and got the same answer'), `the second answer told it: ${results[1].slice(-200)}`);
+    assert((await bad()).startsWith('⚠️ Stopped: the assistant asked the app the same thing three times (see_screen)'), `the chat says why it stopped: ${await bad()}`);
+    eq(await js('document.querySelectorAll("#asLog .as-act.bad").length'), 1, 'said once');
+    // Waiting is meant to be repeated (a render takes its time): four identical waits go through.
+    const before = mockCalls();
+    await type('#asInput', 'patience: wait for the render');
+    await press('Enter');
+    await idle();
+    eq(mockCalls(), before + 5, 'four waits and the answer');
+    assert((await bot()).startsWith('Done waiting.'), `it finished on its own: ${await bot()}`);
+    eq(await js('document.querySelectorAll("#asLog .as-act.bad").length'), 1, 'no new stop');
+  });
+
+  await test('assistant: a long task gets a plan it ticks off; a long chat folds into a note; an overflow folds and retries', async () => {
+    const bot = () => js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    const idle = () => waitFor('document.querySelector("#asStop").hidden', 'assistant done', 40000);
+    const textOf = c => (typeof c === 'string' ? c : c.filter(p => p.type === 'text').map(p => p.text).join('\n'));
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await click('#asClear');
+    await click('#asClear');
+    await choose('#llmSelect', 'mock/small-room');
+    await type('#asInput', 'long task please');
+    await press('Enter');
+    await waitFor('!document.querySelector("#asPlan").hidden && document.querySelectorAll("#asPlan li").length === 5', 'the plan card shows its 5 steps', 20000);
+    await waitFor('document.querySelectorAll("#asPlan li.done").length >= 2', 'steps get ticked in place', 30000);
+    await idle();
+    assert((await bot()).includes('All five steps are done'), `it reports the end: ${await bot()}`);
+    assert(await js('document.querySelector("#asPlan").hidden'), 'the card goes away once cleared');
+    eq(await value('#theme'), 'a surfer at golden hour', 'the steps ran');
+    assert((await text('#asLog')).includes('folded into a short note'), 'earlier steps were folded');
+    const fold = mock.log.find(c => !c.tools && /Write the progress note now\.$/.test(textOf(c.messages.at(-1).content)));
+    assert(fold && !JSON.stringify(fold.messages).includes('image_url') && fold.messages[1].content.includes('# Your plan'), 'the fold call is text-only and carries the plan');
+    assert(!mock.log.filter(c => c.tools).at(-1).messages[0].content.includes('# Your plan'), 'the plan is gone from the instructions after clear');
+    assert(mock.log.filter(c => c.tools && /# Your plan/.test(c.messages[0].content)).length >= 4, 'the plan was pinned every turn');
+    const saved = await (await fetch(`${APP}/api/assistant/chat`)).json();
+    assert(saved.messages.some(m => m.fold && m.content.includes('Earlier in this conversation') && m.content.includes('The user asked: "long task please"')) && saved.messages.length < 14, `the saved chat shrank and keeps the request: ${saved.messages.length}`);
+    const folded = saved.messages.find(m => m.fold);
+    assert(/What the tools reported[\s\S]*\n✓ /.test(folded.content), `the note carries the app's own record of what the tools reported: ${folded.content.slice(-300)}`);
+    eq(saved.plan, null, 'no plan is saved once cleared');
+    // The Brain says the chat doesn't fit: it's folded and asked again, no error shown.
+    const before = mock.log.length;
+    await type('#asInput', 'long task, overflow once');
+    await press('Enter');
+    await idle();
+    assert(!(await text('#asLog')).includes('greater than the context length') && (await bot()).includes('All five steps are done'), `no error: it folded and went on (${await bot()})`);
+    assert(mock.log.slice(before).some(c => !c.tools && /progress note/.test(textOf(c.messages.at(-1).content))), 'a fold call was made');
+    await click('#asClear');
+    await click('#asClear');
+    await choose('#llmSelect', 'mock/vision-8b');
+  });
+
+  await test('denoise: shown for image-to-image workflows, saved on the workflow; never on a video model', async () => {
+    await openPanel('create-render-adv');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(!(await visible('#wfpDenoise')), 'no denoise for a text-to-image workflow');
+    await click('.model-card[data-id="ltx-2-3"]');
+    await sleep(300);
+    assert(await js('document.querySelector("#wfpDenoise").hidden && document.querySelector("#pictureOptions").hidden'), 'not on a video model: the picture is its first frame, and 0 would render a grey clip');
+    // The same image-taking workflow on an image model (picture to picture): there the slider is right.
+    const i2v = (await fetch(`${APP}/api/workflows`).then(r => r.json())).find(w => w.modelId === 'ltx-2-3' && w.denoise?.length);
+    const full = await fetch(`${APP}/api/workflows/${i2v.id}`).then(r => r.json());
+    const made = await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: 'krea-2-raw-i2i', name: 'Mock I2I', prompt: full.prompt, mapping: full.mapping }) }).then(r => r.json());
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded with it');
+    await openPanel('create-render-adv');
+    await click('.model-card[data-id="krea-2-raw-i2i"]');
+    await waitFor('!document.querySelector("#wfpDenoise").hidden', 'denoise for a workflow that takes an image');
+    eq(await js('document.querySelector("#wfpDenoise .dn-range").min'), '0.05', 'it can\'t go to 0 (that renders nothing)');
+    eq(await text('#wfpDenoise .dn-val'), '1.00', 'at the workflow\'s value');
+    await js('const r = document.querySelector("#wfpDenoise .dn-range"); r.value = "0.55"; r.dispatchEvent(new Event("input", { bubbles: true })); r.dispatchEvent(new Event("change", { bubbles: true }))');
+    eq(await text('#wfpDenoise .dn-val'), '0.55', 'shows the new value');
+    assert((await text('#wfpDenoise .dn-hint')).includes('keeps the layout'), 'says what it means');
+    const id = await value('#wfpSelect');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)})?.denoise[0].value === 0.55)`, 'saved on the workflow');
+    await waitFor('document.querySelector("#wfpSettings").textContent.includes("denoise 0.55")', 'and in the settings chips');
+    await click('#wfpEdit');
+    await waitFor('document.querySelector("#wfDialog").open', 'setup open');
+    eq(await value('#samplerCtl .sp-field[data-key="3|denoise"] input'), '0.55', 'the setup dialog shows it too');
+    await click('#wfClose');
+    await click('#wfpDenoise .dn-reset');
+    await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)})?.denoise[0].value === 1)`, '↺ puts it back');
+    // A 0 saved before (by an older version, or by hand) renders with the workflow's own value instead of nothing.
+    await fetch(`${APP}/api/workflows/${i2v.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overridePatch: { [i2v.denoise[0].key]: 0 } }) });
+    const built = wfLib.buildPrompt(await fetch(`${APP}/api/workflows/${i2v.id}`).then(r => r.json()), { text: 'x', imageName: 'a.png' }).prompt; // (the workflow as the server has it, built here)
+    const [node, input] = i2v.denoise[0].key.split('|');
+    eq(built[node].inputs[input], 1, 'a saved denoise of 0 renders at the workflow\'s own value');
+    await fetch(`${APP}/api/workflows/${i2v.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overridePatch: { [i2v.denoise[0].key]: null } }) });
+    await fetch(`${APP}/api/workflows/${made.id}`, { method: 'DELETE' });
+    await goto(`${APP}/#create`);
+    await waitFor('document.documentElement.dataset.ready === "1"', 'reloaded without it');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('cleanup: a copied render is deleted from ComfyUI\'s output folder and gets its own name', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await click('[data-settings-tab="rendering"]');
+    assert(await visible('#sComfyDirField'), 'the folder field shows in Rendering even with cleanup off (deleting from History uses it too)');
+    assert(/^Prompt Maker \d+\.\d+\.\d+/.test(await text('#sVersion')), 'Settings shows the version, for bug reports');
+    await click('#sComfyCleanup');
+    await waitFor(`document.querySelector('#sComfyDir').placeholder.includes(${q(path.join(comfyRoot, 'output'))})`, 'the output folder is found on its own');
+    await click('#settingsForm button[type="submit"]');
+    await waitFor('document.querySelector("#settingsDirty").hidden', 'saved'); // (another toast can cover "Settings saved")
+    await click('.tabs button[data-view="create"]');
+    await type('#theme', 'a red fox in fresh snow');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    const made = comfy.prompts.at(-1).id.slice(0, 6);
+    assert(!(await fileExists(path.join(comfyRoot, 'output', `mock_${made}.png`))), 'gone from ComfyUI\'s output folder');
+    const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'a red fox in fresh snow');
+    const f = entry.variations[0].renders[0].files[0];
+    assert(await fileExists(path.join(dataDir, 'renders', f.file)), 'the copy is in the data folder');
+    assert(/^krea-2-raw_a-red-fox-in-fresh-snow_\d+_[0-9a-f]{6}\.png$/.test(f.name), `the copy has its own name: ${f.name}`);
+    const kept = await fs.readFile(path.join(dataDir, 'renders', f.file));
+    assert(kept.includes('MOCK JOB WORDS'), 'the copy keeps ComfyUI\'s job (its recipe), as ComfyUI saved it');
+    assert(f.original?.sha1, 'ComfyUI\'s checksum is noted');
+    await fs.writeFile(path.join(comfyRoot, 'output', 'not-ours.png'), 'keep me');
+    await click('.tabs button[data-view="settings"]');
+    await click('#sComfyCleanup');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+    await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length === 2 && !document.querySelector(".take .rtile.running")', 'rendered again', 10000);
+    assert(await fileExists(path.join(comfyRoot, 'output', `mock_${comfy.prompts.at(-1).id.slice(0, 6)}.png`)), 'with cleanup off, ComfyUI keeps its file');
+    assert(await fileExists(path.join(comfyRoot, 'output', 'not-ours.png')), 'other files are never touched');
+  });
+
+  await test('cleanup: ComfyUI started with --output-directory has its copy deleted from there', async () => {
+    const ramOut = path.join(tmp, 'comfy-other-output');
+    await fs.mkdir(ramOut, { recursive: true });
+    const settingsFile = path.join(dataDir, 'settings.json');
+    const was = JSON.parse(await fs.readFile(settingsFile, 'utf8'));
+    await fs.writeFile(settingsFile, JSON.stringify({ ...was, comfyCleanup: true, comfyOutputDir: '', comfyLaunch: { dir: comfyRoot, python: 'python', pre: [], args: ['--output-directory', ramOut] } }));
+    comfy.setOutputDir(ramOut);
+    await fs.writeFile(path.join(ramOut, 'not-ours.png'), 'keep me');
+    try {
+      await click('.tabs button[data-view="create"]');
+      await click('.model-card[data-id="krea2-raw"]');
+      await type('#theme', 'a heron in the reeds');
+      await click('#generateBtn');
+      await genDone();
+      await click('.take .rb-go');
+      await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+      const made = `mock_${comfy.prompts.at(-1).id.slice(0, 6)}.png`;
+      assert(!(await fileExists(path.join(ramOut, made))), 'gone from the folder ComfyUI was started with');
+      assert(!(await fileExists(path.join(comfyRoot, 'output', made))), '(it was never in the install folder\'s)');
+      assert(await fileExists(path.join(ramOut, 'not-ours.png')), 'other files there are never touched');
+      const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'a heron in the reeds');
+      assert(await fileExists(path.join(dataDir, 'renders', entry.variations[0].renders[0].files[0].file)), 'the copy is in the data folder');
+    } finally {
+      comfy.setOutputDir(null);
+      await fs.writeFile(settingsFile, JSON.stringify(was));
+    }
+  });
+
+  await test('delete: a render or a run leaves Your renders and the disk at once', async () => {
+    const history = async () => (await fetch(`${APP}/api/history`)).json();
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a tin robot waving hello');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go'); // (auto-render may have started one already)
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    if ((await count('.take .rtile img')) < 2) await click('.take .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile img").length >= 2 && !document.querySelector(".take .rtile.running")', 'rendered twice', 10000);
+    // A new run takes the stage; this one's renders stay in Your renders.
+    const owner = (await history()).find(e => e.theme === 'a tin robot waving hello');
+    const all = owner.variations.flatMap(v => v.renders || []);
+    assert(all.length >= 2, `the run has renders to delete (${all.length})`);
+    const files = all.map(r => r.files[0].file);
+    const tiles = `[...document.querySelectorAll("#reel .rtile img")].filter(i => ${q(files)}.includes(decodeURIComponent(i.getAttribute("src").split("/").pop())))`;
+    await type('#theme', 'a tin robot fast asleep');
+    await click('#generateBtn');
+    await genDone();
+    await waitFor(`${tiles}.length === ${all.length}`, 'Your renders keeps the renders of the run that left the stage');
+    await reloadPage();
+    await waitFor(`${tiles}.length === ${all.length}`, 'Your renders survives a reload');
+    const originalOf = r => path.join(comfyRoot, 'output', `mock_${r.promptId.slice(0, 6)}.png`);
+
+    await js(`${tiles}[0].closest(".rtile").classList.add("pick-me")`);
+    await click('#reel .rtile.pick-me');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    await click('[data-lb="delete"]');
+    await click('[data-lb="delete"]');
+    await toastText('Render deleted', UNDO_WAIT);
+    if (await visible('#lightbox')) await press('Escape');
+    const left = (await history()).find(e => e.id === owner.id).variations.flatMap(v => v.renders || []);
+    eq(left.length, all.length - 1, 'one render fewer');
+    const gone = all.find(r => !left.some(x => x.id === r.id));
+    eq(await js(`${tiles}.length`), all.length - 1, 'Your renders shows one fewer, right away');
+    assert(!(await fileExists(path.join(dataDir, 'renders', gone.files[0].file))), 'the deleted one is gone from the data folder');
+    if (gone.promptId) assert(!(await fileExists(originalOf(gone))) && !comfy.history[gone.promptId], 'and ComfyUI\'s file and job');
+
+    await click('.tabs button[data-view="history"]');
+    await waitFor(`!!document.querySelector('.hcard[data-id=${q(owner.id)}]')`, 'the card');
+    const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.dataset.id === ${q(owner.id)}) + 1`);
+    await js('localStorage.setItem("pm.deleteWarned", "true")'); // the dialog is covered by the delete test
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await toastText('Deleted', UNDO_WAIT);
+    await click('.tabs button[data-view="create"]');
+    eq(await js(`${tiles}.length`), 0, 'Your renders lets go of the deleted run');
+  });
+
+  await test('delete: a History card leaves nothing behind, here or in ComfyUI', async () => {
+    const history = async () => (await fetch(`${APP}/api/history`)).json();
+    let byHand = null; // a job you queued yourself in ComfyUI: never Prompt Maker's to remove
+    const comfyHas = text => Object.entries(comfy.history).some(([id, job]) => id !== byHand && JSON.stringify(job.prompt).includes(JSON.stringify(text).slice(1, -1)));
+    const outputOf = n => path.join(comfyRoot, 'output', `mock_${comfy.prompts.at(n).id.slice(0, 6)}.png`);
+    // A still, rendered (ComfyUI keeps its own file: cleanup is off), then animated: the video take uploads the still.
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a paper boat on a rainy puddle');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rcell .rt-next") && !document.querySelector(".take .rtile.running")', 'still rendered', 10000);
+    const still = (await history()).find(e => e.theme === 'a paper boat on a rainy puddle');
+    const stillText = still.variations[0].versions[0].text;
+    const stillFile = still.variations[0].renders[0].files[0].file;
+    const stillOriginal = outputOf(-1);
+    assert(await fileExists(stillOriginal), 'ComfyUI has its own file of the still');
+    await click('.take .rcell .rt-next');
+    await waitFor('document.querySelector(".model-card.active")?.dataset.id === "ltx-2-3" && !document.querySelector(".dz-preview").hidden', 'still loaded as the first frame');
+    await type('#theme', 'the paper boat drifts into the gutter');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'video rendered', 10000);
+    const video = (await history()).find(e => e.theme === 'the paper boat drifts into the gutter');
+    const videoText = video.variations[0].versions[0].text;
+    const videoOriginal = outputOf(-1);
+    const upload = path.join(comfyRoot, 'input', `prompt-maker_${stillFile}`);
+    assert(await fileExists(upload), 'the still went to ComfyUI\'s input folder');
+    assert(comfyHas(stillText) && comfyHas(videoText), 'ComfyUI\'s history has both jobs, prompts and all');
+    eq((await fetch(`${APP}/renders/${stillFile}`)).headers.get('cache-control'), 'no-store', 'renders aren\'t kept in the browser\'s cache');
+    // The assistant once quoted the still's prompt.
+    await fs.writeFile(path.join(dataDir, 'assistant.json'), JSON.stringify({ messages: [{ role: 'user', content: `Make this moodier: ${stillText}` }, { role: 'assistant', content: 'Sure.' }] }));
+
+    // You also rendered the still's prompt yourself, in ComfyUI's own editor.
+    byHand = (await (await fetch(`http://127.0.0.1:${COMFY_PORT}/prompt`, { method: 'POST', body: JSON.stringify({ prompt: comfy.history[still.variations[0].renders[0].promptId].prompt[2], client_id: 'comfyui-editor' }) })).json()).prompt_id;
+    for (let i = 0; i < 50 && !comfy.history[byHand]; i++) await sleep(100);
+    const handOriginal = path.join(comfyRoot, 'output', `mock_${byHand.slice(0, 6)}.png`);
+    assert(await fileExists(handOriginal), 'your own render of the same prompt is in ComfyUI\'s output folder');
+
+    const deleteCard = async theme => {
+      await click('.tabs button[data-view="history"]');
+      await waitFor(`[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'the card');
+      const n = await js(`[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes(${q(theme)})) + 1`);
+      await js('localStorage.setItem("pm.deleteWarned", "true")'); // the dialog is covered by the delete test
+      await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+      await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+      await waitFor(`![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes(${q(theme)}))`, 'card gone', UNDO_WAIT);
+    };
+
+    await deleteCard('a paper boat on a rainy puddle');
+    await toastText('Deleted');
+    assert(!(await history()).some(e => e.id === still.id), 'the entry is gone');
+    assert(!(await fileExists(path.join(dataDir, 'renders', stillFile))), 'its render is gone from the data folder');
+    assert(!(await fileExists(stillOriginal)), 'and ComfyUI\'s own file of it');
+    assert(!(await fileExists(upload)), 'and the copy uploaded to ComfyUI\'s input folder');
+    assert(!comfyHas(stillText), 'and its job in ComfyUI\'s history');
+    assert(comfy.history[byHand] && await fileExists(handOriginal), 'the render you made yourself in ComfyUI, same prompt, is not touched');
+    assert(!(await fs.readFile(path.join(dataDir, 'assistant.json'), 'utf8')).includes(stillText.slice(0, 60)), 'the assistant conversation no longer quotes it');
+    const kept = (await history()).find(e => e.id === video.id);
+    assert(kept && !kept.source, 'the video made from it stays, without its prompt or a link back');
+    assert(await fileExists(path.join(dataDir, 'images', kept.imageFile)), 'the video keeps its own first frame');
+    assert(await fileExists(videoOriginal) && comfyHas(videoText), 'the video\'s files and job aren\'t touched');
+    assert(!JSON.stringify(await history()).includes(stillText), 'the still\'s prompt is nowhere in History');
+
+    // The form still holds the video's theme and image: they go with it. (Every mock render is the same picture, so
+    // an earlier animation has this very first frame: a file another entry uses stays.)
+    await deleteCard('the paper boat drifts into the gutter');
+    assert((await history()).some(e => e.imageFile === video.imageFile), 'another entry has the same first frame');
+    assert(await fileExists(path.join(dataDir, 'images', video.imageFile)), 'so that file stays');
+    assert(!(await fileExists(path.join(dataDir, 'renders', video.variations[0].renders[0].files[0].file))), 'its render is gone');
+    assert(!(await fileExists(videoOriginal)) && !comfyHas(videoText), 'and ComfyUI\'s file and job');
+    await click('.tabs button[data-view="create"]');
+    eq(await value('#theme'), '', 'the Create form lets go of its theme');
+    assert(!(await visible('.dz-preview')), 'and its image');
+    await reloadPage();
+    eq(await value('#theme'), '', 'still empty after a reload');
+    assert(!(await visible('.dz-preview')), 'no image after a reload');
+
+    // An image of your own, used once, goes with its entry.
+    const mine = path.join(tmp, 'only-once.png');
+    await fs.writeFile(mine, makePng(300, 200));
+    await setFiles('#imageInput', [mine]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image added');
+    await type('#theme', 'a kite over the salt flats');
+    await click('#generateBtn');
+    await genDone();
+    const kite = (await history()).find(e => e.theme === 'a kite over the salt flats');
+    assert(kite.imageFile && (await fileExists(path.join(dataDir, 'images', kite.imageFile))), 'the image is stored');
+    await deleteCard('a kite over the salt flats');
+    assert(!(await fileExists(path.join(dataDir, 'images', kite.imageFile))), 'its input image is gone');
+    await click('.tabs button[data-view="create"]');
+    assert(!(await visible('.dz-preview')) && (await value('#theme')) === '', 'and the form let go of both');
+  });
+
+  await test('step 3 is off on a model that works from words alone; it sits under Make a video', async () => {
+    await click('.tabs button[data-view="create"]');
+    const before = await js('document.querySelector(".model-card.active")?.dataset.id');
+    await click('.model-card[data-id="ltx-2-3-t2v"]');
+    await waitFor('document.querySelector("#dropzone").classList.contains("is-off")', 'the dropzone is greyed out');
+    eq(await text('#imageStepTitle'), 'No image', 'step 3 says so');
+    assert(await js('document.querySelector("#dzGallery").disabled'), 'no Library picking either');
+    eq(await js('document.querySelector(".task-choice[aria-pressed=true]")?.dataset.task'), 'video', 'it is a Make a video model');
+    await click('.model-card[data-id="minimax-h3-t2v"]');
+    await waitFor('document.querySelector("#dropzone").classList.contains("is-off") && document.querySelector("#imageStepOpt").textContent.includes("words")', 'the MiniMax one too');
+    await click('.model-card[data-id="ltx-2-3"]');
+    await waitFor('!document.querySelector("#dropzone").classList.contains("is-off")', 'the picture model takes one again');
+    eq(await js('document.querySelector(".task-choice[aria-pressed=true]")?.dataset.task'), 'animate', 'and animates a picture');
+    if (before) await click(`.model-card[data-id="${before}"]`);
+  });
+
+  await test('takes: ＋ Add a take writes one more for the set; 🗑 deletes a take and its renders, the last one the card', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await openPanel('create-render');
+    if (await js('document.querySelector("#wfpAuto")?.checked')) await click('#wfpAutoRow');
+    await click('#varSeg button[data-value="2"]');
+    await type('#theme', 'a lighthouse for take tests');
+    await click('#generateBtn');
+    await genDone();
+    eq(await count('#resultsList .take'), 2, 'two takes');
+    await click('#addTakeBtn');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 3 && !document.querySelector("#generateBtn").classList.contains("cooking")', 'a third take written');
+    eq(await text('#resultsList .take:nth-child(3) .take-title'), 'Take 3', 'numbered on');
+    eq(await text('#resultsList .take:nth-child(1) .take-title'), 'Take 1', 'the first is Take 1');
+    let entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    eq(entry.variations.length, 3, 'saved on the same card');
+    eq(entry.theme, 'a lighthouse for take tests', 'the same set');
+    assert((await text('#addTakeBtn')).includes('Add a take'), 'the button is back');
+    // Tweak all takes: typed once, every take gets it as a new version.
+    await type('#refineAllForm input', 'make it golden hour');
+    await shot('46-refine-all');
+    await js('document.querySelector("#refineAllForm").requestSubmit()');
+    await waitFor('[...document.querySelectorAll("#resultsList .take .change")].every(c => c.textContent.includes("golden hour")) && !document.querySelector("#generateBtn").classList.contains("cooking")', 'all three refined');
+    entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    assert(entry.variations.every(v => v.versions.length === 2 && v.versions[1].instruction === 'make it golden hour'), 'each take has the change as its own version');
+    eq(await value('#refineAllForm input'), '', 'the box is emptied');
+    // Delete the middle take: the others keep their order, the card stays.
+    await js('localStorage.setItem("pm.deleteWarned", "true")');
+    await click('#resultsList .take:nth-child(2) .take-del');
+    assert((await text('#resultsList .take:nth-child(2) .take-del')).includes('Sure?'), 'asks once');
+    await click('#resultsList .take:nth-child(2) .take-del');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 2', 'two left');
+    entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    eq(entry.variations.length, 2, 'the card has two takes');
+    eq(await text('#resultsList .take:nth-child(2) .take-title'), 'Take 2', 'renumbered');
+    // The last take takes the card with it.
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 1', 'one take left');
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await click('#resultsList .take:nth-child(1) .take-del');
+    await toastText('Deleted');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 0', 'the stage is empty');
+    const themes = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).map(e => e.theme);
+    assert(!themes.includes('a lighthouse for take tests'), 'the card is gone from Saved prompts');
+    // A tweak typed while a set is still being written lines up and runs as soon as the writing is done.
+    await type('#theme', 'a harbour SLOWSECOND');
+    await click('#generateBtn');
+    await waitFor('document.querySelectorAll("#resultsList .take").length === 2 && document.querySelector("#generateBtn").classList.contains("cooking")', 'a new set is cooking');
+    await type('#resultsList .take:nth-child(2) .refine input', 'add a red boat');
+    await js('document.querySelector("#resultsList .take:nth-child(2) .refine").requestSubmit()');
+    assert(await js('document.querySelector("#resultsList .take:nth-child(2) .refine").classList.contains("lined-up")'), 'the tweak is lined up while the take is written');
+    await waitFor('document.querySelector("#resultsList .take:nth-child(2) .change").textContent.includes("red boat") && !document.querySelector("#generateBtn").classList.contains("cooking")', 'then it runs on its own', 30000);
+    const harbour = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8')).find(e => e.theme === 'a harbour SLOWSECOND');
+    eq(harbour.variations[1].versions.at(-1).instruction, 'add a red boat', 'the take got it');
+    eq(harbour.variations[0].versions.length, 1, 'the other take did not');
+    for (const n of [2, 1]) {
+      await click(`#resultsList .take:nth-child(${n}) .take-del`);
+      await click(`#resultsList .take:nth-child(${n}) .take-del`);
+      await waitFor(`document.querySelectorAll("#resultsList .take").length === ${n - 1}`, 'take deleted');
+    }
+    await js('localStorage.removeItem("pm.deleteWarned")');
+    await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('step 3: pick any image from the Library', async () => {
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('#dzGallery');
+    await waitFor('document.querySelector("#imgPick").open && document.querySelectorAll("#imgPickGrid .ip-tile").length > 0', 'the picker shows your image renders');
+    const all = await count('#imgPickGrid .ip-tile');
+    // Each picture's stars, so you can pick a good one: as many tiles with stars as there are rated pictures.
+    const ratedPics = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => (r.files || []).filter(f => f.kind === 'image' && (r.rating || (r.favorite ? 3 : 0)) > 0).map(f => (r.rating || 3))))).sort();
+    if ((await count('#imgPickModels button')) <= 1 || (await js(`document.querySelector(${q('#imgPickModels button[data-id=""]')})?.getAttribute("aria-pressed")`)) === 'true') {
+      eq(JSON.stringify((await js('[...document.querySelectorAll("#imgPickGrid .ip-stars")].map(s => s.textContent.length).sort()'))), JSON.stringify(ratedPics), 'the stars of every rated picture show on its tile');
+    }
+    if ((await count('#imgPickModels button')) > 1) {
+      await click('#imgPickModels button[data-id="ltx-2-3"]');
+      assert((await count('#imgPickGrid .ip-tile')) < all, 'filter by model');
+      await click('#imgPickModels button[data-id=""]');
+    }
+    await shot('45-image-picker');
+    // Bigger thumbnails, remembered; 🔍 opens one full screen, and it can be used from there.
+    const tileW = () => js('Math.round(document.querySelector("#imgPickGrid .ip-tile").getBoundingClientRect().width)');
+    const small = await tileW();
+    await js('{ const r = document.querySelector("#imgPickSize"); r.value = 400; r.dispatchEvent(new Event("input")); }');
+    assert((await tileW()) > small * 1.8, 'the slider makes the thumbnails bigger');
+    eq(await js('localStorage.getItem("imgPickSize")'), '400', 'and the size is remembered');
+    await click('#imgPickGrid .ip-zoom');
+    await waitFor('document.querySelector("#imgView").open && document.querySelector("#ivImg").naturalWidth > 0 && !document.querySelector("#ivUse").hidden', 'a closer look, with Use this image');
+    await click('#ivImg');
+    assert(await js('document.querySelector("#ivStage").classList.contains("actual")'), 'a click shows it at actual size');
+    await click('#ivClose');
+    assert(await js('document.querySelector("#imgPick").open && !document.querySelector("#imgView").open'), 'closing the viewer goes back to the picker');
+    await js('{ const r = document.querySelector("#imgPickSize"); r.value = 140; r.dispatchEvent(new Event("input")); }');
+    await click('#imgPickGrid .ip-tile');
+    await waitFor('!document.querySelector(".dz-preview").hidden && !document.querySelector("#dzSource").hidden', 'attached, linked to its render');
+    await toastText('Image added');
+    assert(!(await js('document.querySelector("#imgPick").open')), 'the picker closed');
+    assert((await text('#dzSource')).startsWith('🔗 From '), 'it says where it came from');
+    assert(await visible('#imageGallery'), 'and another can be picked from the Library');
+    await click('#imageZoom');
+    await waitFor('document.querySelector("#imgView").open && document.querySelector("#ivUse").hidden', 'step 3\'s image opens full screen');
+    await press('Escape');
+    await waitFor('!document.querySelector("#imgView").open', 'Esc closes it');
+    await click('#imageClear');
+  });
+
+  await test('Wan Animate 2: a character performs a motion video; ComfyUI\'s template is fixed and the prompt split', async () => {
+    const history = async () => (await fetch(`${APP}/api/history`)).json();
+    const textOf = c => (typeof c === 'string' ? c : c.filter(p => p.type === 'text').map(p => p.text).join('\n'));
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="wan-animate-2"]');
+    await waitFor('!document.querySelector("#motionBlock").hidden && !document.querySelector("#charLabel").hidden', 'step 3 asks for a character and a motion video');
+    eq(await text('#imageStepTitle'), 'Character & motion', 'step 3 is about both');
+    assert((await js('document.querySelector("#theme").placeholder')).startsWith('Where are they'), 'the theme says where and from what angle');
+
+    // ComfyUI's own template, offered first: read from ComfyUI, its empty pose window fixed, everything mapped.
+    await click((await visible('#wfpAddFirst')) ? '#wfpAddFirst' : '#wfpAdd');
+    await waitFor('!document.querySelector("#wfTemplates").hidden && document.querySelectorAll("#wfTplList button").length === 2', 'ComfyUI\'s templates for the model come first');
+    await click('#wfTplList button[data-template="video_wan_animate2"]');
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'the setup');
+    assert((await text('#wfWarnings')).includes('pose window ended where it started'), 'the template\'s empty pose window is fixed, and it says so');
+    eq(await value('#mapMotion'), '10:103|text', 'the Motion line goes to the pose prompt');
+    eq(await value('#mapVideo'), '2|file', 'the motion video goes to Load Video');
+    eq(await js('[...document.querySelectorAll("#mapPrompt select")].map(s => s.value).join()'), '10:102|text', 'the rest to the prompt');
+    eq(await value('#samplerCtl .sp-field[data-kind="poseEnd"] input'), '1', 'pose end is 1 now');
+    assert(await visible('#samplerCtl .sp-field[data-kind="pose"]') && await visible('#samplerCtl .sp-field[data-kind="identity"]'), 'pose and character strength can be tuned');
+    await shot('46-wan-template-setup');
+    await click('#wfSave');
+    await toastText('is ready');
+
+    // Render without a motion video: a clear message, no ComfyUI job.
+    await setFiles('#imageInput', [portrait]);
+    await waitFor('!document.querySelector(".dz-preview").hidden && document.querySelector("#roleBlock").hidden', 'the character is in (one way to use it: no role to pick)');
+    assert((await text('#roleHint')).includes('performs the motion video'), 'the hint says what happens');
+    assert((await text('#wfpWarn')).includes('needs a motion video'), 'step 5 says the workflow needs a motion video');
+
+    // A motion video recorded in the browser: a WebM with no duration in its header, like many recorders make.
+    await js(`(async () => {
+      const c = document.createElement('canvas'); c.width = 180; c.height = 320; c.style.cssText = 'position:fixed;left:-999px'; document.body.append(c); // frames are only recorded from a canvas on the page
+      const ctx = c.getContext('2d');
+      const rec = new MediaRecorder(c.captureStream(15), { mimeType: 'video/webm' });
+      const chunks = [];
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.start();
+      for (let i = 0; i < 20; i++) { ctx.fillStyle = 'hsl(' + i * 18 + ' 80% 50%)'; ctx.fillRect(0, 0, 180, 320); ctx.fillStyle = '#fff'; ctx.fillRect(20 + i * 6, 100, 40, 120); await new Promise(r => setTimeout(r, 70)); }
+      rec.stop();
+      await new Promise(r => { rec.onstop = r; });
+      c.remove();
+      const dt = new DataTransfer();
+      dt.items.add(new File(chunks, 'dance.webm', { type: 'video/webm' }));
+      const input = document.querySelector('#videoInput');
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    })()`);
+    await waitFor('document.querySelector("#mzInfo").textContent.startsWith("🕺")', 'the motion video is stored', 15000);
+    await toastText('Motion video added');
+    eq(await value('#aspect'), '4:7', 'the clip takes the character\'s shape, as in Wan-AI\'s own code (the video is cropped to it)');
+    assert(!(await text('#motionHint')).includes('📐'), 'the shapes are close: nothing to warn about');
+    assert(!(await visible('#wfpWarn')), 'nothing missing anymore');
+    await shot('47-wan-step3');
+
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'on a rooftop at dusk');
+    await click('#generateBtn');
+    await genDone();
+    const ask = mock.log.at(-1).messages.find(m => m.role === 'user');
+    eq(ask.content.filter(p => p.type === 'image_url').length, 2, 'the Brain sees the character and a contact sheet of the motion');
+    assert(textOf(ask.content).includes('MOTION VIDEO') && textOf(ask.content).includes('role = "character"'), 'and is told which is which');
+    const entry = (await history()).find(e => e.theme === 'on a rooftop at dusk');
+    assert(entry.video?.file?.endsWith('.webm') && entry.video.sheet && entry.video.seconds > 0.5, 'the take keeps its motion video, its frames and its length');
+    eq(entry.imageRole, 'character', 'and the image is the character');
+    assert(await fileExists(path.join(dataDir, 'videos', entry.video.file)), 'the video is in the data folder');
+
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    for (let i = 0; i < 100 && comfy.prompts.length === before; i++) await sleep(50);
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    const sent = comfy.prompts.at(-1).prompt;
+    const main = sent['10:102'].inputs.text;
+    assert(main.startsWith('Character appearance description:') && main.includes('Background description:') && !/Motion:/.test(main), 'the look and setting go to the prompt');
+    assert(sent['10:103'].inputs.text.startsWith('A woman doing'), 'the Motion line goes to the pose prompt');
+    eq(sent['2'].inputs.file, `prompt-maker_${entry.video.file}`, 'the motion video goes to ComfyUI');
+    assert(comfy.uploads.includes(`prompt-maker_${entry.video.file}`) && await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.video.file}`)), 'uploaded to its input folder');
+    eq(sent['10:106'].inputs.pose_end_percent, 1, 'the pose window is fixed in what is sent');
+    eq(`${sent['10:106'].inputs.width}×${sent['10:106'].inputs.height}`, '480×848', '480p in the character\'s shape');
+    await click('.take .rtile img');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert(await visible('[data-lb="character"]'), 'a still can become a character for Wan Animate 2');
+    await press('Escape');
+
+    // New clears the motion video too, and History puts it back.
+    await click('#newBtn');
+    await waitFor('document.querySelector("#motionBlock .mz-preview").hidden', 'cleared');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("on a rooftop at dusk"))', 'the card');
+    const n = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("on a rooftop at dusk")) + 1');
+    await click(`.hcard:nth-of-type(${n}) button.open`);
+    await waitFor('document.querySelector(".model-card.active")?.dataset.id === "wan-animate-2" && document.querySelector("#mzInfo").textContent.startsWith("🕺")', 'the motion video is back with the card');
+
+    // Deleting the card takes the video with it, here and in ComfyUI.
+    await click('.tabs button[data-view="history"]');
+    await js('localStorage.setItem("pm.deleteWarned", "true")'); // the dialog is covered by the delete test
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await click(`.hcard:nth-of-type(${n}) [data-act="delete"]`);
+    await waitFor('![...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("on a rooftop at dusk"))', 'card gone', UNDO_WAIT);
+    await toastText('Deleted');
+    assert(!(await fileExists(path.join(dataDir, 'videos', entry.video.file))), 'the motion video is gone from the data folder');
+    assert(!(await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.video.file}`))), 'and from ComfyUI\'s input folder');
+    assert(!(await fileExists(path.join(dataDir, 'images', entry.video.sheet))), 'and its frames');
+    await click('.tabs button[data-view="create"]');
+    if (await visible('#videoClear')) await click('#videoClear');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(await js('document.querySelector("#motionBlock").hidden'), 'other models don\'t ask for a motion video');
+  });
+
+  await test('comfy: each job tags its end nodes, so ComfyUI saves again a render it has just done (no 404 after Clean up)', async () => {
+    const g = { 1: { class_type: 'KSampler', inputs: { seed: 5, model: ['2', 0] } }, 2: { class_type: 'Loader', inputs: {} }, 9: { class_type: 'SaveImage', inputs: { images: ['1', 0], filename_prefix: 'x' } } };
+    const a = comfyLib.tagRun(g), b = comfyLib.tagRun(g);
+    assert(a[9].inputs.pm_run && a[9].inputs.pm_run !== b[9].inputs.pm_run, 'the Save node gets a new tag each job');
+    eq(`${a[1].inputs.pm_run}|${a[2].inputs.pm_run}|${a[9].inputs.filename_prefix}`, 'undefined|undefined|x', 'the rest is untouched, so ComfyUI still remembers it');
+    eq(g[9].inputs.pm_run, undefined, 'the workflow itself is left as it was');
+  });
+  await test('workflows: a size picked goes past a node that only takes a shape (Krea Dual Resolution Selector) into what it fed', async () => {
+    const w = {
+      prompt: {
+        1: { class_type: 'KreaDualResolutionSelector', inputs: { aspect_ratio: '2:3', base_megapixels: 2, final_megapixels: 3, multiple: 16 } },
+        2: { class_type: 'EmptyLatentImage', inputs: { batch_size: 1, width: ['1', 0], height: ['1', 1] } },
+        3: { class_type: 'KreaTwoStageSampler', inputs: { seed: 0, latent_image: ['2', 0], final_width: ['1', 2], final_height: ['1', 3] } },
+        4: { class_type: 'CLIPTextEncode', inputs: { text: '' } },
+      },
+      mapping: { prompt: [{ node: '4', input: 'text' }], motion: [], image: null, images: [], video: null, audio: null, width: null, height: null, aspect: { node: '1', input: 'aspect_ratio' }, frames: null, seconds: null, fps: null, seed: [{ node: '3', input: 'seed' }] },
+      options: { snap: 16, frameRule: 'exact', fps: 24 },
+    };
+    const { prompt, applied } = wfLib.buildPrompt(w, { text: 'a robot', resolution: '832×1216', aspectRatio: '13:19', seed: 5 });
+    eq(`${prompt['2'].inputs.width}×${prompt['2'].inputs.height}`, '832×1216', 'the latent gets the size');
+    eq(`${prompt['3'].inputs.final_width}×${prompt['3'].inputs.final_height}`, '832×1216', 'and the sampler\'s final size');
+    eq(applied.size, '832×1216', 'and it says so');
+    const plain = wfLib.buildPrompt(w, { text: 'a robot', resolution: '720p', aspectRatio: '16:9', seed: 5 }).prompt;
+    eq(JSON.stringify(plain['2'].inputs.width), '["1",0]', 'a size that is no width × height leaves the node to do it');
+  });
+
+  await test('workflows: a video made in pieces gets the same prompt and size in each; extra saves are left out; a model in a subfolder is found', async () => {
+    // Two copies of one part (a long video in pieces), each with its own prompt and size inputs, joined by a Batch node.
+    const piece = n => ({
+      [`${n}:1`]: { class_type: 'CLIPTextEncode', inputs: { text: 'a dancer', clip: ['9', 1] }, _meta: { title: 'CLIP Text Encode (Prompt)' } },
+      [`${n}:2`]: { class_type: 'CLIPTextEncode', inputs: { text: 'blurry', clip: ['9', 1] }, _meta: { title: 'CLIP Text Encode (Negative Prompt)' } },
+      [`${n}:3`]: { class_type: 'PrimitiveInt', inputs: { value: 896 }, _meta: { title: 'Int (Width)' } },
+      [`${n}:4`]: { class_type: 'PrimitiveInt', inputs: { value: 512 }, _meta: { title: 'Int (Height)' } },
+      [`${n}:5`]: { class_type: 'WanAnimate2ToVideo', inputs: { positive: [`${n}:1`, 0], negative: [`${n}:2`, 0], reference_image: ['7', 0], pose_video: ['8', 0], width: [`${n}:3`, 0], height: [`${n}:4`, 0] } },
+      [`${n}:6`]: { class_type: 'KSampler', inputs: { seed: 1, positive: [`${n}:5`, 0], negative: [`${n}:5`, 1], model: [`${n}:7`, 0] } },
+      [`${n}:7`]: { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: 'speed.safetensors', strength_model: 0.8, model: ['9', 0] }, _meta: { title: 'Load LoRA' } },
+    });
+    const prompt = {
+      ...piece(10), ...piece(20),
+      7: { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+      8: { class_type: 'LoadVideo', inputs: { file: 'y.mp4' } },
+      9: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sam3.1.safetensors' } },
+      30: { class_type: 'CreateVideo', inputs: { images: ['10:6', 0] } },
+      31: { class_type: 'SaveVideo', inputs: { video: ['30', 0] }, _meta: { title: 'Save Video (First piece)' } },
+      32: { class_type: 'BatchImagesNode', inputs: { 'images.image0': ['10:6', 0], 'images.image1': ['20:6', 0] } },
+      33: { class_type: 'CreateVideo', inputs: { images: ['32', 0] } },
+      34: { class_type: 'SaveVideo', inputs: { video: ['33', 0] }, _meta: { title: 'Save Video (Final)' } },
+      40: { class_type: 'ImageStitch', inputs: { image1: ['32', 0], image2: ['8', 0] } },
+      41: { class_type: 'SaveVideo', inputs: { video: ['40', 0] }, _meta: { title: 'Side by side' } },
+    };
+    // The second piece carries on from the first (SCAIL 2's "Extend"): 81 frames each, 5 repeated, its number in a primitive.
+    for (const n of [10, 20]) prompt[`${n}:5`].inputs.length = 81;
+    Object.assign(prompt['20:5'].inputs, { previous_frames: ['10:6', 0], previous_frame_count: 5, pose_video: ['20:9', 0] });
+    prompt['20:8'] = { class_type: 'PrimitiveInt', inputs: { value: 2 }, _meta: { title: 'Int' } };
+    prompt['20:9'] = { class_type: 'ImageFromBatch', inputs: { image: ['8', 0], batch_index: ['20:8', 0], length: 81 } };
+    const notes = wfLib.repair(prompt);
+    assert(!prompt['41'] && !prompt['31'] && prompt['34'], `only the full render is saved (${Object.keys(prompt).filter(k => /^3|^4/.test(k)).join()})`);
+    eq(notes.length, 2, 'and both are said');
+    const { mapping, warnings } = wfLib.analyze(prompt);
+    eq(mapping.prompt.length, 1, 'one prompt slot');
+    assert(warnings.some(w => w.includes('renders in 2 pieces')), 'the setup says it renders in pieces');
+    const w = { prompt, mapping: { ...mapping, width: { node: '10:3', input: 'value' }, height: { node: '10:4', input: 'value' } }, options: { snap: 16, fps: 24, frameRule: 'exact' }, overrides: {}, loras: {} };
+    const built = wfLib.buildPrompt(w, { text: 'a robot', imageName: 'c.png', aspectRatio: '16:9', resolution: '480p', seed: 3 }).prompt;
+    eq(`${built['10:1'].inputs.text}|${built['20:1'].inputs.text}`, 'a robot|a robot', 'every piece gets the prompt');
+    eq(`${built['20:3'].inputs.value}×${built['20:4'].inputs.value}`, '848×480', 'and the size');
+    eq(built['20:2'].inputs.text, 'blurry', 'never the negative');
+    // A longer video gets more pieces like the last, each carrying on from the one before, all joined.
+    eq(wfLib.clipFrames(prompt), 'all', 'it covers any length');
+    const long = wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 400 });
+    eq(long.applied.pieces, 6, '81 + 5 × 76 frames cover 400');
+    eq(JSON.stringify(long.prompt['pm2:5'].inputs.previous_frames), '["pm1:6",0]', 'a new piece carries on from the one before');
+    eq(long.prompt['pm3:8'].inputs.value, 5, 'and knows which piece it is');
+    eq(JSON.stringify(long.prompt['pm3:5'].inputs.positive), '["20:1",0]', 'with the same prompt (shared, not copied)');
+    eq(JSON.stringify(long.prompt['32'].inputs['images.image5']), '["pm4:6",0]', 'all joined into one video');
+    assert(!long.prompt['pm1:7'], 'the LoRA stays shared, not copied');
+    eq(wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 120 }).applied.pieces, 2, 'a short video keeps its two');
+    // With ffmpeg, each piece is saved on its own and Prompt Maker joins them: ComfyUI never holds the whole video twice.
+    prompt['33'].inputs.audio = ['8', 1];
+    const split = wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 400, joinInApp: true });
+    assert(!split.prompt['32'] && !split.prompt['33'] && !split.prompt['34'], 'no Batch node gluing the pieces in ComfyUI');
+    eq(split.parts.saves.join(), 'pmsave001,pmsave002,pmsave003,pmsave004,pmsave005,pmsave006', 'a Save Video per piece, in order');
+    eq(['pmvideo001', 'pmvideo002', 'pmvideo006'].map(id => split.prompt[id].inputs.images[0]).join(), '10:6,20:6,pm4:6', 'each makes a video of its own piece');
+    assert(!('audio' in split.prompt.pmvideo002.inputs) && split.parts.audio, 'the sound is left for the joined video');
+    eq(split.prompt.pmsave003.inputs.filename_prefix, 'video/ComfyUI_piece003', 'each piece has its own file name');
+    eq(JSON.stringify(split.prompt.pmsave003.inputs.video), '["pmvideo003",0]', 'and saves its own video');
+    assert(!wfLib.buildPrompt(w, { text: 'a robot', videoFrames: 400 }).parts, 'without ffmpeg, ComfyUI joins them as before');
+    delete prompt['33'].inputs.audio;
+    // ComfyUI's Distilled template is one piece of 81 frames: a second one carrying on from it is made, then as many as
+    // the video needs, the last only as long as what's left.
+    const distilled = JSON.parse(await fs.readFile(new URL('../workflows/wan-animate-2/motion-transfer.json', import.meta.url), 'utf8'));
+    eq(wfLib.clipFrames(distilled.prompt), 'all', 'the Distilled template covers any length');
+    const dw = { ...distilled, id: 'd', overrides: {}, loras: [] };
+    const lengths = vf => Object.values(wfLib.buildPrompt(dw, { text: 'a robot', videoFrames: vf }).prompt).filter(n => n.class_type === 'WanAnimate2ToVideo').map(n => n.inputs.length).join();
+    eq(lengths(42), '41', 'a short video: one piece, no longer than it');
+    eq(lengths(150), '81,69', 'two pieces, the second as long as what\'s left');
+    eq(lengths(402), '81,81,81,81,81', '400 frames: five');
+    const chained = wfLib.buildPrompt(dw, { text: 'a robot', videoFrames: 402, joinInApp: true });
+    eq(JSON.stringify([chained.prompt['pm1:247'].inputs.continue_motion, chained.prompt['pm1:247'].inputs.video_frame_offset]), '[["pmnext:299",0],["pmnext:247",5]]', 'each carries on from the one before, where it stopped in the video');
+    eq(chained.parts.saves.length, 5, 'saved piece by piece, for Prompt Maker to join');
+    eq(JSON.stringify(chained.prompt.pmvideo002.inputs.images), '["pmnext:trim",0]', 'without the frame it repeats');
+    // Each piece loads the same LoRA: one row, and a change reaches every piece.
+    const { leads } = wfLib.loraGroups(prompt);
+    eq(leads.map(l => `${l.key}×${l.pieces}`).join(), '10:7×2', 'the LoRA shows once, for both pieces');
+    const tuned = wfLib.buildPrompt({ ...w, loras: { tweaks: { '10:7': { on: true, strength: 0.5 } }, added: [] } }, { text: 'a robot' });
+    eq(`${tuned.prompt['10:7'].inputs.strength_model}|${tuned.prompt['20:7'].inputs.strength_model}`, '0.5|0.5', 'its strength goes to both');
+    eq(tuned.applied.loras.length, 1, 'and the render lists it once');
+    const off = wfLib.buildPrompt({ ...w, loras: { tweaks: { '10:7': { on: false, strength: 0.8 } }, added: [] } }, { text: 'a robot' }).prompt;
+    assert(!off['10:7'] && !off['20:7'], 'switched off, it leaves both pieces');
+    const zero = wfLib.buildPrompt({ ...w, loras: { tweaks: { '10:7': { on: true, strength: 0 } }, added: [{ name: 'detail.safetensors', strength: 0, on: true }] } }, { text: 'a robot' });
+    eq(`${zero.prompt['10:7']?.inputs.strength_model}|${zero.prompt['20:7']?.inputs.strength_model}`, '0|0', 'left on at 0, it still goes in at 0: some LoRAs change the render even there');
+    assert(Object.values(zero.prompt).some(n => n.inputs?.lora_name === 'detail.safetensors' && n.inputs.strength_model === 0), 'so does an added one');
+    eq(zero.applied.loras.length, 2, 'and the render lists both');
+    const info = { CheckpointLoaderSimple: { input: { required: { ckpt_name: [['other.safetensors', 'wan-2.1/sam3.1.safetensors']] } } }, CLIPVisionLoader: { input: { required: { clip_name: [[]] } } } };
+    built[11] = { class_type: 'CLIPVisionLoader', inputs: { clip_name: 'clip_vision_h.safetensors' }, _meta: { title: 'Load CLIP Vision' } };
+    const check = modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://huggingface.co/x/clip_vision_h.safetensors', directory: 'clip_vision' }]);
+    eq(JSON.stringify(check.fixes.map(f => f.to)), '["wan-2.1/sam3.1.safetensors"]', 'a model kept in a subfolder is found there');
+    eq(check.missing.map(m => `${m.file}→${m.folder}`).join(), 'clip_vision_h.safetensors→clip_vision', 'a missing one is named, with where it goes');
+    assert(check.missing[0].url.startsWith('https://huggingface.co/') && check.missing[0].download, 'and its download link, one Prompt Maker may use');
+    assert(!modelsLib.checkModels(built, info, [{ name: 'clip_vision_h.safetensors', url: 'https://example.com/clip_vision_h.safetensors', directory: 'clip_vision' }]).missing[0].download, 'a link elsewhere is shown, not downloaded');
+  });
+
+  await test('a long video\'s pieces are joined into one, with the motion video\'s sound', async () => {
+    if (!(await videotools.hasFfmpeg())) return console.log('    (skipped: no ffmpeg)');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-join-'));
+    const ff = args => new Promise((resolve, reject) => spawn('ffmpeg', ['-y', '-v', 'error', ...args]).on('close', c => (c ? reject(new Error(`ffmpeg ${c}`)) : resolve())));
+    const pieces = [];
+    for (const [k, frames] of [24, 20, 10].entries()) {
+      const file = path.join(dir, `p${k}.mp4`);
+      await ff(['-f', 'lavfi', '-i', `testsrc=size=320x176:rate=24`, '-frames:v', String(frames), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', file]);
+      pieces.push(file);
+    }
+    const sound = path.join(dir, 'motion.mp4');
+    await ff(['-f', 'lavfi', '-i', 'testsrc=size=320x176:rate=24', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', sound]);
+    const out = path.join(dir, 'joined.mp4');
+    await videotools.join(pieces, out, { audioFrom: sound });
+    const count = await new Promise(resolve => { let o = ''; spawn('ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', out]).stdout.on('data', d => { o += d; }).on('close', () => resolve(Number(o.trim()))); });
+    eq(count, 54, 'every frame of every piece, in one video');
+    const streams = await new Promise(resolve => { let o = ''; spawn('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', out]).stdout.on('data', d => { o += d; }).on('close', () => resolve(JSON.parse(o))); });
+    assert(streams.streams.some(st => st.codec_type === 'audio'), 'with the motion video\'s sound');
+    assert(Number(streams.format.duration) < 2.6, `cut to the video's 2.25 s, not the sound's 6 (${streams.format.duration})`);
+    const silent = path.join(dir, 'silent.mp4');
+    await videotools.join(pieces, silent, { audioFrom: pieces[0] }); // a motion video without sound
+    const quiet = await videotools.probe(silent);
+    assert(quiet && quiet.width === 320, 'a motion video without sound still gives the joined video');
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  await test('character animation: SCAIL 2 keeps the picture\'s background or the video\'s, as picked', async () => {
+    // A character-replacement workflow: replacement_mode from one boolean per piece, wired to its mask and its sampler.
+    const prompt = {
+      7: { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+      8: { class_type: 'LoadVideo', inputs: { file: 'y.mp4' } },
+    };
+    for (const n of [10, 20]) Object.assign(prompt, {
+      [`${n}:1`]: { class_type: 'CLIPTextEncode', inputs: { text: 'a dancer' } },
+      [`${n}:2`]: { class_type: 'PrimitiveBoolean', inputs: { value: true } },
+      [`${n}:3`]: { class_type: 'SCAIL2ColoredMask', inputs: { sort_by: 'left_to_right', replacement_mode: [`${n}:2`, 0] } },
+      [`${n}:4`]: { class_type: 'WanSCAILToVideo', inputs: { positive: [`${n}:1`, 0], reference_image: ['7', 0], pose_video: ['8', 0], pose_video_mask: [`${n}:3`, 0], replacement_mode: [`${n}:2`, 0] } },
+    });
+    const w = { id: 'w', prompt, mapping: { prompt: [{ node: '10:1', input: 'text' }], seed: [] }, options: { snap: 16, fps: 24, frameRule: 'exact' }, overrides: {}, loras: {} };
+    const bg = wfLib.summary(w).background;
+    eq(`${bg.value}|${bg.original}|${bg.keys.join()}`, 'video|video|10:2|value,20:2|value', 'it keeps the video\'s, as the workflow has it, set in each piece');
+    const picked = { ...w, overrides: { '10:2|value': false, '20:2|value': false } };
+    eq(wfLib.summary(picked).background.value, 'picture', 'picking the picture shows');
+    const sent = wfLib.buildPrompt(picked, { text: 'a robot' }).prompt;
+    eq(`${sent['10:2'].inputs.value}|${sent['20:2'].inputs.value}`, 'false|false', 'and every piece animates the picture');
+    eq(wfLib.summary({ ...w, prompt: { 1: { class_type: 'WanAnimate2ToVideo', inputs: { reference_image: ['7', 0], pose_video: ['8', 0] } } } }).background, null, 'Wan Animate 2 has no such choice');
+    // Written on the node itself, without a primitive.
+    const direct = { 1: { class_type: 'WanSCAILToVideo', inputs: { replacement_mode: false } } };
+    eq(wfLib.summary({ ...w, prompt: direct }).background.keys.join(), '1|replacement_mode', 'a switch on the node itself is found too');
+  });
+
+  await test('models: a workflow needing a model ComfyUI lacks: step 5 says so, ⬇ Download puts it in ComfyUI, then it renders', async () => {
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    await click((await visible('#wfpAddFirst')) ? '#wfpAddFirst' : '#wfpAdd');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [bigModelWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    const setup = await text('#wfWarnings');
+    assert(setup.includes('doesn\'t have a model') && setup.includes('big_model.safetensors'), `the setup says which model is missing: ${setup}`);
+    await type('#wfName', 'Needs a big model');
+    await click('#wfSave');
+    await toastText('is ready');
+    await waitFor('!document.querySelector("#wfpModels").hidden', 'step 5 says a model is missing');
+    const notice = await text('#wfpModels');
+    assert(notice.includes('big_model.safetensors') && notice.includes('models/checkpoints'), `which, and where it goes: ${notice}`);
+    await shot('48-missing-model');
+
+    // Rendering before it's there: a clear message, nothing sent to ComfyUI.
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'a quiet harbor at dawn');
+    await click('#generateBtn');
+    await genDone();
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("doesn\'t have a model")', 'the render says what is missing');
+    eq(comfy.prompts.length, before, 'nothing was sent to ComfyUI');
+    await click('#stageError .x');
+
+    await click('#wfpModels [data-act="mm-get"]');
+    await toastText('is in ComfyUI now');
+    await waitFor('document.querySelector("#wfpModels").hidden', 'once it\'s there, the notice goes', 10000);
+    const got = path.join(comfyRoot, 'models', 'checkpoints', 'big_model.safetensors');
+    eq((await fs.stat(got)).size, MODEL_BYTES.length, 'the whole file is in ComfyUI\'s checkpoints folder');
+    assert(!(await fileExists(`${got}.part`)), 'and nothing half-done next to it');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    eq(comfy.prompts.at(-1).prompt['4'].inputs.ckpt_name, 'big_model.safetensors', 'with that model');
+    const refused = await js(`fetch("/api/comfy/downloads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "x.safetensors", folder: "checkpoints", url: "https://example.com/x.safetensors" }) }).then(async r => [r.status, (await r.json()).error])`);
+    assert(refused[0] === 400 && refused[1].includes('only downloads models from Hugging Face'), `other sites are refused: ${refused[1]}`);
+  });
+
+  await test('render: ComfyUI skipping part of a workflow stops the render, with its reasons', async () => {
+    await type('#theme', 'SKIPOUT a red kite over the dunes');
+    await click('#generateBtn');
+    await genDone();
+    await click('.take .rb-go');
+    await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("would skip part of this workflow")', 'the render stops with ComfyUI\'s reasons');
+    const msg = await text('#stageError');
+    assert(msg.includes('#9 SaveImage') && msg.includes("'gone.safetensors' isn't in ComfyUI") && !msg.includes('mock_model'), `in short: ${msg}`);
+    await sleep(600);
+    eq(await count('.take .rtile img'), 0, 'and no half render is kept');
+    await click('#stageError .x');
+  });
+
+  await test('nodes: a node pack that didn\'t load in ComfyUI: step 5 names the pack and why, the check at start lists it, the render stops', async () => {
+    // ComfyUI's log says the pack failed to import, and the pack's source names the node.
+    const pack = path.join(comfyRoot, 'custom_nodes', 'mock-saver');
+    await fs.mkdir(pack, { recursive: true });
+    await fs.writeFile(path.join(pack, 'nodes.py'), 'NODE_CLASS_MAPPINGS = {"SaveImage": MockSaver}\n');
+    await fs.mkdir(path.join(comfyRoot, 'user'), { recursive: true });
+    await fs.writeFile(path.join(comfyRoot, 'user', 'comfyui.log'), `\x1b[33m[WARNING]\x1b[0m Cannot import ${comfyRoot}/custom_nodes/mock-saver module for custom nodes: cannot import name 'Thing' from 'threadpoolctl' (${comfyRoot}/venv/threadpoolctl.py)\n`);
+    const savedType = OBJECT_INFO.SaveImage;
+    delete OBJECT_INFO.SaveImage;
+    try {
+      const health = await js(`fetch('/api/comfy/health?fresh=1').then(r => r.json())`);
+      const bad = health.problems.find(p => p.nodes.some(n => n.type === 'SaveImage'));
+      assert(bad, `the check over every workflow lists one that uses the node: ${JSON.stringify(health).slice(0, 300)}`);
+      const node = bad.nodes.find(n => n.type === 'SaveImage');
+      assert(node.pack === 'mock-saver' && node.reason.includes("cannot import name 'Thing'") && !node.reason.includes(comfyRoot), `with the pack and why, no paths: ${JSON.stringify(node)}`);
+      assert(node.nodes[0].startsWith('#'), `and which node: ${node.nodes[0]}`);
+
+      await click('.tabs button[data-view="settings"]');
+      await click('#sComfyRecheck');
+      await waitFor('(document.querySelector("#sComfyHealth p")?.textContent || "").includes("can\'t render right now")', 'Settings → ComfyUI lists it');
+      assert((await text('#sComfyHealth')).includes('mock-saver'), `with the pack: ${await text('#sComfyHealth')}`);
+
+      await click('.tabs button[data-view="create"]');
+      await click('.model-card[data-id="krea2-raw"]');
+      await waitFor('!document.querySelector("#wfpModels").hidden && document.querySelector("#wfpModels").textContent.includes("mock-saver")', 'step 5 names the pack');
+      const notice = await text('#wfpModels');
+      assert(notice.includes('SaveImage') && notice.includes("didn't load when ComfyUI started") && notice.includes("cannot import name 'Thing'") && notice.includes('Restart ComfyUI'), `which node, which pack, why, and a restart: ${notice}`);
+      assert((await js('document.querySelector("#wfpSelect").selectedOptions[0].textContent')).startsWith('⚠ '), 'the workflow is marked in the list');
+
+      // Rendering anyway: the same words, nothing sent to ComfyUI.
+      const before = comfy.prompts.length;
+      await click('.take .rb-go');
+      await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("doesn\'t have right now")', 'the render says what is missing');
+      const msg = await text('#stageError');
+      assert(msg.includes('mock-saver') && msg.includes('restart ComfyUI'), `with the pack and the fix: ${msg}`);
+      eq(comfy.prompts.length, before, 'nothing was sent to ComfyUI');
+      await click('#stageError .x');
+    } finally {
+      OBJECT_INFO.SaveImage = savedType;
+      await fs.rm(path.join(comfyRoot, 'user', 'comfyui.log'), { force: true });
+      await fs.rm(pack, { recursive: true, force: true });
+    }
+    // The pack fixed and ComfyUI restarted (here: the node is back): Check again clears it everywhere.
+    await click('#wfpModels [data-act="mm-recheck"]');
+    await toastText('it can render now');
+    await waitFor('document.querySelector("#wfpModels").hidden', 'the notice goes');
+    assert(!(await js('document.querySelector("#wfpSelect").selectedOptions[0].textContent')).startsWith('⚠'), 'and the mark');
+    eq((await js(`fetch('/api/comfy/health').then(r => r.json())`)).problems.length, 0, 'and the check over every workflow is clean');
+  });
+
+  await test('gallery: a render moved out of the renders folder leaves every view, and comes back with its file', async () => {
+    const all = await (await fetch(`${APP}/api/history`)).json();
+    const entry = all.find(e => e.variations.some(v => v.renders?.length));
+    const render = entry.variations.flatMap(v => v.renders || []).at(-1);
+    const file = render.files[0].file;
+    const away = path.join(tmp, `moved-${file}`);
+    await fs.rename(path.join(dataDir, 'renders', file), away);
+    // A video whose file is gone too: its tile only loads the file when hovered, so it would stay a blank box.
+    const histFile = path.join(dataDir, 'history.json');
+    const raw = JSON.parse(await fs.readFile(histFile, 'utf8'));
+    raw.unshift({ id: 'moved-video', createdAt: new Date().toISOString(), favorite: false, modelId: 'ltx-2-3', modelName: 'LTX 2.3', modelKind: 'video', theme: 'a moved video', variations: [{ versions: [{ text: 'a moved video', createdAt: new Date().toISOString() }], renders: [{ id: 'moved-r', versionIndex: 0, text: 'a moved video', workflowName: 'Mock', files: [{ file: 'moved-video_0.mp4', kind: 'video', name: 'moved.mp4' }], createdAt: new Date().toISOString() }] }] });
+    await fs.writeFile(histFile, JSON.stringify(raw));
+    const shown = await (await fetch(`${APP}/api/history`)).json();
+    const files = shown.flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files.map(f => f.file))));
+    assert(!files.includes(file) && !files.includes('moved-video_0.mp4'), 'the page isn\'t sent renders whose file is gone');
+    assert(shown.find(e => e.id === 'moved-video').variations[0].versions.length === 1, 'their takes stay');
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length > 0', 'gallery');
+    eq(await count(`#reelGrid [src*="${file}"], #reelGrid [src*="moved-video_0"]`), 0, 'no tile for them, not even a blank one');
+    eq(await text('#galleryCount'), String(await count('#reelGrid .reel-cell')), 'and the count agrees');
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'history');
+    eq(await count(`.hcard [src*="${file}"], .hcard [src*="moved-video_0"]`), 0, 'no History card shows them');
+    // Put back, it shows again.
+    await fs.rename(away, path.join(dataDir, 'renders', file));
+    await fs.writeFile(histFile, JSON.stringify(raw.slice(1)));
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor(`!!document.querySelector('#reelGrid [src*="${file}"]')`, 'back in the Library with its file');
+    // Gone while it's on screen: the tile leaves too.
+    await fs.rename(path.join(dataDir, 'renders', file), away);
+    await js(`(() => { const el = document.querySelector('#reelGrid [src*="${file}"]'); el.src = el.src + '?again'; })()`);
+    await waitFor(`!document.querySelector('#reelGrid [src*="${file}"]') || document.querySelector('#reelGrid [src*="${file}"]').closest('.reel-cell').hidden`, 'the tile leaves while you look');
+    for (let n = problems.length - 1; n >= 0; n--) if (problems[n].includes(file)) problems.splice(n, 1); // the browser logs the 404 it was meant to hit
+    await fs.rename(away, path.join(dataDir, 'renders', file));
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('motion video: black bars are cropped with one click; a workflow that animates less says so; ✂️ Trim picks the part', async () => {
+    const clip = path.join(tmp, 'webcam-bars.mp4');
+    const made = await new Promise(resolve => {
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x240:rate=12', '-t', '10', '-vf', 'pad=480:240:160:0:black', '-pix_fmt', 'yuv420p', clip], { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', code => resolve(code === 0));
+    });
+    if (!made) return console.log('      (skipped: ffmpeg not installed)');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="wan-animate-2"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await setFiles('#videoInput', [clip]);
+    await waitFor('document.querySelector("#mzInfo").textContent.includes("480×240")', 'the motion video is in', 15000);
+    await waitFor('!!document.querySelector("#videoCrop")', 'it offers to crop the bars');
+    assert((await text('#motionHint')).includes('160×240 inside a 480×240 frame'), 'and says where the picture is');
+    await click('#videoCrop');
+    await toastText('without its black bars');
+    await waitFor('document.querySelector("#mzInfo").textContent.includes("160×240")', 'now the picture alone');
+    assert(!(await js('!!document.querySelector("#videoCrop")')), 'nothing left to crop');
+    eq(await value('#aspect'), '2:3', 'the aspect follows the cropped video (no character yet)');
+
+    // The picked workflow (the mock template) animates 81 frames; this video has 120.
+    await setFiles('#imageInput', [portrait]);
+    await waitFor('(document.querySelector("#wfpWarn")?.textContent || "").includes("animates 81 frames")', 'step 5 says the workflow animates only part of it');
+    assert((await text('#wfpWarn')).includes('the first 6.8s of your 10s motion video'), `and how much: ${await text('#wfpWarn')}`);
+    await click('#videoTrim');
+    await waitFor('document.querySelector("#trimDlg").open', 'the trim window');
+    eq(await value('#trimEnd'), '6.75', 'it starts as long as the workflow animates (81 frames)');
+    assert((await text('#trimNow')).includes('frame 1 of 120'), `the playhead is on the first frame: ${await text('#trimNow')}`);
+    await waitFor('document.querySelectorAll(".trim-thumbs canvas").length >= 8', 'the timeline shows the video\'s frames');
+    // Frame by frame to where it should start (a button, then the arrow key), and start there.
+    await click('#trimFwd');
+    await press('ArrowRight');
+    await press('ArrowRight');
+    assert((await text('#trimNow')).includes('frame 4 of 120'), `one frame per step: ${await text('#trimNow')}`);
+    await click('#trimSetStart');
+    eq(await value('#trimStart'), '0.25', 'it starts at that frame');
+    // Drag along the timeline to 6 s and end there, then drag the start handle to 2 s: real mouse drags.
+    await js('document.querySelector("#trimLine").scrollIntoView({ block: "center" })');
+    const line = await js('(() => { const r = document.querySelector("#trimLine").getBoundingClientRect(); return { l: r.left, w: r.width, y: r.top + r.height / 2 }; })()');
+    const xOf = f => line.l + ((f + 0.5) / 120) * line.w;
+    const drag = async (x0, x1) => {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x0, y: line.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x0 + ((x1 - x0) * k) / 6, y: line.y, button: 'left', buttons: 1 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x1, y: line.y, button: 'left', buttons: 0, clickCount: 1 });
+      await sleep(150);
+    };
+    await drag(xOf(40), xOf(71));
+    assert((await text('#trimNow')).startsWith('0:05.92 · frame 72'), `the playhead shows the frame it's on: ${await text('#trimNow')}`);
+    await click('#trimSetEnd');
+    eq(await value('#trimEnd'), '6.00', 'and the part ends with it');
+    await drag(line.l + (3 / 120) * line.w, xOf(24));
+    eq(await value('#trimStart'), '2.00', 'the start handle drags to 2 s');
+    assert((await text('#trimNow')).includes('frame 25'), 'and the frame it lands on shows');
+    assert((await text('#trimNote')).includes('Frames 25–72 · 48 frames'), `it says what you picked: ${await text('#trimNote')}`);
+    await shot('49-trim');
+    await click('#trimGo');
+    await toastText('of your motion video, from 2s');
+    await waitFor('/🕺 4(\\.\\d)?s ·/.test(document.querySelector("#mzInfo").textContent) && !document.querySelector("#trimDlg").open', 'now that part alone (48 frames at 12 fps)');
+    await waitFor('!(document.querySelector("#wfpWarn")?.textContent || "").includes("animates")', 'and the workflow does all of it');
+    await click('#videoClear');
+    await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('jobs: the assistant works through a folder, skips what fails and logs it; a reload stops it safely', async () => {
+    const pics = path.join(tmp, 'Pics');
+    await fs.mkdir(pics, { recursive: true });
+    await fs.writeFile(path.join(pics, 'a.png'), makePng(320, 200));
+    await fs.writeFile(path.join(pics, 'b10.png'), makePng(200, 320));
+    await fs.writeFile(path.join(pics, 'b2.png'), makePng(256, 256));
+    await fs.writeFile(path.join(pics, 'broken.png'), 'not really a picture');
+    await fs.writeFile(path.join(pics, 'notes.txt'), 'not a picture at all');
+    const listed = await js(`fetch("/api/folder?path=" + encodeURIComponent(${q(pics)})).then(r => r.json())`);
+    eq(JSON.stringify(listed.images.map(i => i.name)), JSON.stringify(['a.png', 'b2.png', 'b10.png', 'broken.png']), 'a folder lists its pictures in natural order');
+    const missing = await js('fetch("/api/folder?path=NoSuchFolderAnywhere").then(async r => [r.status, (await r.json()).error])');
+    assert(missing[0] === 404 && missing[1].includes('home folder'), `a missing folder says where it looked: ${missing[1]}`);
+    await fs.mkdir(path.join(tmp, 'Work', 'Client A', 'Renders'), { recursive: true });
+    const found = await js(`fetch("/api/find?kind=folder&q=renderings&in=" + encodeURIComponent(${q(path.join(tmp, "Work"))})).then(r => r.json())`);
+    assert(found.found[0]?.path === path.join(tmp, 'Work', 'Client A', 'Renders'), `a folder is found by a name close to it, deep down: ${JSON.stringify(found.found[0])}`);
+    const file = await js(`fetch("/api/find?kind=file&q=notes&in=" + encodeURIComponent(${q(tmp)})).then(r => r.json())`);
+    assert(file.found.some(x => x.path === path.join(pics, 'notes.txt')), 'and a file by part of its name');
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await type('#asInput', `show me the pictures in ${pics}`);
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    const saw = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    assert(saw.includes('I see them') && saw.includes('2 files'), `the assistant looks at pictures in a folder: ${saw} | what the app answered: ${await js('[...document.querySelectorAll("#asLog .as-act")].slice(-3).map(a => a.textContent).join(" | ")')}`);
+    await click('#asClear');
+    await click('#asClear');
+    eq(await js(`fetch("/api/folder/image?path=" + encodeURIComponent(${q(path.join(pics, 'notes.txt'))})).then(r => r.status)`), 400, 'only pictures are handed out');
+
+    const before = (await js('fetch("/api/history").then(r => r.json())')).length;
+    await click('.tabs button[data-view="gallery"]');
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await type('#asInput', `job: use the pictures in ${pics}, low then high temperature, skip problems`);
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    const acts = await js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join(" | ")');
+    assert(acts.includes('4 pictures in') && acts.includes('Started the job “Pics, low and high”: 8 items'), `it looked, then started the job: ${acts}`);
+    assert(await visible('#jobsBtn'), 'the 🗂 Job pill shows');
+    // Your own click on the Create tab goes through while a job step runs (its tools can't pull you there, you can go).
+    await waitFor('!!document.querySelector(".job-strip, #jobStrip") || document.querySelector("#jobsCount").textContent !== "✓"', 'the job is running');
+    await click('.tabs button[data-view="create"]');
+    assert(await js('document.querySelector(".tabs button[data-view=\'create\']").classList.contains("active")'), 'the Create tab answers your click while a job runs');
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 90000);
+    assert(await js('document.querySelector(".tabs button[data-view=\'gallery\']").classList.contains("active")'), 'it ran without pulling you off the page you were on');
+    eq((await js('fetch("/api/history").then(r => r.json())')).length, before + 6, 'six prompts written: two for each good picture');
+
+    await click('#jobsBtn');
+    await waitFor('document.querySelector("#view-jobs").classList.contains("active") && document.querySelectorAll(".job .ju").length === 8', 'the Jobs window with the log');
+    eq(await count('.job .ju.s-done'), 6, 'six done');
+    eq(await count('.job .ju.s-skipped'), 2, 'the broken picture is skipped, both runs');
+    assert((await text('.job .ju.s-skipped')).includes('broken.png'), 'and the log says why');
+    assert((await text('.job .job-chip')).includes('done'), 'the job is done');
+    assert((await text('.job .job-req')).includes('skip problems'), 'it shows what you asked');
+    await shot('46-jobs');
+    await click('.job .ju.s-done .ju-thumb');
+    await waitFor('document.querySelector("#imgView").open', 'a picture from the log opens full screen');
+    await click('#ivClose');
+    await click('.job [data-job="only"]');
+    eq(await count('.job .ju'), 2, 'Only the skipped ones');
+    await waitFor('document.querySelector(".job .ju.s-skipped .ju-thumb")?.classList.contains("broken")', 'a picture that won\'t open shows ⚠ instead', 3000);
+    await click('.tabs [data-view="create"]');
+    assert(await js('document.querySelector("#jobsBtn").hidden'), 'once seen, the pill goes away');
+    assert(!(await js('document.querySelector("#asJobs").hidden')), 'the log stays a click away in the assistant panel');
+    const saved = JSON.parse(await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8')).jobs[0];
+    eq(saved.status, 'done', 'the job and its log are saved');
+
+    // A job that was running when the page went away: it stops at that item, marked to check, and offers Resume.
+    const half = { ...saved, id: 'reloaded-job', title: 'Half done', status: 'running', beat: Date.now() - 600e3, seen: false, units: saved.units.map((u, i) => ({ ...u, status: i < 2 ? 'done' : i === 2 ? 'running' : 'pending' })) };
+    await js(`fetch("/api/jobs/reloaded-job", { method: "PUT", headers: { "Content-Type": "application/json" }, body: ${q(JSON.stringify(half))} }).then(r => r.ok)`);
+    await goto(`${APP}/#gallery`);
+    await toastText('was interrupted');
+    const after = JSON.parse(await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8')).jobs.find(j => j.id === 'reloaded-job');
+    eq(after.status, 'paused', 'it is paused');
+    assert(after.units[2].status === 'skipped' && after.units[2].error.includes('Interrupted'), 'the item it was on is marked to check');
+    await click('#jobsBtn');
+    await waitFor('document.querySelector(".job[data-id=\'reloaded-job\'] [data-job=\'remove\']")', 'a paused job can be removed');
+    await click('.job[data-id="reloaded-job"] [data-job="remove"]');
+    await click('.job[data-id="reloaded-job"] [data-job="remove"]');
+    await waitFor('!document.querySelector(".job[data-id=\'reloaded-job\']")', 'removed');
+    await click('.tabs [data-view="create"]');
+  });
+
+  await test('jobs: the sheet must say how many takes each generate writes and is shown in plain words; a shot list is checked, shown as a form and run from it', async () => {
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await js('document.querySelector("#toast").hidden = true'); // the job test before left its "interrupted · Resume" toast over the input
+    await click('#asClear');
+    await click('#asClear');
+    const acts = () => js('[...document.querySelectorAll("#asLog .as-act")].map(a => a.textContent).join(" | ")');
+    // Auto-render on for the model: Generate renders the takes itself, and the sheet's render step must count those
+    // instead of failing with "already rendering" (which skipped the run and starved the pick that followed).
+    await js('localStorage.setItem("pm.autoRender.krea2-raw", "true")');
+    await type('#asInput', 'sheet: stills of a lighthouse');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await acts()).includes('doesn\'t say how many takes'), `a generate without takes is sent back: ${await acts()}`);
+    assert((await acts()).includes('Started the job “Sheet”: 1 item. The sheet: 1. stills: model Krea 2 RAW · theme “a lighthouse at dusk” · write 2 takes · render ×1'), `the sheet is shown in plain words when the job starts: ${await acts()}`);
+    await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 90000);
+    await js('localStorage.setItem("pm.autoRender.krea2-raw", "false")');
+    eq((await (await fetch(`${APP}/api/history`)).json())[0].variations.length, 2, 'it wrote the 2 takes the sheet says');
+    const sheetJob = (await (await fetch(`${APP}/api/jobs`)).json()).find(j => j.title === 'Sheet');
+    eq(sheetJob.units[0].status, 'done', `the run went through with auto-render on: ${JSON.stringify(sheetJob.units[0].log)}`);
+    assert(sheetJob.units[0].log.some(l => /Rendered 2 files \(auto-render made them/.test(l.text || '')), `the render step counted auto-render's renders: ${JSON.stringify(sheetJob.units[0].log)}`);
+    eq((await (await fetch(`${APP}/api/history`)).json())[0].variations.flatMap(v => v.renders).length, 2, 'one render per take, not two');
+    // A numbered request whose sheet stops after the first run is sent back: the whole sheet goes in one start_job.
+    await js('document.querySelector("#toast").hidden = true');
+    await type('#asInput', 'numbered:\n1. set the theme\n2. one take\n3. set it again');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await acts()).includes('The request has 3 numbered steps and this sheet covers only one run'), `a sheet short of the numbered steps is sent back: ${await acts()}`);
+    assert((await acts()).includes('Started the job “Numbered”: 3 items'), `the whole sheet is taken: ${await acts()}`);
+    await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 60000);
+    // A video step must say how long the clip is: the Brain judges it from the action, the sheet shows it, the take gets it.
+    await js('document.querySelector("#toast").hidden = true');
+    await type('#asInput', 'timed: she sips her coffee');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 30000);
+    assert((await acts()).includes('doesn\'t say how long the video should be'), `a video generate without seconds is sent back: ${await acts()}`);
+    assert((await acts()).includes('The sheet: 1. sip: model LTX 2.3 · theme “she sips her coffee and goes back to typ…” · write 1 take · 8 s'), `the sheet shows the length: ${await acts()}`);
+    await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 60000);
+    const timed = (await (await fetch(`${APP}/api/history`)).json())[0];
+    eq(`${timed.modelName} ${timed.duration}`, 'LTX 2.3 8s', 'the clip is written for the length the sheet says');
+    // The shot list: scenes handed to start_job are refused; a video without its length and a line on a model that
+    // can't speak are sent back; the complete list waits in 🗂 Jobs as a form the user checks, changes and runs.
+    await js('document.querySelector("#toast").hidden = true');
+    // Krea 2 Character comes with two workflows: "into your picture" (a place and a person) and "same person, new
+    // picture" (the person alone). A scene that gives the person alone has to render on the second, whichever is picked.
+    OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0].push('krea2_identity_edit_v1_2.safetensors'); // the LoRA both workflows need, "in" the mock ComfyUI
+    for (const starter of ['krea-2-character/into-your-picture.json', 'krea-2-character/identity-edit.json']) {
+      const prep = await (await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starter }) })).json();
+      assert(prep.prompt, `${starter} prepares: ${JSON.stringify(prep).slice(0, 200)}`);
+      await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'krea-2-character', name: prep.name, source: prep.source, prompt: prep.prompt, mapping: prep.mapping, options: prep.options, models: prep.models }) });
+    }
+    const intoYourPicture = (await (await fetch(`${APP}/api/workflows`)).json()).find(w => w.name === 'Krea 2 Character: into your picture').id;
+    await js(`localStorage.setItem("pm.wf.krea-2-character", ${JSON.stringify(JSON.stringify(intoYourPicture))})`); // the two-picture one is the picked one
+    await goto(`${APP}/#create`);
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await js('document.querySelector("#toast").hidden = true');
+    const shotsAsk = 'shots: scene 1 on Krea 2 RAW: a woman typing in a cabin, 2 takes, the best animated on LTX 2.3; scene 2 on Krea 2 Character with her as the person: she looks up, then LTX 2.3 again; join them';
+    await type('#asInput', shotsAsk);
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 40000);
+    assert((await acts()).includes('go on a shot list (shot_list)'), `a scene sheet handed to start_job is refused: ${await acts()}`);
+    assert((await acts()).includes('Scene 1 (Scene 1: at the desk): the video doesn\'t say how long it is'), `a video without its length is sent back: ${await acts()}`);
+    assert((await acts()).includes('LTX 2.3 can\'t say a line'), `a line on a model that can't speak is sent back: ${await acts()}`);
+    assert((await acts()).includes('is in 🗂 Jobs, waiting for the user to check it'), `the complete list waits for the user: ${await acts()}`);
+    const draft = (await (await fetch(`${APP}/api/jobs`)).json()).find(j => j.title === 'Shots');
+    eq(draft.status, 'draft', 'the list is saved as a draft');
+    eq(draft.runs.map(r => r.steps.map(st => st.tool).join(' ')).join(' | '), 'set_model pick_workflow clear_image set_theme generate render pick_still pick_workflow set_line set_theme generate render | set_model pick_workflow use_scene_still set_theme generate render pick_still pick_workflow set_line set_theme generate render | use_scene_video_end pick_workflow set_line set_theme generate render | join_videos', 'the app wrote the steps itself');
+    eq(draft.shot.scenes[1].still.workflow, 'Krea 2 Character: same person, new picture', 'scene 2 renders on the workflow that takes the person alone, not the picked two-picture one');
+    await click('#jobsBtn');
+    await waitFor('document.querySelector(".job.s-draft form[data-shot]")', 'the form is shown', 5000);
+    const field = (n, name) => js(`document.querySelector('.shot-scene[data-scene="${n}"] [name="${name}"]').value`);
+    eq(await field(1, 'still.model'), 'Krea 2 RAW', 'scene 1\'s still model is filled in');
+    eq(await field(1, 'still.takes'), '2', 'and its takes');
+    eq(await field(1, 'video.seconds'), '5', 'and the video\'s seconds');
+    eq(await field(2, 'still.person'), '1', 'scene 2 keeps scene 1\'s person');
+    eq(await field(3, 'video.from'), 'end:2', 'scene 3 carries on from where scene 2\'s video ends');
+    eq(await js('document.querySelector(\'.shot-form [name="voice.name"]\').value'), '', 'no voice on the form: the list made none');
+    const timeLine = () => js('document.querySelector(".shot-form .shot-time").textContent');
+    assert(/^(About .+|Under a minute) of rendering on this computer, going by your last renders/.test(await timeLine()), `the form says about how long it renders, from the renders made here so far: ${await timeLine()}`);
+    assert((await acts()).includes(' of rendering on this computer'), `the Brain is told the time too: ${await acts()}`);
+    // Change a slot, add a scene and take it off again, then run: the job is made from the form as it stands.
+    await js('document.querySelector(\'.shot-scene[data-scene="1"] [name="still.takes"]\').value = "1"');
+    await js('document.querySelector(\'.shot-scene[data-scene="1"] [name="still.takes"]\').dispatchEvent(new Event("input", { bubbles: true }))');
+    assert(/^(About .+|Under a minute) of rendering on this computer/.test(await timeLine()), `the time line follows the change: ${await timeLine()}`);
+    await click('.shot-form [data-shot="add"]');
+    eq(await count('.shot-scene'), 4, 'a scene added');
+    await click('.shot-scene[data-scene="4"] [data-shot="remove"]');
+    eq(await count('.shot-scene'), 3, 'and taken off again');
+    eq(await field(1, 'still.takes'), '1', 'the change stayed through the redraw');
+    await click('.shot-form [data-job="run"]');
+    await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 180000);
+    const shots = (await (await fetch(`${APP}/api/jobs`)).json()).find(j => j.title === 'Shots');
+    const shotsHistory = await (await fetch(`${APP}/api/history`)).json();
+    const shotsMade = shots.units.map(u => ({ startedAt: u.startedAt, entries: u.entries.map(id => { const e = shotsHistory.find(x => x.id === id); return e ? { model: e.modelName, theme: e.theme, renders: e.variations.flatMap(v => (v.renders || []).map(r => ({ at: r.createdAt, files: r.files.map(f => f.kind) }))) } : id; }) }));
+    eq(shots.units.map(u => u.status).join(' '), 'done done done done', `every run went through: ${JSON.stringify(shots.units.map(u => u.error || u.log.map(l => l.text || l.error)))} | made: ${JSON.stringify(shotsMade)}`);
+    eq(shotsMade[0].entries[0]?.theme, 'a woman in a cozy cabin at a desk, typing', `the still was written for the scene's prompt, though Create was hidden behind the Jobs page while the job ran: ${JSON.stringify(shotsMade[0])}`);
+    assert(shots.units[0].log.some(l => /^Scene 1's still: /.test(l.text || '')), `one take: the only still is the still, nothing to judge: ${JSON.stringify(shots.units[0].log)}`);
+    assert(shots.units[1].log.some(l => l.text === 'Workflow → Krea 2 Character: same person, new picture') && shots.units[1].log.some(l => /^Scene 1's still → step 3 as character on Krea 2 Character/.test(l.text || '')), `scene 2 kept scene 1's person on the one-picture workflow: ${JSON.stringify(shots.units[1].log)}`);
+    assert(shots.units[2].log.some(l => /^Where scene 2's video ends → step 3 as first frame on LTX 2.3/.test(l.text || '')), `scene 3 carried on from the end of scene 2's clip: ${JSON.stringify(shots.units[2].log)}`);
+    assert(shots.units[3].log.some(l => /Joined 3 videos/.test(l.text || '')), `the three videos were joined: ${JSON.stringify(shots.units[3].log)}`);
+    // With the check switched off, the list starts at once.
+    await click('#jobsAsk');
+    eq(await js('localStorage.getItem("pm.jobsAsk")'), 'false', 'the check is off');
+    await js('document.querySelector("#toast").hidden = true');
+    await type('#asInput', shotsAsk);
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 40000);
+    assert((await acts()).includes('Started the shot list “Shots”: 3 scenes'), `with the check off the list starts at once: ${await acts()}`);
+    await waitFor('document.querySelector("#jobsCount").textContent === "✓"', 'the job finishes', 180000);
+    await click('#jobsAsk');
+    // In the chat too: generate {takes: 1} writes one take, whatever the dial was set to a step before.
+    await js('document.querySelector("#toast").hidden = true'); // "Job done · See the log" sits over the input
+    await type('#asInput', 'one take only');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('One take, as asked'), `generate took its own number: ${await acts()}`);
+    eq(await count('.take'), 1, 'one take on screen');
+    eq(await js('document.querySelector("#varSeg button.active, #varSeg [aria-pressed=true]")?.dataset.value'), '1', 'and the dial says 1 now');
+  });
+
+  await test('workflows: the ones that come with the app are offered first, set themselves up, and carry nobody\'s prompts', async () => {
+    // Every workflow that ships: Prompt Maker's own format, no prompt text, no seed, no picture of anyone's.
+    const dir = path.join(ROOT, 'workflows');
+    let shippedCount = 0;
+    for (const model of await fs.readdir(dir)) {
+      for (const f of await fs.readdir(path.join(dir, model))) {
+        const w = JSON.parse(await fs.readFile(path.join(dir, model, f), 'utf8'));
+        shippedCount++;
+        eq(w.format, wfLib.EXPORT_FORMAT, `${model}/${f} is in the export format`);
+        for (const [id, node] of Object.entries(w.prompt)) {
+          for (const [input, v] of Object.entries(node.inputs)) {
+            if (/^(text|prompt|string|value)$/i.test(input) && typeof v === 'string') eq(v, '', `${model}/${f} node ${id} ${input} is empty`);
+            if (/seed/i.test(input) && typeof v === 'number') eq(v, 0, `${model}/${f} node ${id} seed is 0`);
+          }
+          if (node.class_type === 'LoadImage') eq(node.inputs.image, 'example.png', `${model}/${f} loads no one's picture`);
+        }
+        assert(w.models.every(m => /^https:\/\/huggingface\.co\//.test(m.url)), `${model}/${f}: every model file has a Hugging Face link`);
+      }
+    }
+    assert(shippedCount > 0, 'a workflow ships');
+    const refused = await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: APP }, body: JSON.stringify({ starter: '../../package.json' }) });
+    eq(refused.status, 404, 'only files in workflows/ are read');
+
+    await click('.tabs button[data-view="models"]');
+    await click('#modelList button[data-id="krea-2-raw-i2i"]');
+    await click('#addWorkflowBtn');
+    await waitFor('!document.querySelector("#wfStarters").hidden && document.querySelectorAll("#wfStList button").length === 1', 'the starter workflow is offered');
+    await click('#wfStList button');
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    eq(await value('#wfName'), 'Krea 2 RAW: image to image', 'named');
+    await click('#wfSave');
+    await waitFor('!document.querySelector("#wfDialog").open', 'saved');
+    const flow = (await fetch(`${APP}/api/workflows`).then(r => r.json())).find(f => f.modelId === 'krea-2-raw-i2i');
+    eq(flow?.source, 'starter:krea-2-raw-i2i/image-to-image.json', 'remembers where it came from');
+    await click('#addWorkflowBtn');
+    await waitFor('document.querySelector("#wfStList button")?.textContent.includes("added already")', 'marked as added');
+    await click('#wfClose');
+    await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
+
+    // Every built-in model comes with its workflows, each added by itself, next to the ones you have.
+    for (const id of ['krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'ltx-2-3-t2v', 'minimax-h3', 'minimax-h3-t2v', 'minimax-h3-ref', 'wan-animate-2', 'krea-2-character', 'z-image-turbo', 'qwen-image-edit']) {
+      assert((await fs.readdir(path.join(dir, id)).catch(() => [])).length, `${id} ships with a workflow`);
+    }
+    const startersFile = path.join(dataDir, 'starters.json');
+    const before = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    const mine = new Set(before.map(f => f.modelId));
+    await fs.writeFile(startersFile, '{}');
+    const after = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    for (const id of await fs.readdir(dir)) {
+      const flows = after.filter(f => f.modelId === id);
+      const had = before.filter(f => f.modelId === id).map(f => f.id);
+      assert(had.every(x => flows.some(f => f.id === x)), `${id} keeps the workflows it had`);
+      for (const file of await fs.readdir(path.join(dir, id))) eq(flows.filter(f => f.source === `starter:${id}/${file}`).length, 1, `${id} has the starter ${file} once (every starter ships, next to your own workflows)`);
+      if (mine.has(id)) eq(flows.length - had.length, flows.filter(f => f.source.startsWith('starter:') && !had.includes(f.id)).length, `${id} got nothing but its starters`);
+    }
+    const added = after.filter(f => !before.some(b => b.id === f.id));
+    assert(added.length > 0, 'some starters were added');
+    for (const f of added) await fetch(`${APP}/api/workflows/${f.id}`, { method: 'DELETE', headers: { Origin: APP } });
+    const gone = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    eq(gone.length, before.length, 'a starter you deleted stays deleted');
+    await goto(APP);
+  });
+
+  await test('settings: ⬆ Updates says which version this is and checks on click; ↻ Restart is offered', async () => {
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('/You have Prompt Maker \\d/.test(document.querySelector("#updNow").textContent)', 'the version and how it was installed');
+    assert((await text('#updNow')).includes('git'), 'a repo copy says so');
+    await click('[data-settings-tab="services"]');
+    assert(await visible('[data-act="app-restart"]'), '↻ Restart on the Prompt Maker row');
+    await click('[data-settings-tab="updates"]');
+    assert(!(await visible('#updGo')), 'nothing to update before a check');
+    await click('#updCheck');
+    await waitFor('!document.querySelector("#updNote").hidden && document.querySelector("#updNote").textContent.length > 5', 'the check answers', 15000);
+    assert((await text('#updNote')).includes('⚠️'), 'with the fake git it says the check failed, plainly');
+    eq(await text('#updCheck'), 'Check again', 'and offers to check again');
+    const st = await fetch(`${APP}/api/update`).then(r => r.json());
+    eq(st.how, 'git', 'the server knows the kind of copy');
+    eq(st.running, st.current, 'the running version is the one on disk');
+    eq(st.stale, false, 'so nothing is stale');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('voices: one-click setup, describe a voice and hear it, keep it by name, say a line, rename, delete', async () => {
+    await click('.tabs button[data-view="voices"]');
+    await waitFor('document.querySelector("#view-voices").classList.contains("active") && !document.querySelector("#voiceSetup").hidden', 'the Voices page, not set up yet');
+    assert((await text('#voiceSetup')).includes('GB'), 'says how much it downloads');
+    assert(await js('document.querySelector("#voiceNew").hidden && document.querySelector("#voiceListCard").hidden'), 'nothing to make voices with yet');
+    await shot('voices-setup');
+    await click('#voiceInstall');
+    await waitFor('!document.querySelector("#voiceProgress").hidden || document.querySelector("#voiceSetup").hidden', 'a progress bar (or already done)');
+    await toastText('Voices are ready', 15000);
+    await waitFor('document.querySelector("#voiceSetup").hidden && !document.querySelector("#voiceNew").hidden', 'ready: the setup card goes, the voice form shows');
+    assert(await fileExists(path.join(dataDir, 'voice', 'site', 'qwen_tts', '__init__.py')), 'the packages went into the data folder');
+    const r = await (await fetch(`${APP}/api/voice`)).json();
+    assert(r.installed && r.packages && r.models, `the server agrees: ${JSON.stringify(r).slice(0, 200)}`);
+    await goto(`${APP}/#voices`);
+    await waitFor('document.querySelector("#voiceSetup").hidden && !document.querySelector("#voiceNew").hidden', 'still installed after a reload');
+
+    await js(`window.__voicePlays = []; window.__sawVoiceProgress = false;
+      const original = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function(...args) { window.__voicePlays.push(this.currentSrc || this.src); return original.apply(this,args); };
+      new MutationObserver(() => { if (!document.querySelector('#vHearProgress').hidden) window.__sawVoiceProgress = true; }).observe(document.querySelector('#vHearProgress'), {attributes:true});`);
+    // Describe → hear → keep.
+    await click('#vHear');
+    await toastText('Describe the voice first');
+    await type('#vDesc', 'A woman in her late twenties, warm light alto, soft Midwestern lilt');
+    await click('#vHear');
+    await waitFor('!document.querySelector("#vHeard").hidden && document.querySelector("#vPlay").src.includes("/voice/")', 'a clip to hear', 10000);
+    assert(/\/voice\/[a-f0-9]{16}\.wav$/.test(await js('document.querySelector("#vPlay").src')), 'served from the voice folder');
+    eq((await fetch(await js('document.querySelector("#vPlay").src'))).status, 200, 'the clip plays');
+    eq(await js('document.activeElement.id'), 'vName', 'ready to be named');
+    await click('#vKeep');
+    await toastText('Give the voice a name');
+    await type('#vName', 'Jess');
+    await press('Enter');
+    await toastText('Kept the voice “Jess”');
+    eq(await count('#voiceList li'), 1, 'listed');
+    eq(await js('window.__voicePlays.length'), 1, 'keeping a voice does not play a saved voice');
+    assert(await js('window.__sawVoiceProgress && document.querySelector("#vHearProgress").hidden'), 'Hear it shows progress and clears it on completion');
+    assert((await text('#voiceList li')).includes('Jess') && (await text('#voiceList li')).includes('Midwestern'), 'with its name and description');
+    assert(await js('document.querySelector("#vHeard").hidden'), 'the form is ready for the next one');
+    await type('#vDesc', 'please fail');
+    await click('#vHear');
+    await toastText('mock refuses');
+    await type('#vDesc', 'A deep calm narrator');
+    await click('#vHear');
+    await waitFor('!document.querySelector("#vHeard").hidden', 'heard', 10000);
+    await type('#vName', 'jess');
+    await click('#vKeep');
+    await toastText('already a voice called');
+    await type('#vName', 'Narrator');
+    await click('#vKeep');
+    await toastText('Kept the voice “Narrator”');
+    eq(await count('#voiceList li'), 2, 'two voices');
+
+    // Say a line in it.
+    await click('#voiceList li [data-act="say"]');
+    await toastText('Type a line to say first');
+    await type('#vTry', 'Every frame, generated. Nothing ever left my computer.');
+    await click('#voiceList li [data-act="say"]');
+    await waitFor('!!document.querySelector("#voiceList li audio")', 'the line plays in the list', 10000);
+    assert((await text('#voiceList li .vl-said')).includes('Every frame') && /\d+(\.\d+)?s/.test(await text('#voiceList li .vl-said')), 'with the words and how long it is');
+    await click('#voiceList li [data-act="sample"]');
+    assert((await text('#voiceList li .vl-said')).includes('out near the lake'), 'the sample again');
+    await shot('voices');
+
+    const played = await js('window.__voicePlays.length');
+    await click('#voiceList li:nth-child(2) [data-act="sample"]');
+    await click('#voiceList li [data-act="sample"]');
+    eq(await js('window.__voicePlays.length'), played + 2, 'each Sample click plays exactly one voice');
+    assert(await js('[...document.querySelectorAll("#voiceList audio")].filter(a=>!a.paused).length <= 1'), 'at most one saved voice plays');
+    const beforeDelete = await js('window.__voicePlays.length');
+    // Rename, delete (asks once).
+    await click('#voiceList li [data-act="rename"]');
+    await type('#voiceList li .vl-name input', 'Jess from Ohio');
+    await press('Enter');
+    await waitFor('document.querySelector("#voiceList li .vl-name").textContent.includes("Jess from Ohio")', 'renamed');
+    eq((await (await fetch(`${APP}/api/voice`)).json()).voices[0].name, 'Jess from Ohio', 'saved');
+    await click('#voiceList li [data-act="delete"]');
+    eq(await count('#voiceList li'), 2, 'one click asks');
+    assert((await text('#voiceList li [data-act="delete"]')).includes('Sure?'), 'and says so');
+    await click('#voiceList li [data-act="delete"]');
+    await toastText('Deleted the voice');
+    eq(await count('#voiceList li'), 1, 'gone; the Narrator stays');
+    eq(await js('window.__voicePlays.length'), beforeDelete, 'rename and delete do not replay old voices');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('🎙 a line in step 3: said in a kept voice at Generate, the video\'s soundtrack at Render, saved and put back', async () => {
+    const narrator = (await (await fetch(`${APP}/api/voice`)).json()).voices.find(v => v.name === 'Narrator');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(await js('document.querySelector("#lineBlock").hidden'), 'no line on an image model');
+    // MiniMax H3's own workflow takes a sound file (the line). An earlier test may have given it another: add the starter.
+    if (!(await (await fetch(`${APP}/api/workflows`)).json()).some(f => f.modelId === 'minimax-h3' && f.maps.audio)) {
+      const prep = await (await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starter: 'minimax-h3/image-to-video.json' }) })).json();
+      await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'minimax-h3', name: prep.name, source: prep.source, prompt: prep.prompt, mapping: prep.mapping, options: prep.options, models: prep.models }) });
+      await goto(`${APP}/#create`);
+    }
+    await click('.model-card[data-id="minimax-h3"]');
+    const h3 = (await (await fetch(`${APP}/api/workflows`)).json()).find(f => f.modelId === 'minimax-h3' && f.maps.audio);
+    await choose('#wfpSelect', h3.id);
+    await waitFor('!document.querySelector("#lineBlock").hidden && !document.querySelector("#lineForm").hidden', 'the line form on MiniMax H3 (its workflow takes a sound file)');
+    eq(await js('[...document.querySelectorAll("#lineVoice option")].map(o => o.textContent).join("|")'), 'No line|🎙 Narrator', 'your voices to pick from');
+    // A typed size of another shape gives way to the picture's shape: MiniMax has named sizes (768p, 2K), so no W×H
+    // of the new shape can replace it, and it used to stick (Square from the picture, 832×1248 rendered).
+    await choose('#resolution', '__custom');
+    await type('#resW', '832'); await type('#resH', '1248');
+    await click('#resUse');
+    eq(await value('#resolution'), '832×1248', 'your own size on MiniMax');
+    eq(await value('#aspect'), '2:3', 'with its shape');
+    await setFiles('#imageInput', [square]);
+    await waitFor('document.querySelector("#aspect").value === "1:1"', 'a square picture: Shape from image is 1:1');
+    assert(await js('document.querySelector("#resolution").value !== "832×1248"'), 'the typed 2:3 size gives way');
+    eq(await value('#resolution'), '768p', 'to the model\'s usual size');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector("#dropzone .dz-preview").hidden', 'image in');
+    await choose('#lineVoice', narrator.id);
+    await type('#lineText', 'Every frame, generated. Nothing ever left my computer.');
+    await press('Tab');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'MP4TEST she looks up from her coffee and speaks');
+    await type('#duration', '1');
+    assert(await js('document.querySelector("#durationNote").hidden'), 'no duration note before the line is said');
+    await click('#generateBtn');
+    await genDone();
+    const entry = (await (await fetch(`${APP}/api/history`)).json())[0];
+    assert(/^[a-f0-9]{16}\.wav$/.test(entry.line?.file || '') && entry.line.seconds > 0 && entry.line.voice?.name === 'Narrator' && entry.line.text.startsWith('Every frame'), `the line was said and saved with the prompt: ${JSON.stringify(entry.line)}`);
+    // The dial says 1 s, the line is longer: Duration says what the video will be, so the length is no surprise.
+    const least = Math.ceil((entry.line.seconds + 1) * 10) / 10;
+    assert(!(await js('document.querySelector("#durationNote").hidden')), `the duration note shows once the line is said (dial ${await value('#duration')}, line ${JSON.stringify(entry.line.text)} vs ${JSON.stringify(await value('#lineText'))}, note ${JSON.stringify(await text('#durationNote'))})`);
+    eq(await text('#durationNote'), `→ ${least} s, as long as the line`, 'with the length the line sets (the line plus a second)');
+    await type('#duration', '20');
+    assert(await js('document.querySelector("#durationNote").hidden'), 'and goes when the dial is longer than the line');
+    await type('#duration', '1');
+    assert(await fileExists(path.join(dataDir, 'voice', 'clips', entry.line.file)), 'its clip is in the data folder');
+    const asked = JSON.stringify(mock.log.at(-1).messages);
+    assert(asked.includes('SPOKEN LINE') && asked.includes('Every frame, generated. Nothing ever left my computer.'), 'the Brain is told the exact words');
+    await click('.take .rb-count button[data-value="1"]');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img, .take .rtile video") && !document.querySelector(".take .rtile.running")', 'rendered', 15000);
+    let p = comfy.prompts.at(-1).prompt;
+    eq(p['200']?.inputs.audio, `prompt-maker_${entry.line.file}`, 'the clip went to ComfyUI as the soundtrack');
+    eq(JSON.stringify(p['105:16'].inputs.conditioning), '["201",0]', 'through the Add Guide node');
+    assert(Number(p['105:111'].inputs.value) >= entry.line.seconds + 1, `the clip is at least as long as the line: ${p['105:111'].inputs.value}s for ${entry.line.seconds}s`);
+    await click('.take .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox');
+    assert((await text('#lbInfo')).includes('Says') && (await text('#lbInfo')).includes('Every frame') && (await text('#lbInfo')).includes('Narrator'), 'the full-screen view shows what is said, and by which voice');
+    // 🎙 The clip is cut to the line: the mock's video is 5 s and the line shorter, so what came after the words is gone.
+    const lined = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.id === entry.id).variations[0].renders.at(-1);
+    assert(lined.cut && Math.abs(lined.cut.to - (entry.line.seconds + 0.35)) < 0.02 && lined.cut.from >= 4.9, `the render was cut to the line: ${JSON.stringify(lined.cut)} for a ${entry.line.seconds}s line`);
+    const probed = await new Promise(r => { let s = ''; const p = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path.join(dataDir, 'renders', lined.files[0].file)]); p.stdout.on('data', d => { s += d; }); p.on('close', () => r(Number.parseFloat(s))); p.on('error', () => r(null)); });
+    assert(probed != null && Math.abs(probed - lined.cut.to) < 0.2, `and the file is that long: ${probed}s for ${lined.cut.to}s`);
+    assert((await text('#lbInfo')).includes('Cut to the line'), 'the full-screen view says it was cut to the line');
+    await press('Escape');
+
+    // No line: the sound nodes are left out.
+    await click('#lineClear');
+    await waitFor('document.querySelector("#lineText").value === ""', 'cleared');
+    await type('#theme', 'she sips her coffee');
+    await click('#generateBtn');
+    await genDone();
+    assert(!(await (await fetch(`${APP}/api/history`)).json())[0].line, 'no line this time');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img, .take .rtile video") && !document.querySelector(".take .rtile.running")', 'rendered', 15000);
+    p = comfy.prompts.at(-1).prompt;
+    assert(!p['200'] && !p['201'] && JSON.stringify(p['105:16'].inputs.conditioning) === '["105:104",0]', 'Load Audio and Add Guide are gone, the rest wired as before');
+
+    // A workflow that takes no line: step 3 offers the one that does, and the assistant switches by itself.
+    const plain = await (await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'minimax-h3', name: 'H3 without sound', source: 'upload', prompt: JSON.parse(await fs.readFile(apiWorkflowFile, 'utf8')), mapping: { prompt: [{ node: '6', input: 'text' }], image: null, video: null, seed: [] } }) })).json();
+    await goto(`${APP}/#create`);
+    await choose('#wfpSelect', plain.id);
+    await waitFor('!document.querySelector("#lineBlock").hidden && !document.querySelector("#lineSwitch").hidden && document.querySelector("#lineForm").hidden', 'the line block offers the workflow that takes a line');
+    await click('#lineSwitchBtn');
+    await waitFor(`document.querySelector("#wfpSelect").selectedOptions[0]?.textContent === ${q(h3.name)} && !document.querySelector("#lineForm").hidden`, 'one click picks it').catch(async e => { throw new Error(`${e.message} | picked: ${await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent')} | form hidden: ${await js('document.querySelector("#lineForm").hidden')} | switch hidden: ${await js('document.querySelector("#lineSwitch").hidden')} | toast: ${await text('#toast')}`); });
+    await choose('#wfpSelect', plain.id);
+    await waitFor('document.querySelector("#lineForm").hidden', 'back on the plain one');
+
+    // The assistant sets a line and makes voices too (switching the workflow by itself).
+    if (!(await visible('#assistant'))) await click('#askBtn');
+    await type('#asInput', 'make her say "Hello there, and welcome."');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    const said = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    assert(said.includes('Narrator says “Hello there, and welcome.”'), `the assistant set the line: ${said}`);
+    eq(await value('#lineText'), 'Hello there, and welcome.', 'in step 3');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), h3.name, 'on the workflow that takes the line');
+    await fetch(`${APP}/api/workflows/${plain.id}`, { method: 'DELETE', headers: { Origin: APP } });
+    await type('#asInput', 'make a new voice called Sam');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('kept the voice “Sam”'), 'and made a voice');
+    await type('#asInput', 'make a new voice called Sam');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('“Sam” is already there'), 'the same name again just uses it (a job run twice keeps going)');
+    eq(await js('[...document.querySelectorAll("#lineVoice option")].map(o => o.textContent).join("|")'), 'No line|🎙 Narrator|🎙 Sam', 'which step 3 offers right away');
+    await type('#asInput', 'remake the voice called Sam');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 20000);
+    assert((await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')).includes('Remade the voice “Sam”'), `a new description remakes the voice under its name: ${await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""')}`);
+    const sams = (await (await fetch(`${APP}/api/voice`)).json()).voices.filter(v => v.name === 'Sam');
+    eq(sams.map(v => v.description).join('|'), 'a bright young narrator, quick and warm', 'one Sam, the new one (the old one is gone, its name was free again)');
+    await click('#asClear');
+    await click('#asClear');
+    await click('#asClose');
+
+    // History puts the line back.
+    await click('.tabs button[data-view="history"]');
+    await waitFor('[...document.querySelectorAll(".hcard")].some(c => c.textContent.includes("looks up from her coffee"))', 'the card');
+    const n = await js('[...document.querySelectorAll(".hcard")].findIndex(c => c.textContent.includes("looks up from her coffee")) + 1');
+    await click(`.hcard:nth-of-type(${n}) [data-act="open"]`);
+    await waitFor('document.querySelector("#lineText").value.startsWith("Every frame")', 'the line is back');
+    eq(await value('#lineVoice'), narrator.id, 'in its voice');
+    await click('#lineClear');
+    await js('document.querySelector("#imageClear").click()');
+    await click('.model-card[data-id="krea2-raw"]');
+
+    // Deleting the entry takes the clip too, in the data folder and in ComfyUI's input folder, and the words of the line.
+    assert(await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.line.file}`)), "ComfyUI's input folder has the clip before");
+    await fetch(`${APP}/api/history/${entry.id}`, { method: 'DELETE' });
+    assert(!(await fileExists(path.join(dataDir, 'voice', 'clips', entry.line.file))), 'its clip is gone from the data folder');
+    assert(!(await fileExists(path.join(comfyRoot, 'input', `prompt-maker_${entry.line.file}`))), "and ComfyUI's copy of it");
+    assert(!(await fs.readFile(path.join(dataDir, 'history.json.bak'), 'utf8')).includes('Nothing ever left my computer'), 'the copy of History from before no longer has the line');
+  });
+
+  await test('🎬 join videos: the ones shown in Your renders, in their order, become one video; the assistant joins too', async () => {
+    if (!(await clip)) return console.log('    (skipped: no ffmpeg)');
+    if (!(await (await fetch(`${APP}/api/workflows`)).json()).some(f => f.modelId === 'minimax-h3')) {
+      const prep = await (await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starter: 'minimax-h3/image-to-video.json' }) })).json();
+      await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'minimax-h3', name: prep.name, source: prep.source, prompt: prep.prompt, mapping: prep.mapping, options: prep.options, models: prep.models }) });
+      await goto(`${APP}/#create`);
+    }
+    await goto(`${APP}/#create`); // afresh: the line test deleted its entry behind the page's back, and 🎞 Your renders would still show its clip
+    await click('.model-card[data-id="minimax-h3"]');
+    await js('document.querySelector("#lineClear")?.click()');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector("#dropzone .dz-preview").hidden', 'image in');
+    await click('#varSeg button[data-value="1"]');
+    const before = (await (await fetch(`${APP}/api/history`)).json()).length;
+    for (const theme of ['MP4TEST clip one, a sunrise', 'MP4TEST clip two, a sunset']) {
+      await type('#theme', theme);
+      await click('#generateBtn');
+      await genDone();
+      await click('.take .rb-count button[data-value="1"]');
+      await click('.take .rb-go');
+      await waitFor('!!document.querySelector(".take .rtile video, .take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered', 15000).catch(async e => { throw new Error(`${e.message} | stage: ${await text('#stageError')} | tile: ${await js('document.querySelector(".take .rtile")?.outerHTML.slice(0, 400)')}`); });
+    }
+    const made = (await (await fetch(`${APP}/api/history`)).json()).slice(0, 2);
+    assert(made.every(e => e.variations[0].renders?.[0]?.files[0].kind === 'video'), `two little videos: ${JSON.stringify(made.map(e => e.variations[0].renders?.[0]?.files))}`);
+    await js('if (document.querySelector("#reelToggle").getAttribute("aria-expanded") !== "true") document.querySelector("#reelToggle").click()');
+    await click('#reelKinds [data-kind="video"]');
+    await waitFor('!document.querySelector("#reelJoin").hidden', 'the Join button shows with two or more videos');
+    const n = Number((await text('#reelJoin')).match(/\d+/)[0]);
+    assert(n >= 2, `counts them: ${await text('#reelJoin')}`);
+    await click('#reelJoin');
+    await toastText('Joined', 60000).catch(async err => {
+      const shown = await js('[...document.querySelectorAll("#reelGrid .reel-cell")].map(c => c.dataset.file).join(" ")');
+      const have = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files.map(f => f.file)))).join(' ');
+      throw new Error(`${err.message} | shown: ${shown} | in history: ${have}`);
+    });
+    const all = await (await fetch(`${APP}/api/history`)).json();
+    const joined = all[0];
+    eq(joined.modelName, 'Joined video', 'a new render of its own');
+    const r = joined.variations[0].renders[0];
+    eq(r.joined.length, n, 'from those videos, in order');
+    assert(/\.mp4$/.test(r.files[0].file) && await fileExists(path.join(dataDir, 'renders', r.files[0].file)), 'one file in the data folder');
+    const probe = await videotools.probe(path.join(dataDir, 'renders', r.files[0].file));
+    const partSecs = (await Promise.all(r.joined.map(async j => { // the parts' lengths (a lined clip was cut to its line)
+      const f = all.find(e => e.id === j.entryId)?.variations.flatMap(v => v.renders || []).find(x => x.id === j.renderId)?.files.find(x => x.kind === 'video');
+      return f ? (await videotools.probe(path.join(dataDir, 'renders', f.file)).catch(() => null))?.seconds || 0 : 0;
+    }))).reduce((a, b) => a + b, 0);
+    assert(probe && partSecs > 0 && probe.seconds >= partSecs * 0.9 && probe.seconds <= partSecs * 1.1 + 0.5, `as long as all of them together: ${probe?.seconds}s for ${n} clips of ${partSecs}s`);
+    eq(await count('#reelGrid .reel-card, #reelGrid .rcard, #reelGrid > *') > 0, true, 'it lands in the grid');
+    await click('#reelKinds [data-kind=""]');
+    await waitFor('document.querySelector("#toast").hidden', 'the toast goes', 12000);
+
+    if (!(await visible('#assistant'))) await click('#askBtn');
+    await type('#asInput', 'join the videos shown');
+    await press('Enter');
+    await waitFor('document.querySelector("#asStop").hidden', 'assistant done', 60000);
+    const said = await js('[...document.querySelectorAll("#asLog .as-msg.bot")].at(-1)?.textContent || ""');
+    assert(said.includes('Joined') && said.includes('videos into'), `the assistant joins the shown videos: ${said}`);
+    await click('#asClear');
+    await click('#asClear');
+    await click('#asClose');
+    const now = await (await fetch(`${APP}/api/history`)).json();
+    eq(now.length, before + 4, 'two clips, two joins');
+    for (const e of now.slice(0, 4)) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE', headers: { Origin: APP } }); // tidy: the tests after this open the newest card
+    await goto(`${APP}/#create`);
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('security: other websites can\'t use the local API', async () => {
+    const res = await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{"llmModel":"x"}' });
+    eq(res.status, 403, 'cross-site write blocked');
+    // fetch() won't send a custom Host header, so use a raw request.
+    const rebind = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: APP_PORT, path: '/api/history', headers: { Host: `evil.example:${APP_PORT}` } }, r => { r.resume(); resolve(r.statusCode); }).on('error', reject);
+    });
+    eq(rebind, 403, 'DNS-rebinding host blocked');
+    const ok = await fetch(`${APP}/api/models`);
+    eq(ok.status, 200, 'local tools still work');
+  });
+
+  await test('routing: deep link + back button', async () => {
+    await goto(`${APP}/#history`);
+    assert(await js('document.querySelector("#view-history").classList.contains("active")'), 'deep link to history');
+    await click('.tabs button[data-view="models"]');
+    await js('history.back()');
+    await waitFor('document.querySelector("#view-history").classList.contains("active")', 'back to history');
+  });
+
+  await test('responsive: no sideways scroll, screenshots', async () => {
+    await goto(`${APP}/#create`);
+    await click('.tabs button[data-view="history"]');
+    await waitFor('document.querySelectorAll(".hcard").length > 0', 'cards');
+    await click('.hcard:nth-of-type(1) button.open');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image attached');
+    await click('.model-card[data-id="ltx-2-3"]');
+    const sizes = [[360, 740, true], [390, 844, true], [820, 1180, true], [1024, 768, false], [1280, 800, false], [1920, 1080, false]];
+    for (const [w, h, mobile] of sizes) {
+      await viewport(w, h, mobile);
+      for (const view of ['create', 'history', 'gallery', 'models', 'brains', 'settings']) {
+        if (view === 'brains') await js(`document.querySelector('.tabs button[data-view="brains"]').click()`);
+        else await js(`document.querySelector('.tabs button[data-view="${view}"]').click()`);
+        await sleep(250);
+        const overflow = await js('document.documentElement.scrollWidth - innerWidth');
+        const culprit = overflow > 1 ? await js(`[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1 && e.offsetParent).slice(-4).map(e => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\\s+/).join('.') : '') + ' r=' + Math.round(e.getBoundingClientRect().right)).join(' | ')`) : '';
+        assert(overflow <= 1, `${view} at ${w}px scrolls sideways by ${overflow}px: ${culprit}`);
+        await shot(`r-${w}-${view}`, { full: view === 'create' || view === 'models' });
+        if (view === 'brains') await js(`document.querySelector('.tabs button[data-view="models"]').click()`);
+      }
+    }
+    await viewport(1440, 900);
+  });
+
+  await test('storage: an old ./data folder moves out of the app folder', async () => {
+    const app2 = path.join(tmp, 'old-install');
+    for (const d of ['lib', 'public', 'playbooks', 'chains']) await fs.cp(path.join(ROOT, d), path.join(app2, d), { recursive: true });
+    for (const f of ['server.js', 'package.json']) await fs.copyFile(path.join(ROOT, f), path.join(app2, f));
+    const old = path.join(app2, 'data');
+    for (const d of ['models', 'images', 'renders', 'workflows']) await fs.mkdir(path.join(old, d), { recursive: true });
+    await fs.writeFile(path.join(old, 'settings.json'), JSON.stringify({ comfyUrl: 'http://127.0.0.1:9999' }));
+    await fs.writeFile(path.join(old, 'history.json'), JSON.stringify([{ id: 'old-1', createdAt: '2026-09-01T00:00:00.000Z', theme: 'an old theme', modelId: 'krea2-raw', imageFile: 'a.jpg', variations: [{ versions: [{ text: 'an old prompt' }], renders: [{ id: 'r1', files: [{ file: 'r.png', kind: 'image' }] }] }] }]));
+    await fs.writeFile(path.join(old, 'images', 'a.jpg'), 'jpg');
+    await fs.writeFile(path.join(old, 'renders', 'r.png'), 'png');
+    await fs.writeFile(path.join(old, 'renders', 'orphan.png'), 'left by a delete in an older version');
+    await fs.writeFile(path.join(old, 'workflows', 'w1.json'), JSON.stringify({ id: 'w1', modelId: 'krea2-raw', name: 'Old flow', prompt: {}, mapping: {} }));
+    await fs.copyFile(path.join(ROOT, 'playbooks', 'krea2-raw.json'), path.join(old, 'models', 'krea2-raw.json')); // an untouched built-in
+    await fs.writeFile(path.join(old, 'models', 'my-model.json'), JSON.stringify({ id: 'my-model', name: 'My Model', kind: 'image', instructions: '## Mine' }));
+    const home = path.join(tmp, 'home');
+    const env = { ...process.env, PORT: String(APP_PORT + 1), HOME: home, XDG_DATA_HOME: path.join(home, 'xdg'), XDG_CONFIG_HOME: path.join(home, 'xdg-config'), SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, APPDATA: path.join(home, 'appdata'), PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none' };
+    delete env.PROMPT_MAKER_DATA;
+    const srv = spawn(process.execPath, ['server.js'], { cwd: app2, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let log = '';
+    srv.stdout.on('data', d => { log += d; });
+    srv.stderr.on('data', d => { log += d; });
+    try {
+      for (let i = 0; i < 50 && !log.includes('running at'); i++) await sleep(100);
+      assert(log.includes('running at'), `the old install starts:\n${log}`);
+      assert(log.includes('Moved your data out of the app folder'), 'it says what it moved');
+      const base = `http://127.0.0.1:${APP_PORT + 1}`;
+      const get = p => fetch(`${base}${p}`).then(r => r.json());
+      const settings = await get('/api/settings');
+      const dir = settings.dataDir;
+      assert(dir.startsWith(home) && !dir.startsWith(app2), `per-user data folder outside the app: ${dir}`);
+      eq(await fileExists(old), false, 'the old data folder is gone');
+      eq(settings.comfyUrl, 'http://127.0.0.1:9999', 'settings moved');
+      eq((await get('/api/history'))[0]?.theme, 'an old theme', 'history moved');
+      eq((await get('/api/workflows'))[0]?.name, 'Old flow', 'workflows moved');
+      for (const f of ['images/a.jpg', 'renders/r.png', 'models/my-model.json']) assert(await fileExists(path.join(dir, f)), `${f} moved`);
+      assert(!(await fileExists(path.join(dir, 'renders', 'orphan.png'))), 'a render no History entry uses is removed at start-up');
+      assert(!(await fileExists(path.join(dir, 'models', 'krea2-raw.json'))), 'an untouched copy of a built-in is dropped');
+      const models = await get('/api/models');
+      assert(models.some(m => m.id === 'my-model' && !m.builtin), 'your own model is there');
+      assert(models.some(m => m.id === 'krea2-raw' && m.builtin && !m.edited), 'built-ins come from the app');
+    } finally {
+      srv.kill();
+    }
+  });
+
+  await test('delete: a picture that a prompt in line needs, or one being written from, stays', async () => {
+    const send = (p, body, method = 'POST') => fetch(`${APP}${p}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const img = (await (await send('/api/images', { image: `data:image/png;base64,${makePng(37, 41).toString('base64')}` })).json()).file;
+    const file = path.join(dataDir, 'images', img);
+    const gen = async theme => {
+      const out = await (await send('/api/generate', { modelId: 'krea2-raw', variations: 1, theme, imageFile: img, imageRole: 'reference' })).text();
+      return JSON.parse(out.split('\n').find(l => l.includes('"saved"')).replace(/^data: /, '')).entry;
+    };
+    const holds = line => send('/api/holds', { client: 'test-browser-1', form: [], line }, 'PUT');
+    // A prompt waiting in line uses the same picture as the card being deleted.
+    const first = await gen('a held picture, one');
+    await holds([img]);
+    await fetch(`${APP}/api/history/${first.id}`, { method: 'DELETE' });
+    assert(await fileExists(file), 'the picture stays for the prompt in line');
+    await holds([]);
+    // A prompt is being written from it while the only card with it is deleted.
+    const second = await gen('a held picture, two');
+    const third = gen('SLOWTEST a held picture, three');
+    await sleep(800);
+    await fetch(`${APP}/api/history/${second.id}`, { method: 'DELETE' });
+    assert(await fileExists(file), 'the picture stays while a prompt is written from it');
+    const saved = await third;
+    eq(saved.imageFile, img, 'and the new card has it');
+    // Nothing needs it anymore: it goes with its last card.
+    await fetch(`${APP}/api/history/${saved.id}`, { method: 'DELETE' });
+    assert(!(await fileExists(file)), 'deleted with the last card that used it');
+  });
+
+  await test('files are sent piece by piece: a part of a video or picture on request, not the whole file each time', async () => {
+    const one = (await fs.readdir(path.join(dataDir, 'renders')))[0];
+    const whole = await fs.readFile(path.join(dataDir, 'renders', one));
+    const part = await fetch(`${APP}/renders/${one}`, { headers: { Range: 'bytes=10-19' } });
+    eq(part.status, 206, 'a part is a part');
+    eq(part.headers.get('content-range'), `bytes 10-19/${whole.length}`, 'it says which');
+    eq(Buffer.from(await part.arrayBuffer()).equals(whole.subarray(10, 20)), true, 'the right bytes');
+    const tail = await fetch(`${APP}/renders/${one}`, { headers: { Range: 'bytes=-5' } });
+    eq(Buffer.from(await tail.arrayBuffer()).equals(whole.subarray(whole.length - 5)), true, 'the last bytes');
+    eq((await fetch(`${APP}/renders/${one}`, { headers: { Range: `bytes=${whole.length}-` } })).status, 416, 'past the end is refused');
+    eq(Buffer.from(await (await fetch(`${APP}/renders/${one}`)).arrayBuffer()).equals(whole), true, 'and the whole file is the whole file');
+  });
+
+  await test('a damaged settings or history file does not stop the app: the copy from before the last save is used', async () => {
+    const settings = await (await fetch(`${APP}/api/settings`)).json();
+    const put = body => fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await put({ topP: settings.topP }); // two saves, so the copy from before the last one is as good as the file
+    await put({ topP: settings.topP });
+    await fs.writeFile(path.join(dataDir, 'settings.json'), ''); // what a power cut could leave
+    const after = await fetch(`${APP}/api/settings`);
+    eq(after.status, 200, 'settings still load');
+    eq((await after.json()).llmModel, settings.llmModel, 'with what you had set');
+    assert((await fs.readdir(dataDir)).some(f => f.startsWith('settings.json.damaged-')), 'the damaged file is set aside, not thrown away');
+    eq(JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8')).llmModel, settings.llmModel, 'and the file is whole again');
+    // History the same way: its entries (and so their renders) are not lost.
+    const history = await (await fetch(`${APP}/api/history`)).json();
+    const fav = history[0].favorite;
+    const patch = favorite => fetch(`${APP}/api/history/${history[0].id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ favorite }) });
+    await patch(fav);
+    await patch(fav);
+    await fs.writeFile(path.join(dataDir, 'history.json'), '{"cut off');
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, history.length, 'every entry is still there');
+  });
+
+  await test('the built-in instructions are not frozen into your settings; a bypassed subgraph passes its input on', async () => {
+    const put = body => fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const s = await (await fetch(`${APP}/api/settings`)).json();
+    await put({ masterPrompt: s.defaultMasterPrompt });
+    let file = JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8'));
+    assert(!('masterPrompt' in file), 'the built-in text is not written out, so a newer version\'s reaches you');
+    eq((await (await fetch(`${APP}/api/settings`)).json()).masterPrompt, s.defaultMasterPrompt, 'and it is still what is used');
+    await put({ masterPrompt: 'My own rules.' });
+    file = JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8'));
+    eq(file.masterPrompt, 'My own rules.', 'your own edit is kept');
+    await put({ masterPrompt: s.masterPrompt });
+
+    const info = OBJECT_INFO;
+    const sub = { id: 'sg-1', name: 'Extra', inputNode: { id: -10 }, outputNode: { id: -20 }, inputs: [{ name: 'image', type: 'IMAGE', linkIds: [1] }], outputs: [{ name: 'IMAGE', type: 'IMAGE', linkIds: [2] }],
+      nodes: [{ id: 5, type: 'LoadImage', mode: 0, inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [2] }], widgets_values: ['inner.png', 'image'] }],
+      links: [{ id: 2, origin_id: 5, origin_slot: 0, target_id: -20, target_slot: 0, type: 'IMAGE' }] };
+    const ui = mode => ({
+      nodes: [
+        { id: 1, type: 'LoadImage', mode: 0, inputs: [], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [10] }], widgets_values: ['a.png', 'image'] },
+        { id: 2, type: 'sg-1', mode, inputs: [{ name: 'image', type: 'IMAGE', link: 10 }], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [11] }] },
+        { id: 3, type: 'SaveImage', mode: 0, inputs: [{ name: 'images', type: 'IMAGE', link: 11 }], outputs: [], widgets_values: ['ComfyUI'] },
+      ],
+      links: [[10, 1, 0, 2, 0, 'IMAGE'], [11, 2, 0, 3, 0, 'IMAGE']],
+      definitions: { subgraphs: [sub] },
+    });
+    eq(JSON.stringify(convertUiWorkflow(ui(0), info)['3'].inputs.images), '["2:5",0]', 'an active subgraph: its inner node feeds the save');
+    const bypassed = convertUiWorkflow(ui(4), info);
+    eq(JSON.stringify(bypassed['3'].inputs.images), '["1",0]', 'bypassed: what went in goes straight on');
+    assert(!Object.keys(bypassed).some(id => id.startsWith('2:')), 'and none of its inner nodes are sent');
+  });
+
+  await test('the assistant panel never lies over the page; the top bar\'s menus open over the panel; the Library fits the window', async () => {
+    const open = async want => { if ((await js('!document.querySelector("#assistant").hidden')) !== want) await click('#askBtn'); await sleep(350); };
+    const edges = () => js('(() => { const s = document.querySelector(".stage").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return { stageRight: Math.round(s.right), stageWidth: Math.round(s.width), panelLeft: Math.round(a.left) }; })()');
+    await click('.tabs button[data-view="create"]');
+    await viewport(1600, 1000);
+    await open(true);
+    let e = await edges();
+    assert(e.stageRight <= e.panelLeft, `nothing of the results is under the panel: ${JSON.stringify(e)}`);
+    const available = await js('(() => { const box = document.querySelector(".create"); return box.clientWidth - document.querySelector(".director").getBoundingClientRect().width - parseFloat(getComputedStyle(box).columnGap); })()');
+    assert(e.stageWidth >= 350 && Math.abs(e.stageWidth - available) <= 1 && !(await js('document.body.classList.contains("narrow")')), `results fill the space beside the studio form and sidebar: ${JSON.stringify(e)}`);
+    await click('#llmPick');
+    assert(await js('(() => { const b = document.querySelector("#llmMenu").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return b.right > a.left && !!document.elementFromPoint(b.right - 20, b.top + 60)?.closest("#llmMenu"); })()'), 'the Brain menu opens over the panel');
+    await press('Escape');
+    await viewport(1100, 800);
+    await sleep(200);
+    e = await edges();
+    assert(await js('document.body.classList.contains("narrow")'), 'beside the panel on a smaller window, the page lays itself out in one column');
+    assert(e.stageRight <= e.panelLeft, `so still nothing is under the panel: ${JSON.stringify(e)}`);
+    eq(await js('document.documentElement.scrollWidth <= innerWidth'), true, 'and nothing scrolls sideways');
+    eq(await js('Math.round(document.querySelector(".as-title").getBoundingClientRect().height) < 30'), true, 'the panel\'s title stays on one line');
+    await open(false);
+    assert(!(await js('document.body.classList.contains("narrow")')), 'closed: two columns again');
+    await viewport(1440, 900);
+    await click('.tabs button[data-view="gallery"]');
+    await sleep(400);
+    eq(await js('document.documentElement.scrollHeight - innerHeight'), 0, 'the Library fills the window exactly: only its grid scrolls');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('the assistant panel stretches: drag its edge, ⤢ fills the window and goes back; the message box grows and can be dragged taller', async () => {
+    const drag = async (sel, dx, dy) => {
+      const g = await js(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: g.x, y: g.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: g.x + (dx * k) / 6, y: g.y + (dy * k) / 6, button: 'left', buttons: 1 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: g.x + dx, y: g.y + dy, button: 'left', buttons: 0, clickCount: 1 });
+      await sleep(150);
+    };
+    const width = () => js('Math.round(document.querySelector("#assistant").getBoundingClientRect().width)');
+    const edges = () => js('(() => { const s = document.querySelector(".stage").getBoundingClientRect(); const a = document.querySelector("#assistant").getBoundingClientRect(); return { stageRight: Math.round(s.right), panelLeft: Math.round(a.left) }; })()');
+    await click('.tabs button[data-view="create"]');
+    await viewport(1600, 1000);
+    if (await js('document.querySelector("#assistant").hidden')) await click('#askBtn');
+    await sleep(350);
+    eq(await width(), 420, 'it starts 420 wide');
+    await drag('#asGrip', -280, 0);
+    eq(await width(), 700, 'dragging its left edge makes it wider');
+    const e = await edges();
+    assert(e.stageRight <= e.panelLeft, `and the page makes room: ${JSON.stringify(e)}`);
+    await click('#asWide');
+    eq(await width(), 1600, '⤢ fills the window');
+    eq(await js('document.documentElement.scrollWidth <= innerWidth'), true, 'nothing scrolls sideways');
+    await viewport(1300, 900);
+    await sleep(200);
+    eq(await width(), 1300, 'and keeps filling it when the window changes');
+    await click('#asWide');
+    eq(await width(), 700, 'again: back to the width it had');
+    await reloadPage();
+    await sleep(350);
+    eq(await width(), 700, 'the width is remembered');
+    await js('document.querySelector("#asGrip").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))');
+    eq(await width(), 420, 'a double click on the edge: back to normal');
+    const height = () => js('Math.round(document.querySelector("#asInput").getBoundingClientRect().height)');
+    const h0 = await height();
+    await js('(() => { const t = document.querySelector("#asInput"); t.value = "line\\n".repeat(5); t.dispatchEvent(new Event("input", { bubbles: true })); })()');
+    assert(await height() > h0 && await height() <= 160, `the message box grows with what is written: ${h0} → ${await height()}`);
+    await drag('#asInputGrip', 0, -300);
+    assert(await height() >= 400, `and dragging the edge above it makes it as tall as you like: ${await height()}`);
+    await js('document.querySelector("#asInputGrip").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))');
+    await js('(() => { const t = document.querySelector("#asInput"); t.value = ""; t.dispatchEvent(new Event("input", { bubbles: true })); })()');
+    eq(await height(), h0, 'a double click on that edge: back to normal');
+    await click('#asClose');
+    await viewport(1440, 900);
+  });
+
+  await test('viewer: stars precede the resizable prompt box; ⇆ Compare puts two renders side by side, each with its stars', async () => {
+    await click('.tabs button[data-view="gallery"]');
+    await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length >= 2', 'at least two renders in the Library');
+    eq(await js('[...document.querySelectorAll("#reelGrid .reel-cell .rate-bar")][0].querySelector("button").dataset.rate'), '1', 'on a card, the stars are in their natural order for the keyboard');
+    assert(await js('document.querySelector("#reelGrid .rate-bar button").getBoundingClientRect().width >= 28'), 'and big enough to hit');
+    await click('#reelGrid .reel-cell .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'viewer open');
+    eq(await js('[...document.querySelector("#lbInfo").children].map(e => e.className.split(" ")[0] || e.tagName).slice(0, 3).join(" ")'), 'lb-idea lb-rate lb-prompt-box', 'the idea (folded), then the stars, then the resizable prompt box');
+    assert(!(await text('#lbInfo .lb-facts')).includes('—'), 'facts with nothing to say are left out');
+    await click('#lbInfo [data-lb="compare"]');
+    await waitFor('document.querySelector("#lbStage").classList.contains("pair") && document.querySelectorAll("#lbStage .lb-pane").length === 2', 'two side by side');
+    const names = () => js('[...document.querySelectorAll("#lbStage .lb-pane img, #lbStage .lb-pane video")].map(m => m.getAttribute("src")).join(" | ")');
+    const [left, right] = (await names()).split(' | ');
+    assert(left && right && left !== right, `two different renders: ${await names()}`);
+    await click('#lbStage .lb-pane[data-side="right"] [data-rate="2"]');
+    await waitFor('document.querySelectorAll("#lbStage .lb-pane[data-side=right] .rate-bar button.on").length === 2', 'the right one is rated where it stands');
+    eq(await count('#lbStage .lb-pane[data-side="left"] .rate-bar button.on') < 3, true, 'the left one keeps its own rating');
+    await click('#lbStage .lb-pane[data-side="right"] [data-rate="2"]');
+    await waitFor('document.querySelectorAll("#lbStage .lb-pane[data-side=right] .rate-bar button.on").length === 0', 'and the rating comes off again');
+    await click('#lbStage [data-pane="keep"]');
+    await waitFor(`(document.querySelector('#lbStage .lb-pane[data-side="left"] img, #lbStage .lb-pane[data-side="left"] video')?.getAttribute("src")) === ${q(right)}`, '📌 Keep this one moves it to the left');
+    await click('#lbInfo [data-lb="compare"]');
+    await waitFor('!document.querySelector("#lbStage").classList.contains("pair")', 'back to one at a time');
+    await press('Escape');
+    await waitFor('document.querySelector("#lightbox").hidden', 'closed');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('small things: odd addresses are answered properly; renders are private to this app', async () => {
+    eq((await fetch(`${APP}/renders/%E0%A4%A`)).status, 404, 'an address that can\'t be read is "not found", not a server error');
+    eq((await fetch(`${APP}/renders/x.png`, { headers: { Origin: 'https://example.com', 'Sec-Fetch-Site': 'cross-site' } })).status, 403, 'another website can\'t fetch your renders');
+    const entry = (await (await fetch(`${APP}/api/history`)).json())[0];
+    const odd = await fetch(`${APP}/api/render`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ historyId: entry.id, index: 'length', workflowId: 'x' }) });
+    eq(odd.status, 400, 'a take number that isn\'t a number is refused politely');
+  });
+
+  await test('the app folder is never written to', async () => {
+    eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'playbooks'))).sort()), JSON.stringify(Object.keys(shipped).sort()), 'no files added to or removed from playbooks/');
+    for (const [f, before] of Object.entries(shipped)) eq(await fs.readFile(path.join(ROOT, 'playbooks', f), 'utf8'), before, `playbooks/${f} unchanged`);
+    eq(await fileExists(path.join(ROOT, 'data')), hadLegacyData, 'no data folder appears in the app folder');
+    eq(JSON.stringify((await fs.readdir(path.join(ROOT, 'chains'))).sort()), JSON.stringify(Object.keys(shippedChains).sort()), 'no files added to or removed from chains/');
+    for (const [f, before] of Object.entries(shippedChains)) eq(await fs.readFile(path.join(ROOT, 'chains', f), 'utf8'), before, `chains/${f} unchanged`);
+  });
+
+  await test('character sheet: written from the picture first, every trait in every take, your edits kept', async () => {
+    const send = (p, body) => fetch(`${APP}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const events = async body => (await (await send('/api/generate', body)).text()).split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const img = (await (await send('/api/images', { image: `data:image/png;base64,${makePng(30, 40).toString('base64')}` })).json()).file;
+    const before = mockCalls();
+    let ev = await events({ modelId: 'krea-2-character', variations: 2, theme: 'at a night market', imageFile: img });
+    eq(ev.find(e => e.type === 'sheet')?.text, 'Age: woman in her late twenties\nEyes: light green, almond-shaped\nHair: copper-red, shoulder-length, loose waves\nBuild: slim, narrow shoulders\nMarks: none', 'the sheet, without chatter or unseen traits');
+    eq(mockCalls() - before, 3, 'one call for the sheet, one per take');
+    const sheetCall = mock.log.at(-3);
+    assert(JSON.stringify(sheetCall.messages).includes('image_url'), 'the Brain looks at the picture for the sheet');
+    assert(JSON.stringify(mock.log.at(-1).messages).includes('CHARACTER SHEET'), 'each take is given the sheet');
+    const takes = ev.filter(e => e.type === 'done').map(e => e.text);
+    eq(takes.length, 2, 'two takes');
+    for (const t of takes) assert(['late twenties', 'light green, almond-shaped', 'copper-red', 'narrow shoulders'].every(w => t.includes(w)), `every trait in the take: ${t}`);
+    const entry = ev.find(e => e.type === 'saved').entry;
+    assert(entry.characterSheet.includes('copper-red'), 'saved with the prompt');
+    // The sheet you edited is used as it is: no new one is written.
+    const calls = mockCalls();
+    ev = await events({ modelId: 'krea-2-character', variations: 1, theme: 'on a beach', imageFile: img, characterSheet: 'Eyes: violet, round\nHair: platinum pixie cut' });
+    assert(!ev.some(e => e.type === 'sheet'), 'no new sheet');
+    eq(mockCalls() - calls, 1, 'only the take is written');
+    const t = ev.find(e => e.type === 'done').text;
+    assert(t.includes('violet, round') && t.includes('platinum pixie cut') && !t.includes('copper'), 'your traits, not the old ones');
+    // MiniMax H3 Reference puts the traits in the person's line.
+    ev = await events({ modelId: 'minimax-h3-ref', variations: 1, theme: 'running for a tram', imageFile: img, characterSheet: 'Eyes: violet, round' });
+    assert(ev.find(e => e.type === 'done').text.includes('violet, round'), 'the trait reaches the video prompt');
+    // Without a picture there's no person to keep: no sheet.
+    ev = await events({ modelId: 'krea-2-character', variations: 1, theme: 'a lighthouse' });
+    assert(!ev.some(e => e.type === 'sheet') && !ev.find(e => e.type === 'saved').entry.characterSheet, 'no picture, no sheet');
+    // On the page: return from the viewer before using Create's model chooser.
+    if (await visible('#lightbox')) await press('Escape');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea-2-character"]');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
+    assert(await visible('#sheetBlock'), 'the sheet box shows');
+    eq(await value('#sheetText'), '', 'empty until Generate');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'reading in a library');
+    await click('#generateBtn');
+    await genDone();
+    assert((await value('#sheetText')).includes('Eyes: light green'), 'filled in from the picture');
+    await click('#sheetRedo');
+    eq(await value('#sheetText'), '', '↻ clears it for a fresh one');
+    await click('.model-card[data-id="krea2-raw"]');
+    assert(!(await visible('#sheetBlock')), 'other models have no sheet');
+    await click('#imageClear');
+  });
+
+  await test('recipe: a picture or video that keeps how it was made puts its model, workflow, LoRAs, seed, settings, prompt and size back', async () => {
+    if (await visible('#lightbox')) await press('Escape');
+    await click('.tabs button[data-view="create"]');
+    if (await js('document.querySelector("#manualMode").checked')) await click('.manual-row .switch');
+    // (Set up the way Add workflow does it: read the file, then save it on Krea 2 RAW.)
+    await js(`(async () => {
+      const prep = await fetch('/api/workflows/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ json: ${JSON.stringify(recipeFlow)}, name: 'Recipe flow' }) }).then(r => r.json());
+      await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...prep, modelId: 'krea2-raw' }) });
+    })()`);
+    await reloadPage();
+    await click('.model-card[data-id="ltx-2-3"]'); // somewhere else: the recipe brings you back
+
+    // A ComfyUI picture, picked with browse: it comes in as a picture, with "Recipe inside" on it.
+    await setFiles('#imageInput', [recipePng]);
+    await waitFor('!document.querySelector("#dzRecipe").hidden', 'Recipe inside');
+    await js('document.querySelector("#dropzone").scrollIntoView({ block: "center" })');
+    await shot('recipe-inside');
+    await click('#dzRecipe');
+    await waitFor('document.querySelector("#recipeDlg").open', 'How this was made');
+    const said = await text('#recipeList');
+    for (const part of ['Krea 2 RAW', 'Recipe flow', 'the one it was made with', 'baked_in ×0.3', 'film_grain ×0.6', 'gone ×1 (not in your ComfyUI: left out)', '4242', '640×960', '33 steps', '6 words']) assert(said.includes(part), `the dialog says "${part}": ${said}`);
+    assert(!(await visible('#recipeMotion')), 'a picture is never offered as a motion video');
+    await shot('recipe-dialog');
+    await click('#recipeUse');
+    await toastText('Recipe in');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Recipe flow', 'its model and workflow are picked');
+    eq(await count('#wfpLoras .lora-row'), 2, 'its own LoRA and the added one, not the missing one');
+    eq(await value('#wfpLoras [data-key="21"] .lr-num'), '0.30', 'the workflow\'s LoRA at the recipe\'s strength');
+    assert((await text('#wfpLoras [data-key="+0"]')).includes('film_grain'), 'the added LoRA is film_grain');
+    eq(await value('#wfpLoras [data-key="+0"] .lr-num'), '0.60', 'at its strength');
+    const flow = await js('fetch("/api/workflows").then(r => r.json()).then(l => l.find(w => w.name === "Recipe flow"))');
+    eq(`${flow.seed.mode}|${flow.seed.value}`, 'fixed|4242', 'its seed, kept fixed');
+    eq(flow.overrides['3|steps'], 33, 'its steps');
+    assert(await js('document.querySelector("#manualMode").checked'), 'its prompt goes in word for word');
+    eq(await value('#theme'), 'a lighthouse at dusk, recipe test', 'its prompt');
+    eq(await value('#resolution'), '640×960', 'its size');
+    assert(!(await visible('.dz-preview')), 'the picture only carried the recipe: it is taken out');
+
+    // A1111's JPEG, dropped on the page: no workflow of yours loads its model, so only the prompt and size come in.
+    await click('.manual-row .switch');
+    await js(`(async () => {
+      const c = Object.assign(document.createElement('canvas'), { width: 64, height: 96 });
+      c.getContext('2d').fillRect(0, 0, 64, 96);
+      const jpg = new Uint8Array(await (await new Promise(r => c.toBlob(r, 'image/jpeg'))).arrayBuffer());
+      const app1 = Uint8Array.from(atob(${q(app1.toString('base64'))}), ch => ch.charCodeAt(0));
+      const file = new File([jpg.subarray(0, 2), app1, jpg.subarray(2)], 'kite.jpg', { type: 'image/jpeg' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    })()`);
+    await waitFor('!document.querySelector("#dzRecipe").hidden', 'Recipe inside the JPEG');
+    await click('#dzRecipe');
+    await waitFor('document.querySelector("#recipeDlg").open', 'its dialog');
+    const kite = await text('#recipeList');
+    assert(kite.includes('sd_xl_base_1.0 isn\'t loaded by any of your workflows'), `says its model isn't yours: ${kite}`);
+    assert(kite.includes('832×1216') && kite.includes('6 words'), `its size and prompt: ${kite}`);
+    assert((await text('#recipeIntro')).includes('A1111'), 'says what made it');
+    await click('#recipeUse');
+    await toastText('Recipe in');
+    eq(await value('#theme'), 'a red kite over the dunes', 'its prompt, the LoRA tag taken out');
+    eq(await value('#resolution'), '832×1216', 'its size');
+    eq(await js('document.querySelector("#wfpSelect").selectedOptions[0]?.textContent'), 'Recipe flow', 'the workflow stays');
+    eq(await count('#wfpLoras .lora-row'), 2, 'its LoRA isn\'t put on a model it wasn\'t made for');
+
+    // A video with its recipe, dropped alone: you choose, nothing switches to the motion-video model by itself.
+    if (recipeClip) {
+      await js(`(() => {
+        const file = new File([Uint8Array.from(atob(${q(recipeClip.toString('base64'))}), ch => ch.charCodeAt(0))], 'waves.mp4', { type: 'video/mp4' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      })()`);
+      await waitFor('document.querySelector("#recipeDlg").open', 'the video\'s recipe');
+      assert((await text('#recipeIntro')).includes('This video'), 'says it is a video');
+      assert(await visible('#recipeMotion'), 'or use it as a motion video');
+      assert((await text('#recipeList')).includes('5 words'), 'its prompt');
+      await click('#recipeDlg button[value="no"]');
+      await waitFor('!document.querySelector("#recipeDlg").open', 'closed');
+      eq(await js('document.querySelector(".model-card.active")?.dataset.id'), 'krea2-raw', 'still on Krea 2 RAW');
+      // Browsed for in Add an image (the picture box's own file dialog), the same: it's a recipe, not a picture.
+      await js(`(() => {
+        const file = new File([Uint8Array.from(atob(${q(recipeClip.toString('base64'))}), ch => ch.charCodeAt(0))], 'waves.mp4', { type: 'video/mp4' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const input = document.querySelector('#imageInput');
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+      await waitFor('document.querySelector("#recipeDlg").open', 'the browsed video\'s recipe');
+      assert((await text('#recipeIntro')).includes('This video'), 'browsed: says it is a video');
+      await click('#recipeDlg button[value="no"]');
+      await waitFor('!document.querySelector("#recipeDlg").open', 'closed again');
+      assert(!(await text('body')).includes('isn\'t an image'), 'a browsed video is never "not an image"');
+    }
+
+    // It began from a picture of yours still in the data folder: that picture comes back; another one's name doesn't.
+    const back = await js(`(async () => {
+      const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+      const c = Object.assign(document.createElement('canvas'), { width: 8, height: 8 });
+      const { file } = await post('/api/images', { image: c.toDataURL('image/png') });
+      const graph = name => ({ ...${JSON.stringify(recipeGraph)}, 11: { class_type: 'LoadImage', inputs: { image: name }, _meta: { title: 'First frame' } } });
+      const mine = await post('/api/recipe', { prompt: graph('prompt-maker_' + file) });
+      const theirs = await post('/api/recipe', { prompt: graph('prompt-maker_../settings.json') });
+      // A render that names only its model (how Prompt Maker's own renders leave): no recipe.
+      const named = await fetch('/api/recipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: { 4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'mock_model.safetensors' } } } }) });
+      return [mine.picture === file, mine.takesPicture, String(theirs.picture), named.status].join();
+    })()`);
+    eq(back, 'true,true,null,422', 'its own picture back, nothing from outside the images folder; a model\'s name alone isn\'t a recipe');
+    await click('.manual-row .switch');
+  });
+
+  await test('UI themes: every palette fits desktop and phone without moving the workspace', async () => {
+    if (await visible('#lightbox')) await press('Escape');
+    await goto(`${APP}/#create`);
+    if (await visible('#assistant')) await click('#asClose');
+    await click('#tabRenders');
+    const themes = ['sage', 'sand', 'ocean', 'midnight'];
+    const geometry = () => js(`JSON.stringify([...document.querySelectorAll('button,input,select,textarea,details,#studioSidebar,#createForm,#stage,.topbar')].map(e => { const r = e.getBoundingClientRect(); return [e.id,e.className,r.x,r.y,r.width,r.height]; }).filter(r => r[4] > 0 && r[5] > 0))`);
+    for (const [width, height] of [[1440,1000],[1280,800],[390,844]]) {
+      await viewport(width, height);
+      await click('#uiThemeButton');
+      await waitFor('document.querySelector("#uiThemeDialog").open', 'theme picker');
+      await click('#uiThemeDialog [data-ui-theme-choice="sage"]');
+      const selectedPane = await js('document.querySelector(".stage-tabs [aria-selected=true]").id');
+      await press('Enter', { ctrl: true });
+      eq(await js('document.querySelector(".stage-tabs [aria-selected=true]").id'), selectedPane, 'theme dialog shields Create from its generation shortcut');
+      const before = await geometry();
+      const draft = await value('#theme');
+      for (const theme of themes) {
+        await click(`#uiThemeDialog [data-ui-theme-choice="${theme}"]`);
+        eq(await js('document.documentElement.dataset.uiTheme'), theme, 'palette applied');
+        eq(await geometry(), before, 'only colors change, no controls move');
+        const lowContrast = await js(`(() => {
+          const css = getComputedStyle(document.documentElement);
+          const lum = token => { const hex = css.getPropertyValue('--'+token).trim(); const c = [1,3,5].map(i => parseInt(hex.slice(i,i+2),16)/255).map(v => v<=.04045 ? v/12.92 : ((v+.055)/1.055)**2.4); return c[0]*.2126+c[1]*.7152+c[2]*.0722; };
+          const pairs = ['text','text-2','muted','hot','danger','warn','ok'].flatMap(fg => ['panel','panel-2','panel-3'].map(bg => [fg,bg]));
+          pairs.push(['on-hot','hot'], ['on-danger','danger'], ['on-ok','ok'], ['on-media','media-bg']);
+          return pairs.filter(([fg,bg]) => { const a=lum(fg), b=lum(bg); return !Number.isFinite(a+b) || (Math.max(a,b)+.05)/(Math.min(a,b)+.05)<4.5; });
+        })()`);
+        eq(lowContrast.length, 0, 'text and action colors stay readable: '+JSON.stringify(lowContrast));
+        assert(await js(`(() => {
+          const canvas=document.createElement('canvas'); canvas.width=canvas.height=1; const ctx=canvas.getContext('2d');
+          const lum=color=>{ctx.clearRect(0,0,1,1);ctx.fillStyle=color;ctx.fillRect(0,0,1,1);const c=[...ctx.getImageData(0,0,1,1).data].slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return c[0]*.2126+c[1]*.7152+c[2]*.0722;};
+          const contrast=(a,b)=>(Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+          return [...document.querySelectorAll('.model-card')].every(card=>{
+            const kind=card.querySelector('.mc-kind');
+            if(!kind) return true;
+            const label=contrast(lum(getComputedStyle(kind).color),lum(getComputedStyle(card).backgroundColor));
+            const check=getComputedStyle(card,'::after');
+            return label>=4.5 && (!card.classList.contains('active') || contrast(lum(check.color),lum(check.backgroundColor))>=4.5);
+          });
+        })()`), 'model identity colors never reduce label or selection contrast');
+        eq(await value('#theme'), draft, 'the idea draft is untouched');
+        eq(await js('getComputedStyle(document.documentElement).colorScheme'), theme === 'midnight' ? 'dark' : 'light', 'native controls follow the theme');
+        eq(await js('document.querySelector(\'meta[name="color-scheme"]\').content'), theme === 'midnight' ? 'dark' : 'light', 'browser color scheme follows');
+        eq(await js('document.querySelector(\'meta[name="theme-color"]\').content'), {sage:'#f8f8f4',sand:'#faf5ef',ocean:'#f2f7fa',midnight:'#151824'}[theme], 'browser chrome follows');
+        assert(await js(`(() => { const r = document.querySelector('#uiThemeDialog').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })()`), 'picker fits viewport');
+        assert(await js(`(() => { const a = document.querySelectorAll('#uiThemeDialog .ui-theme-option'); return a[0].getBoundingClientRect().top === a[1].getBoundingClientRect().top; })()`), 'palette previews stay in two columns');
+        await shot(`theme-picker-${theme}-${width}x${height}`);
+      }
+      await press('Escape');
+      eq(await js('document.activeElement.id'), 'uiThemeButton', 'Escape returns focus to the trigger');
+    }
+    await viewport(1440,1000);
+    await click('.tabs [data-view="settings"]');
+    await click('[data-settings-tab="appearance"]');
+    assert(await visible('#appearanceCard'), 'Appearance is reachable in Settings');
+    const dirty = await js('document.querySelector("#settingsDirty").hidden');
+    await click('#appearanceCard [data-ui-theme-choice="ocean"]');
+    eq(await js('document.querySelector("#settingsDirty").hidden'), dirty, 'browser appearance does not dirty server settings');
+    await goto(`${APP}/#settings`);
+    eq(await js('document.documentElement.dataset.uiTheme'), 'ocean', 'choice survives a reload');
+    eq(await js('document.querySelector(\'#appearanceCard [aria-pressed="true"]\').dataset.uiThemeChoice'), 'ocean', 'Settings reflects the saved choice');
+  });
+
+  await test('UI themes: system changes follow live and explicit choices stay fixed', async () => {
+    const scheme = async value => cdp.send('Emulation.setEmulatedMedia', { features: [{ name:'prefers-color-scheme', value }, {name:'prefers-reduced-motion',value:'reduce'}] });
+    try {
+      await scheme('light');
+      await click('#uiThemeButton');
+      await click('#uiThemeDialog [data-ui-theme-choice="system"]');
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sage', 'light system uses Sage');
+      await scheme('dark');
+      await waitFor('document.documentElement.dataset.uiTheme === "midnight"', 'live dark system');
+      await scheme('light');
+      await waitFor('document.documentElement.dataset.uiTheme === "sage"', 'live light system');
+      await scheme('dark');
+      await press('Escape');
+      await goto(`${APP}/#settings`);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'midnight', 'system preference restores on reload');
+      await click('#appearanceCard [data-ui-theme-choice="sand"]');
+      await scheme('light');
+      await sleep(100);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sand', 'explicit selection ignores OS changes');
+    } finally { await scheme('light'); }
+  });
+
+  await test('UI themes: missing, old and malformed choices fall back; blocked storage still works', async () => {
+    for (const raw of [null, '"old-dark"', '{broken', '42', '{"theme":"midnight"}']) {
+      await js(raw === null ? "localStorage.removeItem('pm.uiTheme')" : `localStorage.setItem('pm.uiTheme', ${q(raw)})`);
+      await goto(`${APP}/#settings`);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sage', 'invalid or missing preference is Sage');
+    }
+    // Install after the harness setup script so only application code sees blocked storage.
+    const block = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('Blocked for test', 'SecurityError'); } });` });
+    try {
+      await goto(`${APP}/#create`);
+      eq(await js('document.documentElement.dataset.uiTheme'), 'sage', 'boot works with blocked storage');
+      await click('#uiThemeButton');
+      await click('#uiThemeDialog [data-ui-theme-choice="midnight"]');
+      eq(await js('document.documentElement.dataset.uiTheme'), 'midnight', 'switching works in memory');
+      await press('Escape');
+      await click('.tabs [data-view="models"]');
+      assert(await visible('#view-models'), 'app navigation still works');
+    } finally {
+      await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: block.identifier });
+      await goto(`${APP}/#create`);
+      await js("localStorage.removeItem('pm.uiTheme')");
+      await goto(`${APP}/#create`);
+    }
+  });
+
+  // Last: it empties the test app's work.
+  await test('settings: 🗑 Delete everything empties Saved prompts, renders, pictures, the chat and jobs; the setup stays', async () => {
+    const no = await fetch(`${APP}/api/history`, { method: 'DELETE' });
+    eq(no.status, 400, 'a delete without { confirm: "everything" } is refused');
+    const before = (await (await fetch(`${APP}/api/history`)).json()).length;
+    assert(before > 0, 'there is work to delete');
+    const models = (await (await fetch(`${APP}/api/models`)).json()).length;
+    await fetch(`${APP}/api/jobs/wipe-test`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'a test job', log: [] }) });
+    await js("localStorage.setItem('pm.theme', JSON.stringify('an idea typed in Create'))");
+    await click('#wipeBtn');
+    await waitFor('document.querySelector("#wipeDlg").open', 'the "Delete everything?" dialog');
+    assert((await text('#wipeWhat')).includes(`${before} saved prompt`), 'it says how many saved prompts go');
+    assert(await js('document.querySelector("#wipeGo").disabled'), 'the button waits for the tick');
+    await click('#wipeSure');
+    await click('#wipeGo');
+    await toastText('Deleted everything', 30000);
+    eq((await (await fetch(`${APP}/api/history`)).json()).length, 0, 'Saved prompts is empty');
+    const left = d => fs.readdir(path.join(dataDir, d)).then(names => names.filter(n => !n.endsWith('.tmp')), () => []);
+    eq(`${(await left('renders')).length}|${(await left('images')).length}|${(await left('videos')).length}`, '0|0|0', 'no render, picture or motion video is left');
+    eq((await (await fetch(`${APP}/api/assistant/chat`)).json()).messages.length, 0, 'the assistant chat is empty');
+    eq((await (await fetch(`${APP}/api/jobs`)).json()).length, 0, 'and the jobs');
+    eq(await js("localStorage.getItem('pm.theme')"), null, 'the idea the form remembered goes too');
+    eq((await (await fetch(`${APP}/api/models`)).json()).length, models, 'the setup stays');
+  });
+
+  let updatesFlow;
+  await test('updates: Brain rating, thinking, take LoRA off, viewer Brain controls, navigation and draft sizing', async () => {
+    const put = (url, body, method = 'PUT') => fetch(`${APP}${url}`, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+    const prep = await put('/api/workflows/prepare', { json: withLora, name: 'Updates regression' }, 'POST');
+    updatesFlow = await put('/api/workflows', { ...prep, modelId: 'krea2-raw', name: 'Updates regression' }, 'POST');
+    assert(updatesFlow.id, `workflow created: ${JSON.stringify(updatesFlow).slice(0,200)}`);
+    await put('/api/settings', { thinking: 'medium' });
+    await js(`localStorage.clear(); sessionStorage.clear(); localStorage.setItem('pm.wf.krea2-raw', ${q(JSON.stringify(updatesFlow.id))});`);
+    await goto(`${APP}/#brains`);
+    await choose('.brain[data-id="mock/thinker"] [data-act="rating"]', '3');
+    await waitFor(`fetch('/api/llms').then(r=>r.json()).then(r=>r.models.find(m=>m.id==='mock/thinker').rating===3)`, 'rating saved');
+    await click('.brain-sort [data-sort="rating"]');
+    eq(await js('document.querySelector("#brainList .brain")?.dataset.id'), 'mock/thinker', 'highest rating first');
+    eq(await text('.brain-sort [data-sort="rating"]'), 'Rating 🤩–😞 ↓', 'rating direction is clear');
+    await click('.brain-sort [data-sort="rating"]');
+    eq(await js('document.querySelector("#brainList .brain")?.dataset.id'), 'mock/thinker', 'rated Brains remain ahead of unrated Brains when ascending');
+    eq(await text('.brain-sort [data-sort="rating"]'), 'Rating 😞–🤩 ↑', 'rating reverses from poor to wow');
+    await goto(`${APP}/#create`);
+    await click('.model-card[data-id="krea2-raw"]');
+    await choose('#llmSelect', 'mock/thinker');
+    await click('#llmPick');
+    await choose('#llmSort', 'rating');
+    eq(await text('#llmSortDirection'), '↓ Highest first', 'the picker shows its rating direction');
+    eq(await js('[...document.querySelectorAll("#llmList .grp")].map(g=>g.textContent).join("|")'), '🤩 Wow|No rating yet', 'the picker groups each rating separately');
+    await click('#llmFilters [data-trait="thinking"]');
+    assert(await js(`!!document.querySelector('#llmList [data-id="mock/thinker"]') && !document.querySelector('#llmList [data-id="mock/vision-8b"]')`), 'Thinking filter excludes ordinary Brains');
+    await click('#llmFilters [data-all]');
+    await press('Escape');
+    await click('#varSeg button[data-value="2"]');
+    await type('#theme', 'A harbor in soft morning light');
+    await click('#generateBtn'); await genDone();
+    eq(await count('.take'), 2, 'two takes');
+    assert(await js('!document.querySelector(".take-thinking").hidden && !document.querySelector(".take-thinking").open'), 'thinking is available, collapsed');
+    assert((await text('.thinking-text')).includes('framing'), 'actual reasoning retained');
+    await click('.take .rb-tune');
+    await waitFor('!!document.querySelector(".take .rb-loras .lr-on")', 'LoRA toggle');
+    await click('.take .rb-loras .switch');
+    assert(await js('!document.querySelector(".take .rb-loras .lr-on").checked'), 'LoRA stays off after click');
+    await click('.take .rb-tune'); await click('.take .rb-tune');
+    await waitFor('!!document.querySelector(".take .rb-loras .lr-on")', 'settings reopened');
+    assert(await js('!document.querySelector(".take .rb-loras .lr-on").checked'), 'LoRA stays off after reopening');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered without LoRA', 15000);
+    assert(!comfy.prompts.at(-1).prompt['20'], 'disabled LoRA omitted from actual Comfy graph');
+    await click('.take:nth-child(2) .rb-go');
+    await waitFor('!!document.querySelector(".take:nth-child(2) .rtile img") && !document.querySelector(".take:nth-child(2) .rtile.running")', 'second take rendered', 15000);
+    assert(!!comfy.prompts.at(-1).prompt['20'], 'other take keeps its LoRA');
+    const draft = 'My unsaved editing survives the viewer. '.repeat(12);
+    await type('.take .prompt-text', draft);
+    const beforeHeight = await js('document.querySelector(".take .prompt-text").getBoundingClientRect().height');
+    await click('.take .rtile');
+    assert((await text('#lbInfo')).includes('Mock Thinker'), 'viewer identifies Brain');
+    eq(await value('#lbInfo [data-lb-brain-rating]'), '3', 'viewer shows the Brain rating');
+    await choose('#lbInfo [data-lb-brain-rating]', '2');
+    await waitFor(`fetch('/api/llms').then(r=>r.json()).then(r=>r.models.find(m=>m.id==='mock/thinker').rating===2)`, 'viewer saves the changed Brain rating');
+    eq(await value('#lbInfo [data-lb-brain-rating]'), '2', 'changed Brain rating stays in the viewer');
+    const first = await js('document.querySelector("#lbStage img").src');
+    await click('#lbNext');
+    assert(await js(`document.querySelector('#lbStage img').src !== ${q(first)}`), 'next reaches the other take');
+    await press('ArrowLeft');
+    eq(await js('document.querySelector("#lbStage img").src'), first, 'keyboard goes back');
+    await click('#lbInfo [data-lb-brain]');
+    await waitFor('document.querySelector("#view-brains").classList.contains("active") && !!document.querySelector(".brain[data-id=\\"mock/thinker\\"]")', 'Brain link opens its card');
+    eq(await value('.brain[data-id="mock/thinker"] [data-act="rating"]'), '2', 'Brains card has the rating changed in the viewer');
+    eq(await value('#brainSearch'), 'Mock Thinker 9B', 'the linked Brain is isolated by name');
+    await click('.tabs button[data-view="create"]');
+    eq(await value('.take .prompt-text'), draft, 'unsaved words survive');
+    assert(Math.abs(await js('document.querySelector(".take .prompt-text").getBoundingClientRect().height') - beforeHeight) < 3, 'textarea height stays stable');
+    await goto(`${APP}/#settings`);
+    assert(!mock.loadedKeys().length, 'rendering released the Brain');
+    await put('/api/settings', { llmModel: '' });
+    const resumed = await fetch(`${APP}/api/generate`, { method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({modelId:'krea2-raw',theme:'A harbor',variations:1}) });
+    const events = await resumed.text();
+    assert(events.includes('"type":"saved"'), `Auto reloads its released Brain: ${events.slice(-300)}`);
+    eq(mock.log.at(-1).model, 'mock/thinker', 'the same Brain comes back');
+
+  });
+
+  await test('updates: deterministic parameter and LoRA batches, dates and select none', async () => {
+    assert(updatesFlow?.id, 'run the updates group together');
+    const sweep = { workflowId: updatesFlow.id, mode: 'combinations', axes: [{ target: 'param', key: '3|steps', label: 'Steps', values: [4, 6] }, { target: 'loraOn', key: '20', label: 'LoRA use', values: [false, true] }] };
+    await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ batches: [{ id: 'updates-cycle', name: 'Settings cycle', count: 4, mode: 'same', sweep }] }) });
+    await goto(`${APP}/#create`);
+    await click('.model-card[data-id="krea2-raw"]');
+    if (!(await js('document.querySelector("#manualMode").checked'))) await click('label:has(#manualMode)');
+    await type('#theme', 'An unchanging caption');
+    await choose('#batchPick', 'updates-cycle');
+    await goto(`${APP}/#batches`);
+    await click('#batchList [data-id="updates-cycle"] .b-cycle');
+    assert((await text('.cycle-preview summary')).includes('4 renders'), 'cycle preview counts combinations');
+    await click('.cycle-save');
+    await goto(`${APP}/#create`);
+    await choose('#batchPick', 'updates-cycle');
+    const before = comfy.prompts.length, calls = mock.log.length;
+    await click('#generateBtn');
+    await waitFor('!document.querySelector("#generateBtn").classList.contains("cooking") && document.querySelector("#stopBtn").hidden && document.querySelectorAll(".take .rtile img").length === 4', 'four cycle renders', 25000);
+    const sent = comfy.prompts.slice(before).map(x => x.prompt);
+    eq(sent.length, 4, 'all combinations rendered');
+    eq(sent.map(p => `${p['3'].inputs.steps}:${!!p['20']}`).join(), '4:false,6:false,4:true,6:true', 'each graph has its requested steps and LoRA switch');
+    assert(sent.every(p => p['6'].inputs.text === 'An unchanging caption'), 'caption stays literal');
+    eq(mock.log.length, calls, 'cycling calls no Brain');
+    await goto(`${APP}/#gallery`);
+    await choose('#reelSort', 'oldest');
+    const oldest = await js('document.querySelector("#reelGrid .reel-cell").dataset.file');
+    await choose('#reelSort', 'newest');
+    assert(await js(`document.querySelector('#reelGrid .reel-cell').dataset.file !== ${q(oldest)}`), 'date sort reverses order');
+    await click('#reelSelectAll');
+    assert(await visible('#reelSelectNone'), 'select none offered');
+    await click('#reelSelectNone');
+    eq(await count('#reelGrid .picked'), 0, 'selection cleared');
+    await goto(`${APP}/#history`);
+    await choose('#historySort', 'oldest');
+    await click('#historySelectAll');
+    assert(await count('.hcard.picked') > 0, 'history cards selected');
+    await click('#historySelectNone');
+    eq(await count('.hcard.picked'), 0, 'history selection cleared');
+    // A deleted LoRA in a saved cycle must explain the problem and leave the app usable.
+    const stale = { ...sweep, mode: 'cycle', axes: [{ target: 'loraOn', key: '+removed.safetensors', label: 'Removed LoRA', values: [false,true] }] };
+    await fetch(`${APP}/api/settings`, { method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({batches:[{id:'stale-cycle',name:'Stale cycle',count:2,mode:'same',sweep:stale}]}) });
+    await goto(`${APP}/#create`);
+    await choose('#batchPick','stale-cycle');
+    await click('#generateBtn');
+    await waitFor('document.querySelector("#stageError").textContent.includes("no longer") && document.querySelector("#stopBtn").hidden', 'stale cycle stops cleanly');
+    await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ batches: [], thinking: 'off' }) });
+  });
+
+  await test('prompt sets: create, combine, remember, edit, remove and validate', async () => {
+    await fetch(`${APP}/api/settings`, { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({promptSets:[],batches:[],llmModel:'mock/vision-8b',checkTheme:false}) });
+    await js('localStorage.clear(); sessionStorage.clear()');
+    await goto(`${APP}/#create`);
+    await js("document.querySelector('#managePromptSets').closest('details').open = true");
+    await click('#managePromptSets');
+    assert(await visible('#addPromptSet'), 'manager opens directly');
+    await click('#addPromptSet');
+    await type('[data-set-name]', 'ABC Branding Language');
+    await type('[data-set-examples]', 'A cobalt package on a clean white table.\n\nA teal storefront in morning light.');
+    await click('#addPromptSet');
+    await type('.prompt-set-editor:nth-child(2) [data-set-name]', '<Studio & Co>');
+    await type('.prompt-set-editor:nth-child(2) [data-set-examples]', 'A paper sculpture beside a window.');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await goto(`${APP}/#create`);
+    await js("document.querySelector('#managePromptSets').closest('details').open = true");
+    eq(await count('#promptSetChoices [data-prompt-set]'), 2, 'all sets get checkboxes');
+    eq(await count('#promptSetChoices [data-prompt-set]:checked'), 0, 'new sets are off');
+    assert((await text('#promptSetChoices')).includes('<Studio & Co>'), 'names are text, never markup');
+    await click('#promptSetChoices label:nth-child(1)');
+    await waitFor('!document.querySelector("[data-prompt-set]").disabled', 'first selection saved');
+    await click('#promptSetChoices label:nth-child(2)');
+    await waitFor('!document.querySelector("[data-prompt-set]").disabled', 'second selection saved');
+    await reloadPage();
+    eq(await count('#promptSetChoices [data-prompt-set]:checked'), 2, 'selections survive reload');
+    // The same list in Fine-tune → Writing: a change there shows under Prompt options too.
+    await click('#openCreateOptions');
+    await click('#tuneWriting');
+    eq(await count('#tunePromptSetChoices [data-prompt-set]:checked'), 2, 'Fine-tune → Writing lists the same sets, checked');
+    await click('#tunePromptSetChoices label:nth-child(2)');
+    await waitFor('!document.querySelector("#tunePromptSetChoices [data-prompt-set]").disabled && document.querySelectorAll("#promptSetChoices [data-prompt-set]:checked").length === 1', 'unchecked there, and the Create panel follows');
+    await click('#tunePromptSetChoices label:nth-child(2)');
+    await waitFor('document.querySelectorAll("#promptSetChoices [data-prompt-set]:checked").length === 2', 'checked again');
+    await click('#doneCreateOptions');
+    await type('#theme', 'a product launch');
+    await click('#generateBtn');
+    await genDone();
+    let sent = JSON.stringify(lastCall().messages);
+    assert(sent.includes('A cobalt package') && sent.includes('A paper sculpture'), 'both selected sets reach the Brain');
+    await js("document.querySelector('#managePromptSets').closest('details').open = true");
+    await click('#promptSetChoices label:nth-child(2)');
+    await waitFor('!document.querySelector("[data-prompt-set]").disabled', 'deselection saved');
+    await click('#generateBtn');
+    await genDone();
+    sent = JSON.stringify(lastCall().messages);
+    assert(sent.includes('A cobalt package') && !sent.includes('A paper sculpture'), 'unchecked sets stay out');
+    await click('#managePromptSets');
+    await type('[data-set-name]', 'Updated brand');
+    await type('[data-set-examples]', 'A yellow storefront beside a park.');
+    await click('.prompt-set-editor:nth-child(2) [data-remove-set]');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    let settings = await (await fetch(`${APP}/api/settings`)).json();
+    eq(settings.promptSets.length, 1, 'removed set is gone');
+    eq(settings.promptSets[0].name, 'Updated brand', 'rename saved');
+    assert(settings.promptSets[0].enabled, 'editing preserves selection');
+    const bad = await fetch(`${APP}/api/settings`, { method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({promptSets:[{name:'',examples:[]}]}) });
+    eq(bad.status, 400, 'invalid sets are rejected');
+    await click('[data-remove-set]');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await goto(`${APP}/#create`);
+    eq(await count('[data-prompt-set]'), 0, 'deleting all sets clears Creator choices');
+  });
+
+  await test('no console errors', async () => {
+    assert(!problems.length, `console problems:\n      ${problems.join('\n      ')}`);
+  });
+
+  const failed = results.filter(r => !r.ok);
+  console.log(`\n${results.length - failed.length}/${results.length} passed${failed.length ? `, ${failed.length} failed` : ''}.`);
+  if (appLog.includes('Error')) console.log(`\nApp server log:\n${appLog}`);
+  const chromeExit = new Promise(r => chrome.once('exit', r));
+  chrome.kill();
+  app.kill();
+  await Promise.race([chromeExit, sleep(3000)]);
+  await mock.stop();
+  await comfy.stop();
+  await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  process.exit(failed.length ? 1 : 0);
+}
+
+main().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

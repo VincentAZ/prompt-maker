@@ -1,0 +1,44 @@
+# Prompt Maker updates — 1.63.0
+
+Review log for the 24 requests, October 17, 2026. Changes use the creator-first defaults: optional controls stay folded, existing work carries over, and batches are explicit and previewable.
+
+| # | Request | Result and judgment call |
+|---|---|---|
+| 1 | Create is cluttered | Add an image starts folded; adding an image opens it. Prompt sets are under Prompt options. Model information, looks, and advanced render/writing options remain folded. The idea, target model, size, Takes, and main action remain accessible. Existing remembered panel choices are respected. |
+| 2 | Brain in lightbox | A Brain row identifies the writer for the rendered version, including a different Brain used for refinement. New renders retain this identity. Older work falls back to its session record; unrecorded identity is labeled rather than guessed. Own prompts say no Brain. |
+| 3 | Rate/sort Brains | Brains have Not rated / Pretty good / Very good / Excellent ratings, saved by model ID. Both Brain lists and the header picker offer Your rating sorting. |
+| 5 | Oldest/newest | Library/Your renders and Saved prompts offer both directions. Your order preserves manual arrangement; dragging while date-sorted switches to Your order. |
+| 6 | Wider model selector | The header Brain picker now allows 480px instead of 250px, with room for the loaded model and compression code. Auto shows the Brain name too. The Create divider still lets users widen the target-model controls. |
+| 7 | Expandable thinking | Each take has a collapsed Brain thinking section when its provider actually supplies reasoning. It streams and is saved with the version. No reasoning is fabricated for models that do not expose it. Captured reasoning is limited to 100,000 characters per version. |
+| 8 | LoRA disabling ignored | Take settings reject stale asynchronous redraws, and a workflow switch sets the new workflow before refreshing controls. The summary uses the take’s effective LoRA switches. Browser regression verifies off survives reopening and removes the loader from the graph sent to ComfyUI, while another take keeps it enabled. |
+| 9 | Viewer left/right | A render opened from Takes browses all renders across the displayed takes, including the common case of one render per take. Buttons and arrow keys navigate; text fields and resize controls keep their arrow-key behavior. |
+| 10 | Thinking filter | The picker and Brains page include Thinking, using advertised capabilities, learned behavior, and recognizable reasoning-model names. Name-based detection is a best-effort fallback. |
+| 11 | FLUX 3 Image Klein Base | Added a playbook and three text-to-image workflows: INT8 ConvRot, BF16, and NVFP4. Base defaults are 50 steps, CFG 3.5. NVFP4 needs Blackwell. No large model downloads were performed. See licensing and validation notes below. |
+| 12 | Creativity slider disabled with literal prompt | This app’s temperature is the Brain’s text-sampling temperature; it does not control diffusion. Renamed to Writing creativity and explained why it is inactive with a literal prompt. Use seed, sampler, steps, guidance, and LoRAs for image/video variation. |
+| 13 | Prompt set choices | Each named set has a checkbox in Create; selections save immediately and revert if saving fails. |
+| 14 | App-driven parameter batches | Batches → Cycle settings lets users choose seed, exposed sampler/conditioning settings, size, shape, duration, and each LoRA’s use/strength. Cycle together repeats shorter lists; Every combination computes the Cartesian product. Preview every render before saving. Existing batch limit remains 50 outputs; oversized combinations are rejected. One prompt keeps the words fixed and cycles without Brain calls. Only controls supported by the chosen workflow are offered. A failed render or unavailable LoRA stops its cycle with an explanation. |
+| 15 | Variations → Takes | Restored Takes in the primary controls and related visible copy. Internal data keys remain compatible with existing saved work. |
+| 16 | Compression in names | Brain names include LM Studio’s quantization code, without duplicating one already in the name. Search can find the code. FLUX workflow names include their precision. Missing service metadata is not invented. |
+| 17 | Select none | Library/Your renders and Saved prompts show Select none when selection is nonempty. |
+| 18 | Prompt box after viewer | Viewer close restores focus without scrolling, then recalculates textareas with their own reserved height. Fixed passing the array index as a textarea sizing argument. Regression verifies unsaved text and height survive viewer navigation/close. |
+| 19 | Keeping voice starts another | Keeping a voice stops playback; rebuilding the saved-voice list does not autoplay previous clips. |
+| 20 | Hear it progress | An indeterminate progress bar and busy state cover the request and clear on success or error. The speech worker has no trustworthy percentage, so the UI does not invent one. |
+| 21 | Sample/delete replay voices | Playback begins only for the requested clip; starting another pauses the others. Rename/delete/redraw do not replay saved clips. Stale asynchronous speech responses cannot steal playback from a newer request. |
+| 22 | Say a line too small | Replaced the narrow single-line controls with resizable multiline textareas in Voices and Create. |
+| 23 | GPU memory | Local Brain, rendering, and speech jobs share a cancellable queue. Handoffs unload LM Studio instances, request ComfyUI model/cache release after its queue is idle, and await voice-worker shutdown. Auto remembers and reloads a Brain released for memory, including after an app restart. The Python worker keeps one speech model resident, clears it on model switches/failure, and enables expandable CUDA allocation segments by default. OOM errors explain recovery options. Unrelated GPU processes are not killed. |
+
+## FLUX 3 source and license decisions
+
+The requested repository is the **Base** model. The workflows follow the [official ComfyUI template](https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_flux3_klein_t2i.json) and [BFL Comfy weights documentation](https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/blob/main/README.md). They omit the optional second prompt upsampler: Prompt Maker’s Brain supplies the caption, and literal prompts must remain literal. This addition covers text-to-image; it does not claim image-editing support.
+
+The [Base license](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE.md) is restrictive, not a blanket commercial license. It contains a conditional commercial-output exception for qualifying users below US$5M gross annualized revenue, including affiliates. Conditions include content filtering or review before distributing outputs, required disclosures, and restricted-use obligations. Review the actual license for the intended business use; app settings do not override it. Downloads may require accepting the repository’s terms and providing a Hugging Face token through the existing download flow.
+
+## Verification and practical limits
+
+Final validation: **158/158 browser checks passed**, **4/4 unit tests passed**, and the separate focused regression run passed **5/5 checks**. JavaScript syntax checks, Python compilation, and `git diff --check` passed. All seven README screenshots were refreshed from clean demonstration data. The browser suite deliberately exercises failed voice generation and damaged-file recovery; those expected server log messages are not test failures.
+
+Automated browser coverage exercises real clicks with isolated mock LM Studio, ComfyUI, and speech services. Added regressions cover ratings, thinking, take-level LoRA graph changes, viewer navigation/draft preservation, deterministic batch graphs with no Brain calls, sorting, selection clearing, and voice playback/progress. Unit tests cover cycle limits/order, quantization labels, GPU serialization/cancellation/failure recovery, and scrubbed FLUX workflow defaults.
+
+Screenshots are regenerated from isolated demonstration folders with empty prompts, generic asset names, and seed 0. Real FLUX inference and the reported 95GB GPU allocation pattern require installed weights and the user’s GPU; mocks verify orchestration and graph correctness, not hardware memory capacity or image quality. Serializing local GPU work trades some throughput and model-reload latency for lower peak memory. External programs can still consume the card; a model larger than available memory still needs a smaller precision, image size, or duration.
+
+A read-only GPU check during validation found an RTX PRO 6000 Blackwell with 97,887 MiB total, 6,349 MiB used, and 90,899 MiB free. The earlier near-full allocation was not present, so that exact OOM was not reproduced. No GPU process was stopped for this check.

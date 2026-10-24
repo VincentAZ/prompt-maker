@@ -1,0 +1,152 @@
+{
+  "format": "prompt-maker-workflow",
+  "name": "FLUX 3 Klein Base · NVFP4 · Blackwell: text to image",
+  "note": "Base weights, 50 steps, CFG 3.5. Adapted from the official ComfyUI template. Your Brain supplies the full scene caption; no second prompt rewrite. Accept BFL’s license before downloading.",
+  "prompt": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "flux3-image-klein-base-nvfp4.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen3vl_4b_int8_convrot.safetensors",
+        "type": "flux3",
+        "device": "default"
+      }
+    },
+    "3": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "flux2-vae.safetensors"
+      }
+    },
+    "4": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": [
+          "2",
+          0
+        ]
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": [
+          "2",
+          0
+        ]
+      }
+    },
+    "6": {
+      "class_type": "EmptyFlux2LatentImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      }
+    },
+    "7": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "positive": [
+          "4",
+          0
+        ],
+        "negative": [
+          "5",
+          0
+        ],
+        "latent_image": [
+          "6",
+          0
+        ],
+        "seed": 0,
+        "steps": 50,
+        "cfg": 3.5,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "7",
+          0
+        ],
+        "vae": [
+          "3",
+          0
+        ]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": [
+          "8",
+          0
+        ],
+        "filename_prefix": "PromptMaker/flux3_klein_base"
+      }
+    }
+  },
+  "mapping": {
+    "prompt": [
+      {
+        "node": "4",
+        "input": "text"
+      }
+    ],
+    "width": {
+      "node": "6",
+      "input": "width"
+    },
+    "height": {
+      "node": "6",
+      "input": "height"
+    },
+    "seed": [
+      {
+        "node": "7",
+        "input": "seed"
+      }
+    ]
+  },
+  "options": {
+    "snap": 16,
+    "frameRule": "exact",
+    "fps": 24,
+    "randomizeSeed": true,
+    "seedMode": "random"
+  },
+  "models": [
+    {
+      "name": "flux3-image-klein-base-nvfp4.safetensors",
+      "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-base-nvfp4.safetensors",
+      "directory": "diffusion_models"
+    },
+    {
+      "name": "qwen3vl_4b_int8_convrot.safetensors",
+      "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/text_encoders/qwen3vl_4b_int8_convrot.safetensors",
+      "directory": "text_encoders"
+    },
+    {
+      "name": "flux2-vae.safetensors",
+      "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/vae/flux2-vae.safetensors",
+      "directory": "vae"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "id": "qwen-image-edit",
+  "name": "Qwen Image Edit",
+  "kind": "image",
+  "task": "edit",
+  "description": "Edit a picture with a plain instruction: change one thing and keep everything else.",
+  "guide": {
+    "bestFor": "Precise edits of a picture you have: swap an object, change the clothes, rewrite the words on a sign, change the background, the season or the style, while the person, the product and the layout stay exactly the same.",
+    "youNeed": "The picture you want to change.",
+    "steps": [
+      "Add your picture in step ③.",
+      "In step ②, say what should change, in a sentence: \"make the jacket red\", \"replace the sign's text with CLOSED\".",
+      "Press Generate, then render. Four steps, so it's quick.",
+      "Too much changed? Say what must stay (\"keep her face and the background\") and generate again."
+    ],
+    "tryThese": [
+      "make it a winter evening: snow on the ground, warm light in the windows",
+      "change the text on the sign to \"OPEN LATE\" in the same lettering",
+      "turn this photo into a watercolor painting, same composition"
+    ]
+  },
+  "color": "#a78bfa",
+  "instructions": "# Qwen Image Edit prompting guide\n\n## What this model is\n- Qwen-Image-Edit-2509 is Alibaba's open-weights image-editing model (Apache 2.0): a 20B diffusion transformer with a Qwen2.5-VL vision-language encoder that looks at the attached picture and reads one instruction, then renders the edited picture.\n- It keeps what you don't mention: a person's face and identity across poses and styles, a product's shape, logo and label, the layout and the camera. Text it edits keeps the original font, color and material unless told otherwise.\n- Here it runs in 4 steps with the Lightning LoRA and no guidance (cfg 1), so there is no negative prompt: the instruction alone steers it.\n\n## Prompt format\n- Write ONE short instruction in plain imperative language, 1–3 sentences, English or Chinese. The model sees the picture, so do NOT describe the whole picture: name the change, then what must stay.\n  - \"Change her jacket to a dark green waxed cotton jacket with a brown corduroy collar. Keep her face, pose, the alley and the light exactly as they are.\"\n- Describe the result, not the process: \"the wall is painted sage green\", not \"paint the wall\".\n- One clear change per prompt, two at most. Several edits are better done as several rounds (refine the take).\n- Name what the edit touches precisely: which person (\"the woman on the left\"), which object (\"the blue mug on the table\"), where (\"in the top left corner\").\n- Text in the picture: put the exact new words in double quotes and say what to keep: 'Replace the sign's text with \"OPEN LATE\", same font, same red color.' To add text, say where and in what style.\n- Style changes: name the medium and what to keep: \"Turn this photo into a loose watercolor painting; keep the composition, the figures and their positions.\"\n- Background, time and weather: \"Replace the background with a quiet beach at sunset; keep the man, his clothes and his pose as they are.\" \"Make it a winter night: snow on the ground, warm light in the windows, everything else unchanged.\"\n- People: say \"the same woman\" / \"keep his face\" when the edit could change identity (a new outfit, a new pose, a new setting). Pose changes are allowed: \"She turns to face the camera and smiles; same person, same clothes.\"\n- Products: keep the label and logo readable: \"Put the bottle on a marble counter with soft morning light; keep its label, shape and color exactly.\"\n\n## Avoid\n- Captioning the picture (\"A photo of a woman in a red dress standing…\") instead of instructing: the model may repaint what you describe.\n- Vague wishes (\"make it better\", \"more professional\", \"fix it\"): say what better looks like.\n- Negation as the whole instruction (\"no hat\"): say the result, \"she is bareheaded, her hair loose\".\n- Weights like (word:1.3), tags, quality words (\"masterpiece\", \"8K\"), style lists. The encoder reads them literally.\n- Piling many edits into one prompt.\n\n## Image roles\n- The attached image is the picture being edited; the theme is the instruction. Whatever the role says, write the instruction for this picture.\n- With no theme, write one tasteful improvement that keeps the content: cleaner light, a tidier background, or sharper focus, and say that everything else stays.\n\n## Length\n- short: about 10–25 words, one change and one \"keep\" clause.\n- medium: about 25–50 words: the change in detail, what stays, and where.\n- long: about 50–90 words, for an edit with several parts (a new setting with light and time of day, or a style with its materials), each stated plainly. Never a description of the whole picture.",
+  "examples": [
+    "Change her jacket to a dark green waxed cotton jacket with a brown corduroy collar. Keep her face, her pose, the alley behind her and the overcast light exactly as they are.",
+    "Replace the text on the shop sign with \"OPEN LATE\" in the same hand-painted red lettering and the same size. Everything else stays the same.",
+    "Make it a winter evening: fresh snow on the street and the parked cars, warm yellow light in every window, a few snowflakes in the air. Keep the buildings, the people and the camera angle unchanged.",
+    "Turn this photograph into a loose watercolor painting on textured paper, soft edges and pooled pigment, a muted palette of blues and ochres. Keep the composition, the figures and their positions."
+  ],
+  "aspectRatios": [
+    "1:1",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "16:9",
+    "9:16"
+  ],
+  "resolutions": [
+    "1024×1024",
+    "1152×896",
+    "896×1152",
+    "1216×832",
+    "832×1216",
+    "1344×768",
+    "768×1344"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "1:1",
+    "resolution": "1024×1024",
+    "duration": "",
+    "temperature": 0.7,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈10–25 words",
+    "medium": "≈25–50 words",
+    "long": "≈50–90 words"
+  },
+  "sources": [
+    "https://huggingface.co/Qwen/Qwen-Image-Edit-2509",
+    "https://github.com/QwenLM/Qwen-Image",
+    "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI",
+    "https://huggingface.co/lightx2v/Qwen-Image-Lightning",
+    "https://docs.comfy.org/tutorials/image/qwen/qwen-image-edit",
+    "https://comfy.org/templates/image_qwen_image_edit_2509"
+  ],
+  "comfyTemplates": [
+    {
+      "name": "image_qwen_image_edit_2509",
+      "title": "Qwen Image Edit 2509",
+      "note": "ComfyUI's template, with its optional Lightning LoRA (4 steps)."
+    }
+  ],
+  "updatedAt": "2026-10-11"
+}

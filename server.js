@@ -1,0 +1,2479 @@
+// Prompt Maker: local web server. Zero dependencies; serves the UI, talks to LM Studio (prompts)
+// and, optionally, to a local ComfyUI (renders).
+import http from 'node:http';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import * as store from './lib/store.js';
+import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, setRoom, loadAlone } from './lib/lmstudio.js';
+import * as assistant from './lib/assistant.js';
+import * as autostart from './lib/autostart.js';
+import * as services from './lib/services.js';
+import * as voice from './lib/voice.js';
+import { acquireGpu, withGpu, memoryError, isOutOfMemory } from './lib/gpu.js';
+import * as cloud from './lib/cloud.js';
+import * as folders from './lib/folders.js';
+import * as computer from './lib/computer.js';
+import * as comfySetup from './lib/comfy-setup.js';
+import * as firstSetup from './lib/setup.js';
+import * as update from './lib/update.js';
+import { spawn } from 'node:child_process';
+import * as videotools from './lib/videotools.js';
+import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
+import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, setsStatus, fitToRoom, estimateTokens, tooBigMessage, OVERFLOW, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet, buildSurpriseMessages, cleanSurprise, lookOf } from './lib/prompt.js';
+import * as comfy from './lib/comfy.js';
+import * as wf from './lib/workflows.js';
+import * as models from './lib/models.js';
+import * as recipe from './lib/recipe.js';
+import { planZip, writeZip } from './lib/zip.js';
+import { convertUiWorkflow, isApiWorkflow, isUiWorkflow, pruneToOutputs, ConvertError } from './lib/comfy-convert.js';
+
+const PORT = Number(process.env.PORT) || 5317;
+const HOST = process.env.HOST || '127.0.0.1';
+const PUBLIC_DIR = path.join(import.meta.dirname, 'public');
+const MAX_BODY = 30 * 1024 * 1024;
+const BATCH_MAX = store.BATCH_MAX; // takes per request and renders per take (a batch is either)
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.woff2': 'font/woff2',
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.opus': 'audio/ogg',
+};
+
+// The browser may only talk to this server: nothing external can load, even by accident.
+// media-src blob: lets a motion video play in the page while it's read and uploaded.
+const CSP = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'";
+
+// ---------- helpers ----------
+
+async function readBody(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const c of req) {
+    size += c.length;
+    if (size > MAX_BODY) throw store.httpError(413, 'Request too large.');
+    chunks.push(c);
+  }
+  const text = Buffer.concat(chunks).toString('utf8');
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw store.httpError(400, 'Invalid JSON body.');
+  }
+}
+
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(data));
+}
+
+// Live runs, so Stop can cancel the LLM call while the stream stays open to deliver finished takes.
+const runs = new Map();
+
+// Newline-delimited JSON stream for live token output.
+function openStream(res) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  const controller = new AbortController();
+  const runId = crypto.randomUUID();
+  runs.set(runId, controller);
+  res.on('close', () => {
+    if (!res.writableFinished) controller.abort();
+    runs.delete(runId);
+  });
+  const send = obj => { if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n'); };
+  return { send, runId, signal: controller.signal, end: () => { runs.delete(runId); res.end(); } };
+}
+
+// Renders and images aren't stored in the browser's cache, so a deleted one doesn't live on there.
+const PRIVATE = { 'Cache-Control': 'no-store' };
+
+// Serves a file, with byte ranges so videos can seek. Read from disk piece by piece as it's sent: a player asks for
+// many small ranges of a big video, and loading the whole file for each would fill the memory.
+async function serveFile(req, res, file, extraHeaders = {}) {
+  const st = await fs.stat(file).catch(() => null);
+  if (!st?.isFile()) return sendJson(res, 404, { error: 'Not found' });
+  const size = st.size;
+  const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+  const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache', 'Accept-Ranges': 'bytes', ...extraHeaders };
+  const send = (status, head, start, end) => {
+    res.writeHead(status, { ...headers, ...head, 'Content-Length': end - start + 1 });
+    if (req.method === 'HEAD' || end < start) return res.end();
+    const stream = createReadStream(file, { start, end });
+    stream.on('error', () => res.destroy()); // deleted or unreadable meanwhile: the headers are already out
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+  };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      return res.end();
+    }
+    return send(206, { 'Content-Range': `bytes ${start}-${end}/${size}` }, start, end);
+  }
+  send(200, {}, 0, size - 1);
+}
+
+// Blocks other websites (cross-site requests) and DNS-rebinding tricks from using this local API.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const LOOPBACK_ADDRESS = /^(127\.|::1$|::ffff:127\.)/;
+function isTrustedRequest(req) {
+  const host = String(req.headers.host || '');
+  const hostname = host.replace(/:\d+$/, '');
+  const openToNetwork = !['127.0.0.1', 'localhost', '::1'].includes(HOST);
+  if (!openToNetwork && !LOOPBACK_HOSTS.has(hostname)) return false;
+  const origin = req.headers.origin;
+  if (origin && origin !== 'null' && origin !== `http://${host}`) return false;
+  if (origin === 'null' && req.method !== 'GET') return false;
+  return true;
+}
+
+function within(dir, rel) {
+  const full = path.join(dir, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
+  return full.startsWith(dir + path.sep) || full === dir ? full : null;
+}
+
+// Picks the LM Studio model to use and reports what we know about it: LM Studio's facts ({ id, name, vision,
+// loaded, thinkSwitch, … }) plus its Thinking level (its own, else Settings) and how Thinking: Off works on it.
+async function prepareLlm(settings, requested, needsVision) {
+  const id = (requested || settings.llmModel || '').trim();
+  // A cloud Brain doesn't need LM Studio at all.
+  const llms = cloud.isCloudId(id) ? await cloud.listModels() : await listLlms(settings.lmStudioUrl);
+  if (cloud.isCloudId(id) && !llms.some(m => m.id === id)) throw store.httpError(400, 'That cloud Brain is no longer available. Pick another one in the top bar.');
+  const brainNotes = await store.getBrainNotes();
+  let info;
+  if (id) {
+    info = llms.find(m => m.id === id) || { id, name: id, vision: null, loaded: null };
+  } else {
+    const loaded = llms.filter(m => m.loaded);
+    const remembered = llms.filter(m => brainNotes[m.id]?.memoryReleasedAt).sort((a, b) => brainNotes[b.id].memoryReleasedAt.localeCompare(brainNotes[a.id].memoryReleasedAt));
+    const candidates = loaded.length ? loaded : remembered;
+    info = (needsVision && candidates.find(m => m.vision)) || candidates[0];
+    if (!info) throw store.httpError(400, 'No Brain selected. Pick one in the top bar (one that sees images 👁 if you use an image).');
+  }
+  if (needsVision && info.vision === false) {
+    throw store.httpError(400, `"${info.name}" is text-only and can't see images. Pick a vision model (👁) in the top bar.`);
+  }
+  const notes = brainNotes[info.id] || {};
+  return { ...info, thinking: notes.thinking || settings.thinking, thinkOff: notes.thinkOff || null };
+}
+
+// Opens the event stream and tells the UI which LLM is working and whether it still has to load.
+async function startStream(res, settings, info, count, hasImage) {
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId, count, llmModel: info.id, llmName: info.name });
+  try { await loadBrain(settings, info, stream); }
+  catch (err) {
+    stream.send({ type: 'error', message: memoryError(err).message });
+    stream.end();
+    throw err;
+  }
+  if (hasImage && info.loaded !== false) stream.send({ type: 'status', text: 'Studying your image…' });
+  return stream;
+}
+
+// One Brain at a time in LM Studio: before a Brain is asked anything, every other model loaded there goes, and
+// the Brain is loaded if it isn't, with the room it had last (noted when it went, or picked from its Room menu),
+// said in the stream's status line. The Brain's facts are refreshed in place (its room, for the fit check), except
+// `loaded`, which the first call sets, so the run's record knows the Brain was cold. A failure here isn't the
+// end: the call itself says what's wrong with LM Studio. Returns the seconds the load took, or null.
+async function loadBrain(settings, llm, stream) {
+  if (llm.cloud) return null;
+  const t0 = Date.now();
+  const status = text => stream.send({ type: 'status', text });
+  if (llm.loaded === false) status(`Loading ${llm.name} into memory…`);
+  const out = await withGpu('brain', settings, { signal: stream.signal, onStatus: status }, () => ensureAlone(settings, llm, status));
+  if (out?.llm) Object.assign(llm, { ...out.llm, loaded: llm.loaded });
+  return out?.loaded ? secondsSince(t0) : null;
+}
+
+function sampling(settings, temperature, llm) {
+  const t = Number(temperature);
+  const opts = {
+    temperature: Number.isFinite(t) ? Math.min(2, Math.max(0, t)) : 0.8,
+    top_p: settings.topP,
+    max_tokens: settings.maxTokens,
+  };
+  // Reasoning models think for thousands of tokens by default; prompt writing rarely needs it.
+  if (llm.thinking !== 'default') opts.reasoning_effort = llm.thinking === 'off' ? 'none' : llm.thinking;
+  return opts;
+}
+
+// Does the loading for loadBrain, remembering rooms in the Brains' notes.
+async function ensureAlone(settings, llm, onStatus = () => {}) {
+  const notes = await store.getBrainNotes().catch(() => ({}));
+  const remember = (id, room) => (room ? store.noteBrain(id, { room }).catch(() => {}) : null);
+  const out = await loadAlone(settings.lmStudioUrl, llm.id, { contextLength: notes[llm.id]?.room || null, onUnload: remember, onStatus }).catch(err => { if (isOutOfMemory(err)) throw memoryError(err); return null; });
+  if (out?.loaded) await remember(llm.id, out.llm.contextLoaded);
+  return out;
+}
+
+// Runs one completion with the Thinking setting applied. LM Studio can switch thinking off only for models it
+// recognizes (llm.thinkSwitch). Other Brains are watched when Thinking is Off: one that starts thinking anyway is
+// stopped and asked again with its thinking already over (EMPTY_THINK), and the app remembers which Brains need that.
+async function complete(settings, llm, body, options) {
+  if (llm.cloud) return completeNow(settings, llm, body, options);
+  return withGpu('brain', settings, options, async () => {
+    await ensureAlone(settings, llm, options.onStatus);
+    return completeNow(settings, llm, body, options);
+  });
+}
+async function completeNow(settings, llm, body, { signal, onUpdate, onStatus }) {
+  const run = (b, stopIfThinking) => (llm.cloud
+    ? cloud.stream(llm.id, b, { signal, onUpdate }, streamCompletion)
+    : streamCompletion(settings.lmStudioUrl, b, { signal, onUpdate, stopIfThinking }));
+  if (llm.thinking !== 'off' || llm.thinkSwitch) return run(body, false);
+  const learn = thinkOff => { llm.thinkOff = thinkOff; return store.noteBrain(llm.id, { thinkOff }); };
+  const tricked = { ...body, messages: [...body.messages, EMPTY_THINK] };
+  if (llm.thinkOff === 'trick') return run(tricked, false);
+  if (llm.thinkOff === 'stubborn') return run(body, false);
+  const first = await run(body, true);
+  if (!first.thoughtAnyway) {
+    if (!llm.thinkOff) await learn('quiet');
+    return first;
+  }
+  onStatus?.(`${llm.name} ignores Thinking: Off. Switching it off another way…`);
+  const second = await run(tricked, true);
+  if (!second.thoughtAnyway) {
+    await learn('trick');
+    return second;
+  }
+  await learn('stubborn');
+  onStatus?.(`${llm.name} keeps thinking even with Thinking: Off. Letting it think…`);
+  return run(body, false);
+}
+
+// A completion that must produce text: its text, or a clear error when the Brain ran out of room first.
+async function writeText(settings, llm, body, opts) {
+  const out = await complete(settings, llm, body, opts);
+  if (!out.text && out.finishReason === 'length') throw brainFailure('room', outOfRoom(llm, body.max_tokens, out.reasoningChars));
+  opts.onReasoning?.(out.reasoning || '');
+  return out.text;
+}
+
+function outOfRoom(llm, maxTokens, reasoningChars) {
+  if (!reasoningChars) return `The Brain ran out of room (its limit of ${maxTokens} tokens) before writing anything. Raise Max tokens in Settings → How the Brain thinks.`;
+  if (llm.thinking === 'off') return `${llm.name} kept thinking even with Thinking: Off and hit the ${maxTokens}-token limit before writing anything. Raise Max tokens in Settings, or pick another Brain in the top bar.`;
+  return `The Brain hit the ${maxTokens}-token limit before writing anything (it spent them all thinking). Set Thinking to Off (in Settings, or for this Brain on Models → Brains) or raise Max tokens in Settings.`;
+}
+
+// After a take is written: a short text-only call lists the theme's facts the prompt changed, dropped or
+// contradicted; if any, one refine-style pass puts them back. Returns { text, kept }, kept being { checked: true }
+// (nothing lost), { checked: true, fixed: [facts] } (put back) or { checked: true, drift: [facts] } (lost, and the
+// fix pass failed); null when the check itself failed or was skipped (nothing is claimed on the take). Through
+// complete(), never writeText(): a check that fails doesn't count against the Brain's record.
+// A refine of a ✍️ own-prompt take (manual) is never checked: its "theme" is the prompt as the user typed it, so
+// every refine would be put back to the old words, the very ones the refine was asked to change.
+async function keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt, text, instruction = null, manual = false, opts }, { signal, onStatus }) {
+  if (settings.checkTheme === false || !params.theme || manual) return null;
+  try {
+    onStatus?.('Checking it against your idea…');
+    const check = buildCheckMessages({ theme: params.theme, text, role: params.imageRole, hasImage: Boolean(imageDataUrl), instruction, sheet: params.characterSheet });
+    const room = llm.thinking === 'off' ? 500 : 1500; // a thinking Brain spends some of it thinking
+    const out = await complete(settings, llm, { model: llm.id, messages: check, ...opts, temperature: 0.1, max_tokens: room }, { signal, onStatus });
+    if (!out.text) return null; // out of room or empty: no claim either way
+    const drift = parseDrift(out.text, params.theme, text, instruction || '');
+    if (!drift.length) return { text, kept: { checked: true } };
+    const facts = drift.map(d => d.given);
+    onStatus?.(`Putting back: ${facts.join(', ')}…`);
+    const fix = buildRefineMessages(masterFor(settings), modelFor(model, settings), { ...params, sourcePrompt, video: brainVideo }, imageDataUrl, text, putBackInstruction(drift));
+    const fixed = cleanPrompt((await complete(settings, llm, { model: llm.id, messages: fix, ...opts }, { signal, onStatus })).text);
+    if (!fixed || looksRefused(fixed)) return { text, kept: { checked: true, drift: facts } };
+    return { text: imageDataUrl && params.characterSheet ? withSheet(fixed, params.characterSheet, model) : fixed, kept: { checked: true, fixed: facts } };
+  } catch (err) {
+    if (signal?.aborted) return null; // Stop keeps the take as written
+    console.warn(`[keep the theme] check skipped: ${err.message}`);
+    return null;
+  }
+}
+
+// An error that counts against the Brain in its record ('room' or 'empty').
+const brainFailure = (outcome, message) => Object.assign(store.httpError(502, message), { outcome });
+
+// The room a local Brain was loaded with (null when unknown, or for a cloud Brain, which has plenty).
+const brainRoom = llm => (llm.cloud ? null : llm.contextLoaded || llm.context || null);
+
+// Builds a request that fits the Brain's room (fewer example prompts when it must, said in the status line), or
+// throws the plain-words error when it can't fit at all. build(model) makes the messages.
+function fitRequest(llm, model, build, onStatus) {
+  const room = brainRoom(llm);
+  if (!room) return build(model);
+  const fit = fitToRoom(model, room, build);
+  if (!fit.fits) throw brainFailure('room', tooBigMessage(llm, room, estimateTokens(fit.messages)));
+  if (fit.dropped) onStatus?.(`${llm.name} has room for ${room.toLocaleString('en-US')} tokens: fewer example prompts go along, so the request fits.`);
+  return fit.messages;
+}
+
+// LM Studio said the request didn't fit after all: the same plain words, with the numbers.
+const explainOverflow = (err, llm, messages) => {
+  if (OVERFLOW.test(err.message || '') && !llm.cloud && messages) err.message = tooBigMessage(llm, brainRoom(llm) || 'an unknown number of', estimateTokens(messages));
+  return err;
+};
+const EMPTY_HINT = 'The Brain returned an empty prompt. If it is a "thinking" model it may have used all its room thinking. Raise Max tokens in Settings or pick a non-thinking Brain.';
+const secondsSince = t0 => Math.round((Date.now() - t0) / 100) / 10;
+
+// Adds a prompt-writing run to the Brain's record. Runs that included loading the model aren't timed.
+async function recordRun(llm, outcome, t0, warm) {
+  await store.recordBrainRun(llm.id, { outcome, seconds: warm ? secondsSince(t0) : null }).catch(() => {});
+}
+
+// The image role used: one the model offers (its imageRoles, else reference / recreate, plus animate for video).
+function roleFor(model, wanted) {
+  const offered = model.imageRoles?.length ? model.imageRoles : ['reference', 'recreate', ...(model.kind === 'video' ? ['animate'] : [])];
+  return offered.includes(wanted) ? wanted : offered[0];
+}
+
+// A typed W×H size decides the shape: its aspect wins over an Aspect that doesn't match it (1280×720 with 2:3 → 16:9).
+function sizeAspect(resolution, aspectRatio) {
+  const m = /^(\d+)\s*[×x]\s*(\d+)$/.exec(resolution.trim());
+  if (!m) return aspectRatio;
+  const w = Number(m[1]), h = Number(m[2]);
+  const a = /^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/.exec(aspectRatio);
+  if (a && Math.abs(Math.log((Number(a[1]) / Number(a[2])) / (w / h))) < 0.05) return aspectRatio;
+  const gcd = (x, y) => (y ? gcd(y, x % y) : x);
+  const g = gcd(w, h);
+  return w / g <= 64 && h / g <= 64 ? `${w / g}:${h / g}` : `${(w / h).toFixed(2)}:1`;
+}
+
+// The look of step 2: a built-in's id, 'none' (🚫 No look), or one of the user's own (looks): its words are copied
+// onto the request, so a take keeps its look through refines and after the look is edited or deleted (the current
+// words win while it exists; a deleted look's copy on the entry is the fallback).
+function lookParams(body, looks) {
+  const look = String(body.look || '');
+  if (look === NO_LOOK || Object.hasOwn(LOOKS, look)) return { look };
+  const mine = looks.find(l => l.id === look);
+  if (mine) return { look, lookName: mine.name, lookText: mine.still, ...(mine.move ? { lookMove: mine.move } : {}) };
+  if (CUSTOM_LOOK_ID.test(look) && String(body.lookText || '').trim()) {
+    return { look, lookName: String(body.lookName || 'Your look').slice(0, 40), lookText: String(body.lookText).trim().slice(0, 500), ...(body.lookMove ? { lookMove: String(body.lookMove).slice(0, 200) } : {}) };
+  }
+  return {};
+}
+
+function pickParams(body, model, looks = []) {
+  const resolution = String(body.resolution || model.defaults.resolution || '');
+  return {
+    theme: String(body.theme || '').trim(),
+    imageRole: roleFor(model, body.imageRole),
+    aspectRatio: sizeAspect(resolution, String(body.aspectRatio || model.defaults.aspectRatio || '')),
+    resolution,
+    duration: model.kind === 'video' ? String(body.duration || model.defaults.duration || '') : '',
+    length: store.LENGTHS.includes(body.length) ? body.length : model.defaults.length,
+    ...lookParams(body, looks), // the camera-and-light look picked in step 2; nothing: the Brain picks
+    ...(model.characterSheet && cleanSheet(body.characterSheet) ? { characterSheet: cleanSheet(body.characterSheet) } : {}), // the person's traits (step 3)
+    ...(model.kind === 'video' && body.line?.voice && String(body.line.text || '').trim() ? { line: { voice: String(body.line.voice).slice(0, 80), text: String(body.line.text).replace(/\s+/g, ' ').trim().slice(0, 600) } } : {}), // what they say, in which voice (step 3)
+  };
+}
+
+// 🎙 The line said in the voice, as a clip the video model follows: { voice: { id, name }, text, file, seconds }.
+async function spokenLine(settings, line) {
+  const r = await voice.say(settings, { voice: line.voice, text: line.text });
+  return { voice: r.voice, text: line.text, file: r.file, seconds: r.seconds };
+}
+
+// The other picture slots of step ③: their stored files (checked), the slots' names and hints (from the picked
+// workflow), and the pictures as the Brain sees them. Slot 1 is the first picture (imageFile); these are 2, 3…
+async function extraPictures(body, imageFile) {
+  const files = (Array.isArray(body.images) ? body.images : []).slice(0, 6).map(f => (typeof f === 'string' && /^[a-f0-9]{20}\.(jpg|png|webp)$/.test(f) ? f : null));
+  while (files.length && files.at(-1) === null) files.pop();
+  const slots = (Array.isArray(body.imageSlots) ? body.imageSlots : []).slice(0, 7).map(x => ({ label: String(x?.label || '').trim().slice(0, 40), hint: String(x?.hint || '').trim().slice(0, 300), optional: x?.optional === true }));
+  const imageDataUrls = [];
+  for (const f of files) imageDataUrls.push(f ? await store.readImageDataUrl(f) : null);
+  return { images: files, imageSlots: files.length || slots.length > 1 ? slots : [], imageDataUrls: imageFile ? imageDataUrls : [] };
+}
+
+// ---------- generation ----------
+
+// A motion video for a character-animation model (Wan Animate 2): the stored file, the contact sheet of its frames
+// that the Brain sees, and its shape. Returns { file, sheet, seconds, frames, width, height }, or null.
+async function motionVideo(v, model) {
+  if (!model.motionVideo || !v || typeof v !== 'object') return null;
+  const file = store.videoPath(v.file);
+  if (!file || !(await fs.access(file).then(() => true, () => false))) throw store.httpError(400, 'The motion video is missing. Add it again in step 3.');
+  const num = (x, max) => (Number.isFinite(Number(x)) && Number(x) > 0 ? Math.min(max, Math.round(Number(x) * 100) / 100) : null);
+  return {
+    file: v.file,
+    ...(v.preview === `${v.file.slice(0, 20)}.preview.mp4` ? { preview: v.preview } : {}), // what the page plays (H.265 and such)
+    sheet: /^[a-f0-9]{20}\.(jpg|png|webp)$/.test(v.sheet || '') ? v.sheet : null,
+    fps: num(v.fps, 1000),
+    seconds: num(v.seconds, 36000),
+    frames: num(v.frames, 64),
+    width: num(v.width, 16384),
+    height: num(v.height, 16384),
+  };
+}
+
+// The motion video as the Brain gets it (its contact sheet's data URL added), or null.
+async function videoForBrain(video) {
+  if (!video) return null;
+  const sheetDataUrl = video.sheet ? await store.readImageDataUrl(video.sheet).catch(() => null) : null;
+  return { ...video, sheetDataUrl };
+}
+
+// A take started from an earlier render (e.g. a still that becomes a video's first frame). Returns the link
+// to store on the new entry, or null if that render is gone.
+async function resolveSource(src) {
+  if (!src || typeof src !== 'object') return null;
+  const parent = await store.getHistory(String(src.entryId || ''));
+  const index = Number(src.index);
+  const render = parent?.variations?.[index]?.renders?.find(r => r.id === src.renderId);
+  const file = render?.files?.find(f => f.file === src.file && f.kind === 'image');
+  if (!file) return null;
+  return {
+    entryId: parent.id,
+    index,
+    renderId: render.id,
+    file: file.file,
+    kind: 'image',
+    modelId: parent.modelId,
+    modelName: parent.modelName,
+    workflowName: render.workflowName || '',
+    seed: render.seed ?? null,
+    text: render.text,
+  };
+}
+
+// Which chain run (and step) a take belongs to. Step 0 also carries the run's steps, so it can be resumed.
+function chainRef(c) {
+  if (!c || typeof c !== 'object' || !/^[\w-]{1,64}$/.test(c.runId || '')) return null;
+  const step = Math.min(9, Math.max(0, Math.round(Number(c.step) || 0)));
+  const ref = { runId: c.runId, step };
+  if (step === 0 && Array.isArray(c.steps) && c.steps.length > 1) ref.steps = c.steps.slice(0, 10).map((s, i) => store.normalizeStep(s, i));
+  return ref;
+}
+
+async function generate(req, res) {
+  let body = await readBody(req);
+  const settings = await store.getSettings();
+  // ＋ Add a take: one more take for a saved set, from everything that set was made with (its words, picture,
+  // look, line, dials), different from the takes it has.
+  const set = body.entryId ? await store.getHistory(String(body.entryId)) : null;
+  if (body.entryId && !set) throw store.httpError(404, 'That set is no longer in Saved prompts.');
+  if (set?.manual) throw store.httpError(400, 'A prompt kept word for word has no Brain to write another take.');
+  if (set) body = { ...set, llmModel: body.llmModel, variations: 1, image: undefined, manual: false, chain: undefined, batch: undefined, line: set.line ? { voice: set.line.voice?.id || set.line.voice, text: set.line.text } : undefined, images: set.images || [], imageSlots: set.imageSlots || [] };
+  const model = await store.getModel(body.modelId || '');
+  if (!model) throw store.httpError(400, 'Pick a target model first.');
+  const params = pickParams(body, model, await store.listLooks());
+  if (params.line) params.line = set?.line?.file ? set.line : await spokenLine(settings, params.line); // (the set's clip is kept)
+
+  let imageFile = null;
+  let imageDataUrl = null;
+  if (body.image) {
+    imageFile = await store.saveImage(body.image);
+    imageDataUrl = body.image;
+  } else if (body.imageFile) {
+    imageFile = body.imageFile;
+    imageDataUrl = await store.readImageDataUrl(imageFile);
+  }
+  // The other picture slots of step ③ (a second person, a place…): stored files, with what each slot is for.
+  const { images, imageSlots, imageDataUrls } = await extraPictures(body, imageFile);
+  if (imageSlots.length) params.imageSlots = imageSlots;
+  const video = await motionVideo(body.video, model);
+  const brainVideo = await videoForBrain(video);
+  if (!params.theme && !imageDataUrl && !video) throw store.httpError(400, 'Enter a theme, add an image, or both.');
+  const source = imageDataUrl ? await resolveSource(body.source) : null;
+  const chain = chainRef(body.chain);
+  const batch = typeof body.batch === 'string' ? body.batch.trim().slice(0, 60) : ''; // the saved batch this run belongs to
+  if (body.manual === true) return saveManual(res, { model, params, imageFile, images, video, source, chain, batch });
+
+  const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
+  if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null; // a text-only Brain goes by the theme alone
+  const seesImages = Boolean(imageDataUrl || brainVideo?.sheetDataUrl);
+  const llmModel = llm.id;
+  const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.variations) || 1)));
+  const opts = sampling(settings, body.temperature ?? model.defaults.temperature, llm);
+
+  const stream = await startStream(res, settings, llm, count, seesImages);
+  const texts = [];
+  const thoughts = [];
+  const keeps = []; // per take: what the check against the theme found (null: not checked)
+  const had = set ? set.variations.map(v => v.versions.at(-1).text) : []; // the set's takes: the new one differs from them
+  const letGo = store.holdFiles([imageFile, ...images, video?.file, video?.sheet]); // a card sharing them may be deleted meanwhile
+  let messages = null;
+  try {
+    if (model.characterSheet && imageDataUrl && !params.characterSheet) { // first, the person's traits from the image
+      stream.send({ type: 'status', text: 'Writing the character sheet from your picture…' });
+      // The person is the picture in the slot called so (a two-picture workflow: place + person), else the first.
+      const personAt = imageSlots.findIndex(x => /person|character|who|face/i.test(x.label || ''));
+      const raw = await writeText(settings, llm, { model: llmModel, messages: buildSheetMessages(personAt > 0 && imageDataUrls[personAt - 1] ? imageDataUrls[personAt - 1] : imageDataUrl), ...opts, temperature: 0.2 }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
+      llm.loaded = true;
+      const sheet = cleanSheet(raw);
+      if (sheet) {
+        params.characterSheet = sheet;
+        stream.send({ type: 'sheet', text: sheet });
+      }
+    }
+    for (let index = 0; index < count; index++) {
+      messages = fitRequest(llm, modelFor(model, settings), m => buildGenerateMessages(masterFor(settings), m, { ...params, sourcePrompt: source?.text, video: brainVideo, extraImages: imageDataUrls }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] }), text => stream.send({ type: 'status', text }));
+      if (setsStatus(settings)) stream.send({ type: 'status', text: setsStatus(settings) });
+      const t0 = Date.now();
+      const warm = llm.loaded !== false;
+      const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
+        signal: stream.signal,
+        onReasoning: reasoning => { thoughts[index] = reasoning; },
+        onUpdate: u => stream.send({ type: 'delta', index, text: u.text, thinking: u.thinking, reasoning: u.reasoning, reasoningChars: u.reasoningChars }),
+        onStatus: text => stream.send({ type: 'status', text }),
+      });
+      llm.loaded = true;
+      const written = cleanPrompt(raw);
+      if (!written) throw brainFailure('empty', EMPTY_HINT);
+      await recordRun(llm, looksRefused(written) ? 'refused' : 'ok', t0, warm);
+      const whole = imageDataUrl && params.characterSheet ? withSheet(written, params.characterSheet, model) : written; // no trait left out
+      const kept = await keepTheme(settings, llm, { model, params: { ...params, extraImages: imageDataUrls }, imageDataUrl, brainVideo, sourcePrompt: source?.text, text: whole, opts }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
+      const text = kept?.text || whole;
+      texts.push(text);
+      keeps.push(kept?.kept || null);
+      stream.send({ type: 'done', index, text, ...(kept ? { kept: kept.kept } : {}) });
+    }
+  } catch (err) {
+    explainOverflow(err, llm, messages);
+    if (err.outcome) await recordRun(llm, err.outcome);
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message, index: texts.length, partial: err.partial ? cleanPrompt(err.partial) : '' });
+  }
+
+  try {
+    if (texts.length && set) {
+      const now = new Date().toISOString();
+      const entry = await store.updateHistory(set.id, e => { e.variations.push(...texts.map((text, i) => ({ versions: [{ text, instruction: null, createdAt: now, llmModel, llmName: llm.name, ...(thoughts[i] ? { reasoning: thoughts[i] } : {}), ...(keeps[i] ? { kept: keeps[i] } : {}) }] }))); });
+      stream.send({ type: 'saved', entry });
+    } else if (texts.length) {
+      const now = new Date().toISOString();
+      const entry = await store.addHistory({
+        modelId: model.id,
+        modelName: model.name,
+        modelKind: model.kind,
+        llmModel,
+        llmName: llm.name,
+        ...params,
+        temperature: opts.temperature,
+        imageFile,
+        ...(images.length ? { images } : {}),
+        ...(video ? { video } : {}),
+        ...(source ? { source } : {}),
+        ...(chain ? { chain } : {}),
+        ...(batch ? { batch } : {}),
+        variations: texts.map((text, i) => ({ versions: [{ text, instruction: null, createdAt: now, llmModel, llmName: llm.name, ...(thoughts[i] ? { reasoning: thoughts[i] } : {}), ...(keeps[i] ? { kept: keeps[i] } : {}) }] })),
+      });
+      stream.send({ type: 'saved', entry });
+    }
+  } finally {
+    letGo();
+  }
+  stream.end();
+}
+
+// ✍️ Your own prompt: the theme is the take, word for word, and no Brain is asked. It streams like a written take,
+// so the page shows and renders it the same way.
+async function saveManual(res, { model, params, imageFile, images = [], video, source, chain, batch }) {
+  if (!params.theme) throw store.httpError(400, 'Type or paste your prompt in step 2.');
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId, count: 1, llmModel: '', llmName: 'you' });
+  const letGo = store.holdFiles([imageFile, ...images, video?.file, video?.sheet]);
+  try {
+    stream.send({ type: 'done', index: 0, text: params.theme });
+    const entry = await store.addHistory({
+      modelId: model.id,
+      modelName: model.name,
+      modelKind: model.kind,
+      manual: true,
+      ...params,
+      imageFile,
+      ...(images.length ? { images } : {}),
+      ...(video ? { video } : {}),
+      ...(source ? { source } : {}),
+      ...(chain ? { chain } : {}),
+      ...(batch ? { batch } : {}),
+      variations: [{ versions: [{ text: params.theme, instruction: null, createdAt: new Date().toISOString() }] }],
+    });
+    stream.send({ type: 'saved', entry });
+  } finally {
+    letGo();
+  }
+  stream.end();
+}
+
+async function refine(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const entry = await store.getHistory(body.historyId || '');
+  if (!entry) throw store.httpError(404, 'That result is no longer in history.');
+  const variation = entry.variations[body.index];
+  if (!variation) throw store.httpError(400, 'Unknown variation.');
+  const instruction = String(body.instruction || '').trim();
+  if (!instruction) throw store.httpError(400, 'Describe what to change.');
+  const model = await store.getModel(entry.modelId);
+  if (!model) throw store.httpError(400, `The target model "${entry.modelName}" no longer exists.`);
+
+  // The user may refine an older version; a manual edit is only logged if the text differs from that one.
+  const base = variation.versions[Number.isInteger(body.baseIndex) ? body.baseIndex : -1] || variation.versions.at(-1);
+  const current = typeof body.currentText === 'string' && body.currentText.trim() ? body.currentText.trim() : base.text;
+  const imageDataUrl = entry.imageFile ? await store.readImageDataUrl(entry.imageFile) : null;
+  const extraImages = [];
+  for (const f of entry.images || []) extraImages.push(f ? await store.readImageDataUrl(f).catch(() => null) : null);
+  const brainVideo = model.motionVideo ? await videoForBrain(entry.video) : null;
+  const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
+  if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null;
+  const seesImages = Boolean(imageDataUrl || brainVideo?.sheetDataUrl);
+  const llmModel = llm.id;
+  const opts = sampling(settings, body.temperature ?? entry.temperature, llm);
+  const params = pickParams(entry, model, await store.listLooks());
+
+  const stream = await startStream(res, settings, llm, 1, seesImages);
+  let messages = null;
+  try {
+    messages = fitRequest(llm, modelFor(model, settings), m => buildRefineMessages(masterFor(settings), m, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo, extraImages }, imageDataUrl, current, instruction), text => stream.send({ type: 'status', text }));
+    const t0 = Date.now();
+    let reasoning = '';
+    const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
+      signal: stream.signal,
+      onReasoning: value => { reasoning = value; },
+      onUpdate: u => stream.send({ type: 'delta', index: body.index, text: u.text, thinking: u.thinking, reasoning: u.reasoning, reasoningChars: u.reasoningChars }),
+      onStatus: text => stream.send({ type: 'status', text }),
+    });
+    const text = cleanPrompt(raw);
+    if (!text) throw brainFailure('empty', EMPTY_HINT);
+    await recordRun(llm, looksRefused(text) ? 'refused' : 'ok', t0, llm.loaded !== false);
+    const kept = await keepTheme(settings, llm, { model, params, imageDataUrl, brainVideo, sourcePrompt: imageDataUrl ? entry.source?.text : '', text, instruction, manual: entry.manual === true, opts }, { signal: stream.signal, onStatus: t => stream.send({ type: 'status', text: t }) });
+    const final = kept?.text || text;
+    const now = new Date().toISOString();
+    const saved = await store.updateHistory(entry.id, e => {
+      const v = e.variations[body.index];
+      if (current !== base.text) v.versions.push({ text: current, instruction: '(manual edit)', createdAt: now, llmModel: base.llmModel, llmName: base.llmName });
+      v.versions.push({ text: final, instruction, createdAt: now, llmModel, llmName: llm.name, ...(reasoning ? { reasoning } : {}), ...(kept ? { kept: kept.kept } : {}) });
+    });
+    stream.send({ type: 'done', index: body.index, text: final, ...(kept ? { kept: kept.kept } : {}) });
+    stream.send({ type: 'saved', entry: await store.withPresentFiles(saved) });
+  } catch (err) {
+    explainOverflow(err, llm, messages);
+    if (err.outcome) await recordRun(llm, err.outcome);
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
+  }
+  stream.end();
+}
+
+async function draftGuide(req, res) {
+  const body = await readBody(req);
+  const docs = String(body.docs || '').trim();
+  if (!docs) throw store.httpError(400, 'Paste some documentation or notes first.');
+  const settings = await store.getSettings();
+  const llm = await prepareLlm(settings, body.llmModel, false);
+  const llmModel = llm.id;
+  const stream = await startStream(res, settings, llm, 1, false);
+  try {
+    const messages = buildDraftGuideMessages(String(body.name || 'the model'), body.kind === 'video' ? 'video' : 'image', docs);
+    const text = await writeText(settings, llm, { model: llmModel, messages, ...sampling(settings, 0.3, llm), max_tokens: Math.max(settings.maxTokens, 4096) }, {
+      signal: stream.signal,
+      onUpdate: u => stream.send({ type: 'delta', index: 0, text: u.text, thinking: u.thinking, reasoningChars: u.reasoningChars }),
+      onStatus: text => stream.send({ type: 'status', text }),
+    });
+    if (!text) throw store.httpError(502, EMPTY_HINT);
+    stream.send({ type: 'done', index: 0, text: text.replace(/^```(?:markdown|md)?\s*\n?|\n?```\s*$/g, '').trim() });
+  } catch (err) {
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
+  }
+  stream.end();
+}
+
+// 🎲 Surprise me with a picture in: one idea for the theme box from what the picture shows and the look picked.
+// The picture is only looked at, never stored (a stored one is read by its name).
+async function surprise(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const model = await store.getModel(String(body.modelId || ''));
+  if (!model) throw store.httpError(400, 'Pick a target model first.');
+  const imageDataUrl = body.imageFile ? await store.readImageDataUrl(String(body.imageFile)) : /^data:image\/[\w.+-]+;base64,/.test(body.image || '') ? body.image : null;
+  if (!imageDataUrl) throw store.httpError(400, 'Add a picture first.');
+  const params = pickParams(body, model, await store.listLooks());
+  const llm = await prepareLlm(settings, body.llmModel, true);
+  const stream = await startStream(res, settings, llm, 1, true);
+  try {
+    const previous = (Array.isArray(body.previous) ? body.previous : []).map(t => String(t).trim().slice(0, 300)).filter(Boolean).slice(-5);
+    const messages = buildSurpriseMessages({ model, role: params.imageRole, staging: Boolean(model.motionVideo), look: lookOf(params), theme: params.theme.slice(0, 300), previous, imageDataUrl });
+    const raw = await writeText(settings, llm, { model: llm.id, messages, ...sampling(settings, 1, llm) }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
+    const text = cleanSurprise(raw);
+    if (!text) throw brainFailure('empty', EMPTY_HINT);
+    stream.send({ type: 'done', index: 0, text });
+  } catch (err) {
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
+  }
+  stream.end();
+}
+
+// ---------- assistant ----------
+
+// One turn of the assistant: the LLM answers, or asks for tools (which the page runs, then sends back).
+async function assistantChat(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const chat = assistant.cleanMessages(body.messages);
+  const llm = await prepareLlm(settings, body.llmModel, assistant.hasImages(chat)); // looking at images needs a 👁 Brain
+  const plan = assistant.cleanPlan(body.plan); // its to-do list for the task in hand, pinned into the instructions
+  const system = assistant.systemPrompt(body.state, { rendersDir: folders.tidy(store.RENDERS_DIR), computer: settings.assistantComputer, plan });
+  const tools = assistant.cleanTools(body.tools);
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId, llmName: llm.name });
+  await loadBrain(settings, llm, stream);
+  try {
+    const maxTokens = Math.max(settings.maxTokens, 2048);
+    // inWriting: the tools described in the instructions (see assistant.toolsText) instead of sent as tools.
+    const ask = inWriting => complete(settings, llm, {
+      model: llm.id,
+      messages: inWriting
+        ? [{ role: 'system', content: `${system}\n\n${assistant.toolsText(tools)}` }, ...assistant.textToolChat(chat)]
+        : [{ role: 'system', content: system }, ...chat],
+      ...(tools.length && !inWriting ? { tools, tool_choice: 'auto' } : {}),
+      ...sampling(settings, 0.3, llm),
+      // With a plan to follow, a thinking Brain thinks a little per step, not a lot.
+      ...(plan?.steps.some(st => !st.done) && ['medium', 'high'].includes(llm.thinking) ? { reasoning_effort: 'low' } : {}),
+      max_tokens: maxTokens,
+    }, {
+      signal: stream.signal,
+      onUpdate: u => stream.send({ type: 'delta', text: assistant.shownText(u.text), thinking: u.thinking }),
+      onStatus: text => stream.send({ type: 'status', text }),
+    });
+    let out;
+    // A Brain whose template failed with tools gets them in writing straight away from then on (asked the other way
+    // again after 30 days, in case LM Studio or the model was updated), instead of failing first every turn.
+    const noted = (await store.getBrainNotes())[llm.id]?.toolsInWriting;
+    const inWritingFirst = tools.length > 0 && !llm.cloud && Date.now() - Date.parse(noted || 0) < 30 * 864e5;
+    try {
+      out = await ask(inWritingFirst);
+    } catch (err) {
+      // LM Studio couldn't fit the tools into this Brain's chat template (it fails in a moment, before any answer).
+      if (!tools.length || llm.cloud || !assistant.templateFailed(err)) throw err;
+      if (inWritingFirst) throw store.httpError(502, `${llm.name} can't chat here: LM Studio can't put a conversation into the form this model expects. Pick another Brain in the top bar.`);
+      out = await ask(true).catch(e => {
+        throw assistant.templateFailed(e) ? store.httpError(502, `${llm.name} can't chat here: LM Studio can't put a conversation into the form this model expects. Pick another Brain in the top bar.`) : e;
+      });
+      await store.noteBrain(llm.id, { toolsInWriting: new Date().toISOString() }).catch(() => {});
+    }
+    const read = out.toolCalls.length ? out : assistant.fallbackToolCalls(out.text);
+    const { toolCalls } = read;
+    // The answer ended in the middle of a step (out of room): what was written of it isn't shown as if it were text.
+    const text = read.cutOff && !toolCalls.length ? [read.text, '(I ran out of room in the middle of a step, so that step wasn\'t done. Say "go on" and I\'ll do it, or raise Max tokens in Settings so I have more room.)'].filter(Boolean).join('\n\n') : read.text;
+    if (!text && !toolCalls.length) {
+      throw store.httpError(502, out.finishReason === 'length'
+        ? outOfRoom(llm, maxTokens, out.reasoningChars)
+        : 'The Brain sent back an empty answer. Try again, or pick a bigger Brain in the top bar.');
+    }
+    stream.send({ type: 'done', text, toolCalls });
+  } catch (err) {
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
+  }
+  stream.end();
+}
+
+// The earlier part of a long chat, folded into a progress note by the Brain (the page replaces those messages with
+// it). Text only, short; the page falls back to a list of the steps' summaries when this fails.
+async function assistantFold(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const chat = assistant.cleanMessages(body.messages);
+  const llm = await prepareLlm(settings, body.llmModel, false);
+  const messages = assistant.foldMessages(chat, assistant.cleanPlan(body.plan));
+  const opts = { ...sampling(settings, 0.2, llm), max_tokens: llm.thinking === 'off' ? 700 : 1800 };
+  const out = await complete(settings, llm, { model: llm.id, messages, ...opts }, {}).catch(() => ({ text: '' }));
+  sendJson(res, 200, { note: String(out.text || '').trim().slice(0, 2400) });
+}
+
+// ---------- services (Settings → Services) ----------
+
+const comfyUp = settings => comfy.status(settings.comfyUrl).then(() => true, () => false);
+
+// What's running, and whether each can be started or stopped from here. Seeing ComfyUI run also teaches the app
+// how you start it (folder, Python, options), so its Start button does the same.
+async function servicesStatus() {
+  const settings = await store.getSettings();
+  const [llms, comfyStatus, proc, unitActive, app, onService] = await Promise.all([
+    listLlms(settings.lmStudioUrl).catch(() => null),
+    comfy.status(settings.comfyUrl).catch(() => null),
+    services.comfyProcess(settings.comfyUrl),
+    services.comfyUnitActive(),
+    autostart.status(),
+    services.underService(),
+  ]);
+  if (proc?.dir) {
+    const learned = { dir: proc.dir, python: proc.python, pre: proc.pre, args: proc.args };
+    if (JSON.stringify(learned) !== JSON.stringify(settings.comfyLaunch)) Object.assign(settings, await store.updateSettings({ comfyLaunch: learned }));
+  }
+  const launch = await services.comfyLaunch(settings);
+  if (launch.dir && !(await services.isComfyDir(launch.dir))) launch.dir = null; // a folder that isn't ComfyUI's (yet) counts as not found
+  return {
+    app: { service: onService, autostart: app.autostart, supported: app.supported },
+    lms: { running: Boolean(llms), loaded: llms ? llms.filter(m => m.loaded).length : 0, local: services.isLocalUrl(settings.lmStudioUrl) },
+    comfy: {
+      running: Boolean(comfyStatus),
+      starting: !comfyStatus && unitActive,
+      gpu: comfyStatus?.gpu || '',
+      local: services.isLocalUrl(settings.comfyUrl),
+      autostart: settings.comfyAutostart,
+      launch: launch.dir ? { dir: launch.dir, command: [launch.python, ...launch.pre, 'main.py', ...launch.args].join(' '), from: launch.from } : null,
+      setup: comfySetup.current(), // the one-click set-up, while it runs (or how it ended)
+    },
+  };
+}
+
+// ---------- Brains ----------
+
+// What the app knows about a Brain beyond LM Studio's facts (see store.getBrainNotes).
+const brainView = (n = {}) => ({ memoryReleasedAt: n.memoryReleasedAt || null, rating: n.rating || 0, thinking: n.thinking || null, thinkOff: n.thinkOff || null, stats: n.stats || null, check: n.check || null });
+
+// Quick check: a short test of one Brain on this machine. It writes an image prompt and a video prompt, and looks
+// at a test image if it's a vision model. It uses the Brain's own Thinking level, so the times match Create.
+async function checkBrain(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const llm = await prepareLlm(settings, String(body.id || ''), false);
+  const models = await store.listModels();
+  const target = (id, kind) => models.find(x => x.id === id) || models.find(x => x.kind === kind);
+  const targets = [target('krea2-raw', 'image'), target('ltx-2-3', 'video')].filter(Boolean);
+  const stream = openStream(res);
+  stream.send({ type: 'start', runId: stream.runId });
+  const status = text => stream.send({ type: 'status', text });
+  const check = { at: new Date().toISOString() };
+  try {
+    const loadSeconds = await loadBrain(settings, llm, stream);
+    if (loadSeconds != null) check.loadSeconds = loadSeconds;
+    for (const model of targets) {
+      status(`Writing ${model.kind === 'video' ? 'a video' : 'an image'} prompt for ${model.name}…`);
+      check[model.kind] = await checkPrompt(settings, llm, model, stream.signal, status);
+    }
+    if (llm.vision !== false) {
+      status('Looking at a test image…');
+      check.vision = await checkVision(settings, llm, stream.signal, status);
+    }
+    await store.noteBrain(llm.id, { check });
+    stream.send({ type: 'done', check });
+  } catch (err) {
+    if (err.name !== 'AbortError') stream.send({ type: 'error', message: err.message });
+  }
+  stream.end();
+}
+
+async function checkPrompt(settings, llm, model, signal, onStatus) {
+  const params = pickParams({ theme: CHECK_THEMES[model.kind], length: 'medium' }, model);
+  const messages = buildGenerateMessages(masterFor(settings), modelFor(model, settings), params, null, { index: 0, count: 1, previous: [] });
+  const target = model.lengthGuide?.medium || null;
+  const t0 = Date.now();
+  try {
+    const raw = await writeText(settings, llm, { model: llm.id, messages, ...sampling(settings, model.defaults.temperature, llm) }, { signal, onStatus });
+    const text = cleanPrompt(raw);
+    const words = countWords(text);
+    const range = wordRange(target);
+    const refused = looksRefused(text);
+    return {
+      model: model.name,
+      seconds: secondsSince(t0),
+      ok: Boolean(text) && !refused,
+      refused,
+      words,
+      target,
+      inRange: range ? words >= range[0] * 0.8 && words <= range[1] * 1.25 : null,
+      tidy: text === raw.trim(), // no preamble, quotes or code fences to strip
+      sample: text.slice(0, 600),
+    };
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    return { model: model.name, seconds: secondsSince(t0), ok: false, error: err.message };
+  }
+}
+
+// Shows the Brain an image that is half red, half blue, and asks for the two colors.
+async function checkVision(settings, llm, signal, onStatus) {
+  const messages = [
+    { role: 'system', content: 'You describe images in as few words as possible.' },
+    { role: 'user', content: [{ type: 'image_url', image_url: { url: testImageDataUrl() } }, { type: 'text', text: 'Which two colors fill this image? Answer with just the two color names.' }] },
+  ];
+  const t0 = Date.now();
+  try {
+    const out = await complete(settings, llm, { model: llm.id, messages, ...sampling(settings, 0.2, llm) }, { signal, onStatus });
+    const answer = out.text.trim();
+    return { seconds: secondsSince(t0), ok: /\bred\b/i.test(answer) && /\bblue\b/i.test(answer), answer: answer.slice(0, 120) };
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    return { seconds: secondsSince(t0), ok: false, error: err.message };
+  }
+}
+
+// ---------- ComfyUI workflows & renders ----------
+
+// Starter workflows: the ones that come with the app (workflows/<model id>/*.json, read-only), ready to add in one
+// click. They are in Prompt Maker's own export format, carry no prompt text, and name a download link per model file.
+const STARTERS_DIR = path.join(import.meta.dirname, 'workflows');
+const starterFile = key => (/^[\w-]+\/[\w-]+\.json$/.test(key) ? path.join(STARTERS_DIR, key) : null);
+async function starterWorkflows(modelId) {
+  const dir = String(modelId || '').replace(/[^\w-]/g, '');
+  if (!dir) return [];
+  const files = (await fs.readdir(path.join(STARTERS_DIR, dir)).catch(() => [])).filter(f => /^[\w-]+\.json$/.test(f)).sort();
+  const out = [];
+  for (const f of files) {
+    const json = await fs.readFile(path.join(STARTERS_DIR, dir, f), 'utf8').then(JSON.parse).catch(() => null);
+    if (json?.format === wf.EXPORT_FORMAT) out.push({ key: `${dir}/${f}`, title: String(json.name || f.replace(/\.json$/, '')), note: String(json.note || '') });
+  }
+  return out;
+}
+
+// Every starter workflow a model ships with is added by itself (one by one, so a starter that comes with an update
+// arrives too), so a new person can render right away. Each is added once: delete it and it stays gone (＋ Add workflow
+// brings it back). starters.json remembers the keys added per model (an older file holds one key as a string).
+const STARTERS_ADDED = path.join(store.DATA_DIR, 'starters.json');
+const startersAdded = () => fs.readFile(STARTERS_ADDED, 'utf8').then(JSON.parse).catch(() => ({}));
+const addedKeys = v => (Array.isArray(v) ? v : v ? [v] : []);
+let addingStarters = null;
+function addStarters() {
+  addingStarters ??= (async () => {
+    const added = await startersAdded();
+    const flows = await wf.listWorkflows();
+    let changed = false;
+    for (const modelId of await fs.readdir(STARTERS_DIR).catch(() => [])) {
+      if (!(await store.getModel(modelId))) continue;
+      const have = addedKeys(added[modelId]);
+      // Before 1.40.0 only the first starter was added and recorded as "test"/its key: those models' other starters come now.
+      for (const starter of await starterWorkflows(modelId)) {
+        if (have.includes(starter.key) || flows.some(f => f.modelId === modelId && f.source === `starter:${starter.key}`)) continue;
+        try {
+          const p = await prepareWorkflow({ starter: starter.key });
+          await wf.saveWorkflow({ modelId, name: p.name, source: p.source, prompt: p.prompt, mapping: p.mapping, options: p.options, models: p.models });
+        } catch (err) {
+          console.warn(`Couldn't add the starter workflow ${starter.key}: ${err.message}`);
+          continue;
+        }
+        have.push(starter.key);
+        added[modelId] = have;
+        changed = true;
+      }
+    }
+    if (changed) await fs.writeFile(STARTERS_ADDED, JSON.stringify(added, null, 2) + '\n');
+  })().finally(() => { addingStarters = null; });
+  return addingStarters;
+}
+// A model deleted (or reset to the shipped one) takes its workflows with it, so its starter comes back.
+async function forgetStarter(modelId) {
+  const added = await startersAdded();
+  if (!(modelId in added)) return;
+  delete added[modelId];
+  await fs.writeFile(STARTERS_ADDED, JSON.stringify(added, null, 2) + '\n');
+}
+
+// Turns an uploaded or ComfyUI-saved workflow into an API prompt plus a suggested input mapping.
+async function prepareWorkflow(body) {
+  const settings = await store.getSettings();
+  let json = body.json;
+  let name = String(body.name || '').replace(/\.json$/i, '');
+  let source = 'upload';
+  let sourceModified = null;
+  if (body.comfyPath) {
+    const listed = (await comfy.savedWorkflows(settings.comfyUrl)).find(f => f.path === body.comfyPath);
+    if (!listed) throw store.httpError(404, `“${body.comfyPath}” isn't in ComfyUI's saved workflows anymore. Was it renamed or deleted?`);
+    json = await comfy.readSavedWorkflow(settings.comfyUrl, body.comfyPath);
+    name = body.comfyPath.split('/').pop().replace(/\.json$/i, '');
+    source = `comfyui:${body.comfyPath}`;
+    sourceModified = Number(listed.modified) || null;
+  } else if (body.template) {
+    json = await comfy.readTemplate(settings.comfyUrl, String(body.template));
+    name = String(body.templateTitle || body.template).trim().slice(0, 120);
+    source = `comfytemplate:${body.template}`;
+  } else if (body.starter) {
+    const file = starterFile(String(body.starter));
+    json = file && await fs.readFile(file, 'utf8').then(JSON.parse).catch(() => null);
+    if (!json) throw store.httpError(404, 'That starter workflow isn\'t in this version of Prompt Maker.');
+    source = `starter:${body.starter}`;
+  }
+  if (!json || typeof json !== 'object') throw store.httpError(400, 'That file is not valid JSON.');
+  let preset = null;
+  if (json.format === wf.EXPORT_FORMAT) {
+    preset = json;
+    name = json.name || name;
+    json = json.prompt;
+  }
+  let prompt;
+  const info = await comfy.objectInfo(settings.comfyUrl).catch(() => null);
+  const links = preset ? models.sanitizeLinks(preset.models) : models.modelLinks(json);
+  if (isApiWorkflow(json)) {
+    prompt = json;
+  } else if (isUiWorkflow(json)) {
+    if (!info) throw store.httpError(400, 'ComfyUI needs to be running to read this workflow (it is in editor format). Start ComfyUI and try again, or export it with Workflow → Export (API).');
+    try {
+      prompt = pruneToOutputs(convertUiWorkflow(json, info), info);
+    } catch (err) {
+      if (err instanceof ConvertError) throw store.httpError(400, err.message);
+      throw err;
+    }
+  } else {
+    throw store.httpError(400, 'This doesn\'t look like a ComfyUI workflow. In ComfyUI use Workflow → Save, or Workflow → Export (API).');
+  }
+  const fixed = wf.repair(prompt);
+  if (fixed.length && info) prompt = pruneToOutputs(prompt, info);
+  const analysis = wf.analyze(prompt, info);
+  const { missing } = models.checkModels(prompt, info, links);
+  return {
+    name: name || 'Workflow',
+    source,
+    sourceModified,
+    prompt,
+    models: links,
+    missing,
+    mapping: preset?.mapping || analysis.mapping,
+    options: preset?.options || analysis.options,
+    candidates: analysis.candidates,
+    warnings: [...fixed, ...analysis.warnings, ...(missing.length ? [models.describeMissing(missing).replace('in step ⑤', 'in step ⑤ once this is saved')] : [])],
+    producesVideo: analysis.producesVideo,
+    nodes: Object.keys(prompt).length,
+  };
+}
+
+// A dropped picture's or video's recipe (read from the file in the browser, see lib/recipe.js), with the workflow of
+// yours it matches and whether ComfyUI has each LoRA. current: the workflow in use now (it wins a tie).
+async function readRecipe(body) {
+  const settings = await store.getSettings();
+  const info = await comfy.objectInfo(settings.comfyUrl).catch(() => null);
+  let graph = body.prompt && isApiWorkflow(body.prompt) ? body.prompt : null;
+  if (!graph && body.workflow && isUiWorkflow(body.workflow)) {
+    if (!info) throw store.httpError(400, 'This file keeps its recipe as a ComfyUI workflow, which ComfyUI needs to be running to read. Start ComfyUI and drop it again.');
+    try { graph = pruneToOutputs(convertUiWorkflow(body.workflow, info), info); } catch { graph = null; }
+  }
+  const r = graph ? recipe.fromGraph(graph, info) : typeof body.parameters === 'string' && body.parameters.trim() ? recipe.fromParameters(body.parameters) : null;
+  // (Only the model's name, as Prompt Maker's own renders keep it, isn't a recipe: nothing to make it again with.)
+  if (!r || (!r.prompt.trim() && !r.loras.length)) throw store.httpError(422, 'There\'s no recipe in this file that Prompt Maker can read.');
+  const all = (await Promise.all((await wf.listWorkflows()).map(w => wf.getWorkflow(w.id)))).filter(Boolean);
+  const match = recipe.matchWorkflow(r, all, typeof body.current === 'string' ? body.current : null);
+  const model = match && await store.getModel(match.workflow.modelId).catch(() => null);
+  const have = info ? await comfy.loraList(settings.comfyUrl).catch(() => null) : null;
+  const loras = r.loras.map(l => {
+    const found = recipe.findLora(l.name, have);
+    return { name: found || l.name, strength: l.strength, ...(match?.same && l.key ? { key: l.key } : {}), have: found === undefined ? null : Boolean(found) };
+  });
+  return {
+    from: r.from,
+    prompt: r.prompt,
+    model: r.model ? r.model.split('/').pop() : null,
+    loras,
+    seed: r.seed,
+    size: r.size,
+    aspect: r.aspect,
+    seconds: r.seconds,
+    settings: r.settings,
+    takesPicture: r.takesPicture,
+    // The picture it started from, when it was one of yours and is still in the data folder.
+    picture: await (async () => {
+      const own = r.pictures[0]?.startsWith('prompt-maker_') ? r.pictures[0].slice('prompt-maker_'.length) : null;
+      if (!own || !/^[\w-]+(\.[\w-]+)*$/.test(own)) return null;
+      return fs.access(path.join(store.IMAGES_DIR, own)).then(() => own, () => null);
+    })(),
+    video: r.video,
+    match: match && model ? {
+      workflowId: match.workflow.id,
+      workflowName: match.workflow.name,
+      modelId: model.id,
+      modelName: model.name,
+      same: match.same,
+      overrides: recipe.settingsFor(r, match.workflow, match.same),
+    } : null,
+  };
+}
+
+// Pulls in a newer version of a workflow: from ComfyUI (if it came from there) or from a file you pick.
+async function refreshWorkflow(existing, body) {
+  const fromComfy = existing.source.startsWith('comfyui:');
+  const template = existing.source.startsWith('comfytemplate:') ? existing.source.slice('comfytemplate:'.length) : '';
+  const starter = existing.source.startsWith('starter:') ? existing.source.slice('starter:'.length) : '';
+  if (!body.json && !fromComfy && !template && !starter) throw store.httpError(400, 'This workflow was uploaded from a file. Pick the new version of the file to update it.');
+  const fresh = await prepareWorkflow(body.json ? { json: body.json, name: existing.name } : starter ? { starter } : template ? { template, templateTitle: existing.name } : { comfyPath: existing.source.slice('comfyui:'.length) });
+  const { mapping, overrides, loras, lost, changes } = wf.carryOver(existing, fresh.prompt, fresh.mapping);
+  if (!mapping.prompt.length) throw store.httpError(400, 'The new version has no text input for the prompt, so it can\'t be used for rendering.');
+  const saved = await wf.saveWorkflow({ prompt: fresh.prompt, mapping, overrides, loras, models: fresh.models, sourceModified: fresh.sourceModified, ...(body.json ? { source: 'upload' } : {}) }, existing);
+  return { ...saved, candidates: fresh.candidates, warnings: fresh.warnings, producesVideo: fresh.producesVideo, lost, changes };
+}
+
+const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+
+// The names an entry's input image gets in ComfyUI's input folder (its render original, or the copy the LLM saw).
+const uploadNames = e => [e.source?.file, e.imageFile, ...(e.images || []), e.video?.file, e.line?.file].filter(Boolean).map(name => `prompt-maker_${name}`);
+const VIDEO_MIME = Object.fromEntries(Object.entries(store.VIDEO_TYPES).map(([mime, ext]) => [ext, mime]));
+// And the names its renders got when a take was made from one of them (animating a still uploads the still).
+const renderUploads = renders => renders.flatMap(r => (r.files || []).map(f => `prompt-maker_${f.file}`));
+
+// Size and checksum of each of these renders' files as ComfyUI saved them, to find ComfyUI's own copies: noted when
+// the render was kept, else read before it's deleted.
+async function fingerprint(f) {
+  if (f.original) return f.original;
+  const buf = await fs.readFile(path.join(store.RENDERS_DIR, f.file)).catch(() => null);
+  return buf && comfy.fingerprint(buf);
+}
+async function fingerprints(renders) {
+  const out = [];
+  for (const f of renders.flatMap(r => r.files || [])) {
+    const fp = await fingerprint(f);
+    if (fp) out.push(fp);
+  }
+  return out;
+}
+
+// Drops copies with the same content as a render an entry still has (the same seed and prompt rendered twice):
+// ComfyUI's file of that content may be that entry's.
+async function notShared(copies, rest) {
+  const sizes = new Set(copies.map(c => c.size));
+  const shared = new Set();
+  for (const f of rest.flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files || [])))) {
+    if (f.original) {
+      if (sizes.has(f.original.size)) shared.add(f.original.sha1);
+      continue;
+    }
+    const file = path.join(store.RENDERS_DIR, f.file);
+    if (!sizes.has((await fs.stat(file).catch(() => null))?.size)) continue;
+    const buf = await fs.readFile(file).catch(() => null);
+    if (buf) shared.add(comfy.fingerprint(buf).sha1);
+  }
+  return copies.filter(c => !shared.has(c.sha1));
+}
+
+// Removes what ComfyUI keeps of deleted renders or takes: their jobs (found by id or prompt text), the files those
+// jobs saved, ComfyUI's copies of the renders (found by content), and uploaded input images no entry left uses.
+// Returns a note if some of it may be out of reach, else null.
+async function forgetInComfy(settings, { promptIds = [], texts = [], copies = [], inputs = [], rest = [] }) {
+  const base = settings.comfyUrl;
+  const refs = inputs.map(filename => ({ type: 'input', subfolder: '', filename }));
+  if (promptIds.some(Boolean) || texts.length) {
+    // Not running: its history (kept in memory) is already gone, and its folders are still found below.
+    refs.push(...await comfy.forgetJobs(base, { promptIds, texts }).catch(err => (console.warn(`ComfyUI: ${err.message}`), [])));
+  }
+  const keep = new Set(rest.flatMap(uploadNames));
+  const wanted = refs.filter(r => !(r.type === 'input' && keep.has(r.filename)));
+  const twins = copies.length ? await notShared(copies, rest) : [];
+  const sets = await comfyFolders(settings);
+  for (const dirs of sets) await comfy.removeFiles(dirs, wanted, twins).catch(err => console.warn(`Couldn't remove ComfyUI's copies: ${err.message}`));
+  if (copies.length && !sets[0].output && !settings.comfyCleanup) return "ComfyUI's output folder wasn't found, so its own copies of the renders may still be there. Set the folder in Settings → ComfyUI, or delete them there.";
+  return null;
+}
+
+// ComfyUI's folders, as sets to look through: the ones it runs with now (its options may name them), and the ones
+// under its own folder when those differ.
+async function comfyFolders(settings) {
+  const roots = [settings.comfyDir, settings.comfyLaunch?.dir];
+  const live = await comfy.folders(settings.comfyUrl, { output: settings.comfyOutputDir, roots, args: await comfyArgs(settings) });
+  const disk = await comfy.folders(settings.comfyUrl, { output: settings.comfyOutputDir, roots, args: [] });
+  return ['output', 'input', 'temp'].every(k => live[k] === disk[k]) ? [live] : [live, disk];
+}
+
+// ComfyUI's own copy of a render just kept, deleted from the folder ComfyUI really saves to: the one it was started
+// with (--output-directory), the one set in Settings, or its install folder's.
+async function removeComfyCopy(settings, base, out, size) {
+  const dirs = [...new Set([...(await comfyFolders(settings)).map(d => d.output), settings.comfyOutputDir].filter(Boolean))];
+  for (const dir of dirs) if (await comfy.removeOutput(base, out, size, dir)) return true;
+  return comfy.removeOutput(base, out, size, '');
+}
+
+// Uploads of Prompt Maker's (prompt-maker_…) left in ComfyUI's input folders that nothing uses anymore, from deletes
+// made while its folders were out of reach. Run at start; a file under ten minutes old is left (it may be a render on
+// its way). Returns how many went.
+async function sweepComfyLeftovers() {
+  const settings = await store.getSettings();
+  const used = store.filesInUse(await store.listHistory());
+  const keep = new Set([...used.images, ...used.renders, ...used.videos, ...used.lines, ...await store.heldFiles({ form: true })]);
+  const stems = new Set([...keep].map(n => n.slice(0, 20))); // a video's 24 fps copy is named after it
+  let removed = 0;
+  for (const dirs of await comfyFolders(settings)) {
+    for (const name of dirs.input ? await fs.readdir(dirs.input).catch(() => []) : []) {
+      if (!name.startsWith('prompt-maker_')) continue;
+      const own = name.slice('prompt-maker_'.length);
+      if (keep.has(own) || (/^[a-f0-9]{20}\.\d+fps\.mp4$/.test(own) && stems.has(own.slice(0, 20)))) continue;
+      const file = path.join(dirs.input, name);
+      const st = await fs.stat(file).catch(() => null);
+      if (!st?.isFile() || st.mtimeMs > Date.now() - 6e5) continue;
+      if (await store.removeFile(file).catch(() => false)) removed++;
+    }
+  }
+  return removed;
+}
+
+// The options the ComfyUI on this computer runs with now (they may name its folders), else the ones last seen.
+const comfyArgs = async settings => (await services.comfyProcess(settings.comfyUrl).catch(() => null))?.args || settings.comfyLaunch?.args || [];
+
+async function deleteTake(id) {
+  const settings = await store.getSettings();
+  const found = await store.getHistory(id);
+  if (!found) return { ok: true };
+  const renders = found.variations.flatMap(v => v.renders || []);
+  const copies = await fingerprints(renders);
+  const { entry, rest } = await store.deleteHistory(id);
+  if (!entry) return { ok: true };
+  await voice.forgetLine(entry.line?.file, [...store.filesInUse(rest).lines]).catch(err => console.warn(`Couldn't remove the line's clip: ${err.message}`));
+  // A prompt another entry also has (word for word) may be that one's job, so it isn't used to find jobs.
+  const others = new Set(rest.flatMap(e => e.variations.flatMap(v => v.versions.map(x => x.text))));
+  const texts = [...new Set(entry.variations.flatMap(v => v.versions.map(x => x.text)))].filter(t => !others.has(t));
+  const notes = [await forgetInComfy(settings, { promptIds: renders.map(r => r.promptId), texts, copies, inputs: [...uploadNames(entry), ...renderUploads(renders)], rest })];
+  const left = notes.filter(Boolean).join(' ');
+  return { ok: true, ...(left ? { left } : {}) };
+}
+
+// 🗑 Delete everything (Settings): every Saved prompts card with all it made, in one pass, the way deleteTake deletes
+// one: renders in the making are stopped first, then the cards, their files, the assistant's chats and jobs
+// (store.deleteAllHistory), the spoken lines' clips, ComfyUI's copies and jobs.
+// Returns how many cards and renders went, and what couldn't be reached (left).
+async function deleteEverything() {
+  const settings = await store.getSettings();
+  for (const job of renderJobs.values()) if (!job.done) runs.get(job.runId)?.abort();
+  const before = await store.listHistory();
+  const renders = before.flatMap(e => e.variations.flatMap(v => v.renders || []));
+  const copies = await fingerprints(renders);
+  const all = await store.deleteAllHistory();
+  const gone = all.flatMap(e => e.variations.flatMap(v => v.renders || []));
+  for (const e of all) await voice.forgetLine(e.line?.file, []).catch(err => console.warn(`Couldn't remove a line's clip: ${err.message}`));
+  const texts = [...new Set(all.flatMap(e => e.variations.flatMap(v => v.versions.map(x => x.text))))];
+  const inputs = [...new Set([...all.flatMap(uploadNames), ...renderUploads(gone)])];
+  const notes = [await forgetInComfy(settings, { promptIds: gone.map(r => r.promptId), texts, copies, inputs, rest: [] })];
+  await sweepComfyLeftovers().catch(err => console.warn(`Couldn't sweep ComfyUI's input folder: ${err.message}`));
+  const left = notes.filter(Boolean).join(' ');
+  return { ok: true, prompts: all.length, renders: gone.length, ...(left ? { left } : {}) };
+}
+
+const onThisComputer = raw => {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(new URL(raw).hostname);
+  } catch {
+    return true;
+  }
+};
+
+// 🗑 One take out of a set: its renders go the way a deleted render does, then the take itself; its words leave
+// ComfyUI's job history the way a deleted card's do. The last take takes the card with it.
+async function deleteOneTake(id, index) {
+  const found = await store.getHistory(id);
+  if (!found || !found.variations[index]) return { ok: true, entry: found || null };
+  if (found.variations.length === 1) return { ...(await deleteTake(id)), entry: null };
+  const settings = await store.getSettings();
+  for (const r of found.variations[index].renders || []) await deleteOneRender(id, r.id);
+  const { entry, removed, rest } = await store.deleteVariation(id, index);
+  const others = new Set(rest.flatMap(e => e.variations.flatMap(v => v.versions.map(x => x.text))));
+  const texts = [...new Set(removed.versions.map(x => x.text))].filter(t => !others.has(t));
+  const notes = [await forgetInComfy(settings, { texts, rest })];
+  const left = notes.filter(Boolean).join(' ');
+  return { ok: true, entry: await store.withPresentFiles(entry), ...(left ? { left } : {}) };
+}
+
+async function deleteOneRender(entryId, renderId) {
+  const settings = await store.getSettings();
+  const render = (await store.getHistory(entryId))?.variations.flatMap(v => v.renders || []).find(r => r.id === renderId);
+  const copies = render ? await fingerprints([render]) : [];
+  const { entry, removed, rest } = await store.deleteRender(entryId, renderId);
+  await forgetInComfy(settings, { promptIds: [removed.promptId], copies, inputs: renderUploads([removed]), rest });
+  return entry;
+}
+
+// Download links for a workflow's model files: saved with it, or read again from where it came from (workflows added
+// before Prompt Maker kept them).
+async function workflowLinks(workflow, base) {
+  if (workflow.models?.length) return workflow.models;
+  const src = workflow.source || '';
+  const json = src.startsWith('comfyui:') ? await comfy.readSavedWorkflow(base, src.slice('comfyui:'.length)).catch(() => null)
+    : src.startsWith('comfytemplate:') ? await comfy.readTemplate(base, src.slice('comfytemplate:'.length)).catch(() => null)
+      : null;
+  return json && isUiWorkflow(json) ? models.modelLinks(json) : [];
+}
+
+// Node packs that didn't load when ComfyUI started, and which of them has a node: from ComfyUI's log and the packs'
+// source, kept for five minutes (a restart of ComfyUI changes both; "fresh" reads again).
+const nodePacks = { at: 0, failures: [], dir: null, packs: new Map() };
+async function failedPacks(settings, { fresh = false } = {}) {
+  if (!fresh && Date.now() - nodePacks.at < 5 * 60_000) return nodePacks;
+  const dirs = await comfy.folders(settings.comfyUrl, { roots: [settings.comfyDir, settings.comfyLaunch?.dir] }).catch(() => ({}));
+  nodePacks.failures = await comfy.importFailures([dirs.user && path.join(dirs.user, 'comfyui.log'), services.comfyLog()]);
+  nodePacks.dir = dirs.customNodes || null;
+  nodePacks.packs = new Map();
+  nodePacks.at = Date.now();
+  return nodePacks;
+}
+async function packForNode(settings, type, opts) {
+  const np = await failedPacks(settings, opts);
+  if (!np.packs.has(type)) np.packs.set(type, await comfy.packFor(np.dir, np.failures, type).catch(() => null));
+  return np.packs.get(type);
+}
+
+// The model files a workflow needs that ComfyUI doesn't have (with their download links), as the render would use
+// it: a LoRA switched off doesn't count, and the nodes it uses that ComfyUI doesn't offer (with the pack that failed
+// to load, when the log says). fresh: ask ComfyUI again (a model was just added). Returns { info, missing, fixes, nodes }.
+async function workflowModels(workflow, base, { fresh = false } = {}) {
+  let info = await comfy.objectInfo(base, { fresh }).catch(() => null);
+  if (!info) return { info, missing: [], fixes: [], nodes: [], checked: false };
+  let nodes = models.checkNodes(workflow.prompt, info);
+  if (nodes.length && !fresh) { // maybe installed since Prompt Maker last asked
+    info = await comfy.objectInfo(base, { fresh: true }).catch(() => info);
+    nodes = models.checkNodes(workflow.prompt, info);
+  }
+  if (nodes.length) {
+    const settings = await store.getSettings();
+    for (const n of nodes) {
+      const pack = await packForNode(settings, n.type, { fresh });
+      if (pack) Object.assign(n, { pack: pack.pack, reason: pack.reason });
+    }
+  }
+  let probe;
+  try {
+    probe = wf.buildPrompt(workflow, { text: '' }, info).prompt;
+  } catch {
+    probe = workflow.prompt;
+  }
+  let check = models.checkModels(probe, info);
+  if (check.missing.length && !fresh) { // maybe added since Prompt Maker last asked
+    info = await comfy.objectInfo(base, { fresh: true }).catch(() => info);
+    check = models.checkModels(probe, info);
+  }
+  if (check.missing.length) check = models.checkModels(probe, info, await workflowLinks(workflow, base));
+  return { info, ...check, nodes, checked: true };
+}
+
+// Stops a render before anything is sent when ComfyUI lacks a node or a model file the workflow uses. Returns /object_info.
+async function checkWorkflowModels(workflow, base) {
+  const { info, missing, nodes } = await workflowModels(workflow, base);
+  if (nodes.length) throw store.httpError(400, models.describeMissingNodes(nodes));
+  if (missing.length) throw Object.assign(store.httpError(400, models.describeMissing(missing)), { missingModels: missing });
+  return info;
+}
+
+// Every workflow checked against ComfyUI (nodes it lacks, model files it lacks): at start, whenever ComfyUI comes
+// back, every ten minutes while it's up, and on request. Step ⑤ and Settings → ComfyUI show what can't render.
+const health = { at: 0, comfyOk: null, running: null, workflows: [] };
+async function checkAllWorkflows(settings, { fresh = false } = {}) {
+  if (health.running) return health.running;
+  health.running = (async () => {
+    const out = [];
+    for (const sum of await wf.listWorkflows()) {
+      const w = await wf.getWorkflow(sum.id).catch(() => null);
+      if (!w) continue;
+      const r = await workflowModels(w, settings.comfyUrl, { fresh }).catch(() => null);
+      if (!r?.checked) return; // ComfyUI went away: keep what was known
+      if (!r.missing.length && !r.nodes.length) continue;
+      const model = await store.getModel(w.modelId).catch(() => null);
+      out.push({ id: w.id, name: w.name, modelId: w.modelId, modelName: model?.name || '', missing: r.missing, nodes: r.nodes });
+    }
+    health.workflows = out;
+    health.at = Date.now();
+  })().finally(() => { health.running = null; });
+  return health.running;
+}
+// Called whenever ComfyUI answers: a check when it just came back (its node packs may differ) or is ten minutes old.
+function comfyAnswered(settings, ok) {
+  const came = ok && health.comfyOk !== true;
+  health.comfyOk = ok;
+  if (came) adoptRenders(settings).catch(() => {});
+  if (ok && (came || Date.now() - health.at > 10 * 60_000)) checkAllWorkflows(settings, { fresh: came }).catch(() => {});
+}
+
+// The size a render uses: the take's own (⚙ on the take), else the set's. Strings as the form sends them.
+function takeSize(size, entry, workflow) {
+  const str = (v, max) => (typeof v === 'string' && v.trim() && v.length <= max ? v.trim() : null);
+  const resolution = str(size?.resolution, 24) ?? entry.resolution;
+  const aspectRatio = str(size?.aspectRatio, 16) ?? entry.aspectRatio;
+  const duration = /^\d{1,3}s$/.test(size?.duration || '') ? size.duration : entry.duration;
+  return { resolution, aspectRatio: sizeAspect(String(resolution || ''), String(aspectRatio || '')), duration: workflow.mapping.frames || workflow.mapping.seconds ? duration : entry.duration };
+}
+
+async function renderTake(req, res) {
+  const body = await readBody(req);
+  const settings = await store.getSettings();
+  const entry = await store.getHistory(body.historyId || '');
+  if (!entry) throw store.httpError(404, 'That take is no longer in history.');
+  const variation = Number.isInteger(body.index) ? entry.variations[body.index] : null;
+  if (!variation) throw store.httpError(400, 'Unknown take.');
+  const versionIndex = Number.isInteger(body.versionIndex) && variation.versions[body.versionIndex] ? body.versionIndex : variation.versions.length - 1;
+  const text = variation.versions[versionIndex].text;
+  const workflow = wf.withSetup(await wf.getWorkflow(body.workflowId || ''), body.setup);
+  if (!workflow) throw store.httpError(400, 'Pick a workflow to render with.');
+  if (workflow.mapping.image && !entry.imageFile) {
+    throw store.httpError(400, `"${workflow.name}" needs an input image (it has a Load Image node), but this take has none. Add an image on the Create page, or pick a text-to-image/video workflow.`);
+  }
+  const slots = workflow.mapping.images || [];
+  const slotFiles = slots.map((t, i) => (i === 0 ? entry.imageFile : entry.images?.[i - 1] || null));
+  const missing = slots.findIndex((t, i) => i > 0 && !t.optional && !slotFiles[i]);
+  if (missing > 0) throw store.httpError(400, `"${workflow.name}" needs a picture in its "${slots[missing].label || `Picture ${missing + 1}`}" slot, which this take has none for. Add it in step 3 on the Create page and Generate again.`);
+  if (workflow.mapping.video && !entry.video?.file) {
+    throw store.httpError(400, `"${workflow.name}" needs a motion video (it has a Load Video node), but this take has none. Add a motion video in step 3 on the Create page, then Generate again.`);
+  }
+  const base = settings.comfyUrl;
+  await comfy.status(base);
+  const info = await checkWorkflowModels(workflow, base);
+  let imageName = null;
+  if (workflow.mapping.image && entry.imageFile) {
+    // A take started from a render sends that original file (full size, lossless), not the smaller copy the LLM saw.
+    const original = entry.source?.file ? within(store.RENDERS_DIR, entry.source.file) : null;
+    const useOriginal = Boolean(original) && (await fs.access(original).then(() => true, () => false));
+    const name = useOriginal ? entry.source.file : entry.imageFile;
+    const buf = await fs.readFile(useOriginal ? original : path.join(store.IMAGES_DIR, entry.imageFile));
+    const ext = name.split('.').pop().toLowerCase();
+    imageName = await comfy.uploadImage(base, buf, `prompt-maker_${name}`, IMAGE_MIME[ext] || 'image/png');
+  }
+  // The other picture slots: each stored picture uploaded as it is.
+  const imageNames = [imageName];
+  for (const f of slotFiles.slice(1)) {
+    if (!f) { imageNames.push(null); continue; }
+    const buf = await fs.readFile(path.join(store.IMAGES_DIR, f)).catch(() => { throw store.httpError(404, 'One of this take\'s pictures is missing from the data folder.'); });
+    imageNames.push(await comfy.uploadImage(base, buf, `prompt-maker_${f}`, IMAGE_MIME[f.split('.').pop()] || 'image/png'));
+  }
+  let videoName = null;
+  // How many frames the motion video has: a workflow made of pieces gets as many as it needs, and one that loops over
+  // the whole video says how many pieces it's on.
+  let videoFrames = null;
+  if (workflow.mapping.video && entry.video?.file) {
+    const file = store.videoPath(entry.video.file);
+    await fs.access(file).catch(() => { throw store.httpError(404, 'This take\'s motion video is missing from the data folder.'); });
+    let info = entry.video.seconds && entry.video.fps ? entry.video : await videotools.probe(file);
+    // Wan Animate 2 takes the video's frames one for one: from a 60 fps phone video its 81 frames are 1.4 s, and the
+    // moves play fast. Over 30 fps, ComfyUI gets a 24 fps copy (made for this render, then removed).
+    const fps = 24;
+    let copy = null;
+    if (info?.fps > 30 && fps < info.fps && (await videotools.hasFfmpeg())) {
+      copy = await videotools.retime(file, fps).catch(err => { console.warn(`Couldn't make a ${fps} fps copy of the motion video: ${err.message}`); return null; });
+      if (copy) info = (await videotools.probe(copy)) || { ...info, fps };
+    }
+    try {
+      const buf = await fs.readFile(copy || file);
+      videoName = await comfy.uploadImage(base, buf, `prompt-maker_${copy ? entry.video.file.replace(/\.\w+$/, `.${fps}fps.mp4`) : entry.video.file}`, copy ? 'video/mp4' : VIDEO_MIME[entry.video.file.split('.').pop()] || 'video/mp4');
+    } finally {
+      if (copy) await store.removeFile(copy);
+    }
+    if (info?.seconds && info?.fps) videoFrames = Math.round(info.seconds * info.fps);
+  }
+  // 🎙 The spoken line goes in as the soundtrack; without one, the workflow's sound nodes are left out.
+  let audioName = null;
+  if (workflow.mapping.audio && entry.line?.file) {
+    const file = await voice.clipPath(entry.line.file);
+    const buf = file && (await fs.readFile(file).catch(() => null));
+    if (!buf) throw store.httpError(404, 'This take\'s spoken line is missing from the data folder. Generate again to make it.');
+    audioName = await comfy.uploadImage(base, buf, `prompt-maker_${entry.line.file}`, 'audio/wav');
+  }
+  const count = Math.min(BATCH_MAX, Math.max(1, Math.round(Number(body.count) || 1)));
+  const pieces = videoFrames ? wf.loopPieces(workflow.prompt, videoFrames) : null;
+  // A video in pieces: ComfyUI saves each piece and Prompt Maker joins them, which needs ffmpeg (see wf.splitPieces).
+  const joinInApp = Boolean(pieces) && (await videotools.hasFfmpeg());
+  // ⚙ This take's own settings: a size and seed of its own (else the set's size and the workflow's seed).
+  const own = takeSize(body.size, entry, workflow);
+  const fixedSeed = body.seed && typeof body.seed === 'object' && body.seed.mode === 'fixed' && Number.isSafeInteger(Number(body.seed.value)) && Number(body.seed.value) >= 0 ? Number(body.seed.value) : null;
+  const seeds = fixedSeed != null ? Array.from({ length: count }, (_, i) => fixedSeed + i) : await wf.takeSeeds(workflow.id, count, { fresh: body.newSeed === true });
+  if (fixedSeed != null) await wf.noteLastSeed(workflow.id, seeds.at(-1));
+  const stream = openRenderJob({ historyId: entry.id, index: body.index, versionIndex, count, workflowId: workflow.id, workflowName: workflow.name, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio }, body.runId);
+  stream.send({ type: 'start', runId: stream.runId, count, workflowName: workflow.name });
+  // A page that named the job follows it over its one connection for all renders; else this request streams it.
+  if (body.runId) sendJson(res, 200, { runId: stream.runId, count, workflowName: workflow.name });
+  else watchRenderJob(stream.job, res);
+  const clientId = comfy.newClientId();
+  let loraFileInfo = null;
+  for (let i = 0; i < count; i++) {
+    if (stream.signal.aborted) break; // cancelled between two renders (while one was being copied or joined)
+    if (i > 0 && !(await store.getHistory(entry.id))) break; // deleted meanwhile: its prompt isn't sent again
+    const t0 = Date.now();
+    let promptId = null;
+    let releaseGpu;
+    const onAbort = () => { if (promptId) comfy.cancel(base, promptId); };
+    try {
+      releaseGpu = await acquireGpu('render', settings, { signal: stream.signal, onStatus: title => stream.send({ type: 'node', i, title }) });
+      const seed = seeds[i];
+      const built = wf.buildPrompt(workflow, {
+        text,
+        imageName,
+        imageNames,
+        videoName,
+        audioName,
+        minSeconds: audioName && entry.line?.seconds ? Math.ceil((entry.line.seconds + 1) * 10) / 10 : 0,
+        aspectRatio: own.aspectRatio,
+        resolution: own.resolution,
+        duration: own.duration,
+        seed,
+        videoFrames,
+        joinInApp,
+      }, info);
+      const { prompt, applied, parts } = built;
+      // Which LoRA files it used (size and date), so a file replaced under the same name later shows.
+      loraFileInfo ??= await comfy.loraFiles(base, (applied.loras || []).map(l => l.name)).catch(() => ({}));
+      if (applied.loras?.length) applied.loras = applied.loras.map(l => (loraFileInfo[l.name] ? { ...l, file: loraFileInfo[l.name] } : l));
+      models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
+      promptId = await comfy.queuePrompt(base, prompt, clientId);
+      await store.noteRendering(promptId, { historyId: entry.id, index: body.index, versionIndex, clientId, comfyUrl: base, workflowId: workflow.id, workflowName: workflow.name, seedMode: workflow.options?.seedMode || 'random', overrides: workflow.overrides || {}, count, i, applied, parts: parts || null, inputs: [imageName, videoName, audioName].filter(Boolean), queuedAt: t0 }).catch(() => {});
+      if (stream.signal.aborted) { // cancelled while ComfyUI was taking it
+        await comfy.cancel(base, promptId);
+        break;
+      }
+      stream.signal.addEventListener('abort', onAbort, { once: true });
+      stream.send({ type: 'queued', i, applied });
+      let lastPreview = 0;
+      const done = await comfy.watch(base, promptId, clientId, prompt, {
+        signal: stream.signal,
+        pieces,
+        parts: wf.pieceParts(prompt),
+        onEvent: ev => {
+          if (ev.type !== 'preview') return stream.send({ ...ev, i });
+          if (Date.now() - lastPreview < 350) return;
+          lastPreview = Date.now();
+          stream.send({ type: 'preview', i, src: `data:${ev.mime};base64,${ev.data.toString('base64')}` });
+        },
+      });
+      stream.signal.removeEventListener('abort', onAbort);
+      const render = await keepRender({ settings, base, entry, index: body.index, versionIndex, text, workflow: { id: workflow.id, name: workflow.name, seedMode: workflow.options?.seedMode || 'random', overrides: workflow.overrides || {} }, applied, parts, done, promptId, count, t0, stream, i, inputs: [imageName, videoName, audioName].filter(Boolean), lined: Boolean(audioName) });
+      await store.doneRendering(promptId).catch(() => {});
+      stream.send({ type: 'render', i, render });
+    } catch (err) {
+      stream.signal.removeEventListener('abort', onAbort);
+      if (promptId) await store.doneRendering(promptId).catch(() => {});
+      if (err.name === 'AbortError' || stream.signal.aborted) {
+        if (promptId) await comfy.cancel(base, promptId);
+        break;
+      }
+      stream.send({ type: 'error', i, message: memoryError(err).message });
+      break;
+    } finally { releaseGpu?.(); }
+  }
+  stream.end();
+}
+
+// What ComfyUI made for one render: copied into the renders folder (pieces joined into one video), recorded on its
+// take, and ComfyUI's copy removed when Clean up is on. Shared by renders followed from the start and renders picked
+// up again after Prompt Maker restarted (adoptRenders). Returns the render it recorded.
+async function keepRender({ settings, base, entry, index, versionIndex, text, workflow, applied, parts, done, promptId, count, t0, stream, i, inputs, lined = false }) {
+      const outputs = comfy.outputFiles(done);
+      if (!outputs.length) throw store.httpError(502, 'ComfyUI finished but saved no image, video or audio. Does the workflow end in a Save node?');
+      const id = crypto.randomUUID();
+      const files = [];
+      const copies = [];
+      // ComfyUI reuses its numbers (ComfyUI_00001_.png) once files are gone, so copies get their own names.
+      const named = [store.slugify(entry.modelName), store.slugify(entry.theme || 'from-image').slice(0, 40), applied.seed ?? null, id.slice(0, 6)].filter(x => x !== null && x !== '').join('_');
+      if (parts) {
+        stream.send({ type: 'node', i, title: 'Joining the pieces into one video…' });
+        const file = await joinPieces(base, settings, parts, outputs, `${id}_0`, entry.video?.file ? store.videoPath(entry.video.file) : null, copies);
+        files.push({ file, kind: 'video', name: `${named}${path.extname(file)}` });
+      }
+      for (const [n, out] of (parts ? [] : outputs).entries()) {
+        const ext = (path.extname(out.filename).toLowerCase() || '.bin').replace(/[^.\w]/g, '');
+        const file = `${id}_${n}${ext}`;
+        const buf = await comfy.download(base, out);
+        await fs.writeFile(path.join(store.RENDERS_DIR, file), buf);
+        const original = comfy.fingerprint(buf);
+        copies.push(original);
+        files.push({ file, kind: out.kind, name: `${named}${outputs.length > 1 ? `-${n + 1}` : ''}${ext}`, original });
+        if (settings.comfyCleanup) {
+          await removeComfyCopy(settings, base, out, buf.length).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
+        }
+      }
+      // 🎙 A clip with a line ends when the line ends: the model is asked for the line plus a second and may go on past
+      // the words (MiniMax H3 keeps talking, in made-up ones), so what comes after the last word is cut off.
+      let cut = null;
+      const clip = lined && entry.line?.seconds > 0 ? files.find(f => f.kind === 'video') : null;
+      if (clip) {
+        const full = path.join(store.RENDERS_DIR, clip.file);
+        const to = Math.round((entry.line.seconds + 0.35) * 100) / 100;
+        const long = await videotools.probe(full).catch(() => null);
+        if (long?.seconds > to + 0.25) {
+          stream.send({ type: 'node', i, title: 'Cutting the clip to the line…' });
+          let trimmed = null;
+          try {
+            trimmed = await videotools.trim(full, 0, to);
+            await store.removeFile(full);
+            await fs.rename(trimmed, full);
+            cut = { from: Math.round(long.seconds * 10) / 10, to };
+          } catch (err) {
+            console.warn(`Couldn't cut ${clip.file} to its line: ${err.message}`);
+            if (trimmed) await fs.rm(trimmed, { force: true }).catch(() => {});
+          }
+        }
+      }
+      // The size it really came out at: a workflow may round what was asked for (to a multiple of 16, say).
+      const made = files[0] && files[0].kind !== 'audio' ? await videotools.probe(path.join(store.RENDERS_DIR, files[0].file)).catch(() => null) : null;
+      if (made?.width && made?.height) applied.size = `${made.width}×${made.height}`;
+      const render = {
+        id,
+        promptId,
+        versionIndex,
+        text,
+        brain: entry.variations[index].versions[versionIndex].llmName || entry.variations[index].versions[versionIndex].llmModel || (entry.manual ? null : entry.llmName || entry.llmModel || null),
+        workflowId: workflow.id,
+        workflowName: workflow.name,
+        seed: applied.seed ?? null,
+        sampler: applied.sampler,
+        steps: applied.steps,
+        cfg: applied.cfg,
+        size: applied.size || null,
+        aspect: applied.aspect || null,
+        frames: applied.frames || null,
+        duration: applied.duration || null,
+        ...(applied.loras?.length ? { loras: applied.loras } : {}),
+        // The rest of the setup, so opening this from History can put it all back.
+        count,
+        seedMode: workflow.seedMode,
+        overrides: workflow.overrides,
+        files,
+        createdAt: new Date().toISOString(),
+        secs: t0 ? Math.round((Date.now() - t0) / 100) / 10 : null,
+        ...(cut ? { cut } : {}),
+      };
+      try {
+        await store.updateHistory(entry.id, e => { (e.variations[index].renders ||= []).push(render); });
+      } catch (err) {
+        if (err.status !== 404) throw err;
+        // The take was deleted while this rendered: none of it is kept, here or in ComfyUI.
+        await store.removeRenderFiles([render]);
+        await forgetInComfy(settings, { promptIds: [promptId], copies, inputs, rest: await store.listHistory() });
+        throw store.httpError(404, 'That take was deleted, so its render was thrown away.');
+      }
+  return render;
+}
+
+// Renders Prompt Maker sent to ComfyUI before it stopped (a restart, an update, a crash): each is followed again, the
+// way it would have been, and kept on its take, whether it's still running or ComfyUI finished it meanwhile. One that
+// ComfyUI no longer has (it restarted too) is let go. Renders of a ×2–×4 that hadn't been sent yet aren't sent now.
+const adopting = new Set();
+async function adoptRenders(settings) {
+  const all = await store.listRendering().catch(() => ({}));
+  for (const [promptId, rec] of Object.entries(all)) {
+    if (adopting.has(promptId)) continue;
+    adopting.add(promptId);
+    adoptRender(settings, promptId, rec).catch(err => console.warn(`Couldn't pick up a render after the restart: ${err.message}`)).finally(() => adopting.delete(promptId));
+  }
+}
+async function adoptRender(settings, promptId, rec) {
+  const base = rec.comfyUrl || settings.comfyUrl;
+  const entry = await store.getHistory(rec.historyId || '');
+  const variation = entry?.variations?.[rec.index];
+  const known = (await comfy.history(base, promptId).catch(() => null)) || (await comfy.queuePosition(base, promptId).catch(() => -1)) >= 0;
+  if (!variation || !known) {
+    if (!variation && known) await forgetInComfy(settings, { promptIds: [promptId], copies: [], inputs: rec.inputs || [], rest: await store.listHistory() }).catch(() => {});
+    return store.doneRendering(promptId);
+  }
+  const versionIndex = variation.versions[rec.versionIndex] ? rec.versionIndex : variation.versions.length - 1;
+  const stream = openRenderJob({ historyId: entry.id, index: rec.index, versionIndex, count: 1, workflowId: rec.workflowId, workflowName: rec.workflowName, theme: entry.theme || '', modelName: entry.modelName, modelId: entry.modelId, aspectRatio: entry.aspectRatio });
+  stream.send({ type: 'start', runId: stream.runId, count: 1, workflowName: rec.workflowName });
+  const onAbort = () => comfy.cancel(base, promptId);
+  stream.signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const queued = await comfy.queueItem(base, promptId).catch(() => null);
+    const graph = queued?.[2] || (await comfy.history(base, promptId).catch(() => null))?.prompt?.[2] || {};
+    stream.send({ type: 'queued', i: 0, applied: rec.applied || {} });
+    const done = await comfy.watch(base, promptId, rec.clientId, graph, { signal: stream.signal, parts: rec.parts, onEvent: ev => { if (ev.type !== 'preview') stream.send({ ...ev, i: 0 }); } });
+    stream.signal.removeEventListener('abort', onAbort);
+    const render = await keepRender({ settings, base, entry, index: rec.index, versionIndex, text: variation.versions[versionIndex].text, workflow: { id: rec.workflowId, name: rec.workflowName, seedMode: rec.seedMode || 'random', overrides: rec.overrides || {} }, applied: { ...(rec.applied || {}) }, parts: rec.parts, done, promptId, count: rec.count || 1, t0: rec.queuedAt || Date.now(), stream, i: 0, inputs: rec.inputs || [] });
+    stream.send({ type: 'render', i: 0, render });
+  } catch (err) {
+    stream.signal.removeEventListener('abort', onAbort);
+    if (err.name !== 'AbortError' && !stream.signal.aborted) stream.send({ type: 'error', i: 0, message: err.message });
+  } finally {
+    await store.doneRendering(promptId).catch(() => {});
+    stream.end();
+  }
+}
+
+// The pieces of a long video, saved one by one in ComfyUI (wf.splitPieces), downloaded and joined into one video in the
+// renders folder, with the motion video's sound if the workflow had it. Returns the file's name. ComfyUI's copies of
+// the pieces go (with Clean up ComfyUI's output folder on) only once the video is safely joined.
+async function joinPieces(base, settings, parts, outputs, name, motionVideo, copies) {
+  const files = parts.saves.map(node => outputs.find(o => o.node === node && o.kind === 'video'));
+  const missing = files.filter(f => !f).length;
+  if (missing) throw store.httpError(502, `ComfyUI saved ${files.length - missing} of the ${files.length} pieces of this video, so they can't be joined into one.`);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'prompt-maker-pieces-'));
+  try {
+    const local = [];
+    for (const [k, out] of files.entries()) {
+      const buf = await comfy.download(base, out);
+      const file = path.join(dir, `${String(k + 1).padStart(3, '0')}${path.extname(out.filename).toLowerCase() || '.mp4'}`);
+      await fs.writeFile(file, buf);
+      local.push(file);
+      copies.push(comfy.fingerprint(buf));
+    }
+    const file = `${name}${path.extname(local[0])}`;
+    try {
+      await videotools.join(local, path.join(store.RENDERS_DIR, file), { audioFrom: parts.audio ? motionVideo : null });
+    } catch (err) {
+      await fs.rm(path.join(store.RENDERS_DIR, file), { force: true });
+      throw store.httpError(502, `Couldn't join the ${files.length} pieces into one video (${err.message}). They're still in ComfyUI's output folder.`);
+    }
+    if (settings.comfyCleanup) {
+      for (const [k, out] of files.entries()) {
+        const size = (await fs.stat(local[k])).size;
+        await removeComfyCopy(settings, base, out, size).catch(err => console.warn(`Couldn't remove ${out.filename} from ComfyUI's output folder: ${err.message}`));
+      }
+    }
+    return file;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+// A render keeps going when the page that started it closes or reloads: the page only watches it, and can pick it
+// up again (GET /api/renders, then its events). Stop and ✕ cancel it through /api/runs/:id/cancel.
+// Each job keeps its events to replay to a page that comes back, except previews: only the latest per render.
+// A page follows all its renders over one connection (/api/renders/stream: every job's events, with their runId),
+// because a browser only opens a few connections to one server: one per render left none for Stop or Cancel once
+// several rendered at once. It catches up on a job with /api/renders/:id/events; an event's n (counting up per job)
+// tells it what it already has.
+const renderJobs = new Map();
+const renderHubs = new Set();
+
+function watchAllRenders(res) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  res.write('{"type":"hello"}\n');
+  renderHubs.add(res);
+  const alive = setInterval(() => res.write('{"type":"ping"}\n'), 25_000);
+  res.on('close', () => { clearInterval(alive); renderHubs.delete(res); });
+}
+
+// runId: the page's own id for the job (so it can listen for it before asking), unless it's taken.
+function openRenderJob(meta, wantedId = null) {
+  const controller = new AbortController();
+  const runId = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(wantedId || '') && !renderJobs.has(wantedId) && !runs.has(wantedId) ? wantedId : crypto.randomUUID();
+  const job = { ...meta, runId, events: [], previews: new Map(), watchers: new Set(), seq: 0, done: false, startedAt: Date.now(), now: { i: 0, finished: 0, pct: null, stage: 'Waiting for ComfyUI…' } };
+  runs.set(runId, controller);
+  renderJobs.set(runId, job);
+  // What the Rendering panel shows: which render of the job, how far, doing what.
+  const track = ev => {
+    const now = job.now;
+    if (ev.i != null && ev.type !== 'render' && ev.type !== 'preview') { if (ev.i !== now.i) Object.assign(now, { pct: null }); now.i = ev.i; }
+    if (ev.type === 'queued') now.stage = ev.position > 1 ? `Waiting: ${ev.position - 1} ahead in ComfyUI` : ev.position === 1 ? 'Next up in ComfyUI' : 'Sent to ComfyUI…';
+    else if (ev.type === 'running') Object.assign(now, { stage: 'Starting…', pct: 0 });
+    else if (ev.type === 'node') now.stage = ev.title;
+    else if (ev.type === 'progress' && ev.max) now.pct = Math.round(ev.overall ?? (ev.value / ev.max) * 100);
+    else if (ev.type === 'render') Object.assign(now, { finished: now.finished + 1, pct: null, stage: 'Saving…' });
+    else if (ev.type === 'error') now.stage = `⚠️ ${ev.message}`;
+  };
+  const send = ev => {
+    const obj = { ...ev, n: ++job.seq };
+    track(obj);
+    if (obj.type === 'preview') job.previews.set(obj.i, obj);
+    else job.events.push(obj);
+    for (const res of job.watchers) if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n');
+    const tagged = JSON.stringify({ ...obj, runId }) + '\n';
+    for (const res of renderHubs) if (!res.writableEnded) res.write(tagged);
+  };
+  const end = () => {
+    job.done = true;
+    runs.delete(runId);
+    for (const res of job.watchers) res.end();
+    for (const res of renderHubs) if (!res.writableEnded) res.write(JSON.stringify({ type: 'end', runId }) + '\n');
+    setTimeout(() => renderJobs.delete(runId), 60_000); // a page reloading right now still gets the ending
+  };
+  return { send, end, runId, signal: controller.signal, job };
+}
+
+function watchRenderJob(job, res) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  for (const ev of [...job.events, ...job.previews.values()]) res.write(JSON.stringify(ev) + '\n');
+  if (job.done) return res.end();
+  job.watchers.add(res);
+  res.on('close', () => job.watchers.delete(res));
+}
+
+// When this server started: Create's "This session" box shows the renders made since then.
+const STARTED_AT = new Date().toISOString();
+// The version people see in Settings (for bug reports): package.json's, plus the exact commit when run from git.
+const VERSION = await (async () => {
+  const { version } = JSON.parse(await fs.readFile(path.join(import.meta.dirname, 'package.json'), 'utf8'));
+  const git = path.join(import.meta.dirname, '.git');
+  const head = (await fs.readFile(path.join(git, 'HEAD'), 'utf8').catch(() => '')).trim();
+  const ref = head.startsWith('ref: ') ? head.slice(5) : '';
+  const sha = ref ? (await fs.readFile(path.join(git, ref), 'utf8').catch(async () => {
+    const packed = await fs.readFile(path.join(git, 'packed-refs'), 'utf8').catch(() => '');
+    return packed.split('\n').find(l => l.endsWith(` ${ref}`))?.split(' ')[0] || '';
+  })).trim() : head;
+  return /^[0-9a-f]{7,}$/.test(sha) ? `${version} (${sha.slice(0, 7)})` : version;
+})();
+
+// ---------- routing ----------
+
+async function route(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const p = url.pathname;
+  const m = req.method;
+  let match;
+  // Your renders, pictures and videos are as private as the API: another website can't fetch them either.
+  if (/^\/(api|renders|videos|images)\//.test(p) && !isTrustedRequest(req)) return sendJson(res, 403, { error: 'Forbidden' });
+
+  if (p === '/api/models' && m === 'GET') return sendJson(res, 200, await store.listModels());
+  if (p === '/api/models' && m === 'POST') {
+    const body = await readBody(req);
+    const items = Array.isArray(body) ? body : [body];
+    const overwrite = url.searchParams.get('overwrite') === '1';
+    const saved = [];
+    for (const item of items) saved.push(await store.saveModel(item, { overwrite }));
+    return sendJson(res, 200, Array.isArray(body) ? saved : saved[0]);
+  }
+  if (p === '/api/models/draft' && m === 'POST') return draftGuide(req, res);
+  if (p === '/api/surprise' && m === 'POST') return surprise(req, res);
+  if (p === '/api/chains' && m === 'GET') return sendJson(res, 200, await store.listChains());
+  if (p === '/api/chains' && m === 'POST') return sendJson(res, 200, await store.saveChain(await readBody(req), { overwrite: url.searchParams.get('overwrite') === '1' }));
+  if ((match = p.match(/^\/api\/chains\/([\w-]+)$/)) && m === 'DELETE') {
+    await store.deleteChain(match[1]);
+    return sendJson(res, 200, { ok: true });
+  }
+  if (p === '/api/models/hidden' && m === 'GET') return sendJson(res, 200, await store.hiddenBuiltins());
+  if ((match = p.match(/^\/api\/models\/([\w-]+)\/reset$/)) && m === 'POST') return sendJson(res, 200, await store.resetModel(match[1]));
+  if ((match = p.match(/^\/api\/models\/([\w-]+)$/))) {
+    const id = match[1];
+    if (m === 'GET') {
+      const model = await store.getModel(id);
+      return model ? sendJson(res, 200, model) : sendJson(res, 404, { error: 'Model not found' });
+    }
+    if (m === 'PUT') {
+      const body = await readBody(req);
+      // A changed name/id renames the file; refuse to clobber a different existing model.
+      const renamed = store.slugify(body.id || body.name) !== id;
+      return sendJson(res, 200, await store.saveModel(body, { overwrite: !renamed, previousId: id }));
+    }
+    if (m === 'DELETE') {
+      await store.deleteModel(id);
+      await wf.deleteWorkflowsForModel(id);
+      await forgetStarter(id);
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  // Both responses carry the defaults the Settings page needs (e.g. for "Reset to default").
+  const settingsView = s => ({ ...s, defaultMasterPrompt: DEFAULT_MASTER_PROMPT, dataDir: store.DATA_DIR, version: VERSION, startedAt: STARTED_AT });
+  if (p === '/api/settings' && m === 'GET') return sendJson(res, 200, settingsView(await store.getSettings()));
+  if (p === '/api/looks' && m === 'GET') return sendJson(res, 200, await store.listLooks());
+  if (p === '/api/looks' && m === 'PUT') return sendJson(res, 200, await store.saveLooks(await readBody(req)));
+  if (p === '/api/sizes' && m === 'GET') return sendJson(res, 200, await store.listSizes());
+  if (p === '/api/sizes' && m === 'PUT') return sendJson(res, 200, await store.saveSizes(await readBody(req)));
+  if (p === '/api/dials' && m === 'GET') return sendJson(res, 200, await store.listDials());
+  if (p === '/api/dials' && m === 'PUT') return sendJson(res, 200, await store.saveDials(await readBody(req)));
+  if (p === '/api/settings' && m === 'PUT') {
+    const body = await readBody(req);
+    if (typeof body.lmStudioUrl === 'string') assertLocalUrl(body.lmStudioUrl.trim());
+    if (typeof body.comfyUrl === 'string') assertLocalUrl(body.comfyUrl.trim());
+    return sendJson(res, 200, settingsView(await store.updateSettings(body)));
+  }
+
+  if (p === '/api/llms' && m === 'GET') {
+    const settings = await store.getSettings();
+    const base = url.searchParams.get('url') || settings.lmStudioUrl;
+    try {
+      const [models, notes, history, clouds] = await Promise.all([listLlms(base), store.getBrainNotes(), store.listHistory(), cloud.listModels()]);
+      const records = brainRecords(history);
+      return sendJson(res, 200, { ok: true, startedAt: STARTED_AT, url: base, models: [...models, ...clouds].map(m => ({ ...m, ...brainView(notes[m.id]), record: records[m.id] || null })) });
+    } catch (err) {
+      // LM Studio is down, but cloud Brains still work.
+      const clouds = await cloud.listModels().catch(() => []);
+      return sendJson(res, 200, { ok: false, startedAt: STARTED_AT, url: base, error: err.message, models: clouds });
+    }
+  }
+
+  // Starting with the computer (Settings): on/off, and whether the offline page's Start link works here.
+  if (p === '/api/autostart' && m === 'GET') return sendJson(res, 200, await autostart.status());
+  if (p === '/api/autostart' && m === 'PUT') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await autostart.setAutostart(Boolean(body.enabled)));
+  }
+  // Set up for another copy, or one that's gone: point the setup at this one.
+  if (p === '/api/autostart/repair' && m === 'POST') return sendJson(res, 200, await autostart.repair());
+
+  // Settings → Services: what's running, and start / stop buttons for each.
+  if (p === '/api/services' && m === 'GET') return sendJson(res, 200, await servicesStatus());
+  // One-click ComfyUI set-up: what the computer has, start it (into a folder), watch it, stop it, and the root fixes.
+  if (p === '/api/comfy/setup' && m === 'GET') return sendJson(res, 200, await comfySetup.status(await store.getSettings()));
+  if (p === '/api/comfy/setup' && m === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await comfySetup.install(await store.getSettings(), { dir: body.dir, start: startComfyAt }));
+  }
+  // The first start on Windows: everything set up from one screen (ComfyUI, LM Studio, a Brain that can see).
+  if (p === '/api/setup' && m === 'GET') return sendJson(res, 200, await firstSetup.status(await store.getSettings()));
+  if (p === '/api/setup/run' && m === 'POST') return sendJson(res, 200, await firstSetup.start(await store.getSettings(), { startComfy: startComfyAt }));
+  if (p === '/api/setup/job' && m === 'GET') return sendJson(res, 200, firstSetup.current() || { state: 'none' });
+  if (p === '/api/comfy/setup/job' && m === 'GET') return sendJson(res, 200, comfySetup.current() || { state: 'none' });
+  if (p === '/api/comfy/setup/cancel' && m === 'POST') return sendJson(res, 200, comfySetup.cancel() || { state: 'none' });
+  if (p === '/api/comfy/setup/fix' && m === 'POST') return sendJson(res, 200, await comfySetup.fix(String((await readBody(req)).what || '')));
+  // ⬆ A newer Prompt Maker, and ↻ a restart, from Settings.
+  if (p === '/api/update' && m === 'GET') {
+    // A copy updated by hand (git pull, a new folder) keeps the old code running until a restart, while the page it
+    // serves is already the new one: settings the old code doesn't know would be dropped without a word. Say so.
+    const st = await update.status();
+    const running = VERSION.split(' ')[0];
+    return sendJson(res, 200, { ...st, running, stale: st.current !== running });
+  }
+  if (p === '/api/update/check' && m === 'POST') return sendJson(res, 200, await update.check());
+  if (p === '/api/update/apply' && m === 'POST') {
+    const stream = openStream(res);
+    let r = null;
+    try {
+      r = await update.apply(text => stream.send({ type: 'status', text }));
+      stream.send({ type: 'done', ...r });
+    } catch (err) {
+      stream.send({ type: 'error', message: err.message });
+    }
+    stream.end();
+    if (r?.installer) installUpdate(r.installer); // Windows: the installer restarts Prompt Maker once this answer is out
+    return;
+  }
+  if (p === '/api/services/app/restart' && m === 'POST') {
+    sendJson(res, 200, { ok: true, service: await services.underService() });
+    return restartApp();
+  }
+  if ((match = p.match(/^\/api\/services\/(comfy|lms|app|all)\/(start|stop)$/)) && m === 'POST') {
+    const [, what, action] = match;
+    const settings = await store.getSettings();
+    if (what === 'comfy' && action === 'start') return sendJson(res, 200, { ok: true, launch: await services.startComfy(settings) });
+    if (what === 'comfy') await services.stopComfy(settings, () => comfyUp(settings));
+    else if (what === 'lms' && action === 'start') await startServer(settings.lmStudioUrl);
+    else if (what === 'lms') await services.stopLmStudio();
+    else if (what === 'all' && action === 'stop') {
+      // Everything, then this server: frees the GPU. What fails to stop (e.g. a ComfyUI started elsewhere) doesn't block the rest.
+      const left = [];
+      await services.stopComfy(settings, () => comfyUp(settings)).catch(err => left.push(err.message));
+      if (services.isLocalUrl(settings.lmStudioUrl)) await services.stopLmStudio().catch(err => left.push(err.message));
+      await services.stopApp();
+      return sendJson(res, 200, { ok: true, left }); // what couldn't be stopped, so the page doesn't say everything did
+    } else if (what === 'app' && action === 'stop') await services.stopApp();
+    else throw store.httpError(400, 'Nothing to do.');
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // Cloud Brains (Settings): providers you add, with your keys. The page never gets a key back.
+  if (p === '/api/providers' && m === 'GET') {
+    await cloud.listModels(); // fills in each provider's model count
+    return sendJson(res, 200, { catalog: cloud.CATALOG, providers: await cloud.listProviders() });
+  }
+  if (p === '/api/providers' && m === 'POST') return sendJson(res, 200, await cloud.addProvider(await readBody(req)));
+  if (p === '/api/providers/trust' && m === 'PUT') {
+    const body = await readBody(req);
+    await cloud.setTrusted(body.id ?? null, body.trusted);
+    return sendJson(res, 200, { providers: await cloud.listProviders() });
+  }
+  if ((match = p.match(/^\/api\/providers\/([\w-]+)$/)) && m === 'DELETE') {
+    await cloud.removeProvider(match[1]);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === '/api/brains' && m === 'PUT') {
+    const body = await readBody(req);
+    if (!body.id) throw store.httpError(400, 'Which Brain?');
+    if (Object.hasOwn(body, 'rating')) return sendJson(res, 200, brainView(await store.setBrainRating(String(body.id), body.rating)));
+    return sendJson(res, 200, brainView(await store.setBrainThinking(String(body.id), body.thinking || '')));
+  }
+  if (p === '/api/brains/check' && m === 'POST') return checkBrain(req, res);
+
+  // Loads a Brain again with the room asked for (Models → Brains, the Room menu). Takes a while for a big model.
+  if (p === '/api/lmstudio/room' && m === 'POST') {
+    const body = await readBody(req);
+    const settings = await store.getSettings();
+    const remember = (id, room) => (room ? store.noteBrain(id, { room }).catch(() => {}) : null);
+    const llm = await withGpu('brain', settings, {}, () => setRoom(settings.lmStudioUrl, String(body.model || ''), body.contextLength, { onUnload: remember }));
+    await remember(llm.id, llm.contextLoaded || Number(body.contextLength));
+    return sendJson(res, 200, { llm });
+  }
+  if (p === '/api/lmstudio/start' && m === 'POST') {
+    const settings = await store.getSettings();
+    await startServer(settings.lmStudioUrl);
+    // A fresh server answers before it has finished indexing, so wait until chat models show up.
+    let models = null;
+    for (let i = 0; i < 40; i++) {
+      models = await listLlms(settings.lmStudioUrl).catch(() => null);
+      if (models?.length) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (!models) throw store.httpError(502, 'LM Studio said it started, but its server is not answering yet. Try again in a few seconds.');
+    return sendJson(res, 200, { ok: true, models });
+  }
+  if (p === '/api/generate' && m === 'POST') return generate(req, res);
+  if ((match = p.match(/^\/api\/runs\/([\w-]+)\/cancel$/)) && m === 'POST') {
+    runs.get(match[1])?.abort();
+    return sendJson(res, 200, { ok: true });
+  }
+  if (p === '/api/videos' && m === 'POST') {
+    // The raw file as the body (it can be big, so it isn't JSON), its type in Content-Type.
+    if (Number(req.headers['content-length']) > store.MAX_VIDEO) throw store.httpError(413, `That video is too big (over ${store.MAX_VIDEO / 1024 / 1024} MB). Trim it to the part you need.`);
+    return sendJson(res, 200, { file: await store.saveVideo(req, req.headers['content-type']) });
+  }
+  // What's in a motion video (when ffmpeg is installed), and a preview the browser can play when it can't play the file.
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/prepare$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    const body = await readBody(req);
+    const ffmpeg = await videotools.hasFfmpeg();
+    const info = await videotools.probe(file);
+    let preview = null;
+    if (body.preview && ffmpeg) preview = path.basename(await videotools.preview(file).catch(err => { console.warn(`Couldn't make a preview of ${match[1]}: ${err.message}`); return ''; })) || null;
+    const bars = info ? await videotools.bars(file, info).catch(() => null) : null;
+    return sendJson(res, 200, { ffmpeg, info: info && bars ? { ...info, bars } : info, preview });
+  }
+  // A copy without the black bars around the picture (they'd be part of the moves, and set the video's shape).
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/crop$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
+    const box = await videotools.bars(file, await videotools.probe(file));
+    if (!box) throw store.httpError(400, 'This video has no black bars to crop.');
+    const tmp = await videotools.crop(file, box);
+    try {
+      const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
+      return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  }
+  // A part of a long video (from start, this many seconds): the one stretch you want animated.
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/trim$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
+    const body = await readBody(req);
+    const length = (await videotools.probe(file))?.seconds || 0;
+    const start = Math.max(0, Number(body.start) || 0);
+    const seconds = Math.min(Number(body.seconds) || 0, length ? length - start : Infinity);
+    if (!(seconds >= 0.2) || (length && start >= length)) throw store.httpError(400, `Pick a part inside the video${length ? ` (it's ${Math.round(length * 10) / 10} s long)` : ''}.`);
+    const tmp = await videotools.trim(file, Math.round(start * 1000) / 1000, Math.round(seconds * 1000) / 1000);
+    try {
+      const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
+      return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  }
+  // A copy at a lower frame rate (Wan Animate 2 uses every frame: 120 fps takes 5× as long as 24).
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/retime$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
+    const fps = Math.min(60, Math.max(8, Math.round(Number((await readBody(req)).fps) || 24)));
+    const tmp = await videotools.retime(file, fps);
+    try {
+      const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
+      return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  }
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)$/)) && m === 'GET') {
+    const file = store.videoPath(match[1]);
+    return sendJson(res, 200, { exists: Boolean(file) && (await fs.access(file).then(() => true, () => false)) });
+  }
+  if (p === '/api/images' && m === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, { file: await store.saveImage(body.image) });
+  }
+  if ((match = p.match(/^\/api\/images\/([\w.]+)$/)) && m === 'GET') {
+    const exists = await store.readImageDataUrl(match[1]).then(() => true, () => false);
+    return sendJson(res, 200, { exists });
+  }
+  if ((match = p.match(/^\/api\/images\/([\w.]+)$/)) && m === 'DELETE') return sendJson(res, 200, { removed: await store.deleteImageIfUnused(match[1]) });
+  // What this browser's Create page holds (its form and its line), so the start-up tidy doesn't take it, and
+  // deleting a card doesn't take what a prompt in line needs.
+  if (p === '/api/holds' && m === 'PUT') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await store.setHolds(body.client, body));
+  }
+  if (p === '/api/refine' && m === 'POST') return refine(req, res);
+
+  // The assistant's jobs: a folder's pictures to work through, and each job's plan and log.
+  if (p === '/api/folder' && m === 'GET') return sendJson(res, 200, await folders.listFolder(url.searchParams.get('path')));
+  if (p === '/api/folder/video' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name'), video: true }), PRIVATE);
+  if (p === '/api/folder/image' && m === 'GET') return serveFile(req, res, await folders.imagePath(url.searchParams.get('path'), { folder: url.searchParams.get('folder'), name: url.searchParams.get('name') }), PRIVATE);
+  if (p === '/api/find' && m === 'GET') return sendJson(res, 200, await folders.search(url.searchParams.get('q'), { kind: ['folder', 'file', 'any'].includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'any', from: url.searchParams.get('in') || null }));
+
+  // The assistant using this computer (commands, any file): only when Settings allows it, and only from this computer.
+  if (p.startsWith('/api/computer/')) {
+    if (!(await store.getSettings()).assistantComputer) throw store.httpError(403, 'The assistant isn\'t allowed to use this computer. The user can allow it in Settings → ✦ Assistant → 💻 Let the assistant use my computer.');
+    if (!LOOPBACK_ADDRESS.test(req.socket.remoteAddress || '')) throw store.httpError(403, 'Only from this computer.');
+    if (p === '/api/computer/run' && m === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 200, await computer.run(body.command, { folder: body.folder, seconds: body.seconds }));
+    }
+    if (p === '/api/computer/read' && m === 'GET') return sendJson(res, 200, await computer.read(url.searchParams.get('path'), { from: url.searchParams.get('from') }));
+    if (p === '/api/computer/write' && m === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 200, await computer.write(body.path, body.text, { append: body.append === true, overwrite: body.overwrite === true }));
+    }
+  }
+  if (p === '/api/jobs' && m === 'GET') return sendJson(res, 200, await store.listJobs());
+  if ((match = p.match(/^\/api\/jobs\/([\w-]+)$/)) && m === 'PUT') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await store.saveJob({ ...body, id: match[1] }));
+  }
+  if ((match = p.match(/^\/api\/jobs\/([\w-]+)$/)) && m === 'DELETE') {
+    await store.deleteJob(match[1]);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === '/api/history' && m === 'GET') return sendJson(res, 200, await store.withPresentFiles(await store.listHistory()));
+  if (p === '/api/history' && m === 'DELETE') {
+    const body = await readBody(req);
+    if (body?.confirm !== 'everything') return sendJson(res, 400, { error: 'Deleting everything needs { "confirm": "everything" }.' });
+    return sendJson(res, 200, await deleteEverything());
+  }
+  if ((match = p.match(/^\/api\/history\/([\w-]+)$/))) {
+    const id = match[1];
+    if (m === 'GET') {
+      const entry = await store.getHistory(id);
+      return entry ? sendJson(res, 200, await store.withPresentFiles(entry)) : sendJson(res, 404, { error: 'Not found' });
+    }
+    if (m === 'PATCH') {
+      const body = await readBody(req);
+      const entry = await store.updateHistory(id, e => {
+        if (typeof body.favorite === 'boolean') e.favorite = body.favorite;
+        if (typeof body.text === 'string' && e.variations[body.index]) {
+          const v = e.variations[body.index];
+          const text = body.text.trim();
+          const source = v.versions[body.versionIndex] || v.versions.at(-1);
+          if (text && text !== v.versions.at(-1).text) v.versions.push({ text, instruction: '(manual edit)', createdAt: new Date().toISOString(), llmModel: source.llmModel, llmName: source.llmName });
+        }
+      });
+      return sendJson(res, 200, await store.withPresentFiles(entry));
+    }
+    if (m === 'DELETE') return sendJson(res, 200, await deleteTake(id));
+  }
+  if ((match = p.match(/^\/api\/history\/([\w-]+)\/takes\/(\d+)$/)) && m === 'DELETE') return sendJson(res, 200, await deleteOneTake(match[1], Number(match[2])));
+
+  // ---- ComfyUI (optional renders) ----
+  if (p === '/api/comfy/status' && m === 'GET') {
+    const settings = await store.getSettings();
+    const base = url.searchParams.get('url') || settings.comfyUrl;
+    try {
+      const st = await comfy.status(base);
+      if (base === settings.comfyUrl) comfyAnswered(settings, true);
+      return sendJson(res, 200, { ...st, url: base });
+    } catch (err) {
+      if (base === settings.comfyUrl) comfyAnswered(settings, false);
+      // Off: say whether it's on this computer at all (found, or being set up), so Create can offer ▶ Start or ⬇ Set it up.
+      const local = services.isLocalUrl(base);
+      const launch = local ? await services.comfyLaunch(settings).catch(() => ({ dir: null })) : { dir: null };
+      return sendJson(res, 200, { ok: false, url: base, error: err.message, local, found: Boolean(launch.dir) && (await services.isComfyDir(launch.dir)), setup: comfySetup.current() });
+    }
+  }
+  // What can't render right now, over every workflow (see checkAllWorkflows). fresh: check again now.
+  if (p === '/api/comfy/health' && m === 'GET') {
+    const settings = await store.getSettings();
+    if (url.searchParams.has('fresh') || (!health.at && !health.running)) await checkAllWorkflows(settings, { fresh: url.searchParams.has('fresh') }).catch(() => {});
+    else if (health.running) await health.running.catch(() => {});
+    return sendJson(res, 200, { checkedAt: health.at || null, problems: health.workflows });
+  }
+  if (p === '/api/assistant' && m === 'POST') return assistantChat(req, res);
+  if (p === '/api/assistant/fold' && m === 'POST') return assistantFold(req, res);
+  if (p === '/api/assistant/guide' && m === 'GET') return sendJson(res, 200, await assistant.searchGuide(url.searchParams.get('q')));
+  if (p === '/api/assistant/chat' && m === 'GET') return sendJson(res, 200, await store.getAssistantChat());
+  if (p === '/api/assistant/chat' && m === 'PUT') {
+    const chat = await readBody(req);
+    await store.saveAssistantChat(chat.messages, assistant.cleanPlan(chat.plan));
+    return sendJson(res, 200, { ok: true });
+  }
+  if (p === '/api/render-order' && m === 'GET') return sendJson(res, 200, await store.getRenderOrder());
+  if (p === '/api/render-order' && m === 'PUT') {
+    await store.saveRenderOrder((await readBody(req)).order);
+    return sendJson(res, 200, { ok: true });
+  }
+  if (p === '/api/comfy/output-dir' && m === 'GET') {
+    const settings = await store.getSettings();
+    return sendJson(res, 200, { detected: await comfy.detectOutputDir(settings.comfyUrl).catch(() => null), configured: settings.comfyOutputDir });
+  }
+  // 🎬 Join videos: whole renders, in the order given, as one new video (its own History entry).
+  if (p === '/api/renders/join' && m === 'POST') {
+    const body = await readBody(req);
+    const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 60);
+    if (ids.length < 2) throw store.httpError(400, 'Pick at least two videos to join.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Joining videos needs ffmpeg on this computer (see Settings → Services).');
+    const all = await store.listHistory();
+    const parts = ids.map(id => {
+      for (const e of all) for (const v of e.variations) for (const r of v.renders || []) if (r.id === id || r.id.startsWith(id)) return { e, r, file: r.files.find(f => f.kind === 'video') };
+      return null;
+    });
+    const lost = parts.findIndex(x => !x);
+    if (lost >= 0) throw store.httpError(404, `There's no render with the id ${ids[lost]}.`);
+    const still = parts.find(x => !x.file);
+    if (still) throw store.httpError(400, `“${(still.e.theme || 'from an image').slice(0, 40)}” (take ${still.e.variations.findIndex(v => (v.renders || []).includes(still.r)) + 1}) is a picture, not a video.`);
+    const id = crypto.randomUUID();
+    const file = `${id}_1.mp4`;
+    const t0 = Date.now();
+    await videotools.concat(parts.map(x => path.join(store.RENDERS_DIR, x.file.file)), path.join(store.RENDERS_DIR, file));
+    const info = await videotools.probe(path.join(store.RENDERS_DIR, file));
+    const now = new Date().toISOString();
+    const title = String(body.title || '').trim().slice(0, 120) || `Joined: ${parts.length} videos`;
+    const render = {
+      id, text: title, workflowName: 'Joined in Prompt Maker', seed: null, count: 1,
+      size: info?.width ? `${info.width}×${info.height}` : null, duration: info?.seconds ? `${Math.round(info.seconds * 10) / 10}s` : null,
+      joined: parts.map(x => ({ entryId: x.e.id, renderId: x.r.id })),
+      files: [{ file, kind: 'video', name: `${store.slugify(title).slice(0, 40) || 'joined'}_${id.slice(0, 6)}.mp4` }],
+      createdAt: now, secs: Math.round((Date.now() - t0) / 100) / 10,
+    };
+    const entry = await store.addHistory({ modelId: 'joined', modelName: 'Joined video', modelKind: 'video', theme: title, joined: true, variations: [{ versions: [{ text: title, instruction: null, createdAt: now }], renders: [render] }] });
+    return sendJson(res, 200, { entry, render, seconds: info?.seconds || null });
+  }
+
+  // 🎙 Voices
+  if (p === '/api/voice' && m === 'GET') {
+    const settings = await store.getSettings();
+    return sendJson(res, 200, { ...(await voice.status(settings)), voices: await voice.listVoices() });
+  }
+  if (p === '/api/voice/install' && m === 'POST') return sendJson(res, 200, await voice.install(await store.getSettings()));
+  if (p === '/api/voice/install' && m === 'GET') return sendJson(res, 200, voice.install.job || { state: 'none' });
+  if (p === '/api/voice/design' && m === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await voice.design(await store.getSettings(), body));
+  }
+  if (p === '/api/voice/voices' && m === 'POST') return sendJson(res, 200, await voice.keepVoice(await readBody(req)));
+  if ((match = p.match(/^\/api\/voice\/voices\/([a-f0-9]+)$/)) && m === 'PATCH') return sendJson(res, 200, await voice.renameVoice(match[1], (await readBody(req)).name));
+  if ((match = p.match(/^\/api\/voice\/voices\/([a-f0-9]+)$/)) && m === 'DELETE') return sendJson(res, 200, await voice.deleteVoice(match[1]));
+  if (p === '/api/voice/say' && m === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await voice.say(await store.getSettings(), body));
+  }
+  if (p.startsWith('/voice/') && m === 'GET') {
+    const file = await voice.clipPath(decodeURIComponent(p.slice('/voice/'.length)));
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
+  }
+  if (p === '/api/comfy/loras/files' && m === 'POST') {
+    const body = await readBody(req);
+    const settings = await store.getSettings();
+    const names = (Array.isArray(body.names) ? body.names : []).filter(n => typeof n === 'string').slice(0, 50);
+    return sendJson(res, 200, await comfy.loraFiles(settings.comfyUrl, names).catch(() => ({})));
+  }
+  if (p === '/api/comfy/loras' && m === 'GET') {
+    const settings = await store.getSettings();
+    try {
+      return sendJson(res, 200, { loras: await comfy.loraList(settings.comfyUrl) });
+    } catch (err) {
+      return sendJson(res, 200, { loras: [], error: err.message });
+    }
+  }
+  if (p === '/api/comfy/workflows' && m === 'GET') {
+    const settings = await store.getSettings();
+    return sendJson(res, 200, await comfy.savedWorkflows(settings.comfyUrl));
+  }
+  if (p === '/api/recipe' && m === 'POST') return sendJson(res, 200, await readRecipe(await readBody(req)));
+  if (p === '/api/workflows' && m === 'GET') {
+    await addStarters();
+    return sendJson(res, 200, await wf.listWorkflows());
+  }
+  if (p === '/api/workflows/starters' && m === 'GET') return sendJson(res, 200, await starterWorkflows(url.searchParams.get('model')));
+  if (p === '/api/workflows/prepare' && m === 'POST') return sendJson(res, 200, await prepareWorkflow(await readBody(req)));
+  if (p === '/api/workflows' && m === 'POST') {
+    const body = await readBody(req);
+    if (!(await store.getModel(body.modelId || ''))) throw store.httpError(400, 'Save the model first.');
+    return sendJson(res, 200, wf.summary(await wf.saveWorkflow(body)));
+  }
+  // What model files the workflow needs that ComfyUI doesn't have (step ⑤ offers to download them).
+  if ((match = p.match(/^\/api\/workflows\/([\w-]+)\/models$/)) && m === 'GET') {
+    const existing = await wf.getWorkflow(match[1]);
+    if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
+    const settings = await store.getSettings();
+    // A workflow the check over every workflow lists is asked about afresh (ComfyUI's node list is kept five
+    // minutes, so a routine look could say "fine" from before), and only a fresh answer revises that list.
+    const fresh = url.searchParams.has('fresh') || health.workflows.some(p => p.id === existing.id);
+    const { missing, fixes, nodes, checked } = await workflowModels(existing, settings.comfyUrl, { fresh });
+    if (checked && fresh && health.at) { // the newer answer for this one goes into the check over every workflow
+      health.workflows = health.workflows.filter(p => p.id !== existing.id);
+      if (missing.length || nodes.length) health.workflows.push({ id: existing.id, name: existing.name, modelId: existing.modelId, modelName: (await store.getModel(existing.modelId).catch(() => null))?.name || '', missing, nodes });
+    }
+    return sendJson(res, 200, { checked, missing, nodes, fixes: fixes.length });
+  }
+  if (p === '/api/comfy/downloads' && m === 'GET') return sendJson(res, 200, models.listDownloads());
+  if (p === '/api/comfy/downloads' && m === 'POST') {
+    const settings = await store.getSettings();
+    const body = await readBody(req);
+    return sendJson(res, 200, await models.startDownload(await comfy.modelFolders(settings.comfyUrl), { name: body.name, folder: body.folder, url: body.url }));
+  }
+  if ((match = p.match(/^\/api\/comfy\/downloads\/([\w-]+)\/cancel$/)) && m === 'POST') return sendJson(res, 200, { ok: models.cancelDownload(match[1]) });
+  if ((match = p.match(/^\/api\/workflows\/([\w-]+)\/refresh$/)) && m === 'POST') {
+    const existing = await wf.getWorkflow(match[1]);
+    if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
+    return sendJson(res, 200, await refreshWorkflow(existing, await readBody(req)));
+  }
+  if ((match = p.match(/^\/api\/workflows\/([\w-]+)$/))) {
+    const existing = await wf.getWorkflow(match[1]);
+    if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
+    if (m === 'GET') {
+      const settings = await store.getSettings();
+      const info = await comfy.objectInfo(settings.comfyUrl).catch(() => null);
+      const { candidates, warnings, producesVideo } = wf.analyze(existing.prompt, info);
+      return sendJson(res, 200, { ...existing, candidates, warnings, producesVideo });
+    }
+    if (m === 'PUT') {
+      const body = await readBody(req);
+      // overridePatch changes single sampler values ({ "node|input": value, or null to drop it }) and keeps the rest.
+      // seedPatch: { mode, value } for the seed mode and the next seed, keeping the other options.
+      const sp = body.seedPatch && typeof body.seedPatch === 'object' ? body.seedPatch : null;
+      const options = sp ? { ...existing.options, ...(sp.mode ? { seedMode: sp.mode } : {}), ...(sp.value != null ? { seed: sp.value } : {}) } : body.options;
+      const overrides = body.overridePatch && typeof body.overridePatch === 'object'
+        ? Object.fromEntries(Object.entries({ ...existing.overrides, ...body.overridePatch }).filter(([, v]) => v !== null))
+        : body.overrides;
+      return sendJson(res, 200, wf.summary(await wf.saveWorkflow({ name: body.name, mapping: body.mapping, options, overrides, loras: body.loras }, existing)));
+    }
+    if (m === 'DELETE') {
+      await wf.deleteWorkflow(match[1]);
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+  if (p === '/api/render' && m === 'POST') return renderTake(req, res);
+  if (p === '/api/renders' && m === 'GET') {
+    return sendJson(res, 200, [...renderJobs.values()].filter(j => !j.done).map(j => ({
+      runId: j.runId, historyId: j.historyId, index: j.index, versionIndex: j.versionIndex, count: j.count,
+      workflowId: j.workflowId, workflowName: j.workflowName, theme: j.theme, modelName: j.modelName, modelId: j.modelId,
+      aspectRatio: j.aspectRatio, startedAt: j.startedAt, ...j.now,
+      ...(url.searchParams.has('previews') ? { preview: j.previews.get(j.now.i)?.src || null } : {}),
+    })));
+  }
+  if (p === '/api/renders/stream' && m === 'GET') return watchAllRenders(res);
+  // ⬇ Download in the Gallery's selection bar: the renders picked, as one .zip. A form posts it (files: a JSON list
+  // of render file names), so the browser saves the answer as it comes, however big.
+  if (p === '/api/renders/download' && m === 'POST') {
+    const chunks = [];
+    let size = 0;
+    for await (const c of req) {
+      if ((size += c.length) > MAX_BODY) throw store.httpError(413, 'Request too large.');
+      chunks.push(c);
+    }
+    let names;
+    try { names = JSON.parse(new URLSearchParams(Buffer.concat(chunks).toString('utf8')).get('files') || '[]'); } catch { names = null; }
+    if (!Array.isArray(names) || !names.every(n => typeof n === 'string')) return sendJson(res, 400, { error: 'Which renders?' });
+    const plan = await planZip(names.map(n => ({ path: within(store.RENDERS_DIR, n), name: path.basename(n) })).filter(f => f.path));
+    if (!plan.entries.length) return sendJson(res, 404, { error: 'Those renders are gone.' });
+    res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': plan.length, ...PRIVATE,
+      'Content-Disposition': `attachment; filename="prompt-maker-${plan.entries.length}-renders-${new Date().toISOString().slice(0, 10)}.zip"` });
+    return writeZip(plan, res).catch(() => res.destroy());
+  }
+  if ((match = p.match(/^\/api\/renders\/([\w-]+)\/events$/)) && m === 'GET') {
+    const job = renderJobs.get(match[1]);
+    return job ? sendJson(res, 200, { events: [...job.events, ...job.previews.values()].sort((a, b) => a.n - b.n), done: job.done }) : sendJson(res, 404, { error: 'That render has finished.' });
+  }
+  if ((match = p.match(/^\/api\/renders\/([\w-]+)\/watch$/)) && m === 'GET') {
+    const job = renderJobs.get(match[1]);
+    return job ? watchRenderJob(job, res) : sendJson(res, 404, { error: 'That render has finished.' });
+  }
+  if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'PATCH') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await store.withPresentFiles(await store.updateHistory(match[1], e => {
+      const r = e.variations.flatMap(v => v.renders || []).find(x => x.id === match[2]);
+      if (!r) throw store.httpError(404, 'Render not found.');
+      // How good it is: 1 pretty good, 2 very good, 3 excellent, 0 not rated. (Renders saved before ratings
+      // have favorite: true, which counts as excellent until they're rated.)
+      const rating = typeof body.rating === 'number' ? body.rating : typeof body.favorite === 'boolean' ? (body.favorite ? 3 : 0) : null;
+      if (rating != null) {
+        if (![0, 1, 2, 3].includes(rating)) throw store.httpError(400, 'A rating is 0 (none), 1, 2 or 3.');
+        if (rating) r.rating = rating; else delete r.rating;
+        delete r.favorite;
+      }
+      // Kept out of 🎞 Your renders (it stays everywhere else).
+      if (typeof body.hidden === 'boolean') { if (body.hidden) r.hidden = true; else delete r.hidden; }
+    })));
+  }
+  if ((match = p.match(/^\/api\/history\/([\w-]+)\/renders\/([\w-]+)$/)) && m === 'DELETE') {
+    return sendJson(res, 200, await store.withPresentFiles(await deleteOneRender(match[1], match[2])));
+  }
+  if (p.startsWith('/renders/') && m === 'GET') {
+    const file = within(store.RENDERS_DIR, decodeURIComponent(p.slice('/renders/'.length)));
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
+  }
+
+  if (p.startsWith('/videos/') && m === 'GET') {
+    const file = store.videoPath(decodeURIComponent(p.slice('/videos/'.length)));
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
+  }
+  if (p.startsWith('/images/') && m === 'GET') {
+    const file = within(store.IMAGES_DIR, decodeURIComponent(p.slice('/images/'.length)));
+    return file ? serveFile(req, res, file, PRIVATE) : sendJson(res, 404, { error: 'Not found' });
+  }
+
+  if (m === 'GET' && !p.startsWith('/api/')) {
+    const rel = p === '/' ? 'index.html' : decodeURIComponent(p.slice(1));
+    const file = within(PUBLIC_DIR, rel);
+    const headers = { 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff' };
+    return file ? serveFile(req, res, file, headers) : sendJson(res, 404, { error: 'Not found' });
+  }
+
+  sendJson(res, 404, { error: 'Not found' });
+}
+
+const moved = await store.init();
+if (moved.length) console.log(`Moved your data out of the app folder into ${store.DATA_DIR}: ${moved.join(', ')}`);
+const swept = await store.sweepOrphans().catch(err => (console.warn(`Couldn't tidy the data folder: ${err.message}`), 0));
+voice.sweepClips((await store.listHistory().catch(() => [])).map(e => e.line?.file).filter(Boolean)).catch(() => {});
+if (swept) console.log(`Removed ${swept} file${swept === 1 ? '' : 's'} no History entry uses anymore.`);
+const leftovers = await sweepComfyLeftovers().catch(err => (console.warn(`Couldn't tidy ComfyUI's input folder: ${err.message}`), 0));
+if (leftovers) console.log(`Removed ${leftovers} file${leftovers === 1 ? '' : 's'} Prompt Maker had put in ComfyUI's input folder that nothing uses anymore.`);
+await wf.initWorkflows();
+
+const server = http.createServer(async (req, res) => {
+  try {
+    await route(req, res);
+  } catch (err) {
+    const status = err.status || (err instanceof URIError ? 404 : 500); // an address that can't be read names nothing
+    if (status === 500) console.error(err);
+    if (!res.headersSent) sendJson(res, status, { error: err.message || 'Server error', ...(err.missingModels ? { missing: err.missingModels } : {}) });
+    else res.end();
+  }
+});
+
+// What the set-ups do once ComfyUI is in: point Settings → ComfyUI at it and start it.
+async function startComfyAt(dir) {
+  const settings = await store.updateSettings({ comfyDir: dir });
+  await services.startComfy(settings);
+}
+
+// Stopping.
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { voice.stopWorker().finally(() => process.exit(0)); });
+
+// ↻ Restart: under its service the service restarts it; started by hand (npm start, start.sh, start.bat) a fresh
+// copy of this server is started once this one has let go of the port. The answer to the request goes out first.
+function restartApp() {
+  setTimeout(async () => {
+    if (await services.underService()) {
+      spawn(process.env.SYSTEMCTL_BIN || 'systemctl', ['--user', 'restart', 'prompt-maker.service'], { detached: true, stdio: 'ignore' }).unref();
+      return;
+    }
+    server.close();
+    server.closeAllConnections?.();
+    await voice.stopWorker();
+    // Started by a parent that manages it (the test suite, over IPC): it starts us again, so no copy of ours escapes it.
+    if (process.send) return process.send({ restart: true }, () => setTimeout(() => process.exit(0), 200));
+    spawn(process.execPath, [path.join(import.meta.dirname, 'server.js')], { cwd: import.meta.dirname, env: process.env, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    setTimeout(() => process.exit(0), 200);
+  }, 300);
+}
+
+// ⬆ Update on Windows: the downloaded installer takes over once the answer is out. This copy closes its session and
+// stops, the installer puts the new files in and starts Prompt Maker again; the page waits for it, then reloads.
+function installUpdate(file) {
+  setTimeout(async () => {
+    server.close();
+    server.closeAllConnections?.();
+    await voice.stopWorker();
+    update.runInstaller(file);
+    setTimeout(() => process.exit(0), 500);
+  }, 300);
+}
+
+// The port may still be the last copy's for a moment after a restart: try again for a few seconds.
+let listenTries = 0;
+server.on('error', err => {
+  if (err.code === 'EADDRINUSE' && listenTries++ < 40) return setTimeout(() => server.listen(PORT, HOST), 250);
+  console.error(err.code === 'EADDRINUSE' ? `Port ${PORT} is taken: is Prompt Maker already running?` : err.message);
+  process.exit(1);
+});
+server.listen(PORT, HOST, async () => {
+  console.log(`Prompt Maker running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  // "Start ComfyUI too" (Settings → Services): bring it up along with Prompt Maker, unless it's already running.
+  const settings = await store.getSettings().catch(() => null);
+  // The start-with-the-computer setup written by an older version, or for this copy's Node that's gone: rewrite it.
+  autostart.status().then(st => (st.missing || st.old) && !st.elsewhere && autostart.repair()).catch(() => {});
+  if (settings?.comfyAutostart && !(await comfyUp(settings))) {
+    services.startComfy(settings).then(() => console.log('Starting ComfyUI…'), err => console.warn(`Couldn't start ComfyUI: ${err.message}`));
+  } else if (settings && (await comfyUp(settings))) {
+    comfyAnswered(settings, true); // every workflow checked in the background, so step ⑤ can say what can't render
+  }
+});

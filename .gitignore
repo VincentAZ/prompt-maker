@@ -1,0 +1,14 @@
+# Personal data lives outside the app folder (see "Your data" in the README).
+# Older versions kept it in ./data; ignore that in case an old copy is still around.
+/data/
+*.tmp
+node_modules/
+
+# Local only: Claude worktrees and feedback from users (personal data, never shipped)
+.claude/
+user_feedback/
+
+# Built packages and what they fetch
+/dist/
+/packaging/deb/cache/
+/packaging/windows/cache/

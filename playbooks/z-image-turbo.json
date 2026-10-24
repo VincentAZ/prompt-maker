@@ -1,0 +1,80 @@
+{
+  "id": "z-image-turbo",
+  "name": "Z-Image Turbo",
+  "kind": "image",
+  "task": "picture",
+  "description": "Fast, sharp pictures from your words, with text that reads right.",
+  "guide": {
+    "bestFor": "Quick realistic pictures, and pictures with words in them (signs, labels, posters, packaging): it renders English and Chinese text correctly. Eight steps, so a render takes seconds.",
+    "youNeed": "Nothing but an idea. No picture needed.",
+    "steps": [
+      "In step ②, describe the picture in plain words: who or what, where, and the mood. Put any words that should appear in the picture in quotes.",
+      "Pick a Look under the box if you want a feel (Natural, Noir, Epic…).",
+      "Press Generate. The app turns your idea into the detailed caption the model likes.",
+      "Render: it's fast, so try a few takes and compare them."
+    ],
+    "tryThese": [
+      "a corner bakery at dawn, a chalkboard sign reading \"FRESH BREAD\", steam on the window",
+      "a woman in a yellow raincoat waiting at a tram stop, wet reflections, blue hour",
+      "a product shot of a matte black water bottle on a slab of slate, one soft light"
+    ]
+  },
+  "color": "#f59e0b",
+  "instructions": "# Z-Image Turbo prompting guide\n\n## What this model is\n- Z-Image Turbo is Tongyi-MAI's open-weights 6B text-to-image model (Apache 2.0), distilled to render in 8 steps with no classifier-free guidance. Its Qwen3-4B text encoder reads plain language, English or Chinese.\n- Strengths: photorealism with natural skin and fabric, exact text in the picture (signs, labels, posters, packaging, in English or Chinese), and close instruction following. It handles illustration, anime, product shots and paintings when the medium is named.\n- There is no negative prompt and no prompt expansion here: everything the picture needs must be in the one positive prompt you write.\n\n## Prompt structure\n- Write natural-language prose: one paragraph of 2–6 full sentences, written as a caption of the finished picture. Short prompts may be descriptive phrases joined by commas. Never bare keyword tags.\n- Order, with the most important first:\n  1. Medium, shot type and main subject in the first sentence (\"A candid photograph of…\", \"A flat-color vector poster of…\"). Always name the medium.\n  2. The subject: age, build, hair, clothing with colors and materials, expression, one clear action. Keep each subject's attributes together.\n  3. Setting and background, with positions (foreground/background, left/right).\n  4. Composition and camera: shot size, angle, lens and depth of field chosen for the mood, shown by what they do to the picture.\n  5. Light: a key light and one secondary light, each with source, direction and quality, plus one contrast word.\n  6. Palette, texture and finish (grain, paper, brushwork).\n- Visible text: put the exact words in double quotes and say where they appear and in what lettering (\"a neon sign reading \\\"OPEN\\\" in pink cursive above the door\"). Keep it short: a few words render reliably, a paragraph does not. Chinese text works the same way.\n- Concrete nouns and exact adjectives: \"amber sodium streetlight\", not \"orange light\".\n- Syntax: no weights like (word:1.3), no brackets, no BREAK, no --ar flags, no lists or JSON. The encoder reads symbols literally.\n- Don't add people, animals, props or text the user didn't ask for or clearly imply. Keep any medium they name.\n\n## Vocabulary that works\n- Photo anchors: \"photograph\", \"candid photo\", \"editorial portrait\", \"product photograph\", \"macro photograph\", \"35mm film photograph\".\n- Camera and lens: \"85mm portrait lens\", \"35mm lens\", \"24mm wide-angle lens\", \"shallow depth of field\", \"deep focus\", \"eye-level\", \"low-angle\", \"high-angle\", \"overhead\", \"medium close-up\", \"full-body shot\". One lens and one angle that suit the mood.\n- Light: \"soft window light from the left\", \"overcast daylight\", \"golden hour backlight\", \"a single tungsten lamp\", \"hard noon sun\", \"blue hour\", \"neon from the shopfront\".\n- Texture for realism: \"natural skin texture\", \"visible pores\", \"flyaway hairs\", \"scuffed leather\", \"weathered paint\", \"wet reflective asphalt\", \"fine film grain\". A photo of a person needs at least one skin-texture phrase; the distilled model otherwise smooths faces.\n- Color: name a palette (\"muted, true-to-life colors\", \"warm earth tones\", \"cool desaturated blues\"); unnamed, the model leans bright and clean.\n- Non-photo styles: name the medium and its marks (\"gouache with visible brushstrokes\", \"flat vector illustration with bold outlines\", \"ink drawing with cross-hatching\", \"1990s cel animation\").\n\n## Avoid\n- Quality spam: \"masterpiece\", \"best quality\", \"8K\", \"ultra-detailed\", \"hyperrealistic\", \"award-winning\". They push the picture toward glossy CGI.\n- Plastic triggers in photos: \"flawless\", \"perfect skin\", \"glowing skin\", \"porcelain\", \"airbrushed\", \"octane render\", \"digital art\".\n- Empty praise (\"beautiful\", \"stunning\", \"epic\"): replace it with visual facts.\n- Negation (\"no people\", \"without text\", \"not blurry\"): with no negative prompt, the model may draw what you name. Describe the alternative: \"an empty street\", \"a plain unmarked wall\", \"tack-sharp focus\".\n- More than one action per subject, or more than about four individually described people.\n- Long passages of quoted text: keep words in the picture to a short sign, title or label.\n\n## Image roles\n- reference: take the look from the image (medium, palette, lighting, lens feel, texture, mood, type of composition) and apply it to the theme's subject, in words. Don't copy the reference's specific subject unless the theme asks for it. With no theme, write a new scene in the reference's style.\n- recreate: write a dense caption of the image: medium and shot type; each subject's appearance, clothing colors and materials, pose, expression; exact positions and counts; setting and any visible text in quotes; camera angle, framing, lens and depth of field; lighting direction and color; palette, texture and grain. Keep the original medium. Apply the theme's changes by rewriting the affected details in place.\n\n## Composition by aspect ratio\n- 1:1: a centered or symmetrical subject with balanced negative space.\n- Vertical (3:4, 4:5, 2:3, 9:16): write \"vertical composition\". Suits full-length figures, posters and tall architecture.\n- Landscape (4:3, 3:2): put the subject on the left or right third with the environment visible around it.\n- Wide (16:9, 2.35:1): write \"wide cinematic composition\" with a clear horizon line and leading lines across the frame; avoid tight single-face close-ups.\n\n## Length\n- short: about 30–50 words. Medium, subject, setting, light, one palette or texture cue.\n- medium: about 60–110 words. The full structure in 3–5 sentences.\n- long: about 120–200 words. Add secondary elements, a precise layout, materials and the palette. Stay under 250 words: a longer prompt dilutes the words that matter.\n- Turbo has no prompt expander. Even when the theme is brief, choose the medium, composition, light and palette yourself so they suit the theme.",
+  "examples": [
+    "A candid photograph of a bakery counter at seven in the morning, a woman in her forties in a flour-dusted apron sliding a tray of golden croissants onto the glass display, steam rising past her. Behind her a chalkboard reads \"FRESH BREAD\" in white hand lettering. Eye-level medium shot on a 35mm lens, moderate depth of field with the shelves of loaves softening behind her. Warm tungsten light from the pendant lamps above meets pale blue daylight from the shop window on the left, low contrast. Natural skin texture, flour on her forearms, muted warm colors, fine film grain.",
+    "A low-angle photograph of a motorcycle courier in a scuffed black leather jacket and a red helmet, standing beside his bike under a highway overpass at night, rain falling through the sodium light. Seen from near the wet ground so the concrete pillars tower over him and his reflection stretches across the puddles toward the camera. 24mm wide-angle lens, deep focus. One hard amber streetlight from high on the right throws long shadows, while cold blue light from passing headlights edges the chrome, high contrast. Wet reflective asphalt, visible film grain, desaturated colors with the one red helmet.",
+    "A product photograph of a matte black insulated water bottle standing on a slab of dark slate, a few beads of water on the lid, against a seamless warm grey background. The label reads \"NORTH\" in small white sans-serif capitals. Eye-level shot on an 85mm lens, shallow depth of field, the bottle tack-sharp and the slate edge softening in front. One large soft light from the upper left, a thin cool rim light from behind on the right, clean reflections, low-key exposure. Precise centered composition with generous negative space above, pristine detail on the brushed metal.",
+    "A flat-color vector poster of a lighthouse on a rocky point at dusk, bold simplified shapes, three tones of blue with one orange beam sweeping across the sky. The title \"COAST FESTIVAL\" sits in the lower third in wide geometric capitals, with \"AUGUST\" smaller beneath it. Vertical composition, the lighthouse off-center to the right, gulls as small white marks on the left, a slight paper texture over the whole print, no gradients, clean edges."
+  ],
+  "aspectRatios": [
+    "1:1",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "16:9",
+    "9:16",
+    "4:5",
+    "2.35:1"
+  ],
+  "resolutions": [
+    "1024×1024",
+    "1152×896",
+    "896×1152",
+    "1216×832",
+    "832×1216",
+    "1344×768",
+    "768×1344",
+    "896×1120",
+    "1536×656"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "1:1",
+    "resolution": "1024×1024",
+    "duration": "",
+    "temperature": 0.8,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈30–50 words",
+    "medium": "≈60–110 words",
+    "long": "≈120–200 words"
+  },
+  "sources": [
+    "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
+    "https://github.com/Tongyi-MAI/Z-Image",
+    "https://huggingface.co/Comfy-Org/z_image_turbo",
+    "https://docs.comfy.org/tutorials/image/z-image/z-image-turbo",
+    "https://comfy.org/templates/image_z_image_turbo"
+  ],
+  "comfyTemplates": [
+    {
+      "name": "image_z_image_turbo",
+      "title": "Z-Image-Turbo: Text to Image",
+      "note": "ComfyUI's template: 8 steps, no guidance."
+    }
+  ],
+  "updatedAt": "2026-10-11"
+}

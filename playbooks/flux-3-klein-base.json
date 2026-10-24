@@ -1,0 +1,66 @@
+{
+  "id": "flux-3-klein-base",
+  "name": "FLUX 3 Klein Base",
+  "kind": "image",
+  "task": "picture",
+  "noImage": true,
+  "color": "#eaae54",
+  "description": "Detailed scene captions to images. Base model: 50 steps, CFG 3.5. Choose INT8, BF16 or NVFP4 in its workflow.",
+  "guide": {
+    "bestFor": "Still pictures with detailed scene control, and trying compatible Base LoRAs.",
+    "youNeed": "Current ComfyUI with FLUX 3 support and matching model files. Accept BFL’s license on Hugging Face: the Base weights have restricted use terms, with a conditional commercial-output exception below US$5M annual revenue. Review the license for your use. NVFP4 needs Blackwell.",
+    "steps": [
+      "Pick the Base workflow precision: INT8 for less memory, BF16 for full precision, NVFP4 on Blackwell.",
+      "Describe the scene. Your Brain expands it into a complete caption. For your own prompt, write the full caption yourself.",
+      "Start at 1024×1024, 50 steps and CFG 3.5. Compare seeds and LoRA strengths using Batches."
+    ],
+    "tryThese": []
+  },
+  "instructions": "Write a complete scene caption for FLUX 3 Image Klein Base. Return only the caption, in natural English prose. Preserve the user’s subjects, counts, requested wording, medium and spatial relationships. Open with the medium and framing, then place the subject and background clearly, describe materials, colors and lighting. Turn abstract mood into observable detail. Quote requested visible text exactly and describe its position and lettering. For a photograph, use believable scene details rather than quality slogans. Do not add sampler settings, seed numbers, prompt weights or negative-prompt lists. The Brain supplies the expanded caption; the workflow does not rewrite it. Short: one compact complete caption. Medium: a detailed caption. Long: additional layout and material detail without repetition.",
+  "examples": [],
+  "aspectRatios": [
+    "1:1",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "16:9",
+    "9:16"
+  ],
+  "resolutions": [
+    "1024×1024",
+    "1152×896",
+    "896×1152",
+    "1216×832",
+    "832×1216",
+    "1344×768",
+    "768×1344"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "1:1",
+    "resolution": "1024×1024",
+    "duration": "",
+    "temperature": 0.8,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈70–100 words",
+    "medium": "≈120–180 words",
+    "long": "≈200–300 words"
+  },
+  "sources": [
+    "https://huggingface.co/black-forest-labs/flux-3-image-klein-base",
+    "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy",
+    "https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE.md",
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_flux3_klein_t2i.json"
+  ],
+  "comfyTemplates": [
+    {
+      "name": "image_flux3_klein_t2i",
+      "title": "FLUX 3 Klein Base: official text to image",
+      "note": "Official template includes a prompt upsampler. Shipped Prompt Maker workflows use your Brain caption directly."
+    }
+  ],
+  "updatedAt": "2026-10-17"
+}
