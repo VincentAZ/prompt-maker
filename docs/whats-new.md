@@ -2,6 +2,10 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.72.3
+
+**Launcher icon refresh.** Prompt Maker now refreshes its window and sidebar artwork instead of reusing an old browser-profile copy. A window opened from the desktop shortcut also stays grouped under Prompt Maker's green icon in the system dock or sidebar.
+
 ## Update in 1.72.2
 
 **Hugging Face tokens stay put.** **⬇ Model files → Connect Hugging Face** now explains the setup in two short steps, links straight to a new Read token, and has **Show** so you can check what you pasted. The token stays in the field while the model list checks files in the background. If Hugging Face rejects it, it stays selected, ready for a replacement paste.

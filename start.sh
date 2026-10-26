@@ -55,11 +55,19 @@ wm_class() {
   esac
   echo "$prefix-$(sed -E 's#^[a-z]+://##; s#[:/].*##' <<<"$URL")__-Default"
 }
-# Points the app-menu entry's StartupWMClass at that name, so the dock shows this window with Prompt Maker's icon.
+# Points every launcher at that name, so the dock shows this window with Prompt Maker's icon whether it was opened
+# from the app menu or from the desktop shortcut.
 name_entry() {
-  local entry="${XDG_DATA_HOME:-$HOME/.local/share}/applications/prompt-maker.desktop"
-  [ -f "$entry" ] && grep -q '^StartupWMClass=' "$entry" && ! grep -qx "StartupWMClass=$1" "$entry" \
-    && sed -i "s/^StartupWMClass=.*/StartupWMClass=$1/" "$entry" 2>/dev/null
+  local entry desktop_dir="${XDG_DESKTOP_DIR:-}"
+  if [ -z "$desktop_dir" ] && [ -f "$HOME/.config/user-dirs.dirs" ]; then
+    desktop_dir="$(sed -n 's/^XDG_DESKTOP_DIR="\(.*\)"$/\1/p' "$HOME/.config/user-dirs.dirs")"
+    desktop_dir="${desktop_dir/\$HOME/$HOME}"
+  fi
+  local desktop="${desktop_dir:-$HOME/Desktop}/Prompt Maker.desktop"
+  for entry in "${XDG_DATA_HOME:-$HOME/.local/share}/applications/prompt-maker.desktop" "$desktop"; do
+    [ -f "$entry" ] && grep -q '^StartupWMClass=' "$entry" && ! grep -qx "StartupWMClass=$1" "$entry" \
+      && sed -i "s/^StartupWMClass=.*/StartupWMClass=$1/" "$entry" 2>/dev/null
+  done
   return 0
 }
 wait_up() { for _ in $(seq 1 60); do running && return 0; service_failing && return 1; sleep 1; done; return 1; }

@@ -64,6 +64,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.72.3 — launcher icon refresh.** Prompt Maker now refreshes its window and sidebar artwork instead of reusing an old browser-profile copy, and a window opened from the desktop shortcut stays grouped under Prompt Maker's green icon in the system dock or sidebar.
+
 **1.72.2 — Hugging Face tokens stay put.** **⬇ Model files → Connect Hugging Face** now has two short steps, a direct **Get a Read token** link, and a **Show** button. A pasted token no longer vanishes when the model list refreshes in the background; if Hugging Face rejects it, the token stays selected so the next paste replaces it.
 
 [See the clearer Hugging Face connection](docs/screenshots/hugging-face.png).

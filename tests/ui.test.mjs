@@ -680,7 +680,7 @@ esac
   });
 
   await test('workspace redesign: essentials fit, fine-tune stays separate and keyboard navigation works', async () => {
-    eq(await js('document.querySelector(\'link[rel="icon"]\').getAttribute("href")'), 'icons/prompt-maker-32.png', 'the window uses the crisp small icon');
+    eq(await js('document.querySelector(\'link[rel="icon"]\').getAttribute("href")'), 'icons/prompt-maker-32.png?v=1.72.3', 'the window uses a fresh copy of the crisp small icon');
     await goto(`${APP}/#create`);
     await click('#taskChoices [data-task="picture"]');
     for (const [width, height] of [[1440, 900], [1280, 800]]) {
@@ -1404,12 +1404,13 @@ esac
     // On Wayland the browser names the window itself ("brave-127.0.0.1__-Default"): start.sh gives the window that
     // name (--class) and points the entry's StartupWMClass at it, so the dock shows the icon there too (1.68.5).
     {
-      const sh = (cmd) => execFileSync('bash', ['-c', `set -e; URL=http://127.0.0.1:5317; source <(sed -n '/^wm_class()/,/^}/p; /^name_entry()/,/^}/p' start.sh); ${cmd}`], { cwd: ROOT, env: { ...process.env, XDG_DATA_HOME: xdgData }, encoding: 'utf8' }).trim();
+      const sh = (cmd) => execFileSync('bash', ['-c', `set -e; URL=http://127.0.0.1:5317; source <(sed -n '/^wm_class()/,/^}/p; /^name_entry()/,/^}/p' start.sh); ${cmd}`], { cwd: ROOT, env: { ...process.env, XDG_DATA_HOME: xdgData, XDG_DESKTOP_DIR: desktopDir }, encoding: 'utf8' }).trim();
       eq(sh('wm_class /usr/bin/brave-browser'), 'brave-127.0.0.1__-Default', 'the name Brave gives the window');
       eq(sh('wm_class /usr/bin/google-chrome'), 'chrome-127.0.0.1__-Default', 'and Chrome');
       eq(sh('wm_class /usr/bin/firefox'), 'prompt-maker', 'another browser: the plain name');
       sh('name_entry brave-127.0.0.1__-Default');
       assert((await fs.readFile(path.join(xdgData, 'applications', 'prompt-maker.desktop'), 'utf8')).includes('StartupWMClass=brave-127.0.0.1__-Default\n'), 'the entry follows the browser in use');
+      assert((await fs.readFile(desktopShortcut, 'utf8')).includes('StartupWMClass=brave-127.0.0.1__-Default\n'), 'the desktop shortcut follows it too');
       sh('name_entry prompt-maker'); // back, for the checks below
     }
     assert((await fs.readFile(systemctlLog, 'utf8')).includes('--user enable prompt-maker.service'), 'starts at login');
