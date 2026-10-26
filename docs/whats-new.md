@@ -2,6 +2,10 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.72.6
+
+**The real GNOME title bar.** On GNOME (Ubuntu's desktop), 1.72.5 changed nothing: GNOME never lets a Wayland window ask for the desktop's title bar, so Chrome kept drawing its own 23-pixel bar with the buttons shrunk to fit. Prompt Maker's window now opens through XWayland on GNOME, and GNOME draws the title bar itself, with the normal height and full-sized minimize, maximize and close. Other desktops (KDE, Sway, X11 sessions) were already fine and keep what they had. Graphics acceleration is the same either way; `PM_WAYLAND=1` opens a native Wayland window instead.
+
 ## Update in 1.72.5
 
 **Normal window controls on Linux.** Prompt Maker now uses the desktop's normal title bar and borders instead of Chrome's compressed app frame. Minimize, maximize and close are full-sized again. The preference belongs to Prompt Maker's private browser profile and does not change regular Chrome windows.

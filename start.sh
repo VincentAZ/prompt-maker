@@ -21,7 +21,8 @@ running() { curl -fs -o /dev/null "$URL/api/settings"; }
 
 # Opens the page as its own app window (a Chromium-family browser does app windows: Brave, Chromium, Chrome, Edge),
 # with its own browser profile in the data folder, so it behaves like a desktop app. Without one, the page opens in
-# whatever browser is the default. PM_BROWSER=/path forces a browser (or "default").
+# whatever browser is the default. PM_BROWSER=/path forces a browser (or "default"); PM_WAYLAND=1 keeps the window on
+# native Wayland under GNOME (see open_app).
 DATA="${PROMPT_MAKER_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/prompt-maker}"
 open_app() {
   local bin="${PM_BROWSER:-}" profile="$DATA/browser"
@@ -36,14 +37,22 @@ open_app() {
     # belongs only to Prompt Maker, so ask Chrome to use the desktop's normal-sized title bar without changing the
     # person's regular browser. If this window is already open, the preference safely takes effect next time.
     "$NODE" lib/browser-profile.js "$profile" >/dev/null 2>&1 || true
+    # GNOME's Wayland compositor never lets a window ask for the desktop's title bar (no xdg-decoration protocol), so
+    # there the browser ignores that preference and draws its own: a 23-pixel bar with the buttons shrunk to fit.
+    # Opened through XWayland instead, GNOME decorates the window itself: its normal title bar and full-sized
+    # minimize/maximize/close. Chrome 156 reports the same GPU features either way (checked on NVIDIA 595; 1.68.3
+    # had seen choppy video on XWayland with an older driver). Other Wayland desktops (KDE, Sway) decorate Wayland
+    # windows directly, so they keep native Wayland. PM_WAYLAND=1 keeps it on GNOME too.
+    local platform=()
+    if [ "${XDG_SESSION_TYPE:-}" = wayland ] && [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* ]] && [ -n "${DISPLAY:-}" ] \
+      && [ "${PM_WAYLAND:-}" != 1 ]; then platform=(--ozone-platform=x11); fi
     # On Wayland the browser ignores --class and names an app window "<browser>-<address>__-Default", so the dock
     # couldn't tie it to the app-menu entry and showed a gear. The window gets that name on X11 too (--class) and
-    # the entry's StartupWMClass follows the browser in use, so the dock shows the green star on both. (1.68.3 opened
-    # the window through XWayland for the icon instead; on NVIDIA that lost the GPU, and videos played choppy.)
+    # the entry's StartupWMClass follows the browser in use, so the dock shows the green star on both.
     local wmclass; wmclass="$(wm_class "$bin")"
     name_entry "$wmclass"
     "$bin" --app="$URL" --user-data-dir="$profile" --no-first-run --no-default-browser-check --class="$wmclass" \
-      --disable-component-update --disable-sync >/dev/null 2>&1 &
+      "${platform[@]}" --disable-component-update --disable-sync >/dev/null 2>&1 &
   else
     xdg-open "$URL" >/dev/null 2>&1 || true
   fi
