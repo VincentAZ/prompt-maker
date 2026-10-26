@@ -64,6 +64,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.72.8 — Hugging Face, in three plain steps.** The box in ⬇ Model files now spells out the whole thing: make a free account, click **Agree and access repository** on the exact page it links (FLUX 3 Klein's files live on `flux-3-image-klein-comfy`, not the model's main page), paste a Read token. Once connected, it says **One step left** with the page still to agree on, instead of the same line under every file.
+
 **1.72.7 — Check again really checks again.** In ⬇ Model files, a file behind a Hugging Face account that said **Accept its terms first** kept saying it after you clicked Agree, until Prompt Maker was restarted: **↻ Check again** now asks Hugging Face afresh. The message also names the account it checked and the exact repo to agree on, since FLUX 3 Klein's files live in `flux-3-image-klein-comfy`, a different page from the model's own, with its own Agree.
 
 **1.72.6 — the real GNOME title bar.** On GNOME (Ubuntu's desktop), 1.72.5 changed nothing: GNOME never lets a Wayland window ask for the desktop's title bar, so Chrome kept drawing its own 23-pixel bar with shrunken buttons. Prompt Maker's window now opens through XWayland on GNOME, and GNOME draws the title bar itself: the normal height and full-sized minimize, maximize and close. Graphics acceleration is the same either way; `PM_WAYLAND=1` opens a native Wayland window instead.

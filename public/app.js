@@ -7732,8 +7732,8 @@ function renderModelFiles() {
     if (f.have === true) act = '<span class="mm-ok">✓ Here</span>';
     else if (dl?.state === 'running') act = `<span class="mm-prog"><span class="mm-bar" style="width:${dl.total ? Math.round((dl.received / dl.total) * 100) : 0}%"></span></span><span class="mm-pct">${dl.total ? `${Math.round((dl.received / dl.total) * 100)}% of ${sizeLabel(dl.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="mf-cancel" data-id="${esc(dl.id)}" aria-label="Stop downloading ${esc(f.file)}">✕</button>`;
     else if (dl?.state === 'done') act = '<span class="mm-ok">✓ Downloaded</span>';
-    else if (f.gated === 'terms') act = `<span class="mm-none">Accept its terms first: Hugging Face says ${d.huggingface?.user ? `<b>${esc(d.huggingface.user)}</b>` : 'your account'} isn't on this model's list yet. Open <a href="${esc(mfRepoPage(f.url))}" target="_blank" rel="noopener noreferrer">${esc(mfRepoName(f.url))}</a> (this repo, not the model's main page: each has its own Agree) signed in as that account, click Agree (granted at once), then</span><button type="button" class="btn small" data-act="mf-recheck">↻ Check again</button>`;
-    else if (f.gated) act = `<span class="mm-none">${hf ? "Hugging Face didn't accept your token: connect your account again above." : 'Behind a free Hugging Face account: connect yours above.'}</span>`;
+    else if (f.gated === 'terms') act = '<span class="mm-none">Accept its terms first (one step left: see the top of this screen).</span>';
+    else if (f.gated) act = `<span class="mm-none">${hf ? 'Hugging Face no longer accepts your token: see the top of this screen.' : 'Needs a free Hugging Face account: see the top of this screen.'}</span>`;
     else if (f.download) act = `${dl?.state === 'error' ? `<span class="mm-err">${linkify(dl.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mf-get" data-file="${esc(f.file)}" ${d.comfy ? '' : 'disabled title="Start ComfyUI first"'}>${dl?.state === 'error' ? '↻ Try again' : '⬇ Get'}</button>`;
     else if (/^https?:\/\//.test(f.url || '')) act = `<span class="mm-none">Get it from <a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(f.url).hostname)}</a> and put it in models/${esc(f.folder || '…')}.</span>`;
     else act = `<span class="mm-none">No download link: get it where the workflow came from, into models/${esc(f.folder || '…')}.</span>`;
@@ -7771,10 +7771,25 @@ const mfRepoName = url => { try { return decodeURIComponent(new URL(mfRepoPage(u
 const mfRepoPage = url => { try { const u = new URL(url); return u.pathname.includes('/resolve/') ? `${u.origin}${u.pathname.split('/resolve/')[0]}` : url; } catch { return url; } };
 // Some files (FLUX 3 Klein's) are handed out only to a signed-in Hugging Face account that clicked Agree on the
 // model's page: one token, pasted once here, and ⬇ Get works for them like for the rest.
+// The pages whose files Hugging Face hands only to an account that clicked Agree: one per repo, with the models that
+// need it. terms: the connected account hasn't agreed there yet (Hugging Face said so when asked).
+const mfGatedRepos = d => {
+  const repos = new Map();
+  for (const m of d.models) for (const f of mfMissing(m).filter(f => f.gated)) {
+    const page = mfRepoPage(f.url);
+    const r = repos.get(page) || { page, name: mfRepoName(f.url), models: [], terms: false };
+    if (!r.models.includes(m.name)) r.models.push(m.name);
+    if (f.gated === 'terms') r.terms = true;
+    repos.set(page, r);
+  }
+  return [...repos.values()];
+};
+const mfRepoLinks = repos => repos.map(r => `<a href="${esc(r.page)}" target="_blank" rel="noopener noreferrer"><b>${esc(r.name)}</b></a> (${esc(r.models.join(', '))})`).join(', ');
 function renderModelFilesHf(d) {
   const box = $('#mfHf');
   const hf = d.huggingface || {};
-  const gated = d.models.some(m => mfMissing(m).some(f => f.gated));
+  const repos = mfGatedRepos(d);
+  const gated = repos.length > 0;
   box.hidden = !hf.connected && !gated;
   if (box.hidden) return;
   box.classList.toggle('on', Boolean(hf.connected));
@@ -7782,18 +7797,24 @@ function renderModelFilesHf(d) {
     mf.hfToken = '';
     mf.hfTokenVisible = false;
     mf.hfChecking = false;
-    box.innerHTML = `<p>🤗 Hugging Face: connected${hf.user ? ` as <b>${esc(hf.user)}</b>` : ''}. The files behind an account download like the rest${gated ? ', once you\'ve clicked Agree on the model\'s page' : ''}. <button type="button" class="btn small" data-act="mf-hf-off">Disconnect</button></p>`;
+    const who = hf.user ? `<b>${esc(hf.user)}</b>` : 'your account';
+    const terms = repos.filter(r => r.terms);
+    const refused = repos.some(r => !r.terms);
+    box.innerHTML = `<p>🤗 Hugging Face: connected${hf.user ? ` as <b>${esc(hf.user)}</b>` : ''}. ${!gated ? 'The files behind an account download like the rest. ' : ''}<button type="button" class="btn small" data-act="mf-hf-off">Disconnect</button></p>
+      ${terms.length ? `<p class="mm-none"><b>One step left.</b> Hugging Face says ${who} hasn't agreed to the terms of ${mfRepoLinks(terms)} yet. Open that page <b>signed in as ${who}</b>, click <b>Agree and access repository</b> (it's granted at once), then come back and click <button type="button" class="btn small primary" data-act="mf-recheck">↻ Check again</button></p>` : ''}
+      ${refused ? '<p class="mm-err">Hugging Face no longer accepts this token. Disconnect, then connect again with a new Read token.</p>' : ''}`;
     return;
   }
   if (!mf.hfForm) {
-    box.innerHTML = '<p>Some of these files are handed out only to a Hugging Face account (free). Connect yours once, and they download like the rest. <button type="button" class="btn small primary" data-act="mf-hf-on">Connect Hugging Face</button></p>';
+    box.innerHTML = `<p>Hugging Face hands out ${esc(repos.map(r => r.models.join(', ')).join(', '))}'s files only to a free account that has agreed to the model's terms. Three short steps, once: <button type="button" class="btn small primary" data-act="mf-hf-on">Connect Hugging Face</button></p>`;
     return;
   }
   box.innerHTML = `<p><b>Connect Hugging Face</b></p>
-    <p>Some model files need a free Hugging Face account.</p>
+    <p>${esc(repos.map(r => r.models.join(', ')).join(', ') || 'Some model')}'s files come from Hugging Face, which hands them only to a free account that has agreed to the model's terms. Three steps, once:</p>
     <ol>
-      <li><a href="https://huggingface.co/settings/tokens/new?tokenType=read" target="_blank" rel="noopener noreferrer"><b>Get a Read token from Hugging Face</b></a>. Sign in or make a free account if asked, name the token, then click <i>Create token</i>.</li>
-      <li>Copy the token (it starts with <code>hf_</code>) and paste it below.</li>
+      <li><a href="https://huggingface.co/join" target="_blank" rel="noopener noreferrer"><b>Make a free Hugging Face account</b></a>, or <a href="https://huggingface.co/login" target="_blank" rel="noopener noreferrer">sign in</a> if you have one.</li>
+      <li><b>Agree to the model's terms:</b> open ${mfRepoLinks(repos) || "the model's page"} and click <b>Agree and access repository</b>. Hugging Face grants it at once. Every model page has its own Agree, so do this on that page exactly.</li>
+      <li><a href="https://huggingface.co/settings/tokens/new?tokenType=read" target="_blank" rel="noopener noreferrer"><b>Get a Read token</b></a> (a password made for apps): name it, click <i>Create token</i>, copy it (it starts with <code>hf_</code>) and paste it below.</li>
     </ol>
     <label class="mf-hf-label" for="mfHfToken">Hugging Face token</label>
     <div class="row"><input id="mfHfToken" type="${mf.hfTokenVisible ? 'text' : 'password'}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste token (hf_…)" aria-describedby="mfHfPrivacy"><button type="button" class="btn small" data-act="mf-hf-show" aria-pressed="${mf.hfTokenVisible}">${mf.hfTokenVisible ? 'Hide' : 'Show'}</button><button type="button" class="btn small primary" data-act="mf-hf-save" ${mf.hfChecking ? 'disabled' : ''}>${mf.hfChecking ? 'Checking…' : 'Connect account'}</button><button type="button" class="btn small" data-act="mf-hf-cancel" ${mf.hfChecking ? 'disabled' : ''}>Not now</button></div>

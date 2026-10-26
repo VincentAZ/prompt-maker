@@ -5622,12 +5622,12 @@ esac
     try {
       await click('.tabs button[data-view="models"]');
       await click('#catalogFiles');
-      await waitFor(`document.querySelector("#modelFilesDlg").open && ${row} && ${row}.textContent.includes("Hugging Face account")`, 'the file says it is behind an account', 10000);
+      await waitFor(`document.querySelector("#modelFilesDlg").open && ${row} && ${row}.textContent.includes("Needs a free Hugging Face account")`, 'the file says it needs an account', 10000);
       assert(!(await js(`${row}.querySelector('[data-act="mf-get"]')`)), 'no ⬇ Get for it yet');
       assert(!(await js('document.querySelector("#mfHf").hidden')) && (await text('#mfHf')).includes('Connect Hugging Face'), `and the dialog offers to connect: ${await text('#mfHf')}`);
       await click('#mfHf [data-act="mf-hf-on"]');
       await waitFor('document.querySelector("#mfHfToken")', 'the token field, with two steps');
-      assert((await text('#mfHf')).includes('Get a Read token') && (await text('#mfHf')).includes('starts with hf_') && (await text('#mfHf')).includes("Saved only in Prompt Maker's data folder"), `where to get one, what to paste, and where it stays: ${await text('#mfHf')}`);
+      assert((await text('#mfHf')).includes('Make a free Hugging Face account') && (await text('#mfHf')).includes('Agree and access repository') && (await js('document.querySelector("#mfHf a[href*=\'/hf/gated\']")?.textContent') || '').includes('gated') && (await text('#mfHf')).includes('Get a Read token') && (await text('#mfHf')).includes('starts with hf_') && (await text('#mfHf')).includes("Saved only in Prompt Maker's data folder"), `the three steps with the model's own page, what to paste, and where it stays: ${await text('#mfHf')}`);
       await sleep(150); // let the modal finish painting before the documentation capture
       await shot('49b-connect-hugging-face');
       await type('#mfHfToken', 'hf_wrong_token_00');
@@ -5649,18 +5649,18 @@ esac
       await type('#mfHfToken', 'hf_test_terms');
       await click('#mfHf [data-act="mf-hf-save"]');
       await toastText('Hugging Face connected as tester');
-      await waitFor(`${row} && ${row}.textContent.includes("Accept its terms first") && ${row}.querySelector('[data-act="mf-recheck"]')`, 'the file asks for Agree on its page, with ↻ Check again', 10000);
+      await waitFor(`${row} && ${row}.textContent.includes("Accept its terms first") && document.querySelector('#mfHf [data-act="mf-recheck"]')`, 'the file asks for Agree on its page, and the box has ↻ Check again', 10000);
       assert((await text('#mfHf')).includes('connected as tester'), `the box says who: ${await text('#mfHf')}`);
       const status = await js('fetch("/api/huggingface").then(r => r.json())');
       assert(status.connected && status.user === 'tester' && !JSON.stringify(status).includes('hf_test'), `the page never sees the token: ${JSON.stringify(status)}`);
       eq((await fs.stat(path.join(dataDir, 'huggingface.json'))).mode & 0o777, 0o600, 'the token file is readable by its owner only');
-      assert((await js(`${row}.textContent`)).includes('tester') && (await js(`${row}.querySelector("a")?.textContent`) || '').includes('gated'), `names the account and the repo to agree on: ${await js(`${row}.textContent`)}`);
+      assert((await text('#mfHf')).includes('One step left') && (await text('#mfHf')).includes('Agree and access repository') && (await js('document.querySelector("#mfHf a[href*=\'/hf/gated\']")?.textContent') || '').includes('gated'), `the box names the one step left, the account and the repo to agree on: ${await text('#mfHf')}`);
       // Agree clicked on the model's page since: ↻ Check again asks Hugging Face again instead of repeating its first answer.
       await fetch(`http://127.0.0.1:${COMFY_PORT}/hf/agree`, { method: 'POST' });
-      await js(`${row}.querySelector('[data-act="mf-recheck"]').click()`);
+      await click('#mfHf [data-act="mf-recheck"]');
       await waitFor(`${row} && ${row}.querySelector('[data-act="mf-get"]')`, '↻ Check again sees the Agree and offers ⬇ Get', 10000);
       await click('#mfHf [data-act="mf-hf-off"]');
-      await waitFor(`${row} && ${row}.textContent.includes("Hugging Face account") && (document.querySelector("#mfHf")?.textContent || "").includes("Connect Hugging Face")`, 'Disconnect forgets it', 10000);
+      await waitFor(`${row} && ${row}.textContent.includes("Needs a free Hugging Face account") && (document.querySelector("#mfHf")?.textContent || "").includes("Connect Hugging Face")`, 'Disconnect forgets it', 10000);
       assert(!(await fileExists(path.join(dataDir, 'huggingface.json'))), 'and the file is gone');
       // The right account: the file downloads like any other, with the token sent along.
       await click('#mfHf [data-act="mf-hf-on"]');

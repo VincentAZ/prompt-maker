@@ -2,6 +2,10 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.72.8
+
+**Hugging Face, in three plain steps.** The box at the top of ⬇ Model files now spells out the whole thing, with the exact pages: 1. make a free Hugging Face account (or sign in); 2. open the model's own page (linked; FLUX 3 Klein's files live on `black-forest-labs/flux-3-image-klein-comfy`, not the model's main page) and click **Agree and access repository**; 3. get a Read token and paste it. Once connected, the box says **One step left** and names the account and page still to agree on, with **↻ Check again** there; each file row just points up to it instead of repeating the story six times.
+
 ## Update in 1.72.7
 
 **Check again really checks again.** In ⬇ Model files, a file behind a Hugging Face account that said **Accept its terms first** kept saying it after you clicked Agree, until Prompt Maker was restarted: Prompt Maker remembered Hugging Face's first answer for the whole session. **↻ Check again** now asks afresh. The message also names the account it checked and links the exact repo to agree on: FLUX 3 Klein's files live in `black-forest-labs/flux-3-image-klein-comfy`, a different page from the model's own, and every repo has its own Agree.
