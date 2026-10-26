@@ -5654,6 +5654,11 @@ esac
       const status = await js('fetch("/api/huggingface").then(r => r.json())');
       assert(status.connected && status.user === 'tester' && !JSON.stringify(status).includes('hf_test'), `the page never sees the token: ${JSON.stringify(status)}`);
       eq((await fs.stat(path.join(dataDir, 'huggingface.json'))).mode & 0o777, 0o600, 'the token file is readable by its owner only');
+      assert((await js(`${row}.textContent`)).includes('tester') && (await js(`${row}.querySelector("a")?.textContent`) || '').includes('gated'), `names the account and the repo to agree on: ${await js(`${row}.textContent`)}`);
+      // Agree clicked on the model's page since: ↻ Check again asks Hugging Face again instead of repeating its first answer.
+      await fetch(`http://127.0.0.1:${COMFY_PORT}/hf/agree`, { method: 'POST' });
+      await js(`${row}.querySelector('[data-act="mf-recheck"]').click()`);
+      await waitFor(`${row} && ${row}.querySelector('[data-act="mf-get"]')`, '↻ Check again sees the Agree and offers ⬇ Get', 10000);
       await click('#mfHf [data-act="mf-hf-off"]');
       await waitFor(`${row} && ${row}.textContent.includes("Hugging Face account") && (document.querySelector("#mfHf")?.textContent || "").includes("Connect Hugging Face")`, 'Disconnect forgets it', 10000);
       assert(!(await fileExists(path.join(dataDir, 'huggingface.json'))), 'and the file is gone');

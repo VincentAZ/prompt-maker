@@ -2,6 +2,10 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.72.7
+
+**Check again really checks again.** In ⬇ Model files, a file behind a Hugging Face account that said **Accept its terms first** kept saying it after you clicked Agree, until Prompt Maker was restarted: Prompt Maker remembered Hugging Face's first answer for the whole session. **↻ Check again** now asks afresh. The message also names the account it checked and links the exact repo to agree on: FLUX 3 Klein's files live in `black-forest-labs/flux-3-image-klein-comfy`, a different page from the model's own, and every repo has its own Agree.
+
 ## Update in 1.72.6
 
 **The real GNOME title bar.** On GNOME (Ubuntu's desktop), 1.72.5 changed nothing: GNOME never lets a Wayland window ask for the desktop's title bar, so Chrome kept drawing its own 23-pixel bar with the buttons shrunk to fit. Prompt Maker's window now opens through XWayland on GNOME, and GNOME draws the title bar itself, with the normal height and full-sized minimize, maximize and close. Other desktops (KDE, Sway, X11 sessions) were already fine and keep what they had. Graphics acceleration is the same either way; `PM_WAYLAND=1` opens a native Wayland window instead.

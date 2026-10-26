@@ -121,6 +121,7 @@ function wsFrame(text) {
   return Buffer.concat([header, payload]);
 }
 
+const agreed = new Set(); // accounts that clicked Agree on the gated model's page since the mock started (POST /hf/agree)
 // A "model" the fake Hugging Face (/hf/<name>) hands out.
 export const MODEL_BYTES = Buffer.alloc(300 * 1024, 7);
 
@@ -252,8 +253,9 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
       if (auth === 'Bearer hf_test_scoped') return json(200, { name: 'tester', auth: { type: 'access_token', accessToken: { role: 'fineGrained', fineGrained: { global: [], scoped: [] } } } }); // a fine-grained token without gated access
       return ['Bearer hf_test_ok', 'Bearer hf_test_terms'].includes(auth) ? json(200, { name: 'tester', fullname: 'A Tester', auth: { type: 'access_token', accessToken: { role: 'read' } } }) : json(401, { error: 'Invalid credentials in Authorization header' });
     }
+    if (p === '/hf/agree' && req.method === 'POST') { agreed.add('Bearer hf_test_terms'); return json(200, {}); } // that account clicks Agree
     if (p.startsWith('/hf/')) {
-      if (p.startsWith('/hf/gated/') && req.headers.authorization !== 'Bearer hf_test_ok') return json(req.headers.authorization === 'Bearer hf_test_terms' ? 403 : 401, { error: 'Access to this model is restricted.' });
+      if (p.startsWith('/hf/gated/') && req.headers.authorization !== 'Bearer hf_test_ok' && !agreed.has(req.headers.authorization)) return json(req.headers.authorization === 'Bearer hf_test_terms' ? 403 : 401, { error: 'Access to this model is restricted.' });
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': MODEL_BYTES.length });
       return res.end(MODEL_BYTES);
     }

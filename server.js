@@ -1391,7 +1391,7 @@ async function checkAllWorkflows(settings, { fresh = false } = {}) {
 // The ⬇ Model files screen: for each model, every file its workflows load (the model, its VAE, text encoder, LoRA…),
 // whether ComfyUI has it (when ComfyUI answers), the link to get it and, with sizes, how big it is (asked of
 // Hugging Face once per file, for the ones not here yet; nothing is downloaded by this).
-async function modelFiles(settings, { sizes = false } = {}) {
+async function modelFiles(settings, { sizes = false, fresh = false } = {}) {
   const info = await comfy.objectInfo(settings.comfyUrl, { fresh: true }).catch(() => null); // opened on purpose: what ComfyUI has right now
   const flows = await wf.listWorkflows();
   const out = [];
@@ -1416,7 +1416,7 @@ async function modelFiles(settings, { sizes = false } = {}) {
     if (files.size) out.push({ id: model.id, name: model.name, kind: model.kind, workflows: flows.filter(f => f.modelId === model.id).length, files: [...files.values()] });
   }
   if (sizes) {
-    const got = await models.fileSizes(out.flatMap(m => m.files.filter(f => f.have !== true && f.download).map(f => f.url)));
+    const got = await models.fileSizes(out.flatMap(m => m.files.filter(f => f.have !== true && f.download).map(f => f.url)), { fresh });
     for (const m of out) for (const f of m.files) Object.assign(f, f.url && f.have !== true && got[f.url] ? got[f.url] : { size: null, gated: false });
   }
   return { comfy: Boolean(info), downloads: models.listDownloads(), huggingface: await models.hfStatus(), models: out };
@@ -1872,7 +1872,7 @@ async function route(req, res) {
   }
   if (p === '/api/models/hidden' && m === 'GET') return sendJson(res, 200, await store.hiddenBuiltins());
   // ⬇ Model files: every model file every workflow of every model needs, present or not, with its link and size.
-  if (p === '/api/models/files' && m === 'GET') return sendJson(res, 200, await modelFiles(await store.getSettings(), { sizes: url.searchParams.has('sizes') }));
+  if (p === '/api/models/files' && m === 'GET') return sendJson(res, 200, await modelFiles(await store.getSettings(), { sizes: url.searchParams.has('sizes'), fresh: url.searchParams.has('fresh') }));
   // Your Hugging Face account, for the files behind one (⬇ Model files): connect with a token, see who, forget it.
   if (p === '/api/huggingface' && m === 'GET') return sendJson(res, 200, await models.hfStatus());
   if (p === '/api/huggingface' && m === 'POST') return sendJson(res, 200, await models.hfConnect((await readBody(req)).token));

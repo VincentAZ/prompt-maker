@@ -7694,8 +7694,9 @@ async function openModelFiles({ modelId = null } = {}) {
   await loadModelFiles();
   pollDownloads();
 }
-async function loadModelFiles() {
-  mf.loading ??= api('/api/models/files?sizes=1').then(d => { mf.data = d; }, err => { $('#mfResult').hidden = false; $('#mfResult').className = 'test-result bad'; $('#mfResult').textContent = friendly(err); }).finally(() => { mf.loading = null; });
+// fresh: ↻ Check again, after Agree on a model's page: the server asks Hugging Face again instead of repeating its answer.
+async function loadModelFiles({ fresh = false } = {}) {
+  mf.loading ??= api(`/api/models/files?sizes=1${fresh ? '&fresh=1' : ''}`).then(d => { mf.data = d; }, err => { $('#mfResult').hidden = false; $('#mfResult').className = 'test-result bad'; $('#mfResult').textContent = friendly(err); }).finally(() => { mf.loading = null; });
   await mf.loading;
   renderModelFiles();
 }
@@ -7731,7 +7732,7 @@ function renderModelFiles() {
     if (f.have === true) act = '<span class="mm-ok">✓ Here</span>';
     else if (dl?.state === 'running') act = `<span class="mm-prog"><span class="mm-bar" style="width:${dl.total ? Math.round((dl.received / dl.total) * 100) : 0}%"></span></span><span class="mm-pct">${dl.total ? `${Math.round((dl.received / dl.total) * 100)}% of ${sizeLabel(dl.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="mf-cancel" data-id="${esc(dl.id)}" aria-label="Stop downloading ${esc(f.file)}">✕</button>`;
     else if (dl?.state === 'done') act = '<span class="mm-ok">✓ Downloaded</span>';
-    else if (f.gated === 'terms') act = `<span class="mm-none">Accept its terms first: <a href="${esc(mfRepoPage(f.url))}" target="_blank" rel="noopener noreferrer">open the model's page</a>, click Agree (it's granted at once), then</span><button type="button" class="btn small" data-act="mf-recheck">↻ Check again</button>`;
+    else if (f.gated === 'terms') act = `<span class="mm-none">Accept its terms first: Hugging Face says ${d.huggingface?.user ? `<b>${esc(d.huggingface.user)}</b>` : 'your account'} isn't on this model's list yet. Open <a href="${esc(mfRepoPage(f.url))}" target="_blank" rel="noopener noreferrer">${esc(mfRepoName(f.url))}</a> (this repo, not the model's main page: each has its own Agree) signed in as that account, click Agree (granted at once), then</span><button type="button" class="btn small" data-act="mf-recheck">↻ Check again</button>`;
     else if (f.gated) act = `<span class="mm-none">${hf ? "Hugging Face didn't accept your token: connect your account again above." : 'Behind a free Hugging Face account: connect yours above.'}</span>`;
     else if (f.download) act = `${dl?.state === 'error' ? `<span class="mm-err">${linkify(dl.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mf-get" data-file="${esc(f.file)}" ${d.comfy ? '' : 'disabled title="Start ComfyUI first"'}>${dl?.state === 'error' ? '↻ Try again' : '⬇ Get'}</button>`;
     else if (/^https?:\/\//.test(f.url || '')) act = `<span class="mm-none">Get it from <a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(f.url).hostname)}</a> and put it in models/${esc(f.folder || '…')}.</span>`;
@@ -7766,6 +7767,7 @@ const linkify = text => esc(text).replace(/(https?:\/\/[^\s"'<>]+|(?:^|(?<=[\s(]
 // A workflow's name without the model's ("FLUX 3 Klein Base · BF16: text to image" → "BF16: text to image").
 const mfFlowShort = name => String(name).split(' · ').slice(1).join(' · ') || name;
 // The model's page on Hugging Face (where Agree is), from a file's link.
+const mfRepoName = url => { try { return decodeURIComponent(new URL(mfRepoPage(url)).pathname.replace(/^\/+/, '')) || 'the model\'s page'; } catch { return 'the model\'s page'; } };
 const mfRepoPage = url => { try { const u = new URL(url); return u.pathname.includes('/resolve/') ? `${u.origin}${u.pathname.split('/resolve/')[0]}` : url; } catch { return url; } };
 // Some files (FLUX 3 Klein's) are handed out only to a signed-in Hugging Face account that clicked Agree on the
 // model's page: one token, pasted once here, and ⬇ Get works for them like for the rest.
@@ -7824,10 +7826,10 @@ async function connectHuggingFace(token) {
     renderModelFilesHf(mf.data);
   }
 }
-async function reloadModelFiles() {
+async function reloadModelFiles({ fresh = false } = {}) {
   mf.data = null;
   renderModelFiles();
-  await loadModelFiles();
+  await loadModelFiles({ fresh });
 }
 $('#modelFilesDlg').addEventListener('click', async e => {
   const b = e.target.closest('button[data-act]');
@@ -7838,7 +7840,7 @@ $('#modelFilesDlg').addEventListener('click', async e => {
   else if (b.dataset.act === 'mf-hf-show') { mf.hfToken = $('#mfHfToken')?.value || ''; mf.hfTokenVisible = !mf.hfTokenVisible; renderModelFilesHf(mf.data); const input = $('#mfHfToken'); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); }
   else if (b.dataset.act === 'mf-hf-save') connectHuggingFace($('#mfHfToken')?.value || '');
   else if (b.dataset.act === 'mf-hf-off') { b.disabled = true; await api('/api/huggingface', { method: 'DELETE' }).catch(err => toast(friendly(err), true)); await reloadModelFiles(); }
-  else if (b.dataset.act === 'mf-recheck') { b.disabled = true; await reloadModelFiles(); }
+  else if (b.dataset.act === 'mf-recheck') { b.disabled = true; await reloadModelFiles({ fresh: true }); }
   else if (b.dataset.act === 'mf-get') downloadModels(files.filter(f => f.file === b.dataset.file).slice(0, 1));
   else if (b.dataset.act === 'mf-model') downloadModels(mfToGet(mf.data.models.find(m => m.id === b.dataset.id) || { files: [] }));
   else if (b.dataset.act === 'mf-cancel') api(`/api/comfy/downloads/${b.dataset.id}/cancel`, { method: 'POST' }).then(pollDownloads, () => {});

@@ -64,6 +64,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.72.7 — Check again really checks again.** In ⬇ Model files, a file behind a Hugging Face account that said **Accept its terms first** kept saying it after you clicked Agree, until Prompt Maker was restarted: **↻ Check again** now asks Hugging Face afresh. The message also names the account it checked and the exact repo to agree on, since FLUX 3 Klein's files live in `flux-3-image-klein-comfy`, a different page from the model's own, with its own Agree.
+
 **1.72.6 — the real GNOME title bar.** On GNOME (Ubuntu's desktop), 1.72.5 changed nothing: GNOME never lets a Wayland window ask for the desktop's title bar, so Chrome kept drawing its own 23-pixel bar with shrunken buttons. Prompt Maker's window now opens through XWayland on GNOME, and GNOME draws the title bar itself: the normal height and full-sized minimize, maximize and close. Graphics acceleration is the same either way; `PM_WAYLAND=1` opens a native Wayland window instead.
 
 **1.72.5 — normal window controls.** On Linux, Prompt Maker now uses the desktop's normal title bar and borders instead of Chrome's compressed app frame. Minimize, maximize and close are full-sized again. This changes only Prompt Maker's private browser profile, not your regular Chrome windows.
