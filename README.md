@@ -64,6 +64,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.72.5 — normal window controls.** On Linux, Prompt Maker now uses the desktop's normal title bar and borders instead of Chrome's compressed app frame. Minimize, maximize and close are full-sized again. This changes only Prompt Maker's private browser profile, not your regular Chrome windows.
+
 **1.72.4 — a crisp title-bar icon.** The tiny icon beside “Prompt Maker · Create” now has its own 16-pixel artwork instead of shrinking a larger desktop icon into that space.
 
 **1.72.3 — launcher icon refresh.** Prompt Maker now refreshes its window and sidebar artwork instead of reusing an old browser-profile copy, and a window opened from the desktop shortcut stays grouped under Prompt Maker's green icon in the system dock or sidebar.

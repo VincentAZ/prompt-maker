@@ -32,6 +32,10 @@ open_app() {
   fi
   if [ -n "$bin" ] && [ "$bin" != default ]; then
     mkdir -p "$profile"
+    # Chrome's custom Linux app frame squeezes the whole title bar, including minimize/maximize/close. This profile
+    # belongs only to Prompt Maker, so ask Chrome to use the desktop's normal-sized title bar without changing the
+    # person's regular browser. If this window is already open, the preference safely takes effect next time.
+    "$NODE" lib/browser-profile.js "$profile" >/dev/null 2>&1 || true
     # On Wayland the browser ignores --class and names an app window "<browser>-<address>__-Default", so the dock
     # couldn't tie it to the app-menu entry and showed a gear. The window gets that name on X11 too (--class) and
     # the entry's StartupWMClass follows the browser in use, so the dock shows the green star on both. (1.68.3 opened

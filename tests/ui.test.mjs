@@ -1375,6 +1375,10 @@ esac
   });
 
   await test('start-up: start with the computer from Settings; the offline banner can start the app', async () => {
+    const browserProfile = path.join(tmp, 'browser-profile');
+    execFileSync(process.execPath, ['lib/browser-profile.js', browserProfile], { cwd: ROOT });
+    const browserPrefs = JSON.parse(await fs.readFile(path.join(browserProfile, 'Default', 'Preferences'), 'utf8'));
+    eq(browserPrefs.browser.custom_chrome_frame, false, 'the Linux app window uses normal system title-bar controls');
     await click('.tabs button[data-view="settings"]');
     await waitFor('!document.querySelector("#startupOpts").hidden', 'start-up switches');
     assert(!(await js('document.querySelector("#sAutostart").checked')), 'off at first');

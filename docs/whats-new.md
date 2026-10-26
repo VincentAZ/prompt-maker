@@ -2,6 +2,10 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.72.5
+
+**Normal window controls on Linux.** Prompt Maker now uses the desktop's normal title bar and borders instead of Chrome's compressed app frame. Minimize, maximize and close are full-sized again. The preference belongs to Prompt Maker's private browser profile and does not change regular Chrome windows.
+
 ## Update in 1.72.4
 
 **A crisp title-bar icon.** The tiny icon beside “Prompt Maker · Create” now has its own 16-pixel artwork instead of shrinking a larger desktop icon into that space. The Windows icon includes that exact size too.
