@@ -1,7 +1,7 @@
 ; Prompt Maker's Windows installer (Inno Setup 6). Built by packaging\windows\build.ps1, which passes
 ;   /DVersion=1.2.3   /DStage=<a folder holding app\ and node\>   /DOut=<the dist folder>
 ; Per user, no administrator rights: the app and its own Node.js go under %LOCALAPPDATA%\Programs\Prompt Maker, the
-; app's own set-up (lib\autostart.js) puts it in the Start menu, starts it with the computer and registers the
+; app's own set-up (lib\autostart.js) puts it in the Start menu and on the desktop, starts it with the computer and registers the
 ; promptmaker:// link, and the uninstaller takes all of that out again. The data folder (%APPDATA%\Prompt Maker) is
 ; never touched: it's the user's work.
 #ifndef Version
@@ -40,7 +40,7 @@ Source: "{#Stage}\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs ignorevers
 Source: "{#Stage}\node\*"; DestDir: "{app}\node"; Flags: recursesubdirs ignoreversion
 
 [Run]
-; The app's own set-up, as the first start would do it: Start menu entry, start with the computer, the promptmaker:// link.
+; The app's own set-up, as the first start would do it: Start menu and desktop entries, start with the computer, the promptmaker:// link.
 Filename: "{app}\node\node.exe"; Parameters: """{app}\app\lib\autostart.js"" install"; WorkingDir: "{app}\app"; StatusMsg: "Putting Prompt Maker in your Start menu..."; Flags: runhidden waituntilterminated
 ; A silent install (an update from Settings) brings Prompt Maker back up on its own; an interactive one offers to open it.
 ; skipifsilent matters: a postinstall entry runs in a silent install too, and without it an update started Prompt Maker

@@ -2,6 +2,22 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.72.2
+
+**Hugging Face tokens stay put.** **⬇ Model files → Connect Hugging Face** now explains the setup in two short steps, links straight to a new Read token, and has **Show** so you can check what you pasted. The token stays in the field while the model list checks files in the background. If Hugging Face rejects it, it stays selected, ready for a replacement paste.
+
+## Update in 1.72.1
+
+**The right icon everywhere.** Prompt Maker now uses a crisp small icon in its window and browser tab, and corrected icon sizes in the desktop, dock and window switcher. New Linux and Windows setups put a launch shortcut on the desktop too. **Settings → Services → Put a Prompt Maker shortcut on my desktop** adds or removes it in one click.
+
+## Update in 1.72.0
+
+**Set up LM Studio from the app, on Linux too.** When LM Studio isn't on the computer, the banner at the top, **Settings → Services** and the **Brains** page offer **⬇ Set up LM Studio**. On Linux it installs LM Studio's headless service (LM Studio's own install script, about 1 GB, into your home folder; no window, your shell left alone; the desktop app can be added later and shares the models), starts its server and fetches a Brain that can see (Qwen3-VL 8B, or 4B on a computer with less memory) through LM Studio's own downloader. On Windows it runs LM Studio's installer quietly, as the first start does. Each part has a bar, a part already there is skipped, and the **Brains** page offers **⬇ Get a Brain that can see** on its own when none of your Brains can look at pictures.
+
+**⬇ Model files: everything each model needs, in one list.** In **Settings → Services** (the ComfyUI row), on the **Models** page, in Settings → ComfyUI's workflow check, and at the end of the ComfyUI set-up and of the Windows first start. One section per model: each file in plain words (the model, its text encoder, its VAE, a LoRA, a vision encoder), ✓ for the ones ComfyUI has, the size of the rest (asked of Hugging Face when the list opens), and **⬇ Get** for one file, **⬇ Get all for this model**, or **⬇ Get everything**, with the total. A file Hugging Face hands only to a signed-in account (FLUX 3 Klein's) gets **Connect Hugging Face**: a token pasted once (checked, kept in the data folder for you only), and those files download like the rest; one whose terms you haven't accepted yet points you to *Agree* on the model's page. A file only one variant of a model uses says so.
+
+**⬇ Set up ffmpeg.** The video tools (previews of phone videos, 24 fps and cropped copies, cutting, joining the pieces of a long render, a spoken line on a video) used to need an ffmpeg you installed yourself. **Settings → Services** now has a **Video tools (ffmpeg)** row that says whether it's there and fetches a ready-made build into the data folder when it isn't; the motion video's notes offer the same button. A system ffmpeg is left alone. On Windows, the first start gets it as its fourth part.
+
 ## Update in 1.71.0
 
 **Renders keep their recipe.** Every picture and video Prompt Maker keeps carries the job ComfyUI wrote into it (prompt, model, LoRAs, seed, settings), so a file you share can be made again, and **📜 Recipe inside** reads it back.

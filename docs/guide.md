@@ -67,7 +67,7 @@ The full manual for [Prompt Maker](../README.md): every page, setting and trick.
 - **Your prompt sets.** In **Settings → Instructions**, create named sets with your own example prompts. Separate examples with blank lines and save. Select any combination in **Create → Prompt options** (the same list is in **Fine-tune → Writing**); while the Brain writes, the take says "Writing with your … examples", so you know they went along. They go ahead of the model's own examples, so a Brain short on room leaves the model's out before yours; selections are remembered and work with every model.
 - **Model playbooks you own.** Add a new model, edit its instructions, or paste a model's official docs and let your Brain draft the playbook. Import and export models as `.json`.
 - **Zero install fuss.** Plain Node.js with no dependencies: no `npm install`, no build step.
-- **No terminal after the first start.** On Linux and Windows a launcher puts Prompt Maker in your app menu and starts it with your computer. **Settings → Services** starts and stops LM Studio, ComfyUI and Prompt Maker itself.
+- **No terminal after the first start.** On Linux and Windows a launcher puts Prompt Maker in your app menu and on your desktop, and starts it with your computer. **Settings → Services** starts and stops LM Studio, ComfyUI and Prompt Maker itself, adds or removes the desktop shortcut, and sets up what isn't on the computer yet: **⬇ Set up LM Studio** (with a Brain that can see), **⬇ Set up ComfyUI**, and **⬇ Model files** for the big files each model needs.
 - **Runs on your computer.** Your work stays on your machine unless you add a Cloud Brain (see [Offline](#offline)).
 
 ## How it works
@@ -89,21 +89,21 @@ Prompt Maker builds a request out of three parts and sends it to LM Studio: its 
 | What | Details |
 |---|---|
 | **Node.js 20.11+** | [nodejs.org](https://nodejs.org). Check with `node --version`. |
-| **LM Studio** | [lmstudio.ai](https://lmstudio.ai), free for macOS (Apple Silicon), Windows and Linux. On Windows, Prompt Maker's first start installs it for you. |
-| **A Brain** (a local AI model) | Any chat model works. Use a **vision** model (tagged "Vision" in LM Studio) if you want to use images. See [Choosing a Brain](#choosing-a-brain). On Windows, the first start fetches Qwen3-VL. |
+| **LM Studio** | [lmstudio.ai](https://lmstudio.ai), free for macOS (Apple Silicon), Windows and Linux. On Linux and Windows, Prompt Maker sets it up for you (see [Setting up LM Studio](#setting-up-lm-studio-and-a-brain-that-can-see)); on Windows the first start does. |
+| **A Brain** (a local AI model) | Any chat model works. Use a **vision** model (tagged "Vision" in LM Studio) if you want to use images. See [Choosing a Brain](#choosing-a-brain). The LM Studio set-up fetches Qwen3-VL, which can see. |
 | **Hardware** | Enough memory to run that model. A small 4–8B vision model needs roughly 4–8 GB of GPU VRAM or Mac unified memory. CPU-only works, just slowly. |
 | **A modern browser** | Chrome/Edge 111+, Firefox 121+, Safari 16.2+ |
-| **ComfyUI** *(optional)* | Only for rendering. Any recent [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally (default port `8188`); on Linux, **Settings → Services → ⬇ Set up ComfyUI** installs it for you, and on Windows the first start does (see [Rendering](#rendering-with-comfyui-optional)). Node 22+ gives live progress; older Node versions poll instead. |
+| **ComfyUI** *(optional)* | Only for rendering. Any recent [ComfyUI](https://github.com/comfyanonymous/ComfyUI) running locally (default port `8188`); on Linux, **Settings → Services → ⬇ Set up ComfyUI** installs it for you, and on Windows the first start does (see [Rendering](#rendering-with-comfyui-optional)); **⬇ Model files** then gets the model files. Node 22+ gives live progress; older Node versions poll instead. |
 
 ## Installation
 
-**Ubuntu / Debian, one click:** download `prompt-maker_<version>_amd64.deb` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and double-click it (or `sudo apt install ./prompt-maker_*.deb`). It brings its own Node.js, puts **Prompt Maker** in your app menu, and the first start sets up the rest and asks how private you want it. Then do step 2 below for LM Studio, and you're done; steps 1, 3 and 4 are for every other system. To build the package yourself: `packaging/deb/build.sh` (it fetches Node 22 and writes `dist/`).
+**Ubuntu / Debian, one click:** download `prompt-maker_<version>_amd64.deb` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and double-click it (or `sudo apt install ./prompt-maker_*.deb`). It brings its own Node.js, puts **Prompt Maker** in your app menu and on your desktop, and the first start sets up the rest and asks how private you want it. LM Studio, a Brain that can see and ComfyUI come next, each in one click from **Settings → Services** (or from the banner and from Create, which say when one is missing), and **⬇ Model files** gets the files each model needs; steps 1 to 4 below are for every other system. To build the package yourself: `packaging/deb/build.sh` (it fetches Node 22 and writes `dist/`).
 
-**Windows, one installer:** download `prompt-maker-<version>-setup.exe` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and run it (take the newest release that has one: the Windows installer comes out less often than the Linux package, and Prompt Maker updates itself from there). It installs for your user alone (no administrator password; under `%LOCALAPPDATA%\Programs\Prompt Maker`), brings its own Node.js, puts **Prompt Maker** in your Start menu, starts it with your computer and sets up the link the page's Start button uses; tick **Open Prompt Maker** at the end and it opens as its own window. Windows may say it doesn't recognise the installer (it isn't signed): **More info → Run anyway**. **The first start then gets everything else** from one screen, with nothing to type or pick: ComfyUI in its own folder with its own Python and the PyTorch for your graphics card, LM Studio through its own installer (quietly, for your user), and a Brain that can see (Qwen3-VL, about 6 GB) through LM Studio's own downloader; each part has a bar, and nothing behind the screen can be used until it's done (a few gigabytes, so some minutes). A set-up that stops (no internet, the laptop closed) carries on from where it was with **↻ Try again**. See [The first start on Windows](#the-first-start-on-windows-everything-in-one-go). Prompt Maker runs in the background with no window of its own: close the app window when you're done and it keeps running; **■ Stop** on the Prompt Maker row in **Settings → Services** stops it. Steps 1 to 4 below are for every other system. To build the installer yourself, on Windows: `packaging\windows\build.ps1` (needs Inno Setup 6, `winget install JRSoftware.InnoSetup`; it fetches Node 22 and writes `dist\`), and `packaging\windows\check.ps1` tries the result in a throwaway folder, update included (it skips the first-start set-up).
+**Windows, one installer:** download `prompt-maker-<version>-setup.exe` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and run it (take the newest release that has one: the Windows installer comes out less often than the Linux package, and Prompt Maker updates itself from there). It installs for your user alone (no administrator password; under `%LOCALAPPDATA%\Programs\Prompt Maker`), brings its own Node.js, puts **Prompt Maker** in your Start menu and on your desktop, starts it with your computer and sets up the link the page's Start button uses; tick **Open Prompt Maker** at the end and it opens as its own window. Windows may say it doesn't recognise the installer (it isn't signed): **More info → Run anyway**. **The first start then gets everything else** from one screen, with nothing to type or pick: ComfyUI in its own folder with its own Python and the PyTorch for your graphics card, LM Studio through its own installer (quietly, for your user), and a Brain that can see (Qwen3-VL, about 6 GB) through LM Studio's own downloader; each part has a bar, and nothing behind the screen can be used until it's done (a few gigabytes, so some minutes). A set-up that stops (no internet, the laptop closed) carries on from where it was with **↻ Try again**. See [The first start on Windows](#the-first-start-on-windows-everything-in-one-go). Prompt Maker runs in the background with no window of its own: close the app window when you're done and it keeps running; **■ Stop** on the Prompt Maker row in **Settings → Services** stops it. Steps 1 to 4 below are for every other system. To build the installer yourself, on Windows: `packaging\windows\build.ps1` (needs Inno Setup 6, `winget install JRSoftware.InnoSetup`; it fetches Node 22 and writes `dist\`), and `packaging\windows\check.ps1` tries the result in a throwaway folder, update included (it skips the first-start set-up).
 
 **Updating it:** **Settings → ⬆ Updates → Check for a newer version**, then **⬆ Update** and **↻ Restart**: no terminal, for the .deb, the Windows installer and a git copy alike (see [Settings](#settings)).
 
-**Removing it:** `sudo apt remove prompt-maker` (or remove it in your software app, if it lists it). On Windows, **Settings → Apps → Prompt Maker → Uninstall**: it stops Prompt Maker and takes the Start menu entry, the start-with-your-computer entry and the link out with it. Your pictures, videos, playbooks and settings stay in your data folder, and ComfyUI and LM Studio stay too. Prompt Maker's start-with-your-computer entry stays in your home folder, but it does nothing once the app is gone, and installing again brings it back as it was. To remove that too, run `prompt-maker --uninstall` first. If you then run Prompt Maker from another folder, it notices that the start-up entry points at the removed copy and moves it to itself; **Settings → Services** also says when that entry opens another copy, with a **Use this copy** button.
+**Removing it:** `sudo apt remove prompt-maker` (or remove it in your software app, if it lists it). On Windows, **Settings → Apps → Prompt Maker → Uninstall**: it stops Prompt Maker and takes the Start menu, desktop, start-with-your-computer and Start-link entries out with it. Your pictures, videos, playbooks and settings stay in your data folder, and ComfyUI and LM Studio stay too. Prompt Maker's start-with-your-computer entry stays in your home folder on Linux, but it does nothing once the app is gone, and installing again brings it back as it was. To remove that and the desktop shortcut too, run `prompt-maker --uninstall` first. If you then run Prompt Maker from another folder, it notices that the start-up entry points at the removed copy and moves it to itself; **Settings → Services** also says when that entry opens another copy, with a **Use this copy** button.
 
 ### 1. Install Node.js
 
@@ -111,6 +111,8 @@ Prompt Maker builds a request out of three parts and sends it to LM Studio: its 
 - **Linux:** use your package manager, or [nvm](https://github.com/nvm-sh/nvm): `nvm install --lts`.
 
 ### 2. Install LM Studio and get a model
+
+**On Linux and Windows, Prompt Maker can do this step for you:** when LM Studio isn't on the computer, the banner at the top, **Settings → Services** and the **Brains** page offer **⬇ Set up LM Studio**, which installs it, starts its server and fetches a Brain that can see (see [Setting up LM Studio](#setting-up-lm-studio-and-a-brain-that-can-see)). By hand:
 
 1. Install [LM Studio](https://lmstudio.ai) and open it once. This also installs its `lms` command-line tool.
 2. Go to the **Discover** tab (🔍) and download a vision model, for example **Qwen3-VL 8B**.
@@ -150,7 +152,7 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 
 **On Linux, the first start sets everything up for you,** so you never need the terminal again:
 
-- **Prompt Maker in your app menu.** Open it from there like any other app. It comes with its own icon (the green star), which the app menu, the dock, the window switcher and the share-screen dialog all show for the Prompt Maker window.
+- **Prompt Maker in your app menu and on your desktop.** Open either launcher like any other app. It comes with its own icon (the green star), which the app menu, desktop, dock, window switcher and share-screen dialog all show for the Prompt Maker window. **Settings → Services** can add or remove the desktop shortcut later.
 - **It starts with your computer** and keeps running in the background. It turns on LM Studio's server too, and comes back on its own if it ever stops. Switch this off or on in **Settings → Services**.
 - **A Start button that works even when Prompt Maker is off.** If the page ever says *Prompt Maker's server isn't running*, click **▶ Start Prompt Maker**. The first time, your browser asks to open Prompt Maker: allow it (tick *Always allow*). The page keeps a copy of itself, so it opens even while the server is off.
 
@@ -159,14 +161,15 @@ To stop Prompt Maker, press `Ctrl+C` in the terminal.
 | Row | What you can do |
 |---|---|
 | **Prompt Maker** | ■ Stop it. The page shows it stopped right away (the rows say *Stopped*) and offers ▶ Start Prompt Maker |
-| **LM Studio** | ▶ Start its server, or ■ Stop it, which first unloads every model to free the GPU |
-| **ComfyUI** | ▶ Start it, or ■ Stop it. It starts from its folder, the way Prompt Maker last saw you run it, or with live previews on (`--preview-method auto`); change the folder or the options under **ComfyUI** in Settings. Tick *Start ComfyUI along with it* to have it come up with Prompt Maker. Not on this computer yet? **⬇ Set up ComfyUI** installs it (see [Setting up ComfyUI](#setting-up-comfyui-one-click)) |
+| **LM Studio** | ▶ Start its server, or ■ Stop it, which first unloads every model to free the GPU. Not on this computer yet? **⬇ Set up LM Studio** installs it, with a Brain that can see (see [Setting up LM Studio](#setting-up-lm-studio-and-a-brain-that-can-see)) |
+| **ComfyUI** | ▶ Start it, or ■ Stop it. It starts from its folder, the way Prompt Maker last saw you run it, or with live previews on (`--preview-method auto`); change the folder or the options under **ComfyUI** in Settings. Tick *Start ComfyUI along with it* to have it come up with Prompt Maker. Not on this computer yet? **⬇ Set up ComfyUI** installs it (see [Setting up ComfyUI](#setting-up-comfyui-one-click)). **⬇ Model files** lists the big files each model needs and gets the ones that aren't here (see [Getting the model files](#getting-the-model-files--model-files)) |
+| **Video tools (ffmpeg)** | Says whether ffmpeg is on this computer (its own copy in the data folder, or the system's). Not there? **⬇ Set up ffmpeg** fetches a ready-made build (see [Setting up ffmpeg](#setting-up-ffmpeg-video-tools)) |
 
 **■ Stop everything (frees the GPU)** stops ComfyUI, unloads LM Studio's models and turns its server off, then stops Prompt Maker. On Create, *ComfyUI offline* has a **▶ Start it** link too.
 
 If the app folder moves or is removed, the start-up entry does nothing instead of failing at every login, and the next start from the new place moves it there. To undo all of it, run `./start.sh --uninstall`; `./start.sh --install` sets it up again. Logs: `journalctl --user -u prompt-maker -f`; ComfyUI's own output, when Prompt Maker starts it, goes to `comfyui.log` in your data folder, not the system journal. The launcher opens Prompt Maker as its own app window with its own browser profile in the data folder (Brave, Chromium, Chrome or Edge, whichever is there; the default browser otherwise). `PM_BROWSER=/path/to/browser` picks the browser, `PM_BROWSER=default` keeps the old way. macOS gets the same setup with its own launcher (coming).
 
-On **Windows**, the installer does all of this as it installs (see [Installation](#installation)); with a git copy, double-click **`start.bat`** in the app folder. It starts LM Studio's server if needed, starts Prompt Maker in the background (no window of its own) and opens it as its own app window with its own browser profile in the data folder, as on Linux (Brave, Chrome, Chromium or Edge, whichever is there, so always a window; `PM_BROWSER` as above). The first start also puts **Prompt Maker** in your Start menu and makes it start with your computer; **Settings → Services** switches that off, and `start.bat --uninstall` removes it. Closing the window leaves Prompt Maker running; **■ Stop** in Settings → Services stops it. To see what the server prints, run `node server.js` in the app folder instead. Tried on one Windows 11 PC so far: if something doesn't work, please report it.
+On **Windows**, the installer does all of this as it installs (see [Installation](#installation)); with a git copy, double-click **`start.bat`** in the app folder. It starts LM Studio's server if needed, starts Prompt Maker in the background (no window of its own) and opens it as its own app window with its own browser profile in the data folder, as on Linux (Brave, Chrome, Chromium or Edge, whichever is there, so always a window; `PM_BROWSER` as above). The first start also puts **Prompt Maker** in your Start menu and on your desktop, and makes it start with your computer; **Settings → Services** controls both start-up and the desktop shortcut, and `start.bat --uninstall` removes them. Closing the window leaves Prompt Maker running; **■ Stop** in Settings → Services stops it. To see what the server prints, run `node server.js` in the app folder instead. Tried on one Windows 11 PC so far: if something doesn't work, please report it.
 
 ## Quick start
 
@@ -540,27 +543,58 @@ Without a ComfyUI on this computer, **Settings → Services** shows **⬇ Set up
 4. **Installs PyTorch for your card**: the CUDA build for NVIDIA (about 3 GB), the ROCm build for AMD (new, not yet tried on a real card), the small CPU build without a card.
 5. **Installs ComfyUI's packages**, then **starts it** and points **Settings → ComfyUI** at it, so ▶ Start, ■ Stop and *Start ComfyUI along with it* work from then on.
 
-Each step shows in plain words, with the last line of what runs under it and a bar while something downloads. Close the dialog and it goes on; Services shows how far it is. **✕ Stop** stops it, and a set-up that stopped (no internet, the laptop closed) **carries on from where it was** next time: what's done is skipped. Model files aren't part of it: Fine-tune → Rendering offers **⬇ Download** for each one a workflow needs (see [Missing models](#missing-models)).
+Each step shows in plain words, with the last line of what runs under it and a bar while something downloads. Close the dialog and it goes on; Services shows how far it is. **✕ Stop** stops it, and a set-up that stopped (no internet, the laptop closed) **carries on from where it was** next time: what's done is skipped. Model files aren't part of it: when it's done, **⬇ Get the model files →** opens the list of what each model needs (see [Getting the model files](#getting-the-model-files--model-files)), and Fine-tune → Rendering offers **⬇ Download** for each file a workflow needs (see [Missing models](#missing-models)).
 
 **On Windows** the same set-up runs with its own copy of Python: python.org's embeddable Python 3.12 unpacked into `python\` inside ComfyUI's folder (nothing registered with Windows, no other Python needed or touched), pip, then PyTorch from PyTorch's own index: the CUDA 13 build for an NVIDIA card (CUDA 12.6 on a driver older than the 580 series), the XPU build for Intel Arc (the Arc in Core Ultra chips too), the processor's build otherwise (AMD has no PyTorch for Windows). ComfyUI comes as GitHub's archive through Windows' own `tar`. The folder is `%LOCALAPPDATA%\Prompt Maker\ComfyUI` unless Settings → ComfyUI says otherwise. An NVIDIA card without a driver is told so: get the driver from nvidia.com, restart, then set up. On macOS, install [ComfyUI Desktop](https://www.comfy.org/download) and enter its folder in **Settings → ComfyUI**.
+
+### Setting up LM Studio and a Brain that can see
+
+<img src="screenshots/lms-setup.png" alt="The Set up LM Studio dialog: LM Studio not on this computer yet, its server, and the Brain that can see it will fetch, with the Set it up button" width="600">
+
+LM Studio runs the Brain. Without it on this computer (its `lms` tool isn't in your home folder), the banner at the top says **LM Studio isn't on this computer yet** with **⬇ Set up LM Studio**, and so do **Settings → Services** and the **Brains** page. One click, and Prompt Maker:
+
+1. **Installs LM Studio.** On Linux, as its headless service (LM Studio calls it *llmster*): LM Studio's own install script fetches the build for your computer (about 1 GB; the CUDA build when the NVIDIA driver is there) into `~/.lmstudio/bin`, with the `lms` tool beside it. It runs in the background with no window, nothing else on the computer is touched (your shell's PATH is left alone), and the LM Studio desktop app from [lmstudio.ai](https://lmstudio.ai) can be added later: it shares the same models. The service needs one small system library, libatomic; when it's missing, the dialog offers **Install it** (behind the system's password prompt). On Windows, LM Studio's installer is downloaded from lmstudio.ai and run quietly for your user, as the first start does.
+2. **Starts its server**, the way **▶ Start it** does.
+3. **Gets a Brain that can see**: Qwen3-VL 8B (about 6 GB; the 4B on a computer with less than 20 GB of memory), through LM Studio's own downloader, which picks the quant for your hardware. Any vision model already in LM Studio counts, and this step is skipped; the **Brains** page offers **⬇ Get a Brain that can see** on its own when LM Studio runs but none of its Brains can look at pictures.
+
+Each part shows with a bar; close the dialog and it goes on, and Services shows how far it is. **✕ Stop** stops it, and a set-up that stopped carries on from where it was next time. When it's done, pick the new Brain in the **Brain** menu at the top. On macOS, install LM Studio from lmstudio.ai and open it once.
+
+### Setting up ffmpeg (video tools)
+
+ffmpeg is the free tool that works with video files. Prompt Maker uses it for motion videos from a phone the browser can't play (a preview), 24 fps and cropped copies, cutting a clip, joining the pieces of a long render and **🎬 Join videos**, and a spoken line on a video; without it those parts are left out, and the motion video's notes say so. **Settings → Services** has a **Video tools (ffmpeg)** row that says whether it's there, and offers **⬇ Set up ffmpeg** when it isn't; the motion video's notes in step 3 offer the same button when the video needs it. One click, and Prompt Maker fetches a ready-made build (the FFmpeg-Builds project on GitHub, about 150 MB on Linux, 200 MB on Windows) and puts `ffmpeg` and `ffprobe` in `ffmpeg/bin` in the data folder, with their license. No password, nothing else on the computer is touched, and a system ffmpeg stays as it is: Prompt Maker looks at `FFMPEG_BIN` first, then its own copy, then the system's. A motion video already in step 3 is looked at again once it's done, so its notes and buttons follow. On macOS, `brew install ffmpeg`. The Windows first start gets it as its fourth part.
+
+### Getting the model files (⬇ Model files)
+
+<img src="screenshots/model-files.png" alt="The Model files dialog: each model with the files it needs, what each file is, its size, and Get buttons" width="760">
+
+Each model needs a few big files in ComfyUI: the model itself, a text encoder that reads your prompt, a VAE that makes the pixels, sometimes a LoRA or a vision encoder. **⬇ Model files** (in **Settings → Services** on the ComfyUI row, on the **Models** page, in Settings → ComfyUI's workflow check, and at the end of the ComfyUI set-up and of the first start on Windows) lists them all, one section per model:
+
+- **Each file, in plain words:** what it is (*The model*, *Text encoder*, *VAE*, *LoRA*…), its file name, and **✓ Here** when ComfyUI has it. The files come from the workflows the model has (every workflow that comes with the app names a Hugging Face link for each of its files).
+- **Its size** for the ones you don't have, asked of Hugging Face when the list opens (nothing is downloaded by that). Each model says how much it still needs, and the bottom line adds it all up.
+- **⬇ Get** fetches one file, **⬇ Get all for this model** every file that model lacks, **⬇ Get everything** the lot. They go straight into ComfyUI's models folder, with a bar each; a download that stops carries on from where it was, and **✕** stops one. They're the same downloads as Fine-tune → Rendering's (see [Missing models](#missing-models)).
+- **A file behind a Hugging Face account** (FLUX 3 Klein's, for example: Hugging Face hands them only to a signed-in account that clicked *Agree* on the model's page) says so, and the dialog offers **Connect Hugging Face**: click **Get a Read token**, sign in or make a free account, name and create the token, then paste it and click **Connect account**. **Show** lets you check the paste. The token stays in the field while the model list refreshes; if Hugging Face rejects it, it stays selected so another paste replaces it. A *Fine-grained* token can't open gated models unless *Read access to contents of all public gated repos you can access* is ticked, and Prompt Maker says so if needed. Prompt Maker checks the token, says whose it is, and keeps it in `huggingface.json` in the data folder, readable by you only; it goes to huggingface.co alone (never to the file store Hugging Face hands the download to) and never back to the page. From then on those files have **⬇ Get** like the rest. A file whose terms you haven't accepted yet says **Accept its terms first**, with a link to the model's page: click *Agree* there, then **↻ Check again**. **Disconnect** forgets the token.
+- **A file only some of a model's workflows use** (FLUX 3 Klein has one model file per variant: BF16, INT8, NVFP4) says which under its kind, so you get the variant you render with, not all of them.
+
+ComfyUI has to be running for the list to say what's there; when it's off, the dialog offers **▶ Start ComfyUI**.
 
 ### The first start on Windows: everything in one go
 
 <img src="screenshots/first-start.png" alt="The Setting up Prompt Maker screen over the app: ComfyUI, LM Studio and a Brain that can see, each with its state and a bar" width="600">
 
-The first time Prompt Maker opens on Windows (from the installer or a git copy) it checks for three things and, if any is missing, puts a **Setting up Prompt Maker** screen over everything and gets them, one after the other, each with a bar:
+The first time Prompt Maker opens on Windows (from the installer or a git copy) it checks for four things and, if any is missing, puts a **Setting up Prompt Maker** screen over everything and gets them, one after the other, each with a bar:
 
 1. **ComfyUI**, as above: its own Python, PyTorch for the card, its packages; then it starts, and Settings → ComfyUI points at it.
 2. **LM Studio**: its official installer is downloaded from lmstudio.ai and run quietly for your user (no password). LM Studio is opened once (that is what puts its `lms` tool in your home folder) and closed again; from then on `lms` runs LM Studio's service in the background with no window, and Prompt Maker talks to that. Open LM Studio yourself any time to browse models.
 3. **A Brain that can see**: Qwen3-VL 8B (about 6 GB; the 4B on a computer with less than 20 GB of memory), fetched by LM Studio's own downloader, which picks the quant for your hardware. Any vision model already in LM Studio counts, and this step is skipped.
+4. **Video tools (ffmpeg)**, as in [Setting up ffmpeg](#setting-up-ffmpeg-video-tools): a ready-made build into the data folder. An ffmpeg already on the computer counts.
 
-ComfyUI counts as done only once it answers; its output goes to `comfyui.log` in the data folder, so a ComfyUI that stops at once says why there. One cause is handled on its own: Windows' **Smart App Control** (on by default on new Windows 11 PCs) refuses a freshly written program file the first time it's loaded when its cloud verdict hasn't arrived, and lets the same file through a moment later; the screen says so, waits, and starts ComfyUI again. Nothing behind the screen can be used until all three are in; **Start creating →** opens the app. A part that fails says why and offers **↻ Try again**, which carries on from where it was (what's downloaded stays). The screen never shows again once the three are there; remove one (uninstall LM Studio, delete the ComfyUI folder) and it comes back for that part. `PM_NO_FIRST_SETUP=1` keeps it off (the test suite and the installer's check set it). Linux keeps the ComfyUI dialog above and asks you to install LM Studio yourself, for now.
+ComfyUI counts as done only once it answers; its output goes to `comfyui.log` in the data folder, so a ComfyUI that stops at once says why there. One cause is handled on its own: Windows' **Smart App Control** (on by default on new Windows 11 PCs) refuses a freshly written program file the first time it's loaded when its cloud verdict hasn't arrived, and lets the same file through a moment later; the screen says so, waits, and starts ComfyUI again. Nothing behind the screen can be used until all four are in; **Start creating →** opens the app. A part that fails says why and offers **↻ Try again**, which carries on from where it was (what's downloaded stays). **Start creating →** opens the app with **⬇ Model files** already open, so the files each model needs come next (see [Getting the model files](#getting-the-model-files--model-files)). The screen never shows again once the four are there; remove one (uninstall LM Studio, delete the ComfyUI folder) and it comes back for that part. `PM_NO_FIRST_SETUP=1` keeps it off (the test suite and the installer's check set it). Linux has the two dialogs above instead, one for ComfyUI and one for LM Studio, each offered where the missing program is noticed.
 
 ### Missing models
 
-A workflow can load a model file your ComfyUI doesn't have yet: a checkpoint, a LoRA, a CLIP vision model… ComfyUI would refuse it. Prompt Maker checks before every render, so nothing is half-done:
+A workflow can load a model file your ComfyUI doesn't have yet: a checkpoint, a LoRA, a CLIP vision model… ComfyUI would refuse it. To get everything up front, model by model, see [Getting the model files](#getting-the-model-files--model-files). Prompt Maker also checks before every render, so nothing is half-done:
 
-- **Fine-tune → Rendering says which files are missing** for the picked workflow, and the ComfyUI folder each goes in (`models/clip_vision`, say). A render started anyway stops with the same list.
+- **Fine-tune → Rendering says which files are missing** for the picked workflow, and the ComfyUI folder each goes in (`models/clip_vision`, say). A render started anyway stops with a short note in plain words (*This workflow needs 4 files that aren't in ComfyUI yet: the model, its VAE, its text encoder and a LoRA*) and **⬇ Get the files**, which opens [⬇ Model files](#getting-the-model-files--model-files) at that model.
 - **⬇ Download** gets one (or **⬇ Download all**) straight into that folder, with a progress bar. It uses the link the workflow carries: ComfyUI's templates and most shared workflows list a download link for each model. It runs in Prompt Maker's server, so it goes on through a reload; **✕** stops it. As soon as it's done, the notice goes and the workflow renders.
 - **Only from Hugging Face**, and only when you click. A link to another site is shown for you to open yourself, and a workflow with no link for a file says so: get it there (or where the workflow came from) and put it in that folder.
 - **A file in a subfolder** (the workflow says `sam3.1.safetensors`, your ComfyUI has `wan-2.1/sam3.1.safetensors`) is found there, with nothing to do.
@@ -759,7 +793,7 @@ Each model is a single `.json` file (built-ins in `playbooks/<id>.json`, yours i
 
 The **Brain** is the AI model in LM Studio that writes your prompts. Pick it from the **Brain** menu at the top right. Type a few letters to narrow the list (words in any order: `qwen 27` finds *Qwen3.8 27B…*), use ↑ ↓ and Enter, and sort it by **Recommended** (suggestions first), use, name or your star rating. The button beside the sort menu reverses the order: newest / oldest, A–Z / Z–A, or highest / lowest rating. Search and filters combine with the chosen order. Provider and capability badges keep those details out of the Brain's name, and the selected row has a clear check. Every row ends in four faces: click one to rate that Brain right there, without picking it, handy when you compare Brains on the same idea: 😞 Poor, 😐 OK, 🙂 Good, 🤩 Wow. Poor is a rating of its own, so a Brain you tried and didn't like stays apart from the ones you haven't rated yet. Click the same face again to take the rating off. The row stays put; the list reorders the next time the menu opens. (Renders are rated with stars; Brains with faces.)
 
-- **👁 vision** models can see images. Text-only models still work for themes, and the app tells you if you try to use an image with one.
+- **👁 vision** models can see images. Text-only models still work for themes, and the app tells you if you try to use an image with one. With no Brain that can see, the **Brains** page offers **⬇ Get a Brain that can see** (Qwen3-VL, through LM Studio's own downloader; see [Setting up LM Studio](#setting-up-lm-studio-and-a-brain-that-can-see)).
 - **Filters** above the list narrow it to Brains with a trait: **🧠 Thinking**, **👁 Vision**, **⚡ Loaded**, and **🎬 Dark scenes** for Brains tuned to write horror, war and crime scenes without balking (a general-purpose Brain may refuse a violent prompt or soften it). Pick any combination, and any provider.
 - **Bigger follows the playbooks better,** especially exact length and structured formats like MiniMax's. Smaller is faster.
 
@@ -832,8 +866,8 @@ Settings is a page of cards: **🖥️ Services**, **⬆ Updates**, **🗑 Delet
 | `PORT` | `5317` | Port for the web app. |
 | `HOST` | `127.0.0.1` | Interface to bind. ⚠️ There's no login, so don't expose it to a network you don't trust. |
 | `PROMPT_MAKER_DATA` | [per-user data folder](#your-data) | Where your settings, history, images, renders, workflows and playbooks are stored. |
-| `LMS_BIN` | `~/.lmstudio/bin/lms` | Path to LM Studio's `lms` tool, used by the **▶ Start it** button. |
-| `FFMPEG_BIN` / `FFPROBE_BIN` | `ffmpeg` / `ffprobe` | Optional, for motion videos: previews of videos the browser can't play, and 24 fps copies. |
+| `LMS_BIN` | `~/.lmstudio/bin/lms` | Path to LM Studio's `lms` tool, used by the **▶ Start it** button; where **⬇ Set up LM Studio** puts it. |
+| `FFMPEG_BIN` / `FFPROBE_BIN` | the copy in the data folder, else `ffmpeg` / `ffprobe` | Optional, for motion videos: previews of videos the browser can't play, 24 fps copies, cutting and joining. **⬇ Set up ffmpeg** puts a copy in `ffmpeg/bin` in the data folder, which is looked at before the system's. |
 
 ## Offline
 
@@ -842,7 +876,7 @@ Settings is a page of cards: **🖥️ Services**, **⬆ Updates**, **🗑 Delet
 - **It refuses anything else.** The LM Studio and ComfyUI URLs must be this computer or a local-network address; internet URLs are rejected.
 - **Nothing external loads.** The page's Content-Security-Policy blocks external scripts, fonts and trackers, and the fonts are bundled.
 - **Nothing else is sent anywhere.** No accounts, no telemetry.
-- **Model downloads only when you click.** **⬇ Download** (for a model file a workflow needs, see [Missing models](#missing-models)) fetches that one file from Hugging Face into ComfyUI's models folder. Nothing is downloaded otherwise, and no other site.
+- **Model downloads only when you click.** **⬇ Download** (for a model file a workflow needs, see [Missing models](#missing-models)) and **⬇ Get** in **⬇ Model files** fetch that file from Hugging Face into ComfyUI's models folder. Opening **⬇ Model files** asks Hugging Face how big the files you don't have are (a HEAD request per file, no download). A Hugging Face token you connect there is checked once with huggingface.co (who it belongs to) and sent with those requests to huggingface.co only; it stays in `huggingface.json` in the data folder, readable by you only, and never reaches the page. The set-ups you start yourself fetch from GitHub and PyPI (ComfyUI), lmstudio.ai (LM Studio), GitHub (ffmpeg) and, through LM Studio's own downloader, Hugging Face (the Brain). Nothing is downloaded otherwise, and no other site.
 - **Your renders belong to this app.** Another website open in your browser can't fetch your renders, pictures or videos from Prompt Maker, just as it can't use the rest of the app.
 - **Its own window.** The launcher opens Prompt Maker as an app window with its own browser profile in the data folder, like a desktop app.
 - **Renders keep their recipe.** ComfyUI writes its job into every file it saves (the prompt, model, LoRAs, seed and settings), and Prompt Maker's copy keeps it, so a render you share can be made again, and **📜 Recipe inside** reads it back.
@@ -871,6 +905,7 @@ Set `PROMPT_MAKER_DATA` to use another folder. **Settings** shows the folder in 
 ├── workflows/      # ComfyUI workflows you've attached, with their setup
 ├── chains/         # chains you saved or edited
 ├── providers.json  # cloud providers you added, with your API keys (readable by you only)
+├── huggingface.json # your Hugging Face token, for the model files behind an account (readable by you only)
 ├── brains.json     # what the app learned about each Brain: thinking, speed, Quick check, its own Thinking level
 ├── assistant.json  # the assistant conversation
 ├── jobs.json       # the assistant's jobs: their plan, progress and log (the newest 30)
@@ -900,7 +935,7 @@ The page is open but the app behind it stopped. Click **▶ Start Prompt Maker**
 <details>
 <summary><b>"LM Studio's server is off" banner</b></summary>
 
-Nothing is answering on the LM Studio URL. Click **▶ Start it** in the banner; it runs `lms server start`, which works whether the LM Studio app is open or not. The app reconnects on its own as soon as the server is back.
+Nothing is answering on the LM Studio URL. Click **▶ Start it** in the banner; it runs `lms server start`, which works whether the LM Studio app is open or not. The app reconnects on its own as soon as the server is back. When LM Studio isn't on this computer at all, the banner says so and offers **⬇ Set up LM Studio** instead (see [Setting up LM Studio](#setting-up-lm-studio-and-a-brain-that-can-see)).
 
 Keep in mind that **opening** the LM Studio app doesn't turn its server on, unless "start server on launch" is enabled in its Developer tab. **Quitting** the app turns the server off.
 </details>
@@ -992,7 +1027,7 @@ A node the workflow uses isn't in ComfyUI at the moment. Fine-tune → Rendering
 <details>
 <summary><b>"This browser can't play that video"</b> (motion video)</summary>
 
-Prompt Maker reads the motion video in your browser to show it and to take frames for the Brain. MP4 (H.264) and WebM always play; H.265 (HEVC) phone videos and ProRes often don't. With [ffmpeg](https://ffmpeg.org) installed, Prompt Maker makes a preview the browser can play, on its own. Without it, the video is still used for rendering, but the Brain can't see the moves: describe them in the theme, or convert the video to MP4 (H.264).
+Prompt Maker reads the motion video in your browser to show it and to take frames for the Brain. MP4 (H.264) and WebM always play; H.265 (HEVC) phone videos and ProRes often don't. With [ffmpeg](https://ffmpeg.org) installed (**⬇ Set up ffmpeg** in Settings → Services, or under the video, does it in one click; see [Setting up ffmpeg](#setting-up-ffmpeg-video-tools)), Prompt Maker makes a preview the browser can play, on its own. Without it, the video is still used for rendering, but the Brain can't see the moves: describe them in the theme, or convert the video to MP4 (H.264).
 </details>
 
 <details>
@@ -1019,7 +1054,7 @@ The workflow has a Load Image node mapped as the image input, but the take has n
 |---|---|---|---|
 | The app (`npm start`) | ✅ tested | ✅ should work | ✅ tried on one PC |
 | One-click install (bundled Node, app menu, start with the computer, updates from Settings) | ✅ the .deb | — | ✅ the installer, tried on one PC |
-| Everything else set up on first start (ComfyUI with its own Python and PyTorch, LM Studio, a Brain that sees) | ⚠️ ComfyUI only, from Settings | — | ✅ tried on one PC (Intel Arc) |
+| Everything else set up on first start (ComfyUI with its own Python and PyTorch, LM Studio, a Brain that sees, ffmpeg) | ✅ from Settings, the banner and Create, each in its own dialog (LM Studio as its headless service) | — | ✅ tried on one PC (Intel Arc); ffmpeg's part not yet |
 | Launcher and setup (app menu, start with the computer) | ✅ `./start.sh` | ⚠️ needs `open` instead of `xdg-open` | ✅ `start.bat`, tried on one PC |
 | **■ Stop** ComfyUI, and **■ Stop everything** | ✅ | ⚠️ only a ComfyUI that Prompt Maker started | ⚠️ written; Prompt Maker's own stop tried, ComfyUI's not yet |
 | **▶ Start it** (LM Studio server) | ✅ | ✅ should work | ⚠️ written, not yet tried with LM Studio installed |
@@ -1054,7 +1089,8 @@ prompt-maker/
 │   ├── autostart.js        # setting up the computer: app-menu entry, Start button link, starting with the computer
 │   ├── launch.js           # Windows: starts the server in the background (no window) and opens the app window, for start.bat
 │   ├── comfy-setup.js      # one-click ComfyUI set-up: its own Python (uv/venv on Linux, embedded on Windows), PyTorch for the card, its packages
-│   └── setup.js            # Windows, the first start: ComfyUI, LM Studio (its installer, quietly) and a Brain that sees, from one screen
+│   ├── ffmpeg-setup.js     # one-click ffmpeg set-up: a ready-made build into ffmpeg/ in the data folder
+│   └── setup.js            # LM Studio's set-up (its headless service on Linux, its installer on Windows) with a Brain that sees; Windows' first-start screen
 ├── public/                 # the web app (plain HTML/CSS/JS, bundled fonts; sw.js keeps a copy so the page opens while the server is off)
 ├── playbooks/              # the built-in model playbooks (read-only to the app)
 ├── chains/                 # the starter chains (read-only to the app)
@@ -1087,6 +1123,6 @@ The suite runs the real app against a mock LM Studio and a mock ComfyUI in headl
 
 Screenshots go to `/tmp/prompt-maker-ui/` (or `$SHOTS`). The suite needs Node 22+ and Chrome installed as `google-chrome`.
 
-The guide's own screenshots are retaken with `node tests/demo-shots.mjs create fine-tune gallery models voices comfy-setup ask themes`: it builds two demo copies of the app from the mocks and the sample renders in `docs/renders/` (no prompts, no personal data), takes the shots into `/tmp/promptmaker-demo/shots/`, and stops them again.
+The guide's own screenshots are retaken with `node tests/demo-shots.mjs create fine-tune gallery models voices comfy-setup lms-setup model-files ask themes`: it builds two demo copies of the app from the mocks and the sample renders in `docs/renders/` (no prompts, no personal data), takes the shots into `/tmp/promptmaker-demo/shots/`, and stops them again.
 
 For the 1.63 changes, including parameter cycles, Brain ratings/thinking, voice storage, and GPU coordination, see the [24-item update log](prompt-maker-updates.md).

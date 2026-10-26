@@ -358,11 +358,38 @@ async function main() {
   for (const f of await fs.readdir(path.join(ROOT, 'chains'))) shippedChains[f] = await fs.readFile(path.join(ROOT, 'chains', f), 'utf8');
   await fs.writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ lmStudioUrl: `http://127.0.0.1:${MOCK_PORT}`, comfyUrl: `http://127.0.0.1:${COMFY_PORT}`, llmModel: 'mock/vision-8b', checkTheme: false }));
   const lmsMarker = path.join(tmp, 'lms-called');
+  const lmsLog = path.join(tmp, 'lms.log'); // every call, for the set-up test
+  const lmsGot = path.join(tmp, 'lms-got'); // "lms get" ran: from then on "lms ls" lists a Brain that sees
   const fakeLms = path.join(tmp, 'fake-lms');
-  await fs.writeFile(fakeLms, `#!/bin/sh\necho "$@" > ${JSON.stringify(lmsMarker)}\n`, { mode: 0o755 });
+  await fs.writeFile(fakeLms, `#!/bin/sh
+echo "$@" > ${JSON.stringify(lmsMarker)}
+echo "$@" >> ${JSON.stringify(lmsLog)}
+case "$1" in
+  ls) if [ -f ${JSON.stringify(lmsGot)} ]; then echo '[{"type":"llm","vision":true,"modelKey":"qwen/qwen3-vl-8b"}]'; else echo '[]'; fi ;;
+  get) echo "Downloading 10%"; sleep 0.2; echo "Downloading 60%"; sleep 0.2; echo "Downloading 100%"; touch ${JSON.stringify(lmsGot)} ;;
+  server) echo "Server running" ;;
+esac
+`, { mode: 0o755 });
+  // LM Studio's install script, as the set-up fetches it (PM_LMS_INSTALL_SH): puts the fake lms where LMS_BIN points.
+  const installShLog = path.join(tmp, 'install-sh.log');
+  const installSh = `#!/bin/sh\necho "$@" > ${JSON.stringify(installShLog)}\necho "Installing llmster..."\ncp ${JSON.stringify(`${fakeLms}.off`)} ${JSON.stringify(fakeLms)}\n`;
+  // ffmpeg's "build", as the set-up fetches it (PM_FFMPEG_URL): an archive with two scripts that answer -version.
+  const fakeFfmpegDir = path.join(tmp, 'ffmpeg-fake', 'bin');
+  await fs.mkdir(fakeFfmpegDir, { recursive: true });
+  for (const n of ['ffmpeg', 'ffprobe']) await fs.writeFile(path.join(fakeFfmpegDir, n), `#!/bin/sh\necho "${n} version fake-1.0 Copyright (c) 2000-2026"\n`, { mode: 0o755 });
+  execFileSync('tar', ['-cJf', path.join(tmp, 'ffmpeg-fake.tar.xz'), '-C', tmp, 'ffmpeg-fake']);
+  const fakeFfmpegTar = await fs.readFile(path.join(tmp, 'ffmpeg-fake.tar.xz'));
+  const INSTALL_PORT = MOCK_PORT + 7;
+  const installServer = http.createServer((req, res) => {
+    if (req.url.endsWith('.tar.xz')) { res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': fakeFfmpegTar.length }); return res.end(fakeFfmpegTar); }
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end(installSh);
+  });
+  await new Promise(r => installServer.listen(INSTALL_PORT, '127.0.0.1', r));
   // Start-up setup goes to temp folders and a fake systemctl, never to your real app menu or services.
   const xdgConfig = path.join(tmp, 'xdg-config');
   const xdgData = path.join(tmp, 'xdg-data');
+  const desktopDir = path.join(tmp, 'Desktop');
   const systemctlLog = path.join(tmp, 'systemctl.log');
   const fakeSystemctl = path.join(tmp, 'fake-systemctl');
   await fs.writeFile(fakeSystemctl, `#!/bin/sh
@@ -455,6 +482,11 @@ esac
   const bigModel = structuredClone(SAVED_WORKFLOW);
   Object.assign(bigModel.nodes.find(n => n.type === 'CheckpointLoaderSimple'), { widgets_values: ['big_model.safetensors'], properties: { models: [{ name: 'big_model.safetensors', url: `http://127.0.0.1:${COMFY_PORT}/hf/big_model.safetensors`, directory: 'checkpoints' }] } });
   await fs.writeFile(bigModelWorkflowFile, JSON.stringify(bigModel));
+  // One whose checkpoint Hugging Face hands only to a signed-in account (FLUX 3 Klein's are like that).
+  const gatedWorkflowFile = path.join(tmp, 'needs-gated-model.json');
+  const gatedModel = structuredClone(SAVED_WORKFLOW);
+  Object.assign(gatedModel.nodes.find(n => n.type === 'CheckpointLoaderSimple'), { widgets_values: ['locked_model.safetensors'], properties: { models: [{ name: 'locked_model.safetensors', url: `http://127.0.0.1:${COMFY_PORT}/hf/gated/locked_model.safetensors`, directory: 'checkpoints' }] } });
+  await fs.writeFile(gatedWorkflowFile, JSON.stringify(gatedModel));
   // The tests set up their own workflows: the starters count as added already (one test takes this back).
   const starterModels = await fs.readdir(path.join(ROOT, 'workflows'));
   const starterKeys = Object.fromEntries(await Promise.all(starterModels.map(async id => [id, (await fs.readdir(path.join(ROOT, 'workflows', id))).map(f => `${id}/${f}`)])));
@@ -499,7 +531,7 @@ esac
   const lmsHome = path.join(tmp, 'lmstudio-home');
   await fs.mkdir(path.join(lmsHome, 'server-logs', '2026-10'), { recursive: true });
   // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
-  const appEnv = { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_PKEXEC_BIN: fakePkexec, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none' };
+  const appEnv = { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, PM_DESKTOP_DIR: desktopDir, GIO_BIN: '/bin/true', SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_PKEXEC_BIN: fakePkexec, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none', PM_LMS_INSTALL_SH: `http://127.0.0.1:${INSTALL_PORT}/install.sh`, PM_FIRST_BRAIN: 'qwen/qwen3-vl-8b', PM_FFMPEG_URL: `http://127.0.0.1:${INSTALL_PORT}/ffmpeg.tar.xz`, PM_HF_API: `http://127.0.0.1:${COMFY_PORT}` };
   let app = null;
   let appLog = '';
   // The app server (started again by the test of a restart mid-render; its log is kept across starts).
@@ -648,6 +680,7 @@ esac
   });
 
   await test('workspace redesign: essentials fit, fine-tune stays separate and keyboard navigation works', async () => {
+    eq(await js('document.querySelector(\'link[rel="icon"]\').getAttribute("href")'), 'icons/prompt-maker-32.png', 'the window uses the crisp small icon');
     await goto(`${APP}/#create`);
     await click('#taskChoices [data-task="picture"]');
     for (const [width, height] of [[1440, 900], [1280, 800]]) {
@@ -1354,6 +1387,20 @@ esac
     // Its own icon: in the icon theme under the entry's name, and the window tied to the entry, so no generic gear.
     assert(desktop.includes('Icon=prompt-maker\n') && desktop.includes('StartupWMClass=prompt-maker'), 'the entry names the themed icon and the window class');
     for (const f of ['256x256/apps/prompt-maker.png', '32x32/apps/prompt-maker.png', 'scalable/apps/prompt-maker.svg']) assert(await fileExists(path.join(xdgData, 'icons', 'hicolor', f)), `the icon is installed: ${f}`);
+    const desktopShortcut = path.join(desktopDir, 'Prompt Maker.desktop');
+    assert(await fileExists(desktopShortcut), 'a launcher is put on the desktop too');
+    assert(((await fs.stat(desktopShortcut)).mode & 0o111) !== 0, 'the desktop launcher is allowed to run');
+    assert(await js('document.querySelector("#sDesktopShortcut").checked'), 'Settings shows the desktop shortcut');
+    await click('#sDesktopShortcut');
+    await toastText('removed');
+    assert(!(await fileExists(desktopShortcut)), 'the desktop shortcut can be removed');
+    await click('#sDesktopShortcut');
+    await toastText('on your desktop');
+    assert(await fileExists(desktopShortcut), 'and put back in one click');
+    await js(`document.querySelector('#sDataDir').hidden = true; document.querySelector('#llmPickName').textContent = 'Local Brain'; document.querySelector('.svc[data-svc="lms"] .svc-state').textContent = 'Running'; document.querySelector('.svc[data-svc="comfy"] .svc-state').textContent = 'Running'; 1`);
+    await viewport(1440, 650);
+    await shot('desktop-shortcut');
+    await viewport(1440, 900);
     // On Wayland the browser names the window itself ("brave-127.0.0.1__-Default"): start.sh gives the window that
     // name (--class) and points the entry's StartupWMClass at it, so the dock shows the icon there too (1.68.5).
     {
@@ -1519,6 +1566,99 @@ esac
     await type('#sComfyFolder', '');
     await click('#settingsForm button[type="submit"]');
     await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test("🧠 LM Studio set-up: not on this computer → Set up: its service through LM Studio's script, its server, a Brain that sees", async () => {
+    // LM Studio's server off (nothing at this address) and its lms tool gone: as on a fresh computer.
+    await fs.rename(fakeLms, `${fakeLms}.off`);
+    await fs.rm(lmsGot, { force: true });
+    await fs.writeFile(lmsLog, '');
+    await click('.tabs button[data-view="settings"]');
+    await type('#sUrl', 'http://127.0.0.1:1');
+    await click('#settingsForm button[type="submit"]');
+    await toastText('Settings saved');
+    await click('.tabs button[data-view="create"]');
+    await waitFor('document.querySelector("#banner") && !document.querySelector("#banner").hidden && !document.querySelector("#bannerSetup").hidden', "the banner offers to set up LM Studio when it isn't on this computer", 15000);
+    assert((await text('#bannerTitle')).includes("isn't on this computer"), `says so: ${await text('#bannerTitle')}`);
+    assert(await js('document.querySelector("#bannerStart").hidden'), 'nothing to start');
+    await click('.tabs button[data-view="brains"]');
+    await waitFor('!document.querySelector("#brainsGet").hidden', 'Brains offers it too');
+    eq(await text('#brainsGetBtn'), '⬇ Set up LM Studio', 'as a set-up, since LM Studio itself is missing');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector(\'[data-act="lms-setup"]\').hidden', 'a Set up LM Studio button in Services');
+    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('Not on this computer yet'), `says so: ${await text('.svc[data-svc="lms"] .svc-state')}`);
+
+    // The dialog: what's there, what it gets.
+    await click('[data-act="lms-setup"]');
+    await waitFor('document.querySelector("#lmsSetupDlg").open && document.querySelector(\'#lsChecks [data-check="lms"] .svc-state\').textContent.includes("Not on this computer yet")', 'LM Studio, not here');
+    assert((await text('#lsChecks [data-check="lms"] .svc-state')).includes('llmster'), 'its headless service, on Linux');
+    assert((await text('#lsChecks [data-check="brain"] .svc-state')).includes('qwen/qwen3-vl-8b') && (await text('#lsChecks [data-check="brain"] .svc-state')).includes('6 GB'), `the Brain and its size: ${await text('#lsChecks [data-check="brain"] .svc-state')}`);
+    assert(await js('document.querySelector(\'#lsChecks [data-check="lms"] [data-fix]\').hidden'), 'libatomic is here: nothing to fix first');
+    await shot('lms-setup');
+
+    // Go: the script, then the server, then the Brain through lms get; each step in plain words.
+    await click('#lsGo');
+    await waitFor('!document.querySelector("#lsProgress").hidden && document.querySelector("#lsText").textContent.length > 0', 'progress shows');
+    await waitFor('document.querySelector("#lsProgress").classList.contains("done")', 'done', 30000);
+    assert((await text('#lsText')).includes('set up, with a Brain that can see'), `says so: ${await text('#lsText')}`);
+    assert(await fileExists(fakeLms), 'lms is in place');
+    eq((await fs.readFile(installShLog, 'utf8')).trim(), '--no-modify-path', "LM Studio's script ran, leaving the shell's PATH alone");
+    const calls = (await fs.readFile(lmsLog, 'utf8')).trim().split('\n');
+    assert(calls.includes('server start --port 1'), `then its server: ${calls}`);
+    assert(calls.includes('get qwen/qwen3-vl-8b -y'), `then the Brain, through LM Studio's own downloader: ${calls}`);
+    assert(calls.indexOf('server start --port 1') < calls.indexOf('get qwen/qwen3-vl-8b -y'), 'in that order');
+    eq(await text('#lsLater'), 'Done', 'the dialog is done');
+    await click('#lsLater');
+    await waitFor('document.querySelector(\'[data-act="lms-setup"]\').hidden', 'the Set up button goes');
+    const st = await (await fetch(`${APP}/api/lms/setup`)).json();
+    assert(st.installed && st.brain.ready, `knows it's all there: ${JSON.stringify(st)}`);
+
+    // Already set up: nothing to do.
+    await click('.tabs button[data-view="settings"]');
+    await type('#sUrl', `http://127.0.0.1:${MOCK_PORT}`);
+    await click('#settingsForm button[type="submit"]');
+    await waitFor('document.querySelector("#banner").hidden', 'LM Studio is back', 15000);
+    await fs.rm(`${fakeLms}.off`, { force: true });
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test("🎞 ffmpeg set-up: a build fetched into the data folder, used from then on; Services says which copy", async () => {
+    const own = path.join(dataDir, 'ffmpeg', 'bin', 'ffmpeg');
+    const before = await (await fetch(`${APP}/api/ffmpeg/setup`)).json();
+    assert(before.supported && !(await fileExists(own)), 'no copy of its own yet');
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('document.querySelector(\'.svc[data-svc="ffmpeg"] .svc-state\').textContent !== "…"', 'the ffmpeg row');
+    if (before.ok) { // this computer has ffmpeg: the row says so, the set-up isn't offered, and the API still puts a copy of its own in
+      assert((await text('.svc[data-svc="ffmpeg"] .svc-state')).startsWith('Installed'), `says so: ${await text('.svc[data-svc="ffmpeg"] .svc-state')}`);
+      assert(await js('document.querySelector(\'[data-act="ffmpeg-setup"]\').hidden'), 'nothing to set up');
+      await fetch(`${APP}/api/ffmpeg/setup`, { method: 'POST' });
+      for (let i = 0; i < 100 && (await (await fetch(`${APP}/api/ffmpeg/setup/job`)).json()).state === 'running'; i++) await sleep(200);
+    } else {
+      assert((await text('.svc[data-svc="ffmpeg"] .svc-state')).includes('Not on this computer'), `says so: ${await text('.svc[data-svc="ffmpeg"] .svc-state')}`);
+      await waitFor('!document.querySelector(\'[data-act="ffmpeg-setup"]\').hidden', 'a Set up ffmpeg button');
+      await click('[data-act="ffmpeg-setup"]');
+      await waitFor('document.querySelector("#ffmpegSetupDlg").open && document.querySelector(\'#fsChecks .svc-state\').textContent.includes("Not on this computer yet")', 'the dialog: not here yet');
+      assert((await text('#fsChecks .svc-state')).includes('FFmpeg-Builds') && (await text('#fsChecks .svc-state')).includes(path.join(dataDir, 'ffmpeg')), `where it comes from and goes: ${await text('#fsChecks .svc-state')}`);
+      await click('#fsGo');
+      await waitFor('document.querySelector("#fsProgress").classList.contains("done")', 'done', 30000);
+      assert((await text('#fsText')).includes('fake-1.0'), `says which version: ${await text('#fsText')}`);
+      eq(await text('#fsLater'), 'Done', 'the dialog is done');
+      await click('#fsLater');
+      await toastText('ffmpeg is set up');
+    }
+    const job = await (await fetch(`${APP}/api/ffmpeg/setup/job`)).json();
+    eq(job.state, 'done', `the set-up finished: ${JSON.stringify(job)}`);
+    assert(await fileExists(own) && await fileExists(path.join(dataDir, 'ffmpeg', 'bin', 'ffprobe')), 'ffmpeg and ffprobe are in the data folder');
+    const after = await (await fetch(`${APP}/api/ffmpeg/setup`)).json();
+    assert(after.ok && after.via === 'own' && after.version === 'fake-1.0', `used from then on: ${JSON.stringify(after)}`);
+    await click('.tabs button[data-view="create"]');
+    await click('.tabs button[data-view="settings"]'); // (Services loads again when the page is opened)
+    await waitFor('document.querySelector(\'.svc[data-svc="ffmpeg"] .svc-state\').textContent.includes("its own copy")', 'Services says which copy');
+    // Gone again (the other tests expect this computer as it is): asked afresh, the app notices.
+    await fs.rm(path.join(dataDir, 'ffmpeg'), { recursive: true, force: true });
+    const gone = await (await fetch(`${APP}/api/ffmpeg/setup`)).json();
+    eq(gone.via === 'own', false, `the copy is gone: ${JSON.stringify(gone)}`);
     await click('.tabs button[data-view="create"]');
   });
 
@@ -5385,7 +5525,7 @@ esac
     await setFiles('#wfFile', [bigModelWorkflowFile]);
     await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
     const setup = await text('#wfWarnings');
-    assert(setup.includes('doesn\'t have a model') && setup.includes('big_model.safetensors'), `the setup says which model is missing: ${setup}`);
+    assert(setup.includes('isn\'t in ComfyUI yet') && setup.includes('big_model.safetensors'), `the setup says which model is missing: ${setup}`);
     await type('#wfName', 'Needs a big model');
     await click('#wfSave');
     await toastText('is ready');
@@ -5401,8 +5541,14 @@ esac
     await genDone();
     const before = comfy.prompts.length;
     await click('.take .rb-go');
-    await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("doesn\'t have a model")', 'the render says what is missing');
+    await waitFor('(document.querySelector("#stageError")?.textContent || "").includes("isn\'t in ComfyUI yet")', 'the render says what is missing');
     eq(comfy.prompts.length, before, 'nothing was sent to ComfyUI');
+    const said = await text('#stageError');
+    assert(said.includes('A file to get first') && said.includes('(the model)') && !said.includes('big_model') && said.includes('Fine-tune → Rendering'), `in plain words, no file names: ${said}`);
+    await shot('48b-files-to-get');
+    await click('#stageError .e-files');
+    await waitFor('document.querySelector("#modelFilesDlg").open && document.querySelector("#mfList .mf-model.focus h3")?.textContent.includes("Krea 2 RAW")', 'its ⬇ Get the files opens ⬇ Model files with this model first', 10000);
+    await click('#mfClose');
     await click('#stageError .x');
 
     await click('#wfpModels [data-act="mm-get"]');
@@ -5416,6 +5562,121 @@ esac
     eq(comfy.prompts.at(-1).prompt['4'].inputs.ckpt_name, 'big_model.safetensors', 'with that model');
     const refused = await js(`fetch("/api/comfy/downloads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "x.safetensors", folder: "checkpoints", url: "https://example.com/x.safetensors" }) }).then(async r => [r.status, (await r.json()).error])`);
     assert(refused[0] === 400 && refused[1].includes('only downloads models from Hugging Face'), `other sites are refused: ${refused[1]}`);
+  });
+
+  await test('⬇ Model files: every model\'s files in one list, ✓ for the ones here, size and ⬇ Get for the rest', async () => {
+    const got = path.join(comfyRoot, 'models', 'checkpoints', 'big_model.safetensors');
+    try {
+    await click('.tabs button[data-view="models"]');
+    await click('#catalogFiles');
+    await waitFor('document.querySelector("#modelFilesDlg").open && document.querySelectorAll("#mfList .mf-model").length > 0', 'the list, one section per model');
+    const section = `[...document.querySelectorAll("#mfList .mf-model")].find(s => s.querySelector("h3").textContent.includes("Krea 2 RAW"))`;
+    assert(await js(`${section}.textContent.includes("big_model.safetensors")`), 'the file the workflow loads');
+    assert(await js(`${section}.textContent.includes("✓ Here")`), 'is here (downloaded in the test before)');
+    assert(await js(`${section}.textContent.includes("The model")`), 'with what it is, in plain words');
+    assert(await js(`${section}.querySelector(".mf-sum").textContent.includes("All")`), `and the model says all its files are here: ${await js(`${section}.querySelector(".mf-sum").textContent`)}`);
+    await shot('49-model-files');
+    await click('#mfClose');
+
+    // Gone again: the list says so, with the size, and gets it back.
+    await fs.rm(got, { force: true });
+    await click('.tabs button[data-view="settings"]');
+    await waitFor('!document.querySelector(\'[data-act="model-files"]\').hidden', 'Services offers the list too');
+    await click('[data-act="model-files"]');
+    await waitFor(`document.querySelector("#modelFilesDlg").open && ${section} && ${section}.querySelector('[data-act="mf-get"]')`, 'now with ⬇ Get', 10000);
+    const row = `${section}.querySelector('[data-act="mf-get"]').closest("li")`;
+    assert(await js(`${row}.querySelector(".mf-size").textContent.length > 0`), `with its size: ${await js(`${row}.textContent`)}`);
+    assert(/^1 of \d+ files to get/.test(await js(`${section}.querySelector(".mf-sum").textContent`)), `the model counts it: ${await js(`${section}.querySelector(".mf-sum").textContent`)}`);
+    await js(`${section}.querySelector('[data-act="mf-get"]').click()`);
+    await toastText('is in ComfyUI now');
+    await waitFor(`${section}.textContent.includes("✓ Here")`, 'here again', 10000);
+    eq((await fs.stat(got)).size, MODEL_BYTES.length, 'the whole file is back in ComfyUI\'s checkpoints folder');
+    await click('#mfClose');
+    } finally {
+      await js('document.querySelector("#modelFilesDlg").close(); 1'); // (a failure above would leave it over every test after this one)
+    }
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('⬇ Model files: a file behind a Hugging Face account: connect once (a token, checked), Agree on the page when asked, then ⬇ Get', async () => {
+    await click('.tabs button[data-view="create"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+    const was = (await visible('#wfpAddFirst')) ? '' : await value('#wfpSelect');
+    await click(was ? '#wfpAdd' : '#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [gatedWorkflowFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    await type('#wfName', 'Behind an account');
+    await click('#wfSave');
+    await toastText('is ready');
+    const got = path.join(comfyRoot, 'models', 'checkpoints', 'locked_model.safetensors');
+    const section = `[...document.querySelectorAll("#mfList .mf-model")].find(s => s.querySelector("h3").textContent.includes("Krea 2 RAW"))`;
+    const row = `[...${section}.querySelectorAll("li")].find(li => li.textContent.includes("locked_model"))`;
+    try {
+      await click('.tabs button[data-view="models"]');
+      await click('#catalogFiles');
+      await waitFor(`document.querySelector("#modelFilesDlg").open && ${row} && ${row}.textContent.includes("Hugging Face account")`, 'the file says it is behind an account', 10000);
+      assert(!(await js(`${row}.querySelector('[data-act="mf-get"]')`)), 'no ⬇ Get for it yet');
+      assert(!(await js('document.querySelector("#mfHf").hidden')) && (await text('#mfHf')).includes('Connect Hugging Face'), `and the dialog offers to connect: ${await text('#mfHf')}`);
+      await click('#mfHf [data-act="mf-hf-on"]');
+      await waitFor('document.querySelector("#mfHfToken")', 'the token field, with two steps');
+      assert((await text('#mfHf')).includes('Get a Read token') && (await text('#mfHf')).includes('starts with hf_') && (await text('#mfHf')).includes("Saved only in Prompt Maker's data folder"), `where to get one, what to paste, and where it stays: ${await text('#mfHf')}`);
+      await sleep(150); // let the modal finish painting before the documentation capture
+      await shot('49b-connect-hugging-face');
+      await type('#mfHfToken', 'hf_wrong_token_00');
+      await click('#mfHf [data-act="mf-hf-show"]'); // redraws the form, as the list's background checks do
+      eq(await js('document.querySelector("#mfHfToken").type'), 'text', 'Show makes it possible to check the pasted token');
+      eq(await value('#mfHfToken'), 'hf_wrong_token_00', 'a pasted token survives the form redraw');
+      await click('#mfHf [data-act="mf-hf-show"]');
+      await click('#mfHf [data-act="mf-hf-save"]');
+      await waitFor('(document.querySelector("#mfHf .mm-err")?.textContent || "").includes("didn\'t accept that token")', 'a wrong token is refused, in words');
+      assert(await js('document.activeElement === document.querySelector("#mfHfToken") && document.querySelector("#mfHfToken").selectionStart === 0 && document.querySelector("#mfHfToken").selectionEnd === document.querySelector("#mfHfToken").value.length'), 'the rejected token stays selected for the next paste');
+      await cdp.send('Input.insertText', { text: 'hf_test_scoped' }); // paste over the selected rejected token, without clicking again
+      eq(await value('#mfHfToken'), 'hf_test_scoped', 'a second paste replaces the rejected token');
+      assert(!(await js('document.querySelector("#mfHf .mm-err")')), 'the old error leaves when a replacement is pasted');
+      await click('#mfHf [data-act="mf-hf-save"]');
+      await waitFor('(document.querySelector("#mfHf .mm-err")?.textContent || "").includes("fine-grained")', 'a fine-grained token without gated access is refused, with what to make instead');
+      eq(await js('document.querySelector("#mfHf .mm-err a")?.href'), 'https://huggingface.co/settings/tokens', 'the Hugging Face page in it is a link');
+      assert(!(await fileExists(path.join(dataDir, 'huggingface.json'))), 'and not kept');
+      // An account that hasn't clicked Agree on the model's page: connected, but the file says what to do.
+      await type('#mfHfToken', 'hf_test_terms');
+      await click('#mfHf [data-act="mf-hf-save"]');
+      await toastText('Hugging Face connected as tester');
+      await waitFor(`${row} && ${row}.textContent.includes("Accept its terms first") && ${row}.querySelector('[data-act="mf-recheck"]')`, 'the file asks for Agree on its page, with ↻ Check again', 10000);
+      assert((await text('#mfHf')).includes('connected as tester'), `the box says who: ${await text('#mfHf')}`);
+      const status = await js('fetch("/api/huggingface").then(r => r.json())');
+      assert(status.connected && status.user === 'tester' && !JSON.stringify(status).includes('hf_test'), `the page never sees the token: ${JSON.stringify(status)}`);
+      eq((await fs.stat(path.join(dataDir, 'huggingface.json'))).mode & 0o777, 0o600, 'the token file is readable by its owner only');
+      await click('#mfHf [data-act="mf-hf-off"]');
+      await waitFor(`${row} && ${row}.textContent.includes("Hugging Face account") && (document.querySelector("#mfHf")?.textContent || "").includes("Connect Hugging Face")`, 'Disconnect forgets it', 10000);
+      assert(!(await fileExists(path.join(dataDir, 'huggingface.json'))), 'and the file is gone');
+      // The right account: the file downloads like any other, with the token sent along.
+      await click('#mfHf [data-act="mf-hf-on"]');
+      await type('#mfHfToken', 'hf_test_ok');
+      await click('#mfHf [data-act="mf-hf-save"]');
+      await toastText('Hugging Face connected as tester');
+      await waitFor(`${row} && ${row}.querySelector('[data-act="mf-get"]')`, 'now with ⬇ Get and its size', 10000);
+      assert((await js(`${row}.querySelector(".mf-size").textContent`)).length > 0, `with its size: ${await js(`${row}.textContent`)}`);
+      await js(`${row}.querySelector('[data-act="mf-get"]').click()`);
+      await toastText('is in ComfyUI now');
+      await waitFor(`${row}.textContent.includes("✓ Here")`, 'here', 10000);
+      eq((await fs.stat(got)).size, MODEL_BYTES.length, 'the whole file is in ComfyUI\'s checkpoints folder');
+      await click('#mfClose');
+    } finally {
+      await js('document.querySelector("#modelFilesDlg").close(); 1');
+      await js('fetch("/api/huggingface", { method: "DELETE" })');
+      await fs.rm(got, { force: true });
+    }
+    // The workflow goes again, so the tests after this one see Krea 2 RAW as before.
+    await click('.tabs button[data-view="create"]');
+    await click('#wfpEdit');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfSetup").hidden', 'editing it');
+    await click('#wfDelete');
+    await click('#wfDelete');
+    await toastText('Workflow removed');
+    if (was) await choose('#wfpSelect', was);
   });
 
   await test('render: ComfyUI skipping part of a workflow stops the render, with its reasons', async () => {
@@ -6954,6 +7215,7 @@ esac
   if (appLog.includes('Error')) console.log(`\nApp server log:\n${appLog}`);
   const chromeExit = new Promise(r => chrome.once('exit', r));
   chrome.kill();
+  installServer.close();
   app.kill();
   await Promise.race([chromeExit, sleep(3000)]);
   await mock.stop();

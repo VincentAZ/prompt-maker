@@ -62,7 +62,7 @@ body.as-open:not(.as-over) main { margin-left: var(--sidebar-w); }
 .page-head h1 { font-size: 30px; font-weight: 550; letter-spacing: -.8px; }
 .page-head p { font-size: 14px; color: var(--muted); max-width: 850px; }
 .eyebrow, .page-head .eyebrow { text-transform: uppercase; letter-spacing: 1.8px; font-size: 10px; font-weight: 500; color: var(--muted); margin: 0 0 12px; }
-.banner { margin: 0 0 0 var(--sidebar-w); width: calc(100% - var(--sidebar-w)); top: var(--topbar-h, 68px); border: 0; border-bottom: 1px solid color-mix(in srgb, var(--warn) 25%, transparent); border-radius: 0; background: color-mix(in srgb, var(--warn) 8%, transparent); color: var(--warn); padding: 8px 24px; font-size: 12px; min-height: 44px; }
+.banner { margin: 0 0 0 var(--sidebar-w); width: calc(100% - var(--sidebar-w)); top: var(--topbar-h, 68px); border: 0; border-bottom: 1px solid color-mix(in srgb, var(--warn) 25%, transparent); border-radius: 0; background: color-mix(in srgb, var(--warn) 8%, var(--surface)); color: var(--warn); padding: 8px 24px; font-size: 12px; min-height: 44px; } /* opaque: it stays at the top while the page scrolls under it */
 .banner .long { font-size: 12px; }
 .banner .btn { padding: 4px 10px; font-size: 12px; }
 .create-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; min-height: 40px; }

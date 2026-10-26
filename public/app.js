@@ -58,6 +58,7 @@ const state = {
   wfNodes: new Map(), // workflow id → nodes it uses that ComfyUI doesn't have (with the pack that didn't load)
   trim: null, // { a, b }: the frames kept (a first, b after the last) while picking part of the motion video (✂️ Trim)
   downloads: [], // model downloads into ComfyUI (running in the server)
+  lmsInstalled: null, // LM Studio's lms tool is on this computer (null: not asked yet)
   comfy: null,
   renderRuns: new Set(),
 };
@@ -1172,11 +1173,22 @@ function renderBanner() {
   // With the app's server gone, the page can't start anything itself, but the promptmaker:// link can, where
   // the app has set it up (remembered from when the server was up).
   const canLaunch = Boolean(state.appDown && saved.get('launcher', false));
-  $('#bannerStart').hidden = Boolean(state.appDown);
+  // LM Studio not on this computer at all (its lms tool isn't there): offer to set it up rather than to start it.
+  // Asked once each time LM Studio goes off (its set-up may have run, or been undone, in between).
+  if (!down) bannerAsked = false;
+  if (down && !state.appDown && !bannerAsked) {
+    bannerAsked = true;
+    api('/api/lms/setup').then(st => { state.lmsInstalled = st.supported ? st.installed : null; renderBanner(); }, () => {});
+  }
+  const notHere = down && !state.appDown && state.lmsInstalled === false && (!state.settings || isLocalLmsUrl(state.settings.lmStudioUrl));
+  $('#bannerStart').hidden = Boolean(state.appDown) || notHere;
+  $('#bannerSetup').hidden = !notHere;
   $('#bannerLaunch').hidden = !canLaunch;
   if (!down) return;
-  $('#bannerTitle').textContent = state.appDown ? "Prompt Maker's server isn't running." : "LM Studio's server is off.";
-  $('#bannerLong').textContent = !state.appDown
+  $('#bannerTitle').textContent = state.appDown ? "Prompt Maker's server isn't running." : notHere ? "LM Studio isn't on this computer yet." : "LM Studio's server is off.";
+  $('#bannerLong').textContent = notHere
+    ? 'It runs the Brain that writes your prompts. Set it up here, with a Brain that can see; nothing to type.'
+    : !state.appDown
     ? `Nothing is answering at ${state.settings?.lmStudioUrl || 'localhost:1234'}. Start it here, or in LM Studio → Developer. It reconnects on its own.`
     : canLaunch
       ? 'It stopped, or your computer restarted. Click Start (the first time, your browser asks to open Prompt Maker: allow it). This page reconnects on its own.'
@@ -1703,6 +1715,9 @@ $('#bannerRetry').addEventListener('click', async () => {
   if (!state.llmOk) toast(state.appDown ? "🔌 Prompt Maker's server still isn't answering" : '🔌 Still no answer from LM Studio', true);
 });
 $('#bannerStart').addEventListener('click', e => startLmStudio(e.currentTarget));
+$('#bannerSetup').addEventListener('click', () => openLmsSetup());
+let bannerAsked = false;
+const isLocalLmsUrl = url => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/?$/i.test(String(url || '').trim());
 
 // ---------- create: form ----------
 
@@ -3197,6 +3212,10 @@ function renderMotionHint() {
       : `⚠️ ${Math.round(v.fps)} fps: Wan Animate 2 uses every frame, so the moves play ${Math.round((v.fps / 24) * 10) / 10}× too fast. With ffmpeg installed, Prompt Maker renders from a 24 fps copy.`);
   }
   hint.innerHTML = parts.length ? parts.map(esc).join(' ') : 'The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.';
+  if (v?.file && v.ffmpeg === false && state.services?.ffmpeg?.supported !== false) { // one click sets it up, and the video is looked at again
+    hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoFfmpeg">⬇ Set up ffmpeg</button>');
+    $('#videoFfmpeg').addEventListener('click', () => openFfmpegSetup());
+  }
   if (v?.bars && v.ffmpeg) {
     hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoCrop">✂️ Crop the bars</button>');
     $('#videoCrop').addEventListener('click', e => videoCopy(e.currentTarget, 'crop'));
@@ -3360,6 +3379,7 @@ function errorTitle(msg) {
   if (/can't see images|text-only/i.test(msg)) return ['🙈', 'This Brain can\'t see images'];
   if (/ran out of room|token limit|thinking/i.test(msg)) return ['🧠', 'The Brain ran out of room'];
   if (/No Brain selected/i.test(msg)) return ['🧠', 'No Brain selected'];
+  if (/in ComfyUI yet/i.test(msg)) return ['⬇', /needs a file /.test(msg) ? 'A file to get first' : 'A few files to get first'];
   return ['⚠️', 'That didn\'t work'];
 }
 
@@ -3371,17 +3391,19 @@ function showError(msg) {
   const canStart = /reach LM Studio|stopped responding/i.test(msg);
   const comfyDown = /reach ComfyUI/i.test(msg);
   const canStartComfy = comfyDown && state.comfy?.local !== false; // one on another computer can't be started from here
+  const filesToGet = /in ComfyUI yet/i.test(msg) && /Model files/.test(msg); // the model's files: ⬇ Model files gets them
   // ComfyUI's own words (which step, the raw error) go under Details; what to do about it comes first.
   const step = /^ComfyUI failed at #\S+ ([^:]+): /.exec(msg)?.[1];
   const body = step
     ? `<p>ComfyUI stopped while working on the step “${esc(step.trim())}”. Often it ran out of memory, or a model file or setting in the workflow is wrong. Render again, or open the workflow in ComfyUI to check it.</p><details class="e-details"><summary>Details</summary><p>${esc(msg)}</p></details>`
     : `<p>${esc(msg)}</p>`;
-  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b>${body}${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}${canStartComfy ? '<button type="button" class="btn small primary e-comfy">▶ Start ComfyUI</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
+  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b>${body}${filesToGet ? '<button type="button" class="btn small primary e-files">⬇ Get the files</button>' : ''}${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}${canStartComfy ? '<button type="button" class="btn small primary e-comfy">▶ Start ComfyUI</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
   card.hidden = false;
   card.dataset.comfyDown = comfyDown ? '1' : '';
   card.style.setProperty('--eh', `${card.offsetHeight + (parseFloat(getComputedStyle(card.parentElement).rowGap) || 0)}px`);
   $('.x', card).addEventListener('click', () => showError(''));
   $('.e-start', card)?.addEventListener('click', e => startLmStudio(e.currentTarget));
+  $('.e-files', card)?.addEventListener('click', () => openModelFiles({ modelId: state.modelId }));
   $('.e-comfy', card)?.addEventListener('click', e => {
     const btn = e.currentTarget;
     btn.disabled = true;
@@ -6230,9 +6252,17 @@ function renderBrains() {
   const empty = $('#brainsEmpty');
   empty.hidden = ranked.length > 0;
   empty.textContent = (q || isFiltered(brainFilter)) && state.llms.length ? `No Brain matches${q ? ` "${q}"` : ''}${isFiltered(brainFilter) ? ` ${brainFilterLabel(brainFilter)}` : ''}.`
-    : state.llmOk === false ? 'LM Studio is not reachable, so there are no Brains to show. Start its server (see the banner at the top).'
-    : 'No models in LM Studio yet. Download one there and it shows up here.';
+    : state.llmOk === false ? (state.lmsInstalled === false ? "LM Studio isn't on this computer yet, so there are no Brains to show." : 'LM Studio is not reachable, so there are no Brains to show. Start its server (see the banner at the top).')
+    : 'No models in LM Studio yet. Get one below, or download one in LM Studio, and it shows up here.';
+  // No Brain that can see (none at all, or LM Studio not here): one click gets Qwen3-VL through LM Studio's own downloader.
+  const local = !state.settings || isLocalLmsUrl(state.settings.lmStudioUrl);
+  const noVision = state.llmOk && !state.llms.some(m => m.vision && !m.cloud);
+  const notHere = state.llmOk === false && state.lmsInstalled === false;
+  $('#brainsGet').hidden = !local || !(noVision || notHere);
+  $('#brainsGetBtn').textContent = notHere ? '⬇ Set up LM Studio' : '⬇ Get a Brain that can see';
+  $('#brainsGetHint').textContent = notHere ? 'LM Studio, with a Brain that can see (Qwen3-VL): nothing to type.' : state.llms.some(m => !m.cloud) ? 'Your Brains can\'t look at pictures. Qwen3-VL can (3 to 6 GB; LM Studio picks the size for your computer).' : 'Qwen3-VL, which looks at your pictures and writes your prompts (3 to 6 GB; LM Studio picks the size for your computer).';
 }
+$('#brainsGetBtn').addEventListener('click', () => openLmsSetup());
 
 $('#brainSearch').addEventListener('input', renderBrains);
 wireBrainFilter($('#brainFilters'), brainFilter, 'brainFilters', renderBrains);
@@ -6878,6 +6908,7 @@ async function loadAutostart() {
 function renderAutostart(st) {
   $('#startupOpts').hidden = !st.supported;
   $('#sAutostart').checked = st.autostart;
+  $('#sDesktopShortcut').checked = st.desktop;
   $('#sAutostartHint').textContent = st.autostart
     ? 'It starts when you log in, turns on LM Studio\'s server, and comes back on its own if it ever stops. It\'s also in your app menu.'
     : 'Off: start it from your app menu when you need it. If the page ever says the server isn\'t running, its Start button brings it back.';
@@ -6911,6 +6942,21 @@ $('#sAutostart').addEventListener('change', async e => {
     saved.set('launcher', Boolean(st.launcher));
     renderAutostart(st);
     toast(st.autostart ? '🚀 Prompt Maker starts with your computer' : "🚀 Prompt Maker won't start with your computer");
+  } catch (err) {
+    e.target.checked = !on;
+    toast(err.message, true);
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
+$('#sDesktopShortcut').addEventListener('change', async e => {
+  const on = e.target.checked;
+  e.target.disabled = true;
+  try {
+    const st = await api('/api/autostart/desktop', { method: 'PUT', body: { enabled: on } });
+    renderAutostart(st);
+    toast(st.desktop ? '🚀 Prompt Maker is on your desktop' : '🚀 Desktop shortcut removed');
   } catch (err) {
     e.target.checked = !on;
     toast(err.message, true);
@@ -6957,9 +7003,16 @@ function renderServices(st) {
   $('[data-act="app-restart"]').hidden = false;
   $('#stopAllBtn').disabled = false;
   const { lms, comfy } = st;
+  if (typeof lms.installed === 'boolean') state.lmsInstalled = lms.installed;
+  const lmsMissing = lms.local && lms.installed === false && !lms.running; // not on this computer: one click sets it up
   row('lms', lms.running
-    ? { dot: 'ok', text: `Running · ${lms.loaded ? `${lms.loaded} model${lms.loaded > 1 ? 's' : ''} loaded` : 'no model loaded'}`, start: false, stop: lms.local }
-    : { dot: 'bad', text: lms.local ? 'Off' : 'Off (it runs on another computer)', start: lms.local, stop: false });
+    ? { dot: 'ok', text: `Running · ${lms.loaded ? `${lms.loaded} model${lms.loaded > 1 ? 's' : ''} loaded` : 'no model loaded'}${lms.vision === false ? ' · no Brain that can see yet' : ''}`, start: false, stop: lms.local }
+    : lms.setup?.state === 'running'
+      ? { dot: 'warn', text: `Setting up… ${lms.setup.text}`, start: false, stop: false }
+      : lmsMissing
+        ? { dot: 'bad', text: 'Not on this computer yet. Set it up here: it brings a Brain that can see', start: false, stop: false }
+        : { dot: 'bad', text: lms.local ? 'Off' : 'Off (it runs on another computer)', start: lms.local, stop: false });
+  $('[data-act="lms-setup"]').hidden = !lmsMissing || lms.setup?.state === 'running';
   const busy = $('.svc[data-svc="comfy"]').dataset.busy;
   row('comfy', comfy.running
     ? { dot: 'ok', text: `Running${comfy.gpu ? ` · ${comfy.gpu}` : ''}`, start: false, stop: comfy.local && !busy }
@@ -6969,6 +7022,16 @@ function renderServices(st) {
         ? { dot: 'warn', text: `Setting up… ${comfy.setup.text}`, start: false, stop: false }
         : { dot: 'bad', text: !comfy.local ? 'Off (it runs on another computer)' : comfy.launch ? 'Off' : 'Not on this computer yet. Set it up here, or enter its folder under ComfyUI below', start: comfy.local && Boolean(comfy.launch), stop: false });
   $('[data-act="comfy-setup"]', $('.svc[data-svc="comfy"]')).hidden = comfy.running || comfy.starting || busy === 'start' || !comfy.local || Boolean(comfy.launch) || comfy.setup?.state === 'running';
+  $('[data-act="model-files"]').hidden = !comfy.local || !state.workflows.length;
+  const ff = st.ffmpeg; // (missing from an older server still running: see svcStale)
+  row('ffmpeg', !ff
+    ? { dot: '', text: 'Known once Prompt Maker restarts' }
+    : ff.ok
+      ? { dot: 'ok', text: `Installed · ${ff.via === 'own' ? 'its own copy, in the data folder' : ff.via === 'env' ? 'the one Settings points at' : "the system's"}${ff.version ? ` · ${ff.version}` : ''}` }
+      : ff.setup?.state === 'running'
+        ? { dot: 'warn', text: `Setting up… ${ff.setup.text}` }
+        : { dot: 'bad', text: `Not on this computer: needed for phone videos, cutting and joining clips, and a voice on a video${ff.supported ? '' : '. On macOS: brew install ffmpeg'}` });
+  $('[data-act="ffmpeg-setup"]').hidden = !ff || ff.ok || !ff.supported || ff.setup?.state === 'running';
   const how = comfy.local && comfy.launch;
   $('#svcComfyHow').hidden = !how;
   if (how) {
@@ -6980,7 +7043,7 @@ function renderServices(st) {
   $('#sComfyFolder').placeholder = comfy.launch?.from && comfy.launch.from !== 'set' ? `found: ${comfy.launch.dir}` : 'found automatically';
   // Keep watching while ComfyUI is on its way up.
   clearTimeout(servicesPoll);
-  if ((comfy.starting || busy === 'start' || comfy.setup?.state === 'running') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
+  if ((comfy.starting || busy === 'start' || comfy.setup?.state === 'running' || lms.setup?.state === 'running' || st.ffmpeg?.setup?.state === 'running') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
 }
 
 // With Prompt Maker's server stopped, nothing here can be checked or pressed: say so instead of showing stale states.
@@ -7058,6 +7121,9 @@ function renderUpdate(info = upd.info) {
   now.textContent = info.stale
     ? `Prompt Maker ${info.current} is installed${info.how ? ` (${words[info.how] || ''})` : ''}, but ${info.running} is still running. Restart to use the new one.`
     : `You have Prompt Maker ${info.current}${info.how ? `, ${words[info.how] || ''}` : ''}.${info.latest ? info.newer ? ` ${info.latest} is out.` : ' That\'s the newest version.' : ''}`;
+  // Services says so too: its rows come from the code that runs, which may not know the newer page's buttons.
+  $('#svcStale').hidden = !info.stale;
+  $('#svcStale span').textContent = info.stale ? `Prompt Maker ${info.current} is installed, but ${info.running} is still running, so what's below is what ${info.running} knows. Restart to use the new one.` : '';
   const oneClick = info.how === 'git' || (packaged(info.how) && info.asset); // else the downloads page
   $('#updGo').hidden = !(info.newer && oneClick);
   $('#updGo').textContent = info.updated ? '✓ Updated' : `⬆ Update to ${info.latest || 'the newest'}`;
@@ -7121,6 +7187,9 @@ async function serviceAction(btn) {
   if (act === 'comfy-start') return startComfyUi();
   if (act === 'app-restart') return restartApp();
   if (act === 'comfy-setup') return openComfySetup();
+  if (act === 'lms-setup') return openLmsSetup();
+  if (act === 'ffmpeg-setup') return openFfmpegSetup();
+  if (act === 'model-files') return openModelFiles();
   if (act === 'app-stop' || btn.id === 'stopAllBtn') {
     const all = btn.id === 'stopAllBtn';
     return confirmClick(btn, all ? 'Click again to stop everything' : 'Click again to stop', async () => {
@@ -7225,7 +7294,7 @@ function renderFirstSetup(job) {
   if (job?.state === 'done') $('#setupNote').textContent = 'ComfyUI is starting in the background (up to a minute), and LM Studio runs its Brain when asked. Everything is ready.';
 }
 $('#setupRetry').addEventListener('click', runFirstSetup);
-$('#setupDone').addEventListener('click', () => location.reload());
+$('#setupDone').addEventListener('click', () => { openFilesNext(); location.reload(); });
 
 // ---------- one-click ComfyUI set-up ----------
 // The dialog checks the computer (graphics card and its driver, Python, where ComfyUI goes), then runs the set-up
@@ -7286,13 +7355,14 @@ function renderComfySetup() {
   $('#csProgress').hidden = !job;
   $('#csProgress').classList.toggle('done', job?.state === 'done');
   if (job) {
-    $('#csText').textContent = job.state === 'running' ? `${job.text}${job.percent != null ? ` ${job.percent}%` : ''}` : job.state === 'done' ? '✓ ComfyUI is set up and starting. Step ⑤ renders as soon as it answers.' : 'Stopped.';
+    $('#csText').textContent = job.state === 'running' ? `${job.text}${job.percent != null ? ` ${job.percent}%` : ''}` : job.state === 'done' ? '✓ ComfyUI is set up and starting. Create renders as soon as it answers.' : 'Stopped.';
     $('#csDetail').textContent = job.state === 'running' ? job.detail || '' : '';
   }
   $('#csResult').hidden = job?.state !== 'error';
   $('#csResult').className = 'test-result bad';
   if (job?.state === 'error') $('#csResult').textContent = job.error;
   $('#csGo').hidden = job?.state === 'done';
+  $('#csFiles').hidden = job?.state !== 'done';
   $('#csGo').disabled = running || !py.ok || (g.kind === 'nvidia' && !g.driver);
   $('#csGo').textContent = job?.state === 'error' ? '↻ Try again' : '⬇ Set it up';
   $('#csStop').hidden = !running;
@@ -7349,6 +7419,7 @@ $('#csStop').addEventListener('click', async () => {
   await api('/api/comfy/setup/cancel', { method: 'POST' }).catch(() => {});
   $('#csStop').disabled = false;
 });
+$('#csFiles').addEventListener('click', () => { $('#comfySetupDlg').close(); openModelFiles(); });
 $('#csDirChange').addEventListener('click', () => {
   const input = $('#csDir');
   input.hidden = !input.hidden;
@@ -7379,6 +7450,417 @@ $('#csChecks').addEventListener('click', async e => {
 });
 $('#comfySetupDlg').addEventListener('close', () => { clearTimeout(cs.poll); if (cs.status?.job?.state === 'running') toast('🎨 ComfyUI\'s set-up goes on in the background: Settings → Services shows how far it is'); });
 
+// ---------- LM Studio's set-up: LM Studio, its server, a Brain that can see ----------
+// The dialog says what's there (LM Studio's lms tool, its server, a Brain that sees), then runs the set-up on the
+// server (lib/setup.js): LM Studio's headless service on Linux (its installer on Windows), its server, Qwen3-VL
+// through LM Studio's own downloader. Each part is skipped when it's there. Offered by Settings → Services, the
+// banner (when LM Studio isn't on this computer) and Brains (when no Brain can see).
+const ls = { status: null, poll: null };
+
+async function openLmsSetup() {
+  const dlg = $('#lmsSetupDlg');
+  if (!dlg.open) dlg.showModal();
+  $('#lsResult').hidden = true;
+  ls.status = await api('/api/lms/setup').catch(err => ({ supported: true, error: friendly(err) }));
+  renderLmsSetup();
+  if (ls.status?.job?.state === 'running') pollLmsSetup();
+}
+
+function renderLmsSetup() {
+  const st = ls.status;
+  if (!st) return;
+  const row = (name, dot, text, fix) => {
+    const el = $(`#lsChecks .svc[data-check="${name}"]`);
+    $('.dot', el).className = `dot ${dot}`;
+    $('.svc-state', el).textContent = text;
+    const b = $('[data-fix]', el);
+    if (b) b.hidden = !fix;
+  };
+  const job = st.job;
+  const running = job?.state === 'running';
+  if (!st.supported) {
+    row('lms', 'warn', 'Setting up LM Studio is for Linux and Windows for now. On macOS, install it from lmstudio.ai and open it once.', false);
+    row('server', '', '', false);
+    row('brain', '', '', false);
+    $('#lsGo').hidden = true;
+    $('#lsAbout').textContent = '';
+    return;
+  }
+  if (st.error) {
+    row('lms', 'bad', st.error, false);
+    $('#lsGo').disabled = true;
+    return;
+  }
+  const linux = st.platform === 'linux';
+  const needsLib = linux && !st.installed && st.libatomic === false;
+  row('lms', st.installed ? 'ok' : needsLib ? 'bad' : 'warn',
+    st.installed ? 'On this computer (its lms tool is in your home folder)'
+      : needsLib ? 'Not yet. Its service needs libatomic, a small system library: install it first, then set up'
+        : linux ? 'Not on this computer yet. Its service (llmster) comes from lmstudio.ai, about 1 GB: it runs in the background with no window, and the LM Studio app can be added later'
+          : 'Not on this computer yet. Its installer comes from lmstudio.ai and runs quietly, for your user',
+    needsLib && st.pkexec);
+  row('server', st.server ? 'ok' : st.installed ? 'warn' : '', st.server ? 'Running' : st.installed ? 'Off: it gets started' : 'Starts once LM Studio is in', false);
+  const b = st.brain || {};
+  row('brain', b.ready ? 'ok' : 'warn', b.ready ? `${b.name || 'One is here already'}` : `${b.wanted} (${b.about}), fetched by LM Studio's own downloader, which picks the size for your computer`, false);
+  const done = st.installed && st.server && b.ready;
+  $('#lsAbout').textContent = done ? 'Everything is here. Nothing to do.' : `It downloads ${st.installed ? '' : `LM Studio (${linux ? 'about 1 GB' : 'about 500 MB'})${b.ready ? '' : ' and '}`}${b.ready ? '' : `the Brain (${b.about})`}. Close the dialog and it goes on; Settings → Services shows how far it is.`;
+  $('#lsProgress').hidden = !job;
+  $('#lsProgress').classList.toggle('done', job?.state === 'done');
+  if (job) {
+    $('#lsText').textContent = job.state === 'running' ? `${job.text}${job.percent != null ? ` ${job.percent}%` : ''}` : job.state === 'done' ? '✓ LM Studio is set up, with a Brain that can see. Pick it in the Brain menu at the top.' : 'Stopped.';
+    $('#lsDetail').textContent = job.state === 'running' ? job.detail || '' : '';
+  }
+  $('#lsResult').hidden = job?.state !== 'error';
+  $('#lsResult').className = 'test-result bad';
+  if (job?.state === 'error') $('#lsResult').textContent = job.error;
+  $('#lsGo').hidden = job?.state === 'done' || (done && !job);
+  $('#lsGo').disabled = running || needsLib;
+  $('#lsGo').textContent = job?.state === 'error' ? '↻ Try again' : st.installed ? (st.server ? '⬇ Get the Brain' : '⬇ Set it up') : '⬇ Set it up';
+  $('#lsStop').hidden = !running;
+  $('#lsLater').textContent = job?.state === 'done' || (done && !job) ? 'Done' : running ? 'Close (it goes on)' : 'Later';
+}
+
+function pollLmsSetup() {
+  clearTimeout(ls.poll);
+  ls.poll = setTimeout(async () => {
+    const job = await api('/api/lms/setup/job').catch(() => null);
+    if (!job || job.state === 'none' || !ls.status) return;
+    const was = ls.status.job?.state;
+    ls.status.job = job;
+    if (job.state !== 'running') ls.status = await api('/api/lms/setup').catch(() => ls.status); // what's there now
+    renderLmsSetup();
+    if (job.state === 'running') return pollLmsSetup();
+    if (was === 'running' || was === undefined) {
+      if (job.state === 'done') { toast('🧠 LM Studio is set up, with a Brain that can see'); state.lmsInstalled = true; bannerAsked = false; loadLlms(); }
+      else toast(`LM Studio's set-up stopped: ${job.error}`, true);
+      loadServices();
+    }
+  }, 1500);
+}
+
+$('#lsGo').addEventListener('click', async () => {
+  const b = $('#lsGo');
+  b.disabled = true;
+  $('#lsResult').hidden = true;
+  try {
+    ls.status.job = await api('/api/lms/setup', { method: 'POST' });
+    renderLmsSetup();
+    pollLmsSetup();
+    loadServices();
+  } catch (err) {
+    b.disabled = false;
+    $('#lsResult').hidden = false;
+    $('#lsResult').className = 'test-result bad';
+    $('#lsResult').textContent = friendly(err);
+  }
+});
+$('#lsStop').addEventListener('click', async () => {
+  $('#lsStop').disabled = true;
+  await api('/api/lms/setup/cancel', { method: 'POST' }).catch(() => {});
+  $('#lsStop').disabled = false;
+});
+// The root fix: libatomic, through the system's password prompt.
+$('#lsChecks').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-fix]');
+  if (!b || b.disabled) return;
+  b.disabled = true;
+  const was = b.textContent;
+  b.textContent = 'Installing… (enter your password when asked)';
+  try {
+    await api('/api/lms/setup/fix', { method: 'POST', body: { what: b.dataset.fix } });
+    toast('✓ Installed');
+    ls.status = await api('/api/lms/setup').catch(() => ls.status);
+    renderLmsSetup();
+  } catch (err) {
+    toast(friendly(err), true);
+  } finally {
+    b.disabled = false;
+    b.textContent = was;
+  }
+});
+$('#lmsSetupDlg').addEventListener('close', () => { clearTimeout(ls.poll); if (ls.status?.job?.state === 'running') toast("🧠 LM Studio's set-up goes on in the background: Settings → Services shows how far it is"); });
+
+// ---------- ffmpeg's set-up: a static build into the data folder ----------
+// Offered by Settings → Services and by the motion video's notes when something needs ffmpeg. The server fetches
+// the build and unpacks it (lib/ffmpeg-setup.js); this shows a bar. When it's done, a motion video in step 3 is
+// looked at again, so its notes and buttons follow.
+const fsu = { status: null, poll: null };
+
+async function openFfmpegSetup() {
+  const dlg = $('#ffmpegSetupDlg');
+  if (!dlg.open) dlg.showModal();
+  $('#fsResult').hidden = true;
+  fsu.status = await api('/api/ffmpeg/setup').catch(err => ({ supported: true, error: friendly(err) }));
+  renderFfmpegSetup();
+  if (fsu.status?.job?.state === 'running') pollFfmpegSetup();
+}
+
+function renderFfmpegSetup() {
+  const st = fsu.status;
+  if (!st) return;
+  const el = $('#fsChecks .svc[data-check="ffmpeg"]');
+  const job = st.job;
+  const running = job?.state === 'running';
+  if (!st.supported) {
+    $('.dot', el).className = 'dot warn';
+    $('.svc-state', el).textContent = 'Setting up ffmpeg is for Linux and Windows for now. On macOS: brew install ffmpeg.';
+    $('#fsGo').hidden = true;
+    $('#fsAbout').textContent = '';
+    return;
+  }
+  if (st.error) {
+    $('.dot', el).className = 'dot bad';
+    $('.svc-state', el).textContent = st.error;
+    $('#fsGo').disabled = true;
+    return;
+  }
+  $('.dot', el).className = `dot ${st.ok ? 'ok' : st.tar ? 'warn' : 'bad'}`;
+  $('.svc-state', el).textContent = st.ok ? `Here already (${st.via === 'own' ? 'its own copy, in the data folder' : "the system's"}${st.version ? `, ${st.version}` : ''})`
+    : st.tar ? `Not on this computer yet. A ready-made build (${st.about}) from the FFmpeg-Builds project on GitHub goes to ${st.dir}; nothing else is touched`
+      : "Not on this computer yet, and neither is tar, which unpacks it: install tar with the system's package tool first";
+  $('#fsAbout').textContent = st.ok ? 'Nothing to do.' : 'Close the dialog and it goes on; Settings → Services shows how far it is.';
+  $('#fsProgress').hidden = !job;
+  $('#fsProgress').classList.toggle('done', job?.state === 'done');
+  if (job) {
+    $('#fsText').textContent = job.state === 'running' ? `${job.text}${job.percent != null ? ` ${job.percent}%` : ''}` : job.state === 'done' ? `✓ ${job.text}` : 'Stopped.';
+    $('#fsDetail').textContent = job.state === 'running' ? job.detail || '' : '';
+  }
+  $('#fsResult').hidden = job?.state !== 'error';
+  $('#fsResult').className = 'test-result bad';
+  if (job?.state === 'error') $('#fsResult').textContent = job.error;
+  $('#fsGo').hidden = job?.state === 'done' || (st.ok && !job);
+  $('#fsGo').disabled = running || !st.tar;
+  $('#fsGo').textContent = job?.state === 'error' ? '↻ Try again' : '⬇ Set it up';
+  $('#fsStop').hidden = !running;
+  $('#fsLater').textContent = job?.state === 'done' || (st.ok && !job) ? 'Done' : running ? 'Close (it goes on)' : 'Later';
+}
+
+function pollFfmpegSetup() {
+  clearTimeout(fsu.poll);
+  fsu.poll = setTimeout(async () => {
+    const job = await api('/api/ffmpeg/setup/job').catch(() => null);
+    if (!job || job.state === 'none' || !fsu.status) return;
+    const was = fsu.status.job?.state;
+    fsu.status.job = job;
+    if (job.state !== 'running') fsu.status = await api('/api/ffmpeg/setup').catch(() => fsu.status);
+    renderFfmpegSetup();
+    if (job.state === 'running') return pollFfmpegSetup();
+    if (was === 'running' || was === undefined) {
+      if (job.state === 'done') {
+        toast('🎞 ffmpeg is set up');
+        if (state.video?.file) restoreVideo({ ...state.video, bars: undefined }); // looked at again, now with ffmpeg
+      } else toast(`ffmpeg's set-up stopped: ${job.error}`, true);
+      loadServices();
+    }
+  }, 1500);
+}
+
+$('#fsGo').addEventListener('click', async () => {
+  const b = $('#fsGo');
+  b.disabled = true;
+  $('#fsResult').hidden = true;
+  try {
+    fsu.status.job = await api('/api/ffmpeg/setup', { method: 'POST' });
+    renderFfmpegSetup();
+    pollFfmpegSetup();
+    loadServices();
+  } catch (err) {
+    b.disabled = false;
+    $('#fsResult').hidden = false;
+    $('#fsResult').className = 'test-result bad';
+    $('#fsResult').textContent = friendly(err);
+  }
+});
+$('#fsStop').addEventListener('click', async () => {
+  $('#fsStop').disabled = true;
+  await api('/api/ffmpeg/setup/cancel', { method: 'POST' }).catch(() => {});
+  $('#fsStop').disabled = false;
+});
+$('#ffmpegSetupDlg').addEventListener('close', () => { clearTimeout(fsu.poll); if (fsu.status?.job?.state === 'running') toast("🎞 ffmpeg's set-up goes on in the background: Settings → Services shows how far it is"); });
+
+// ---------- ⬇ Model files: what each model needs in ComfyUI, and getting it ----------
+// One list for every model: each file its workflows load (the model, its text encoder, VAE, LoRA…), ✓ when ComfyUI
+// has it, its size and ⬇ Get when it doesn't, a bar while it downloads; ⬇ Get all per model, and for everything.
+// The downloads are the same as Fine-tune → Rendering's (they run in the server and go on through a reload).
+const mf = { data: null, loading: null, focus: null, scrolled: false, hfForm: false, hfToken: '', hfTokenVisible: false, hfChecking: false, hfError: '' };
+
+async function openModelFiles({ modelId = null } = {}) {
+  const dlg = $('#modelFilesDlg');
+  mf.focus = modelId; // opened for one model: its section first, in view (kept through the redraws that follow the downloads)
+  mf.scrolled = false;
+  if (!dlg.open) dlg.showModal();
+  $('#mfResult').hidden = true;
+  renderModelFiles();
+  await loadModelFiles();
+  pollDownloads();
+}
+async function loadModelFiles() {
+  mf.loading ??= api('/api/models/files?sizes=1').then(d => { mf.data = d; }, err => { $('#mfResult').hidden = false; $('#mfResult').className = 'test-result bad'; $('#mfResult').textContent = friendly(err); }).finally(() => { mf.loading = null; });
+  await mf.loading;
+  renderModelFiles();
+}
+// A download that finished earlier this session counts only while ComfyUI can't say; once it says the file isn't
+// there (deleted since), the record is stale.
+const mfDownload = f => { const d = downloadFor(f); return d?.state === 'done' && f.have === false ? null : d; };
+const mfMissing = m => m.files.filter(f => f.have !== true && mfDownload(f)?.state !== 'done');
+const mfToGet = m => mfMissing(m).filter(f => f.download && !f.gated && mfDownload(f)?.state !== 'running');
+const mfSize = list => list.reduce((n, f) => n + (f.size || 0), 0);
+const mfSizeLabel = (list, { about = true } = {}) => { const known = list.filter(f => f.size); return !known.length ? '' : `${about && known.length < list.length ? 'at least ' : ''}${sizeLabel(mfSize(known))}`; };
+function renderModelFiles() {
+  if (!$('#modelFilesDlg').open) return;
+  const d = mf.data;
+  const stateEl = $('#mfState');
+  const list = $('#mfList');
+  if (!d) {
+    stateEl.innerHTML = 'Looking at what ComfyUI has, and asking Hugging Face how big the rest is…';
+    list.innerHTML = '';
+    $('#mfHf').hidden = true;
+    $('#mfTotal').textContent = '';
+    $('#mfAll').hidden = true;
+    return;
+  }
+  const startable = state.comfy && !state.comfy.ok && state.comfy.local !== false && state.comfy.found !== false;
+  stateEl.innerHTML = d.comfy ? '✓ = already in ComfyUI. Sizes are from Hugging Face; nothing is downloaded until you click.'
+    : `ComfyUI isn't answering, so it can't be told which files are here yet.${startable ? ' <button type="button" class="btn small primary" data-act="mf-start">▶ Start ComfyUI</button>' : ' Start it, then open this again.'}`;
+  renderModelFilesHf(d);
+  const hf = d.huggingface?.connected;
+  const row = (f, m) => {
+    const dl = mfDownload(f);
+    const only = m.workflows > 1 && f.workflows?.length && f.workflows.length < m.workflows; // one variant's file, not every workflow's
+    let act;
+    if (f.have === true) act = '<span class="mm-ok">✓ Here</span>';
+    else if (dl?.state === 'running') act = `<span class="mm-prog"><span class="mm-bar" style="width:${dl.total ? Math.round((dl.received / dl.total) * 100) : 0}%"></span></span><span class="mm-pct">${dl.total ? `${Math.round((dl.received / dl.total) * 100)}% of ${sizeLabel(dl.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="mf-cancel" data-id="${esc(dl.id)}" aria-label="Stop downloading ${esc(f.file)}">✕</button>`;
+    else if (dl?.state === 'done') act = '<span class="mm-ok">✓ Downloaded</span>';
+    else if (f.gated === 'terms') act = `<span class="mm-none">Accept its terms first: <a href="${esc(mfRepoPage(f.url))}" target="_blank" rel="noopener noreferrer">open the model's page</a>, click Agree (it's granted at once), then</span><button type="button" class="btn small" data-act="mf-recheck">↻ Check again</button>`;
+    else if (f.gated) act = `<span class="mm-none">${hf ? "Hugging Face didn't accept your token: connect your account again above." : 'Behind a free Hugging Face account: connect yours above.'}</span>`;
+    else if (f.download) act = `${dl?.state === 'error' ? `<span class="mm-err">${linkify(dl.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mf-get" data-file="${esc(f.file)}" ${d.comfy ? '' : 'disabled title="Start ComfyUI first"'}>${dl?.state === 'error' ? '↻ Try again' : '⬇ Get'}</button>`;
+    else if (/^https?:\/\//.test(f.url || '')) act = `<span class="mm-none">Get it from <a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(f.url).hostname)}</a> and put it in models/${esc(f.folder || '…')}.</span>`;
+    else act = `<span class="mm-none">No download link: get it where the workflow came from, into models/${esc(f.folder || '…')}.</span>`;
+    const size = f.have === true ? '' : f.size ? sizeLabel(f.size) : '';
+    return `<li class="${f.have === true ? 'have' : ''}"><span class="mf-role">${esc(f.role)}${only ? `<small class="mf-for">only for ${esc(f.workflows.map(mfFlowShort).join(', '))}</small>` : ''}</span><code title="${esc(f.name)}${f.workflows?.length > 1 ? ` · used by ${esc(f.workflows.join(', '))}` : ''}">${esc(f.file)}</code><span class="mf-size">${size}</span><span class="mm-act">${act}</span></li>`;
+  };
+  list.innerHTML = d.models.map(m => {
+    const missing = mfMissing(m);
+    const toGet = mfToGet(m);
+    const running = m.files.filter(f => mfDownload(f)?.state === 'running').length;
+    const sum = !d.comfy && !missing.length ? '' : !missing.length ? `<span class="mm-ok">✓ All ${m.files.length} files here</span>`
+      : running ? `Downloading ${running} of ${m.files.length}…` : `${missing.length} of ${m.files.length} files to get${mfSizeLabel(missing) ? ` · ${mfSizeLabel(missing)}` : ''}`;
+    const all = toGet.length > 1 ? `<button type="button" class="btn small primary" data-act="mf-model" data-id="${esc(m.id)}" ${d.comfy ? '' : 'disabled title="Start ComfyUI first"'}>⬇ Get all for this model${mfSizeLabel(toGet) ? ` (${mfSizeLabel(toGet, { about: false })})` : ''}</button>` : '';
+    return `<section class="mf-model" data-id="${esc(m.id)}"><header><h3>${m.kind === 'video' ? '🎬' : '📷'} ${esc(m.name)}</h3><span class="mf-sum">${sum}</span>${all}</header><ul>${m.files.map(f => row(f, m)).join('')}</ul></section>`;
+  }).join('') || '<p class="muted">No model has a workflow yet, so there is nothing to get.</p>';
+  if (mf.focus) { // opened for one model (a render that lacks its files): that model first and in view
+    const sec = $(`.mf-model[data-id="${CSS.escape(mf.focus)}"]`, list);
+    if (sec) { list.prepend(sec); sec.classList.add('focus'); if (!mf.scrolled) { mf.scrolled = true; sec.scrollIntoView({ block: 'start' }); } }
+  }
+  const everything = d.models.flatMap(mfToGet);
+  $('#mfTotal').textContent = everything.length > 1 ? `${everything.length} files to get for all models${mfSizeLabel(everything) ? `: ${mfSizeLabel(everything)}` : ''}` : '';
+  $('#mfAll').hidden = everything.length <= 1;
+  $('#mfAll').disabled = !d.comfy;
+}
+// A message with a link in it (a Hugging Face page, with or without https://): the link becomes one to click.
+const linkify = text => esc(text).replace(/(https?:\/\/[^\s"'<>]+|(?:^|(?<=[\s(]))(?:huggingface\.co|hf\.co)\/[^\s"'<>]+)/g, m => {
+  const trail = m.match(/[.,;:!?)]+$/)?.[0] || ''; // the sentence's own punctuation stays outside the link
+  const link = m.slice(0, m.length - trail.length);
+  return `<a href="${/^https?:/.test(link) ? link : `https://${link}`}" target="_blank" rel="noopener noreferrer">${link}</a>${trail}`;
+});
+// A workflow's name without the model's ("FLUX 3 Klein Base · BF16: text to image" → "BF16: text to image").
+const mfFlowShort = name => String(name).split(' · ').slice(1).join(' · ') || name;
+// The model's page on Hugging Face (where Agree is), from a file's link.
+const mfRepoPage = url => { try { const u = new URL(url); return u.pathname.includes('/resolve/') ? `${u.origin}${u.pathname.split('/resolve/')[0]}` : url; } catch { return url; } };
+// Some files (FLUX 3 Klein's) are handed out only to a signed-in Hugging Face account that clicked Agree on the
+// model's page: one token, pasted once here, and ⬇ Get works for them like for the rest.
+function renderModelFilesHf(d) {
+  const box = $('#mfHf');
+  const hf = d.huggingface || {};
+  const gated = d.models.some(m => mfMissing(m).some(f => f.gated));
+  box.hidden = !hf.connected && !gated;
+  if (box.hidden) return;
+  box.classList.toggle('on', Boolean(hf.connected));
+  if (hf.connected) {
+    mf.hfToken = '';
+    mf.hfTokenVisible = false;
+    mf.hfChecking = false;
+    box.innerHTML = `<p>🤗 Hugging Face: connected${hf.user ? ` as <b>${esc(hf.user)}</b>` : ''}. The files behind an account download like the rest${gated ? ', once you\'ve clicked Agree on the model\'s page' : ''}. <button type="button" class="btn small" data-act="mf-hf-off">Disconnect</button></p>`;
+    return;
+  }
+  if (!mf.hfForm) {
+    box.innerHTML = '<p>Some of these files are handed out only to a Hugging Face account (free). Connect yours once, and they download like the rest. <button type="button" class="btn small primary" data-act="mf-hf-on">Connect Hugging Face</button></p>';
+    return;
+  }
+  box.innerHTML = `<p><b>Connect Hugging Face</b></p>
+    <p>Some model files need a free Hugging Face account.</p>
+    <ol>
+      <li><a href="https://huggingface.co/settings/tokens/new?tokenType=read" target="_blank" rel="noopener noreferrer"><b>Get a Read token from Hugging Face</b></a>. Sign in or make a free account if asked, name the token, then click <i>Create token</i>.</li>
+      <li>Copy the token (it starts with <code>hf_</code>) and paste it below.</li>
+    </ol>
+    <label class="mf-hf-label" for="mfHfToken">Hugging Face token</label>
+    <div class="row"><input id="mfHfToken" type="${mf.hfTokenVisible ? 'text' : 'password'}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste token (hf_…)" aria-describedby="mfHfPrivacy"><button type="button" class="btn small" data-act="mf-hf-show" aria-pressed="${mf.hfTokenVisible}">${mf.hfTokenVisible ? 'Hide' : 'Show'}</button><button type="button" class="btn small primary" data-act="mf-hf-save" ${mf.hfChecking ? 'disabled' : ''}>${mf.hfChecking ? 'Checking…' : 'Connect account'}</button><button type="button" class="btn small" data-act="mf-hf-cancel" ${mf.hfChecking ? 'disabled' : ''}>Not now</button></div>
+    <p id="mfHfPrivacy" class="hint">Saved only in Prompt Maker's data folder, readable only by you. It is sent only to huggingface.co.</p>
+    ${mf.hfError ? `<span class="mm-err">${linkify(mf.hfError)}</span>` : ''}`;
+  const input = $('#mfHfToken');
+  input.value = mf.hfToken;
+  input.addEventListener('input', () => { mf.hfToken = input.value; if (mf.hfError) { mf.hfError = ''; box.querySelector('.mm-err')?.remove(); } }); // keep a paste through redraws; a replacement dismisses the old error
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('[data-act="mf-hf-save"]', box).click(); } }); // (Enter would close the dialog)
+  if (mf.hfError) { input.focus(); input.select(); } // the next paste replaces the rejected token
+  else if (!mf.hfChecking) input.focus();
+}
+async function connectHuggingFace(token) {
+  mf.hfToken = token;
+  mf.hfChecking = true;
+  mf.hfError = '';
+  renderModelFilesHf(mf.data);
+  try {
+    const got = await api('/api/huggingface', { method: 'POST', body: { token } });
+    mf.hfForm = false;
+    mf.hfToken = '';
+    mf.hfTokenVisible = false;
+    mf.hfChecking = false;
+    mf.hfError = '';
+    toast(`🤗 Hugging Face connected${got.user ? ` as ${got.user}` : ''}`);
+    await reloadModelFiles();
+  } catch (err) {
+    mf.hfChecking = false;
+    mf.hfError = friendly(err);
+    renderModelFilesHf(mf.data);
+  }
+}
+async function reloadModelFiles() {
+  mf.data = null;
+  renderModelFiles();
+  await loadModelFiles();
+}
+$('#modelFilesDlg').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b || !mf.data) return;
+  const files = mf.data.models.flatMap(m => m.files);
+  if (b.dataset.act === 'mf-hf-on') { mf.hfForm = true; mf.hfToken = ''; mf.hfTokenVisible = false; mf.hfChecking = false; mf.hfError = ''; renderModelFilesHf(mf.data); }
+  else if (b.dataset.act === 'mf-hf-cancel') { mf.hfForm = false; mf.hfToken = ''; mf.hfTokenVisible = false; mf.hfChecking = false; mf.hfError = ''; renderModelFilesHf(mf.data); }
+  else if (b.dataset.act === 'mf-hf-show') { mf.hfToken = $('#mfHfToken')?.value || ''; mf.hfTokenVisible = !mf.hfTokenVisible; renderModelFilesHf(mf.data); const input = $('#mfHfToken'); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); }
+  else if (b.dataset.act === 'mf-hf-save') connectHuggingFace($('#mfHfToken')?.value || '');
+  else if (b.dataset.act === 'mf-hf-off') { b.disabled = true; await api('/api/huggingface', { method: 'DELETE' }).catch(err => toast(friendly(err), true)); await reloadModelFiles(); }
+  else if (b.dataset.act === 'mf-recheck') { b.disabled = true; await reloadModelFiles(); }
+  else if (b.dataset.act === 'mf-get') downloadModels(files.filter(f => f.file === b.dataset.file).slice(0, 1));
+  else if (b.dataset.act === 'mf-model') downloadModels(mfToGet(mf.data.models.find(m => m.id === b.dataset.id) || { files: [] }));
+  else if (b.dataset.act === 'mf-cancel') api(`/api/comfy/downloads/${b.dataset.id}/cancel`, { method: 'POST' }).then(pollDownloads, () => {});
+  else if (b.dataset.act === 'mf-start') {
+    b.disabled = true;
+    await startComfyUi();
+    await reloadModelFiles();
+  }
+});
+$('#mfAll').addEventListener('click', () => { if (mf.data) downloadModels(mf.data.models.flatMap(mfToGet)); });
+$('#modelFilesDlg').addEventListener('close', () => { mf.focus = null; mf.hfForm = false; mf.hfToken = ''; mf.hfTokenVisible = false; mf.hfChecking = false; mf.hfError = ''; });
+// A set-up that just finished (ComfyUI, or the first start on Windows) opens this next, so the files come right after.
+const OPEN_FILES_KEY = 'pm-open-model-files';
+const openFilesNext = () => { try { sessionStorage.setItem(OPEN_FILES_KEY, '1'); } catch { /* no storage */ } };
+function openFilesIfAsked() {
+  let asked = false;
+  try { asked = sessionStorage.getItem(OPEN_FILES_KEY) === '1'; sessionStorage.removeItem(OPEN_FILES_KEY); } catch { /* no storage */ }
+  if (asked) openModelFiles();
+}
+$('#sComfyFiles').addEventListener('click', () => openModelFiles());
+$('#catalogFiles').addEventListener('click', () => openModelFiles());
+
 function renderSettings() {
   const s = state.settings;
   if (!s) return;
@@ -7408,7 +7890,7 @@ function renderSettings() {
 }
 
 // The Start-up switch saves on its own, so it never makes the form unsaved.
-const marksSettingsDirty = e => { if (!['sAutostart', 'sComfyAutostart'].includes(e.target.id) && !e.target.closest('#cloudCard')) setSettingsDirty(true); };
+const marksSettingsDirty = e => { if (!['sAutostart', 'sDesktopShortcut', 'sComfyAutostart'].includes(e.target.id) && !e.target.closest('#cloudCard')) setSettingsDirty(true); };
 $('#settingsForm').addEventListener('input', marksSettingsDirty);
 // Where ComfyUI's output folder is, as a hint in the field (it's usually found on its own).
 function showOutputDir() {
@@ -8128,7 +8610,7 @@ async function loadHealth({ fresh = false } = {}) {
   if (h.problems.length && !healthToasted) {
     healthToasted = true;
     const names = h.problems.slice(0, 3).map(p => `“${p.name}”`).join(', ');
-    toast(`⚠️ ${h.problems.length === 1 ? 'A workflow' : `${h.problems.length} workflows`} can't render right now: ${names}${h.problems.length > 3 ? '…' : ''}. Step ⑤ says why.`, true);
+    toast(`⚠️ ${h.problems.length === 1 ? 'A workflow' : `${h.problems.length} workflows`} can't render right now: ${names}${h.problems.length > 3 ? '…' : ''}. Fine-tune → Rendering says why.`, true);
   }
   return h;
 }
@@ -8208,7 +8690,7 @@ function renderModelNotice() {
     else if (m.folder === 'loras' && loraInFlow(flow, m.name) && newestLora(m.name, { anyOther: true })) {
       const n = newestLora(m.name, { anyOther: true }).name;
       act = `<span class="mm-none">Another version is in your folder: ${esc(loraShort(n))}.</span><button type="button" class="btn small primary" data-act="mm-swap" data-file="${esc(m.name)}" data-name="${esc(n)}">Use ${esc(versionLabel(n))}</button>`;
-    } else if (m.download) act = `${d?.state === 'error' ? `<span class="mm-err">${esc(d.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mm-get" data-file="${esc(m.file)}">${d?.state === 'error' ? '↻ Try again' : '⬇ Download'}</button>`;
+    } else if (m.download) act = `${d?.state === 'error' ? `<span class="mm-err">${linkify(d.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mm-get" data-file="${esc(m.file)}">${d?.state === 'error' ? '↻ Try again' : '⬇ Download'}</button>`;
     else if (/^https?:\/\//.test(m.url || '')) act = `<span class="mm-none">Get it from <a href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(m.url).hostname)}</a> (the workflow's link) and put it in that folder.</span>`;
     else act = '<span class="mm-none">No download link in the workflow: get it where the workflow came from.</span>';
     return `<li><code title="${esc(m.name)}">${esc(m.file)}</code>${where}<span class="mm-act">${act}</span></li>`;
@@ -8229,6 +8711,7 @@ async function downloadModels(list) {
     }
   }
   renderModelNotice();
+  renderModelFiles();
   pollDownloads();
 }
 
@@ -8264,6 +8747,8 @@ async function pollDownloads() {
   }
   for (const d of failed) toast(`Download of ${d.file} failed: ${d.error}`, true);
   renderModelNotice();
+  if (finished.length && mf.data && $('#modelFilesDlg').open) loadModelFiles(); // ✓ Here, once ComfyUI lists it
+  else renderModelFiles();
   if (list.some(d => d.state === 'running')) downloadTimer = setTimeout(pollDownloads, 1000);
 }
 
@@ -14133,6 +14618,7 @@ async function loadModels() {
     history.replaceState(null, '', `#${VIEWS.find(v => isView(v))}`);
     requestAnimationFrame(sizeTheme);
     state.booted = true;
+    openFilesIfAsked(); // a set-up that just finished: the model files come next
   } catch (err) {
     showError(`Could not start: ${friendly(err)}`);
   }

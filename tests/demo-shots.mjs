@@ -1,6 +1,6 @@
 // Builds the DEMO (5320) and CLEAN (5321) copies tests/screenshots.mjs needs, from the mocks and docs/renders, takes
 // the named shots, then stops everything. No personal data: sample renders, empty prompts, seed 0, neutral paths.
-//   node tests/demo-shots.mjs create gallery models voices comfy-setup ask   → /tmp/promptmaker-demo/shots/*.png
+//   node tests/demo-shots.mjs create gallery models voices comfy-setup lms-setup model-files ask   → /tmp/promptmaker-demo/shots/*.png
 // Then copy the pngs into docs/screenshots (gallery and ask as .jpg: ffmpeg -q:v 4), and look at every one first.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -36,7 +36,7 @@ for (const [i, name] of pics.entries()) {
 }
 await fs.writeFile(path.join(demo, 'history.json'), JSON.stringify(history, null, 2));
 
-const env = { ...process.env, HOME: path.join(BASE, 'home'), XDG_CONFIG_HOME: path.join(BASE, 'home/.config'), XDG_DATA_HOME: path.join(BASE, 'home/.local/share'), SYSTEMCTL_BIN: '/bin/true', LMS_BIN: '/bin/true', PM_RAM_DIR: path.join(BASE, 'ram') };
+const env = { ...process.env, HOME: path.join(BASE, 'home'), XDG_CONFIG_HOME: path.join(BASE, 'home/.config'), XDG_DATA_HOME: path.join(BASE, 'home/.local/share'), SYSTEMCTL_BIN: '/bin/true', LMS_BIN: path.join(BASE, 'home/.lmstudio/bin/lms'), PM_RAM_DIR: path.join(BASE, 'ram') }; // (no lms there: LM Studio counts as not on the computer, for the lms-setup shot)
 const servers = [];
 const startApp = (port, data) => new Promise((resolve, reject) => {
   const p = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...env, PORT: String(port), PROMPT_MAKER_DATA: data }, stdio: ['ignore', 'pipe', 'pipe'] });

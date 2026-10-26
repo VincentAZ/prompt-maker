@@ -32,10 +32,12 @@ $appdata = Join-Path $work 'appdata'
 New-Item -ItemType Directory -Force $dir, $data, $appdata | Out-Null
 # The installer and everything it starts see a throwaway data folder and Start menu, the check's port, no LM Studio,
 # and the local stand-in for the release feed (so nothing here ever asks GitHub).
-$saved = @{ PORT = $env:PORT; PROMPT_MAKER_DATA = $env:PROMPT_MAKER_DATA; APPDATA = $env:APPDATA; LMS_BIN = $env:LMS_BIN; PM_UPDATE_FEED = $env:PM_UPDATE_FEED; PM_NO_FIRST_SETUP = $env:PM_NO_FIRST_SETUP }
+$saved = @{ PORT = $env:PORT; PROMPT_MAKER_DATA = $env:PROMPT_MAKER_DATA; APPDATA = $env:APPDATA; LMS_BIN = $env:LMS_BIN; PM_DESKTOP_DIR = $env:PM_DESKTOP_DIR; PM_UPDATE_FEED = $env:PM_UPDATE_FEED; PM_NO_FIRST_SETUP = $env:PM_NO_FIRST_SETUP }
 $env:PORT = "$port"; $env:PROMPT_MAKER_DATA = $data; $env:APPDATA = $appdata; $env:LMS_BIN = Join-Path $work 'no-lms.exe'; $env:PM_UPDATE_FEED = "http://127.0.0.1:$feedPort/feed"
+$env:PM_DESKTOP_DIR = Join-Path $work 'Desktop'
 $env:PM_NO_FIRST_SETUP = '1' # the first-start set-up (ComfyUI, LM Studio, a Brain: gigabytes) is not for a throwaway copy
 $lnk = Join-Path $appdata 'Microsoft\Windows\Start Menu\Programs\Prompt Maker.lnk'
+$desktopLnk = Join-Path $env:PM_DESKTOP_DIR 'Prompt Maker.lnk'
 $vbs = Join-Path $appdata 'Microsoft\Windows\Start Menu\Programs\Startup\Prompt Maker.vbs'
 $ok = $false
 $feed = $null
@@ -112,6 +114,7 @@ http.createServer((req, res) => {
   }
 
   if (-not (Test-Path $lnk)) { Fail "no Start menu entry at $lnk" }
+  if (-not (Test-Path $desktopLnk)) { Fail "no desktop entry at $desktopLnk" }
   $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
   if ($target -ne (Join-Path $dir 'app\start.bat')) { Fail "the Start menu entry opens $target" }
   if (-not (Test-Path $vbs)) { Fail "no start-with-the-computer entry at $vbs" }
@@ -136,12 +139,13 @@ http.createServer((req, res) => {
   if (Test-Path $uninstallKey) { Fail "the uninstall entry stayed" }
   if (Test-Path 'HKCU:\Software\Classes\promptmaker') { Fail "the promptmaker:// link stayed" }
   if (Test-Path $lnk) { Fail "the Start menu entry stayed" }
+  if (Test-Path $desktopLnk) { Fail "the desktop entry stayed" }
   if (Test-Path $vbs) { Fail "the start-with-the-computer entry stayed" }
   if (Test-Path (Join-Path $dir 'app\server.js')) { Fail "the app's files stayed in $dir" }
   if (-not (Test-Path (Join-Path $data 'renders'))) { Fail "the uninstall took the data folder" }
   $ok = $true
   $did = if ($UpdateFrom) { "installs $([IO.Path]::GetFileName($UpdateFrom)) and updates it from Settings to" } else { "installs" }
-  Write-Host "OK: $did Prompt Maker $version with its own Node ($nodeVersion), the Start menu entry, the Startup entry and the promptmaker:// link, and uninstalls clean."
+  Write-Host "OK: $did Prompt Maker $version with its own Node ($nodeVersion), Start menu and desktop entries, the Startup entry and the promptmaker:// link, and uninstalls clean."
 } finally {
   if ($feed -and -not $feed.HasExited) { Stop-Process -Id $feed.Id -Force -ErrorAction SilentlyContinue }
   if ($UpdateFrom) { Remove-Item (Join-Path $env:TEMP ([IO.Path]::GetFileName($Setup))) -Force -ErrorAction SilentlyContinue } # the update's download

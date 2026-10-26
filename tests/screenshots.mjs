@@ -4,10 +4,10 @@
 //         Start it with PORT=5320 PROMPT_MAKER_DATA=<folder> node server.js
 //   CLEAN (port 5321): an empty data folder, isolated XDG_CONFIG_HOME/XDG_DATA_HOME, and service commands disabled.
 //   Override DEMO, CLEAN and CDP_PORT for other local ports, CHROME_DIR for the browser profile. No conversation is generated for the Ask screenshot.
-// Then:  node tests/screenshots.mjs create gallery models voices comfy-setup ask   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
+// Then:  node tests/screenshots.mjs create gallery models voices comfy-setup lms-setup model-files hugging-face ask   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
 // Look at every picture before it ships: no prompts or personal names. Models shows the chooser, not example prompts.
 // shots.mjs: sharp 1760x1100 screenshots of the running demo apps, no prompt text on screen.
-// usage: node shots.mjs <name>...   (names: create gallery models voices comfy-setup ask)
+// usage: node shots.mjs <name>...   (names: create gallery models voices comfy-setup lms-setup model-files ask)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 
@@ -92,6 +92,25 @@ const steps = {
     await open(`${CLEAN}/#settings`);
     await js(`document.querySelector('[data-act="comfy-setup"]')?.click(); 1`);
     await sleep(2500); await shot('comfy-setup');
+  },
+  // LM Studio not on the computer (the CLEAN copy's LMS_BIN points nowhere): what the set-up offers.
+  async ['lms-setup']() {
+    await open(`${CLEAN}/#settings`);
+    await js(`document.querySelector('[data-act="lms-setup"]')?.click(); 1`);
+    await sleep(2500); await shot('lms-setup');
+  },
+  // Every model's files (the DEMO copy has each model's starter workflows); sizes come from Hugging Face.
+  async ['model-files']() {
+    await open(`${DEMO}/#models`);
+    await js(`document.querySelector('#catalogFiles').click(); 1`);
+    await sleep(6000); await shot('model-files');
+  },
+  async ['hugging-face']() {
+    await open(`${DEMO}/#models`);
+    await js(`document.querySelector('#catalogFiles').click(); 1`);
+    await sleep(6000);
+    await js(`document.querySelector('#mfHf [data-act="mf-hf-on"]')?.click(); 1`);
+    await sleep(700); await shot('hugging-face');
   },
 };
 for (const n of process.argv.slice(2)) { if (steps[n]) await steps[n](); else console.log('unknown', n); }

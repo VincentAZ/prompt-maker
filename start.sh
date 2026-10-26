@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Starts Prompt Maker (and LM Studio's local server if needed), then opens it in the browser.
 #   ./start.sh              start it, or just open it if it's already running. On Linux the first start also
-#                           sets it up: an app-menu entry, a background service that starts it at login (and
+#                           sets it up: app-menu and desktop launchers, a background service that starts it at login (and
 #                           LM Studio's server), and the link the page's Start button uses. Undo: --uninstall
 #   ./start.sh --install    set that up again (after --uninstall)
 #   ./start.sh --uninstall  remove it; start Prompt Maker by hand from then on

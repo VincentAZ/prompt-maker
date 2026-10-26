@@ -18,6 +18,7 @@ import * as folders from './lib/folders.js';
 import * as computer from './lib/computer.js';
 import * as comfySetup from './lib/comfy-setup.js';
 import * as firstSetup from './lib/setup.js';
+import * as ffmpegSetup from './lib/ffmpeg-setup.js';
 import * as update from './lib/update.js';
 import { spawn } from 'node:child_process';
 import * as videotools from './lib/videotools.js';
@@ -810,13 +811,15 @@ const comfyUp = settings => comfy.status(settings.comfyUrl).then(() => true, () 
 // how you start it (folder, Python, options), so its Start button does the same.
 async function servicesStatus() {
   const settings = await store.getSettings();
-  const [llms, comfyStatus, proc, unitActive, app, onService] = await Promise.all([
+  const [llms, comfyStatus, proc, unitActive, app, onService, lmsInstalled, ffmpeg] = await Promise.all([
     listLlms(settings.lmStudioUrl).catch(() => null),
     comfy.status(settings.comfyUrl).catch(() => null),
     services.comfyProcess(settings.comfyUrl),
     services.comfyUnitActive(),
     autostart.status(),
     services.underService(),
+    firstSetup.lmsReady(),
+    ffmpegSetup.status(),
   ]);
   if (proc?.dir) {
     const learned = { dir: proc.dir, python: proc.python, pre: proc.pre, args: proc.args };
@@ -826,7 +829,14 @@ async function servicesStatus() {
   if (launch.dir && !(await services.isComfyDir(launch.dir))) launch.dir = null; // a folder that isn't ComfyUI's (yet) counts as not found
   return {
     app: { service: onService, autostart: app.autostart, supported: app.supported },
-    lms: { running: Boolean(llms), loaded: llms ? llms.filter(m => m.loaded).length : 0, local: services.isLocalUrl(settings.lmStudioUrl) },
+    lms: {
+      running: Boolean(llms),
+      loaded: llms ? llms.filter(m => m.loaded).length : 0,
+      local: services.isLocalUrl(settings.lmStudioUrl),
+      installed: lmsInstalled, // its lms tool is on this computer (the set-up puts it there)
+      vision: llms ? llms.some(m => m.vision) : null, // a Brain that can see is there
+      setup: firstSetup.currentLms(), // LM Studio's set-up, while it runs (or how it ended)
+    },
     comfy: {
       running: Boolean(comfyStatus),
       starting: !comfyStatus && unitActive,
@@ -836,6 +846,7 @@ async function servicesStatus() {
       launch: launch.dir ? { dir: launch.dir, command: [launch.python, ...launch.pre, 'main.py', ...launch.args].join(' '), from: launch.from } : null,
       setup: comfySetup.current(), // the one-click set-up, while it runs (or how it ended)
     },
+    ffmpeg: { ok: ffmpeg.ok, via: ffmpeg.via, version: ffmpeg.version, supported: ffmpeg.supported, setup: ffmpeg.job }, // the video tools, and their set-up while it runs
   };
 }
 
@@ -1042,7 +1053,7 @@ async function prepareWorkflow(body) {
     mapping: preset?.mapping || analysis.mapping,
     options: preset?.options || analysis.options,
     candidates: analysis.candidates,
-    warnings: [...fixed, ...analysis.warnings, ...(missing.length ? [models.describeMissing(missing).replace('in step ⑤', 'in step ⑤ once this is saved')] : [])],
+    warnings: [...fixed, ...analysis.warnings, ...(missing.length ? [models.describeMissing(missing, { files: true })] : [])],
     producesVideo: analysis.producesVideo,
     nodes: Object.keys(prompt).length,
   };
@@ -1357,7 +1368,7 @@ async function checkWorkflowModels(workflow, base) {
 }
 
 // Every workflow checked against ComfyUI (nodes it lacks, model files it lacks): at start, whenever ComfyUI comes
-// back, every ten minutes while it's up, and on request. Step ⑤ and Settings → ComfyUI show what can't render.
+// back, every ten minutes while it's up, and on request. Fine-tune → Rendering and Settings → ComfyUI show what can't render.
 const health = { at: 0, comfyOk: null, running: null, workflows: [] };
 async function checkAllWorkflows(settings, { fresh = false } = {}) {
   if (health.running) return health.running;
@@ -1377,6 +1388,40 @@ async function checkAllWorkflows(settings, { fresh = false } = {}) {
   })().finally(() => { health.running = null; });
   return health.running;
 }
+// The ⬇ Model files screen: for each model, every file its workflows load (the model, its VAE, text encoder, LoRA…),
+// whether ComfyUI has it (when ComfyUI answers), the link to get it and, with sizes, how big it is (asked of
+// Hugging Face once per file, for the ones not here yet; nothing is downloaded by this).
+async function modelFiles(settings, { sizes = false } = {}) {
+  const info = await comfy.objectInfo(settings.comfyUrl, { fresh: true }).catch(() => null); // opened on purpose: what ComfyUI has right now
+  const flows = await wf.listWorkflows();
+  const out = [];
+  for (const model of await store.listModels()) {
+    const files = new Map();
+    for (const sum of flows.filter(f => f.modelId === model.id)) {
+      const w = await wf.getWorkflow(sum.id).catch(() => null);
+      if (!w) continue;
+      let probe;
+      try { probe = wf.buildPrompt(w, { text: '' }, info).prompt; } catch { probe = w.prompt; }
+      const links = await workflowLinks(w, settings.comfyUrl).catch(() => w.models || []);
+      for (const f of models.workflowFiles(probe, info, links)) {
+        const had = files.get(f.file);
+        if (!had) files.set(f.file, { ...f, nodes: undefined, workflows: [w.name] });
+        else {
+          if (!had.workflows.includes(w.name)) had.workflows.push(w.name);
+          if (!had.url && f.url) Object.assign(had, { url: f.url, download: f.download, name: f.name, folder: f.folder, role: f.role });
+          if (had.have === null && f.have !== null) had.have = f.have;
+        }
+      }
+    }
+    if (files.size) out.push({ id: model.id, name: model.name, kind: model.kind, workflows: flows.filter(f => f.modelId === model.id).length, files: [...files.values()] });
+  }
+  if (sizes) {
+    const got = await models.fileSizes(out.flatMap(m => m.files.filter(f => f.have !== true && f.download).map(f => f.url)));
+    for (const m of out) for (const f of m.files) Object.assign(f, f.url && f.have !== true && got[f.url] ? got[f.url] : { size: null, gated: false });
+  }
+  return { comfy: Boolean(info), downloads: models.listDownloads(), huggingface: await models.hfStatus(), models: out };
+}
+
 // Called whenever ComfyUI answers: a check when it just came back (its node packs may differ) or is ten minutes old.
 function comfyAnswered(settings, ok) {
   const came = ok && health.comfyOk !== true;
@@ -1826,6 +1871,12 @@ async function route(req, res) {
     return sendJson(res, 200, { ok: true });
   }
   if (p === '/api/models/hidden' && m === 'GET') return sendJson(res, 200, await store.hiddenBuiltins());
+  // ⬇ Model files: every model file every workflow of every model needs, present or not, with its link and size.
+  if (p === '/api/models/files' && m === 'GET') return sendJson(res, 200, await modelFiles(await store.getSettings(), { sizes: url.searchParams.has('sizes') }));
+  // Your Hugging Face account, for the files behind one (⬇ Model files): connect with a token, see who, forget it.
+  if (p === '/api/huggingface' && m === 'GET') return sendJson(res, 200, await models.hfStatus());
+  if (p === '/api/huggingface' && m === 'POST') return sendJson(res, 200, await models.hfConnect((await readBody(req)).token));
+  if (p === '/api/huggingface' && m === 'DELETE') return sendJson(res, 200, await models.hfForget());
   if ((match = p.match(/^\/api\/models\/([\w-]+)\/reset$/)) && m === 'POST') return sendJson(res, 200, await store.resetModel(match[1]));
   if ((match = p.match(/^\/api\/models\/([\w-]+)$/))) {
     const id = match[1];
@@ -1883,6 +1934,10 @@ async function route(req, res) {
     const body = await readBody(req);
     return sendJson(res, 200, await autostart.setAutostart(Boolean(body.enabled)));
   }
+  if (p === '/api/autostart/desktop' && m === 'PUT') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await autostart.setDesktop(Boolean(body.enabled)));
+  }
   // Set up for another copy, or one that's gone: point the setup at this one.
   if (p === '/api/autostart/repair' && m === 'POST') return sendJson(res, 200, await autostart.repair());
 
@@ -1894,7 +1949,19 @@ async function route(req, res) {
     const body = await readBody(req);
     return sendJson(res, 200, await comfySetup.install(await store.getSettings(), { dir: body.dir, start: startComfyAt }));
   }
-  // The first start on Windows: everything set up from one screen (ComfyUI, LM Studio, a Brain that can see).
+  // LM Studio's set-up: LM Studio itself (its headless service on Linux, its installer on Windows), its server and
+  // a Brain that can see; what's there, start it, watch it, stop it, and the root fix (libatomic on Linux).
+  if (p === '/api/lms/setup' && m === 'GET') return sendJson(res, 200, await firstSetup.lmsStatus(await store.getSettings()));
+  if (p === '/api/lms/setup' && m === 'POST') return sendJson(res, 200, await firstSetup.startLms(await store.getSettings()));
+  if (p === '/api/lms/setup/job' && m === 'GET') return sendJson(res, 200, firstSetup.currentLms() || { state: 'none' });
+  if (p === '/api/lms/setup/cancel' && m === 'POST') return sendJson(res, 200, firstSetup.cancelLms() || { state: 'none' });
+  if (p === '/api/lms/setup/fix' && m === 'POST') return sendJson(res, 200, await firstSetup.fixLms(String((await readBody(req)).what || '')));
+  // ffmpeg's set-up: a static build into the data folder; what's there, start it, watch it, stop it.
+  if (p === '/api/ffmpeg/setup' && m === 'GET') return sendJson(res, 200, await ffmpegSetup.status());
+  if (p === '/api/ffmpeg/setup' && m === 'POST') return sendJson(res, 200, await ffmpegSetup.install());
+  if (p === '/api/ffmpeg/setup/job' && m === 'GET') return sendJson(res, 200, ffmpegSetup.current() || { state: 'none' });
+  if (p === '/api/ffmpeg/setup/cancel' && m === 'POST') return sendJson(res, 200, ffmpegSetup.cancel() || { state: 'none' });
+  // The first start on Windows: everything set up from one screen (ComfyUI, LM Studio, a Brain that can see, ffmpeg).
   if (p === '/api/setup' && m === 'GET') return sendJson(res, 200, await firstSetup.status(await store.getSettings()));
   if (p === '/api/setup/run' && m === 'POST') return sendJson(res, 200, await firstSetup.start(await store.getSettings(), { startComfy: startComfyAt }));
   if (p === '/api/setup/job' && m === 'GET') return sendJson(res, 200, firstSetup.current() || { state: 'none' });
@@ -2267,7 +2334,7 @@ async function route(req, res) {
     if (!(await store.getModel(body.modelId || ''))) throw store.httpError(400, 'Save the model first.');
     return sendJson(res, 200, wf.summary(await wf.saveWorkflow(body)));
   }
-  // What model files the workflow needs that ComfyUI doesn't have (step ⑤ offers to download them).
+  // What model files the workflow needs that ComfyUI doesn't have (Fine-tune → Rendering offers to download them).
   if ((match = p.match(/^\/api\/workflows\/([\w-]+)\/models$/)) && m === 'GET') {
     const existing = await wf.getWorkflow(match[1]);
     if (!existing) return sendJson(res, 404, { error: 'Workflow not found' });
@@ -2474,6 +2541,6 @@ server.listen(PORT, HOST, async () => {
   if (settings?.comfyAutostart && !(await comfyUp(settings))) {
     services.startComfy(settings).then(() => console.log('Starting ComfyUI…'), err => console.warn(`Couldn't start ComfyUI: ${err.message}`));
   } else if (settings && (await comfyUp(settings))) {
-    comfyAnswered(settings, true); // every workflow checked in the background, so step ⑤ can say what can't render
+    comfyAnswered(settings, true); // every workflow checked in the background, so Fine-tune → Rendering can say what can't render
   }
 });

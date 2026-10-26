@@ -2,7 +2,7 @@
 rem Starts Prompt Maker on Windows and opens it as its own window. Double-click it, or use the Start menu entry.
 rem Prompt Maker then runs in the background with no window of its own (stop it in Settings > Services), and
 rem LM Studio's local server is turned on if LM Studio is installed. The first start also sets it up: a Start
-rem menu entry, starting with your computer, and the link the page's Start button uses (the installer does the
+rem menu and desktop entries, starting with your computer, and the link the page's Start button uses (the installer does the
 rem same as it installs).
 rem   start.bat --uninstall    undo that setup (start.bat --install does it again)
 rem   start.bat --background   start it without opening a window (what the Startup entry and the installer run)
@@ -24,7 +24,7 @@ exit /b 1
 :ready
 if /i "%~1"=="--install" (
   "%NODE%" lib\autostart.js install >nul
-  echo Prompt Maker is set up: it's in your Start menu and starts with your computer.
+  echo Prompt Maker is set up: it's in your Start menu and on your desktop, and starts with your computer.
   pause
   exit /b 0
 )

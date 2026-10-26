@@ -6,7 +6,7 @@
 #   /opt/prompt-maker/app     the app, as in this repo (nothing from any data folder)
 #   /opt/prompt-maker/node    Node.js, its own copy: nothing to install first, no version to get wrong
 #   /usr/bin/prompt-maker     starts it (the app's own start.sh, with that Node); --install / --uninstall as there
-#   an app-menu entry and icon, and the promptmaker:// link for the page's Start button
+#   app-menu and desktop launchers with the right icon, and the promptmaker:// link for the page's Start button
 # Per-user setup (the background service, start with the computer) is done by the app on its first start, as
 # always: a package can't do it, it runs as root. LM Studio and ComfyUI are separate installs (see the README).
 set -euo pipefail

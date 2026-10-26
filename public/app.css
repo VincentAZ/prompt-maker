@@ -1660,6 +1660,43 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .cs-progress .cs-detail { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 1.3em; }
 @keyframes cs-slide { 0% { margin-left: 0; } 50% { margin-left: 65%; } 100% { margin-left: 0; } }
 
+/* ⬇ Model files (Settings → Services, Models, the ComfyUI set-up) */
+.model-files-dlg { max-width: 760px; }
+.model-files-dlg .modal-body { max-height: calc(100vh - 48px); box-sizing: border-box; overflow: hidden; } /* the list scrolls; the words and the buttons stay */
+.mf-list { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; flex: 1 1 auto; padding-right: 2px; }
+.mf-model { padding: 10px 14px; border-radius: var(--radius-md); background: var(--panel-2); border: 1px solid var(--line); }
+.mf-model header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mf-model h3 { margin: 0; font-size: 15px; flex: 1 1 200px; }
+.mf-sum { font-size: 13px; color: var(--text-2); }
+.mf-model ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.mf-model li { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; min-width: 0; font-size: 13.5px; }
+.mf-model li.have { color: var(--text-2); }
+.mf-model.focus { border-color: var(--hot); box-shadow: 0 0 0 2px color-mix(in srgb, var(--hot) 25%, transparent); }
+.mf-role { flex: 0 0 190px; font-size: 12.5px; color: var(--text-2); display: grid; }
+.mf-for { font-size: 11.5px; color: var(--muted); }
+.mf-model code { font-family: var(--mono, monospace); font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; flex: 1 1 200px; }
+.mf-size { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text-2); min-width: 54px; text-align: right; }
+.mf-model .mm-act { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.mf-model .mm-prog { width: 110px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--hot) 12%, transparent); overflow: hidden; }
+.mf-model .mm-bar { display: block; height: 100%; background: var(--hot, var(--sun)); transition: width .4s; }
+.mf-model .mm-pct { font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.mf-model .mm-ok, .mf-sum .mm-ok { color: var(--ok); }
+.mf-model .mm-err, .mf-model .mm-none { color: var(--danger); font-size: 12.5px; }
+.model-files-dlg .cloud-dialog-acts { flex: none; overflow: visible; } /* (the buttons never shrink away under a long list) */
+/* Your Hugging Face account, for the files behind one */
+.mf-hf { flex: none; padding: 10px 14px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--warn) 8%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); font-size: 13.5px; display: grid; gap: 8px; }
+.mf-hf.on { background: var(--panel-2); border-color: var(--line); }
+.mf-hf p { margin: 0; }
+.mf-hf ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.mf-hf-label { margin-bottom: -4px; font-weight: 700; }
+.mf-hf .row { align-items: center; gap: 8px; flex-wrap: wrap; }
+.mf-hf input { flex: 1 1 220px; min-width: 0; }
+.mf-hf .hint { margin-top: -3px; }
+.mf-hf .mm-err { color: var(--danger); font-size: 12.5px; }
+.mf-total { margin-right: auto; }
+#brainsGet { align-items: center; gap: 12px; flex-wrap: wrap; }
+@media (max-width: 640px) { .mf-role { flex-basis: 100%; } }
+
 /* Creator workspace: the task and idea lead; model mechanics stay one click away. */
 .director { --bar-fade: 12px; box-shadow: none; backdrop-filter: none; background: var(--panel-solid); }
 .director-steps { gap: 24px; }

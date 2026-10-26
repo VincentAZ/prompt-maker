@@ -245,7 +245,15 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
       return json(200, info);
     }
     if (p === '/internal/folder_paths') return json(200, root ? { custom_nodes: [path.join(root, 'custom_nodes')], checkpoints: [path.join(root, 'models', 'checkpoints')], loras: [path.join(root, 'models', 'loras')] } : {});
+    // The fake Hugging Face: /hf/<name> is open; /hf/gated/<name> only for the account hf_test_ok (hf_test_terms is
+    // an account that hasn't clicked Agree: 403), and /api/whoami-v2 names the account a token belongs to.
+    if (p === '/api/whoami-v2') {
+      const auth = req.headers.authorization || '';
+      if (auth === 'Bearer hf_test_scoped') return json(200, { name: 'tester', auth: { type: 'access_token', accessToken: { role: 'fineGrained', fineGrained: { global: [], scoped: [] } } } }); // a fine-grained token without gated access
+      return ['Bearer hf_test_ok', 'Bearer hf_test_terms'].includes(auth) ? json(200, { name: 'tester', fullname: 'A Tester', auth: { type: 'access_token', accessToken: { role: 'read' } } }) : json(401, { error: 'Invalid credentials in Authorization header' });
+    }
     if (p.startsWith('/hf/')) {
+      if (p.startsWith('/hf/gated/') && req.headers.authorization !== 'Bearer hf_test_ok') return json(req.headers.authorization === 'Bearer hf_test_terms' ? 403 : 401, { error: 'Access to this model is restricted.' });
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': MODEL_BYTES.length });
       return res.end(MODEL_BYTES);
     }

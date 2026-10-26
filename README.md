@@ -64,6 +64,16 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.72.2 — Hugging Face tokens stay put.** **⬇ Model files → Connect Hugging Face** now has two short steps, a direct **Get a Read token** link, and a **Show** button. A pasted token no longer vanishes when the model list refreshes in the background; if Hugging Face rejects it, the token stays selected so the next paste replaces it.
+
+[See the clearer Hugging Face connection](docs/screenshots/hugging-face.png).
+
+**1.72.1 — the right icon everywhere.** Prompt Maker now uses a crisp small icon in its window and browser tab, and corrected app-icon sizes in the desktop, dock and window switcher. New Linux and Windows setups also put a launch shortcut on the desktop. **Settings → Services → Put a Prompt Maker shortcut on my desktop** adds or removes it in one click.
+
+[See the desktop shortcut setting](docs/screenshots/desktop-shortcut.png).
+
+**1.72 — set up everything from the app, on Linux too.** When LM Studio isn't on the computer, the banner, Settings → Services and the Brains page offer **⬇ Set up LM Studio**: on Linux it installs LM Studio's headless service (no window, nothing else touched; the desktop app can be added later), starts its server and fetches a Brain that can see (Qwen3-VL), each with a bar. A new **⬇ Model files** list (Settings → Services, the Models page, the end of the ComfyUI set-up) shows the big files each model needs in ComfyUI, in plain words (the model, its text encoder, its VAE, a LoRA), ✓ for the ones you have, the size of the rest, and **⬇ Get** for one, for a model, or for everything; a file behind a Hugging Face account (FLUX 3 Klein's) downloads too, once you connect your account with a token. **⬇ Set up ffmpeg** (Settings → Services, or under a motion video that needs it) fetches the video tools into the data folder, for phone videos, cutting and joining clips, and a voice on a video.
+
 **1.70 — render settings for selected takes.** Above Prompt takes, expand **Render selected takes** and click the take numbers to select or deselect them. All start selected. Change size, seed, sampler settings, LoRA switches and strengths, or renders per take together, even when the takes have different settings. Each edit changes only that setting on the selected takes. **Render selected** uses their resulting settings; **Same as Fine-tune → Rendering** resets their custom settings. The panel starts collapsed. The workflow picker also affects only selected takes; if they use different workflows, choose a shared workflow before editing their detailed settings.
 
 [See the shared render panel](docs/screenshots/shared-render.png).
@@ -123,14 +133,14 @@ These are short previews without sound; click one to watch the video (the first 
 
 **1. Prompt Maker**
 
-- **Ubuntu or Debian, one click:** download `prompt-maker_<version>_amd64.deb` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and double-click it. It brings its own Node.js and puts **Prompt Maker** in your app menu.
-- **Windows, one installer:** download `prompt-maker-<version>-setup.exe` from the same page (the newest release that has one: the Windows installer comes out less often than the Linux package) and run it. It installs for your user alone (no administrator password), brings its own Node.js, puts **Prompt Maker** in your Start menu and opens it as its own window; the first start then gets steps 2 and 3 below by itself (ComfyUI with its own Python and PyTorch for your card, LM Studio, and a Brain that can see), each with a progress bar, so there's nothing else to install.
+- **Ubuntu or Debian, one click:** download `prompt-maker_<version>_amd64.deb` from the [releases page](https://github.com/VincentAZ/prompt-maker/releases) and double-click it. It brings its own Node.js and puts **Prompt Maker** in your app menu and on your desktop.
+- **Windows, one installer:** download `prompt-maker-<version>-setup.exe` from the same page (the newest release that has one: the Windows installer comes out less often than the Linux package) and run it. It installs for your user alone (no administrator password), brings its own Node.js, puts **Prompt Maker** in your Start menu and on your desktop, and opens it as its own window; the first start then gets steps 2 and 3 below by itself (ComfyUI with its own Python and PyTorch for your card, LM Studio, and a Brain that can see), each with a progress bar, so there's nothing else to install.
 - **Any other computer:** install [Node.js](https://nodejs.org) 20.11 or newer, then `git clone https://github.com/VincentAZ/prompt-maker.git`, go into the folder and run `npm start`. Details for each system are in the [guide](docs/guide.md#installation).
 - **Staying current:** **Settings → ⬆ Updates** checks GitHub when you ask, gets the newer version and restarts the app, for the .deb, the Windows installer and a git copy alike.
 
-**2. LM Studio** (free, it runs the Brain). On Windows the first start installs it and a vision Brain for you. Elsewhere, install [LM Studio](https://lmstudio.ai), download a model, and Prompt Maker finds it. A vision model (marked 👁) lets you use your own pictures.
+**2. LM Studio** (free, it runs the Brain). On Linux and Windows, Prompt Maker installs it for you: when it isn't there, the banner and **Settings → Services** offer **⬇ Set up LM Studio**, which also fetches a Brain that can see (Qwen3-VL); on Windows the first start does all that by itself. On macOS, install [LM Studio](https://lmstudio.ai), download a model, and Prompt Maker finds it. A vision model (marked 👁) lets you use your own pictures.
 
-**3. ComfyUI** (free, it makes the pictures and videos). On Windows the first start installs it; on Linux, open **Settings → Services → ⬇ Set up ComfyUI** and Prompt Maker checks your graphics card, downloads and installs it, and starts it. On macOS install [ComfyUI](https://github.com/comfyanonymous/ComfyUI) yourself; Prompt Maker hooks into it. Without ComfyUI you still get the prompts to use anywhere.
+**3. ComfyUI** (free, it makes the pictures and videos). On Windows the first start installs it; on Linux, open **Settings → Services → ⬇ Set up ComfyUI** and Prompt Maker checks your graphics card, downloads and installs it, and starts it. Then **⬇ Model files** lists the big files each model needs and gets them for you. On macOS install [ComfyUI](https://github.com/comfyanonymous/ComfyUI) yourself; Prompt Maker hooks into it. Without ComfyUI you still get the prompts to use anywhere.
 
 Once the app and your models are installed you can unplug the internet and keep creating with LM Studio and ComfyUI. Only downloads, update checks and a Cloud Brain you added yourself go online, and only when you ask. Every render keeps the recipe ComfyUI writes into it (prompt, model, seed, settings), so a file you share can be made again by anyone with the models.
 
