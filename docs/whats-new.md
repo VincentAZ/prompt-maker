@@ -2,6 +2,10 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.72.4
+
+**A crisp title-bar icon.** The tiny icon beside “Prompt Maker · Create” now has its own 16-pixel artwork instead of shrinking a larger desktop icon into that space. The Windows icon includes that exact size too.
+
 ## Update in 1.72.3
 
 **Launcher icon refresh.** Prompt Maker now refreshes its window and sidebar artwork instead of reusing an old browser-profile copy. A window opened from the desktop shortcut also stays grouped under Prompt Maker's green icon in the system dock or sidebar.

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const sizes = [32, 48, 64, 128, 256, 512];
+const sizes = [16, 32, 48, 64, 128, 256, 512];
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'prompt-maker-icons-'));
 const chrome = spawn(process.env.CHROME_BIN || 'google-chrome', [
   '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check',

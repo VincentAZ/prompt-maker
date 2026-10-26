@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const dir = path.resolve(import.meta.dirname, '..', '..', 'public', 'icons');
-const sizes = [32, 48, 64, 128, 256]; // an .ico entry is at most 256 px
+const sizes = [16, 32, 48, 64, 128, 256]; // an .ico entry is at most 256 px
 const pngs = await Promise.all(sizes.map(n => fs.readFile(path.join(dir, `prompt-maker-${n}.png`))));
 const header = Buffer.alloc(6 + 16 * sizes.length);
 header.writeUInt16LE(0, 0); // reserved

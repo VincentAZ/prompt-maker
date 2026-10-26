@@ -680,7 +680,7 @@ esac
   });
 
   await test('workspace redesign: essentials fit, fine-tune stays separate and keyboard navigation works', async () => {
-    eq(await js('document.querySelector(\'link[rel="icon"]\').getAttribute("href")'), 'icons/prompt-maker-32.png?v=1.72.3', 'the window uses a fresh copy of the crisp small icon');
+    eq(await js('document.querySelector(\'link[rel="icon"][sizes="16x16"]\').getAttribute("href")'), 'icons/prompt-maker-16.png?v=1.72.4', 'the title bar uses its own fresh 16-pixel icon');
     await goto(`${APP}/#create`);
     await click('#taskChoices [data-task="picture"]');
     for (const [width, height] of [[1440, 900], [1280, 800]]) {
