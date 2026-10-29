@@ -10,7 +10,7 @@ Start from an idea, a photo, or both. It writes for each model the way that mode
 ![Runs locally](https://img.shields.io/badge/runs-on%20your%20computer-8b5cf6)
 ![Powered by LM Studio](https://img.shields.io/badge/Brain-LM%20Studio-ff4d8d)
 ![Renders with ComfyUI](https://img.shields.io/badge/renders-ComfyUI-22d3ee)
-![FSL-1.1-ALv2 license](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <a href="docs/renders/film-fisherman.mp4"><img src="docs/renders/film-fisherman.webp" alt="A fisherman's story in four scenes: mending his net at dawn, laughing over cards in a harbor bar, steering through a storm, walking home at night" width="760"></a>
 
@@ -63,6 +63,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 </div>
 
 ## What's new
+
+**1.72.9 — Free and open source under MIT.** Use the original application code, change it, share it, or build a business with it. Fonts, models, workflows adapted from upstream projects, and other third-party materials keep their own terms.
 
 **1.72.8 — Hugging Face, in three plain steps.** The box in ⬇ Model files now spells out the whole thing: make a free account, click **Agree and access repository** on the exact page it links (FLUX 3 Klein's files live on `flux-3-image-klein-comfy`, not the model's main page), paste a Read token. Once connected, it says **One step left** with the page still to agree on, instead of the same line under every file.
 
@@ -180,8 +182,10 @@ Issues and pull requests are welcome. The most valuable contributions are **mode
 
 ## License
 
-[Functional Source License 1.1, Apache 2.0 future license](LICENSE) (FSL-1.1-ALv2) © 2026 Serpico Enterprises LLC. Ubuntu Sans uses the Ubuntu Font Licence (`public/fonts/ubuntu-font-license.txt`); the other bundled fonts use the SIL Open Font License (`public/fonts/OFL.txt`).
+The original application code is free and open source under the [MIT License](LICENSE), copyright © 2026 Serpico Enterprises LLC.
 
-In plain words: use it, change it and share it for anything, including paid work made with it (your images and videos are yours). What you can't do is sell Prompt Maker, or a copy of it under another name, as a competing product or service. Two years after each version comes out, that version also becomes Apache 2.0, with no limits.
+Use it, change it, share it, sell it, or build a business with it. Keep the copyright and permission notice with copies or substantial portions of the code. This release has no restriction on competing products or services.
 
-Versions up to and including 1.21.0 were released under the MIT license and stay MIT.
+Third-party code, fonts, models, model weights, upstream workflow material, and other assets retain their own licenses and terms. Ubuntu Sans uses the [Ubuntu Font Licence](public/fonts/ubuntu-font-license.txt); Bricolage Grotesque and JetBrains Mono use the [SIL Open Font License](public/fonts/OFL.txt). The MIT grant does not override model or service terms, including any conditions on generated output.
+
+Version 1.72.9 restores MIT for the current application code. Previously published releases retain the license included with their release; their history is unchanged.
