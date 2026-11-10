@@ -2,6 +2,16 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.73.0
+
+**MiniMax H3 Image.** MiniMax's new open image model, from words (**Make a picture**) and as an editor (**Edit a picture**). It follows long, exact descriptions and renders large: 4 megapixels to start, up to 16 (its best) in Size, if your graphics card has the memory. Posters, packaging, infographics and product sheets come out with their text spelled right. The Brain writes the long caption MiniMax's own prompt enhancer would, so the workflows leave that second text model out. **MiniMax H3 Image Edit** reads your picture as `<Picture 1>` and two optional pictures as `<Picture 2>` and `<Picture 3>`, and the Brain writes the edit the way MiniMax trained it: what each element is, what stays, and only what changes. Its result keeps your picture's shape at 4 megapixels. Both run in 6 steps and need a ComfyUI from 10 November 2026 or newer (the update that brought MiniMax H3 Image); ⬇ Model files gets the diffusion model and its VAE, and the text encoder is the one MiniMax H3's video models already use.
+
+**MiniMax H3 360 Orbit.** Under **Animate a picture**: the camera circles your picture once, all the way round, while everything in it stays frozen, and the clip ends on the frame it started from, so it loops. It is MiniMax H3's first-and-last-frame model with Pablo Dawson's 360 Orbit LoRA, your picture as both frames, 28 steps at 768×768 and 3 seconds, as the LoRA was trained. The LoRA knows one prompt only, so that prompt is used word for word: there's nothing to write and no Brain is asked. Add the picture, press Generate, and it renders; pick 2 or more to get versions with different seeds. People centered with room around them work best.
+
+**The Model menu follows the task.** Under the task buttons, **Model** lists only the models for the task you picked (Animate: LTX 2.3, MiniMax H3, MiniMax H3 360 Orbit), not every model.
+
+**Smooth video in the viewer again.** Since 1.72.6 opened the window through XWayland on GNOME, the graphics card's video decoder crashed the browser's graphics process whenever a video played, and after three crashes the browser drew the whole window without the graphics card, so videos in the full-screen viewer skipped. On that path, videos are now decoded on the processor (smooth up to 2K); everything else is still drawn by the graphics card. Close the Prompt Maker window and open it again to get the fix.
+
 ## Update in 1.72.9
 
 **Free and open source under MIT.** The original application code can be used, modified, shared, sold, or used to build a business, with the MIT copyright and permission notice preserved. This replaces the current application's Functional Source License and its competing-use restriction. Third-party fonts, models, upstream workflow material, and other assets retain their separate terms. Historical releases are unchanged.

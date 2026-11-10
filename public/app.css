@@ -774,7 +774,7 @@ body.narrow .error-card { --stick-top: calc(var(--topbar-h, 76px) + 8px); }
 }
 
 .models-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 22px; align-items: start; }
-.models-side { position: sticky; top: 90px; display: flex; flex-direction: column; gap: 10px; }
+.models-side { position: sticky; top: 90px; display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 110px); overflow-y: auto; overscroll-behavior: contain; padding: 2px; } /* (a long model list scrolls in place instead of running off the screen) */
 .side-row { display: flex; gap: 6px; }
 .side-row .btn { flex: 1; }
 .model-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -862,12 +862,12 @@ a.btn { text-decoration: none; }
   .create { grid-template-columns: 1fr; }
   .create > .job-bar { margin-bottom: -12px; }
   .models-layout { grid-template-columns: 1fr; }
-  .models-side { position: static; }
+  .models-side { position: static; max-height: none; overflow: visible; }
 }
 body.narrow .create { grid-template-columns: 1fr; }
 body.narrow .create > .job-bar { margin-bottom: -12px; }
 body.narrow .models-layout { grid-template-columns: 1fr; }
-body.narrow .models-side { position: static; }
+body.narrow .models-side { position: static; max-height: none; overflow: visible; }
 @media (max-width: 860px) {
   .topbar { flex-wrap: wrap; gap: 10px; padding: 10px 16px; }
   .tabs { order: 3; width: 100%; margin: 0; justify-content: space-between; }

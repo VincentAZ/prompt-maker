@@ -64,6 +64,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.73.0 — MiniMax H3 Image, and a 360° orbit.** Three new models. **MiniMax H3 Image** makes large, detailed pictures from your words (4 megapixels to start, up to 16), posters and labels with text that reads right; **MiniMax H3 Image Edit** changes what you say in a picture and keeps the rest, with two more slots for pictures to bring in. Both need a ComfyUI from 10 November 2026 or newer. **MiniMax H3 360 Orbit** (under **Animate**) circles the camera once around your picture, frozen in time, and ends where it began so the clip loops: it uses the one prompt its LoRA was trained on, so there is nothing to write. The **Model** menu under the task buttons now lists only the models for the task you picked. And videos play smoothly in the full-screen viewer again: on GNOME since 1.72.6, a playing video crashed the browser's graphics process, and after three crashes the whole window was drawn without the graphics card. Videos are now decoded on the processor there. Close the Prompt Maker window and open it again to get the fix.
+
 **1.72.9 — Free and open source under MIT.** Use the original application code, change it, share it, or build a business with it. Fonts, models, workflows adapted from upstream projects, and other third-party materials keep their own terms.
 
 **1.72.8 — Hugging Face, in three plain steps.** The box in ⬇ Model files now spells out the whole thing: make a free account, click **Agree and access repository** on the exact page it links (FLUX 3 Klein's files live on `flux-3-image-klein-comfy`, not the model's main page), paste a Read token. Once connected, it says **One step left** with the page still to agree on, instead of the same line under every file.
@@ -160,7 +162,7 @@ Once the app and your models are installed you can unplug the internet and keep 
 
 You need a computer with a good graphics card. Linux is where it's tested every day. The Windows installer and launcher have been tried on one Windows 11 PC so far; if something doesn't work there, please tell us.
 
-Twelve models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **Z-Image Turbo**, **Qwen Image Edit**, **LTX 2.3** and **MiniMax H3** (each one model that animates your picture and one that makes the video from words alone, and MiniMax with a Reference version for your person), **Wan Animate 2**, and **FLUX 3 Klein Base** (INT8 ConvRot, BF16, or NVFP4 text-to-image workflows). [Add your own](docs/guide.md#adding-or-updating-a-model).
+Fifteen models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **Z-Image Turbo**, **Qwen Image Edit**, **LTX 2.3** and **MiniMax H3** (each one model that animates your picture and one that makes the video from words alone, and MiniMax with a Reference version for your person and a 360° Orbit that circles your picture), **MiniMax H3 Image** (from words, and an Edit version), **Wan Animate 2**, and **FLUX 3 Klein Base** (INT8 ConvRot, BF16, or NVFP4 text-to-image workflows). [Add your own](docs/guide.md#adding-or-updating-a-model).
 
 ## More
 

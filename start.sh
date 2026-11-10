@@ -40,12 +40,14 @@ open_app() {
     # GNOME's Wayland compositor never lets a window ask for the desktop's title bar (no xdg-decoration protocol), so
     # there the browser ignores that preference and draws its own: a 23-pixel bar with the buttons shrunk to fit.
     # Opened through XWayland instead, GNOME decorates the window itself: its normal title bar and full-sized
-    # minimize/maximize/close. Chrome 156 reports the same GPU features either way (checked on NVIDIA 595; 1.68.3
-    # had seen choppy video on XWayland with an older driver). Other Wayland desktops (KDE, Sway) decorate Wayland
-    # windows directly, so they keep native Wayland. PM_WAYLAND=1 keeps it on GNOME too.
+    # minimize/maximize/close. But there the GPU's video decoder crashes Chrome's GPU process as soon as a video
+    # plays (Chrome 156, NVIDIA 595: "video decode error"), and after three crashes Chrome draws the whole window
+    # without the GPU, so videos skip. Videos are decoded on the processor instead: smooth up to 2K, with everything
+    # else still drawn by the GPU. Other Wayland desktops (KDE, Sway) decorate Wayland windows directly, so they keep
+    # native Wayland. PM_WAYLAND=1 keeps it on GNOME too.
     local platform=()
     if [ "${XDG_SESSION_TYPE:-}" = wayland ] && [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* ]] && [ -n "${DISPLAY:-}" ] \
-      && [ "${PM_WAYLAND:-}" != 1 ]; then platform=(--ozone-platform=x11); fi
+      && [ "${PM_WAYLAND:-}" != 1 ]; then platform=(--ozone-platform=x11 --disable-accelerated-video-decode); fi
     # On Wayland the browser ignores --class and names an app window "<browser>-<address>__-Default", so the dock
     # couldn't tie it to the app-menu entry and showed a gear. The window gets that name on X11 too (--class) and
     # the entry's StartupWMClass follows the browser in use, so the dock shows the green star on both.

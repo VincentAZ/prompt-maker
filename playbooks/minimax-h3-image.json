@@ -1,0 +1,84 @@
+{
+  "id": "minimax-h3-image",
+  "name": "MiniMax H3 Image",
+  "kind": "image",
+  "task": "picture",
+  "description": "Very large, detailed pictures from your words, including posters and readable text.",
+  "guide": {
+    "bestFor": "Big, sharp pictures packed with detail: photos, posters, packaging, infographics and cards with text that reads right. It follows long descriptions closely.",
+    "youNeed": "Nothing but an idea, and a ComfyUI from 10 November 2026 or newer (MiniMax H3 Image arrived then).",
+    "steps": [
+      "In step ②, say what the picture is: who or what, where, and any words that must appear on it.",
+      "Press Generate. The app writes the long, exact description this model likes.",
+      "Render. It starts at 4 megapixels; bigger sizes in step ④ (up to 16, the model's best) need a lot of graphics memory.",
+      "Compare the takes side by side and keep the best."
+    ],
+    "tryThese": [
+      "a vintage travel poster for a mountain railway, the title \"ALPINE EXPRESS\" across the top",
+      "a street food stall at night in Bangkok, steam and neon, shot on a 35mm lens",
+      "a product sheet for a handmade ceramic teapot: front, side and top views with labels"
+    ]
+  },
+  "color": "#b794f6",
+  "instructions": "# MiniMax H3 Image\n\n## What it is\n- MiniMax's open-weights image model: a diffusion transformer read through a Qwen3-VL text encoder that follows long, precise descriptions. It renders large pictures (best between 4 and 20 megapixels) with readable text, posters, packaging, diagrams and photographs.\n- Here it runs in 6 distilled steps with guidance 1: there is no negative prompt, so the prompt alone steers it.\n- It was trained on long English captions written by MiniMax's own prompt enhancer. Write the prompt the way that enhancer does.\n\n## Prompt format\n- One fluent English paragraph, present tense, no headings, lists, tags or weights. Start with \"The image is\" and say what kind of picture it is (a photograph, a poster, an infographic, a product board, a painting) and its overall palette and light.\n- First decide which kind of picture it is:\n  - A scene or photograph: subject identity, pose and contact, scale, setting, light, lens or medium, and physical plausibility come first.\n  - A designed piece (poster, card, packaging, cover, infographic, chart, interface, diagram, product sheet): build the whole layout. Go through it in reading order (title, subtitle, hero image, panels, cards, labels, footer) and give each part its position, its exact text, what it shows and how it is styled. Never write vague fillers like \"icons\", \"details\" or \"supporting graphics\" without saying what they show.\n- A designed piece should feel finished: add a few small elements that belong to it (a subtitle, a legend, units, dimension labels, a short tagline, a badge) as short readable labels, never prose blocks.\n- Diagrams, flowcharts and maps: a few large numbered nodes with thick, non-crossing arrows that start and end at named nodes; large labels over many small ones.\n\n## Write what can be seen\n- Preserve every hard fact of the theme: exact text, names, counts, colors, materials, left/right/top/bottom order, style and medium.\n- Required content must be visible, not implied. Text or a label the theme asks for goes on a surface: give its exact words in double quotes and say where it sits, how big it is and in what lettering.\n- Bodies: fix the scene layout first, then the camera, then state each person's orientation to the camera (front-facing, back-facing, left-facing profile, right-facing profile, front or rear three-quarter) and their movement direction in the frame (leftward, rightward, toward the camera, away from it). Keep gaze, torso, leading limb and support foot consistent with that. A limb is never both planted and airborne.\n- Hands and contact: say which hand touches what and how the fingers hold it. Frame waist-up or closer when hands or faces matter.\n- Keep the subject count the theme asks for; background people stay small and secondary.\n- Use world knowledge only as visible evidence: real tools, materials, clothing, architecture, interface conventions, scientific structures.\n- Style comes after content: name the medium (photograph, oil painting, 3D render, flat vector), then the lens, depth and light for a photo, or the stroke, texture and palette for art. Replace mood words with what they look like.\n\n## What to avoid\n- Quality tags (masterpiece, 8K, best quality), weights like (word:1.3), keyword lists and negative phrasing (\"no people\"): describe what is there instead.\n- Abstract mood words (\"epic\", \"stunning\") in place of visible detail.\n- Inventing extra main subjects, or text the theme didn't ask for on a photograph.\n\n## Image roles\n- reference: carry the reference's look into words (medium, palette, light, lens feel, texture, layout style) and apply it to the theme's subject. Don't copy its subject unless the theme asks for it.\n- recreate: describe the image faithfully in the format above: kind of picture, every subject with clothing, pose and orientation to the camera, exact positions and counts, setting, every readable text in quotes, camera, light and palette. Apply the theme's changes in place.\n\n## Composition by aspect ratio\n- 1:1: a compact, centered or symmetrical subject; icons, avatars, social posts.\n- Vertical (3:4, 2:3, 9:16): full-length figures, tall buildings, posters, covers and stacked information; say \"vertical composition\".\n- Landscape (4:3, 3:2, 16:9): side-by-side structure, a subject on a third with its setting around it, slides and banners.\n- 21:9: panoramas, timelines and genuinely wide layouts only.\n\n## Length\n- It reads up to 4096 tokens and long descriptions work best. Scenes need less; a designed piece with text needs the most, because every part and every label is written out.",
+  "examples": [
+    "The image is a bright, naturalistic documentary photograph of an elderly fisherman mending a fishing net on a wooden pier at dawn, in a cool palette of pale blue mist, weathered silver-grey planks and the warm orange of the net's floats, lit by low sun rising from the right edge of the frame. He sits front three-quarter to the camera on an overturned blue plastic crate in the lower left third, a man in his seventies with deep sun-creased skin, a short white beard and a faded navy wool cap, wearing a cream cable-knit sweater with frayed cuffs under yellow oilskin bib trousers. His left hand holds a torn section of green nylon net taut across his knee while his right hand pushes a wooden netting needle through a mesh, the twine looped once around his index finger. Coils of net spill over the planks around his rubber boots, dotted with round orange floats. Behind him the pier runs diagonally toward the upper right, where two small moored boats sit on flat water half hidden in mist, and a lone gull stands on a bollard at the far end. Shot on a 50mm lens at eye level with shallow depth of field, the fisherman and the net in crisp focus, the boats softened, fine droplets of mist catching the light, natural film grain.",
+    "The image is a vintage travel poster in a flat screen-printed style with a limited palette of deep forest green, snow white, warm ochre and brick red, laid out as a vertical composition with a cream paper border. Across the top, the title \"ALPINE EXPRESS\" runs the full width in bold condensed capital letters in brick red with a thin cream outline, and directly beneath it a smaller ochre line reads \"Zermatt · Grindelwald · St. Moritz\". The hero image fills the middle: a red electric train with cream window bands crosses a curved stone viaduct of five arches from the left side of the frame toward the right, seen from a low angle, with a snow-covered pyramid-shaped peak rising behind it against a pale ochre sky and three layers of dark green fir forest stepping down to a river in the valley. Soft grain and slight misregistration of the color layers give it a printed texture. Along the bottom, on a forest-green band, cream letters read \"Daily departures from 1 June\", and in the lower right corner a small round brick-red badge holds the white words \"1st class\"."
+  ],
+  "aspectRatios": [
+    "1:1",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "16:9",
+    "9:16",
+    "21:9"
+  ],
+  "resolutions": [
+    "2048×2048",
+    "2368×1792",
+    "1792×2368",
+    "2496×1664",
+    "1664×2496",
+    "2720×1536",
+    "1536×2720",
+    "3136×1344",
+    "4096×4096",
+    "4736×3552",
+    "3552×4736",
+    "5024×3360",
+    "3360×5024",
+    "5472×3072",
+    "3072×5472",
+    "6272×2688"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "1:1",
+    "resolution": "2048×2048",
+    "duration": "",
+    "temperature": 0.8,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈120–180 words",
+    "medium": "≈220–350 words",
+    "long": "≈400–600 words"
+  },
+  "comfyTemplates": [
+    {
+      "name": "image_minimax_h3_image_t2i",
+      "title": "MiniMax H3 Image: Text to Image",
+      "note": "ComfyUI's template, with its prompt enhancer (a second text model) and a 4-megapixel start."
+    }
+  ],
+  "sources": [
+    "https://blog.comfy.org/p/minimax-h3-image-is-now-available",
+    "https://huggingface.co/Comfy-Org/MiniMax-H3-Image",
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image",
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image-PE",
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_minimax_h3_image_t2i.json"
+  ],
+  "updatedAt": "2026-11-10"
+}

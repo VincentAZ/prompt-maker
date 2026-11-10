@@ -497,11 +497,12 @@ async function generate(req, res) {
   if (imageSlots.length) params.imageSlots = imageSlots;
   const video = await motionVideo(body.video, model);
   const brainVideo = await videoForBrain(video);
+  if (model.fixedPrompt && !imageDataUrl) throw store.httpError(400, `Add a picture in step 3: ${model.name} makes its video from it.`);
   if (!params.theme && !imageDataUrl && !video) throw store.httpError(400, 'Enter a theme, add an image, or both.');
   const source = imageDataUrl ? await resolveSource(body.source) : null;
   const chain = chainRef(body.chain);
   const batch = typeof body.batch === 'string' ? body.batch.trim().slice(0, 60) : ''; // the saved batch this run belongs to
-  if (body.manual === true) return saveManual(res, { model, params, imageFile, images, video, source, chain, batch });
+  if (body.manual === true || model.fixedPrompt) return saveManual(res, { model, params, imageFile, images, video, source, chain, batch });
 
   const llm = await prepareLlm(settings, body.llmModel, Boolean(imageDataUrl));
   if (llm.vision === false && brainVideo) brainVideo.sheetDataUrl = null; // a text-only Brain goes by the theme alone
@@ -590,19 +591,21 @@ async function generate(req, res) {
 }
 
 // ✍️ Your own prompt: the theme is the take, word for word, and no Brain is asked. It streams like a written take,
-// so the page shows and renders it the same way.
+// so the page shows and renders it the same way. A model with a fixed prompt (fixed) takes that one instead.
 async function saveManual(res, { model, params, imageFile, images = [], video, source, chain, batch }) {
-  if (!params.theme) throw store.httpError(400, 'Type or paste your prompt in step 2.');
+  const text = model.fixedPrompt || params.theme;
+  if (!text) throw store.httpError(400, 'Type or paste your prompt in step 2.');
   const stream = openStream(res);
-  stream.send({ type: 'start', runId: stream.runId, count: 1, llmModel: '', llmName: 'you' });
+  stream.send({ type: 'start', runId: stream.runId, count: 1, llmModel: '', llmName: model.fixedPrompt ? model.name : 'you' });
   const letGo = store.holdFiles([imageFile, ...images, video?.file, video?.sheet]);
   try {
-    stream.send({ type: 'done', index: 0, text: params.theme });
+    stream.send({ type: 'done', index: 0, text });
     const entry = await store.addHistory({
       modelId: model.id,
       modelName: model.name,
       modelKind: model.kind,
       manual: true,
+      ...(model.fixedPrompt ? { fixed: true } : {}),
       ...params,
       imageFile,
       ...(images.length ? { images } : {}),
@@ -610,7 +613,7 @@ async function saveManual(res, { model, params, imageFile, images = [], video, s
       ...(source ? { source } : {}),
       ...(chain ? { chain } : {}),
       ...(batch ? { batch } : {}),
-      variations: [{ versions: [{ text: params.theme, instruction: null, createdAt: new Date().toISOString() }] }],
+      variations: [{ versions: [{ text, instruction: null, createdAt: new Date().toISOString() }] }],
     });
     stream.send({ type: 'saved', entry });
   } finally {
@@ -630,6 +633,7 @@ async function refine(req, res) {
   if (!instruction) throw store.httpError(400, 'Describe what to change.');
   const model = await store.getModel(entry.modelId);
   if (!model) throw store.httpError(400, `The target model "${entry.modelName}" no longer exists.`);
+  if (model.fixedPrompt) throw store.httpError(400, `${model.name} only works with the one prompt it was trained on, so there is nothing to change.`);
 
   // The user may refine an older version; a manual edit is only logged if the text differs from that one.
   const base = variation.versions[Number.isInteger(body.baseIndex) ? body.baseIndex : -1] || variation.versions.at(-1);

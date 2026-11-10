@@ -1,0 +1,60 @@
+{
+  "id": "minimax-h3-orbit",
+  "name": "MiniMax H3 360 Orbit",
+  "kind": "video",
+  "task": "animate",
+  "description": "The camera circles your picture once, all the way round, frozen in time. It loops.",
+  "guide": {
+    "bestFor": "A frozen moment you can walk around: a dancer mid-leap, a skater in the air, a portrait. The camera goes all the way round and ends where it began, so the clip loops without a seam.",
+    "youNeed": "One picture, best of a person with some space around them. Nothing to write: this model always uses the one prompt it was trained on.",
+    "steps": [
+      "Add your picture in step ③. Keep the subject centered and whole (no cut-off elbows or hair).",
+      "Press Generate. There is no prompt to write, so it goes straight to rendering.",
+      "Pick how many in step ④ to get a few versions (each with its own seed), then keep the smoothest."
+    ],
+    "tryThese": []
+  },
+  "color": "#e879f9",
+  "fixedPrompt": "One frozen instant. Only the camera moves. In a continuous 360 orbit. Preserve every person and object in exactly the same world position, orientation, shape and pose throughout the shot. Airborne objects remain suspended at the captured height and angle: no wobbling, shaking, spinning, drifting, falling or continued action. Keep faces, hands, clothing, liquids and the background motionless while retaining their natural appearance. Camera parallax is the only source of apparent movement. No cuts, zoom, morphing or added objects.",
+  "imageRoles": [
+    "animate"
+  ],
+  "instructions": "# MiniMax H3 360 Orbit\n\n## What it is\n- MiniMax H3's first-and-last-frame model with Pablo Dawson's 360 Orbit LoRA. The attached picture is both the first and the last frame, and the camera makes one full circle around the subject while everything in the scene stays frozen.\n- The LoRA was trained on one prompt only, and that prompt is sent word for word. No prompt is written: Prompt Maker uses it as it is.\n\n## The prompt\nOne frozen instant. Only the camera moves. In a continuous 360 orbit. Preserve every person and object in exactly the same world position, orientation, shape and pose throughout the shot. Airborne objects remain suspended at the captured height and angle: no wobbling, shaking, spinning, drifting, falling or continued action. Keep faces, hands, clothing, liquids and the background motionless while retaining their natural appearance. Camera parallax is the only source of apparent movement. No cuts, zoom, morphing or added objects.\n\n## Settings it was trained with\n- 768×768, 73 frames (3 s at 24 fps), 28 steps, LoRA strength 1.0, no audio.\n- Square, human-centered pictures work best; other shapes, subjects and lengths are untested.",
+  "examples": [
+    "One frozen instant. Only the camera moves. In a continuous 360 orbit. Preserve every person and object in exactly the same world position, orientation, shape and pose throughout the shot. Airborne objects remain suspended at the captured height and angle: no wobbling, shaking, spinning, drifting, falling or continued action. Keep faces, hands, clothing, liquids and the background motionless while retaining their natural appearance. Camera parallax is the only source of apparent movement. No cuts, zoom, morphing or added objects."
+  ],
+  "aspectRatios": [
+    "1:1",
+    "3:4",
+    "4:3",
+    "9:16",
+    "16:9"
+  ],
+  "resolutions": [
+    "512p",
+    "768p"
+  ],
+  "durations": [
+    "3s",
+    "4s",
+    "5s"
+  ],
+  "defaults": {
+    "aspectRatio": "1:1",
+    "resolution": "768p",
+    "duration": "3s",
+    "temperature": 0.7,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "the fixed prompt",
+    "medium": "the fixed prompt",
+    "long": "the fixed prompt"
+  },
+  "sources": [
+    "https://huggingface.co/pablodawson/MiniMax-H3-360-Orbit-LoRA",
+    "https://stable-diffusion-art.com/minimax-h3-360-orbit-lora/",
+    "https://huggingface.co/Comfy-Org/MiniMax-H3"
+  ],
+  "updatedAt": "2026-11-10"
+}

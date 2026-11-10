@@ -17,6 +17,7 @@ import * as comfyLib from '../lib/comfy.js';
 import { parseDrift } from '../lib/prompt.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
+const BUILT_IN = (await fs.readdir(path.join(ROOT, 'playbooks'))).filter(f => f.endsWith('.json')).length; // the models that ship
 const APP_PORT = Number(process.env.APP_PORT) || 5399;
 const MOCK_PORT = Number(process.env.MOCK_PORT) || 12399;
 const CDP_PORT = Number(process.env.CDP_PORT) || 9333;
@@ -605,7 +606,7 @@ esac
   await test('boot', async () => {
     await goto(`${APP}/`);
     assert(await js('document.querySelector("#view-create").classList.contains("active")'), 'Create view is active');
-    eq(await count('.model-card'), 12, 'model cards');
+    eq(await count('.model-card'), BUILT_IN, 'model cards');
     await waitFor('document.querySelector("#llmDot").classList.contains("ok")', 'LLM status dot to be green');
     eq(await value('#llmSelect'), 'mock/vision-8b', 'selected brain');
     assert(!(await visible('#banner')), 'offline banner hidden');
@@ -639,6 +640,7 @@ esac
     assert(await js('document.querySelector("#theme").getBoundingClientRect().top < innerHeight - 150'), 'idea field is in the first laptop viewport');
     await click('#taskChoices [data-task="edit"]');
     assert((await text('#chosenModel')).includes('Edit'), 'the task chooses an editing model');
+    eq(await js('[...document.querySelectorAll("#targetSelect option")].map(o => o.value).sort().join()'), 'krea-2-raw-i2i,minimax-h3-image-edit,qwen-image-edit', 'Model lists the editing models only');
     await click('#taskChoices [data-task="picture"]');
     await click('#askBtn');
     assert(await visible('#showResults'), 'laptop with Ask has workspace switching');
@@ -662,7 +664,7 @@ esac
     await click('.tabs [data-view="models"]');
     assert(await visible('#modelCatalog'), 'Models starts as a chooser');
     assert(!(await visible('#modelsPane')), 'editing is behind Customize');
-    eq(await count('[data-catalog-use]'), 12, 'every model can be chosen');
+    eq(await count('[data-catalog-use]'), BUILT_IN, 'every model can be chosen');
     await click('[data-catalog-edit="krea2-raw"]');
     assert(await visible('#modelsPane'), 'Customize opens the existing editor');
     const description = await value('#mDesc');
@@ -2206,19 +2208,19 @@ esac
     eq(await count('#dDur option'), 2, 'duration defaults follow the list');
     await click('#saveModelBtn');
     await toastText('Saved');
-    eq(await count('#modelList li'), 13, 'thirteen models');
-    eq(await count('.model-card'), 13, 'new model on Create');
+    eq(await count('#modelList li'), BUILT_IN + 1, 'one model more');
+    eq(await count('.model-card'), BUILT_IN + 1, 'new model on Create');
     await click('#dupModelBtn');
     eq(await value('#mName'), 'Test Wizard 9 copy', 'duplicate name');
     await click('#saveModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 14', 'thirteen models');
+    await waitFor(`document.querySelectorAll("#modelList li").length === ${BUILT_IN + 2}`, 'and its copy');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 13', 'copy deleted');
+    await waitFor(`document.querySelectorAll("#modelList li").length === ${BUILT_IN + 1}`, 'copy deleted');
     await click('#modelList button[data-id="test-wizard-9"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 12', 'test model deleted');
+    await waitFor(`document.querySelectorAll("#modelList li").length === ${BUILT_IN}`, 'test model deleted');
   });
 
   await test('models: import JSON', async () => {
@@ -2226,11 +2228,11 @@ esac
     await fs.writeFile(file, JSON.stringify({ name: 'Imported Model', kind: 'image', instructions: '## Hi', aspectRatios: ['1:1'] }));
     await setFiles('#importInput', [file]);
     await toastText('1 new');
-    await waitFor('document.querySelectorAll("#modelList li").length === 13', 'imported model listed');
+    await waitFor(`document.querySelectorAll("#modelList li").length === ${BUILT_IN + 1}`, 'imported model listed');
     await click('#modelList button[data-id="imported-model"]');
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
-    await waitFor('document.querySelectorAll("#modelList li").length === 12', 'imported model deleted');
+    await waitFor(`document.querySelectorAll("#modelList li").length === ${BUILT_IN}`, 'imported model deleted');
   });
 
   await test('models: AI draft from docs', async () => {
@@ -2269,13 +2271,13 @@ esac
     await click('#deleteModelBtn');
     await click('#deleteModelBtn');
     await waitFor('!document.querySelector(\'#modelList button[data-id="minimax-h3"]\')', 'gone from the list');
-    eq(await count('.model-card'), 11, 'gone from Create');
+    eq(await count('.model-card'), BUILT_IN - 1, 'gone from Create');
     await waitFor('!document.querySelector("#restoreBuiltinsBtn").hidden', 'bring-back offered');
     assert((await text('#restoreBuiltinsBtn')).includes('MiniMax'), 'names it');
     await click('#restoreBuiltinsBtn');
     await toastText('Brought back');
-    eq(await count('#modelList li'), 12, 'back in the list');
-    eq(await count('.model-card'), 12, 'back on Create');
+    eq(await count('#modelList li'), BUILT_IN, 'back in the list');
+    eq(await count('.model-card'), BUILT_IN, 'back on Create');
     assert(!(await visible('#restoreBuiltinsBtn')), 'nothing left to bring back');
   });
 
@@ -3956,6 +3958,51 @@ esac
     eq(await text('#takesLabel'), 'Takes', 'prompt takes again');
     await click('#imageClear');
     await click('#varSeg button[data-value="1"]');
+  });
+
+  await test('create: a model with its one trained prompt (360 Orbit) renders your picture with it, no Brain', async () => {
+    const fixed = JSON.parse(await fs.readFile(path.join(ROOT, 'playbooks', 'minimax-h3-orbit.json'), 'utf8')).fixedPrompt;
+    if (!(await (await fetch(`${APP}/api/workflows`)).json()).some(f => f.modelId === 'minimax-h3-orbit')) {
+      const prep = await (await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starter: 'minimax-h3-orbit/orbit.json' }) })).json();
+      await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId: 'minimax-h3-orbit', name: prep.name, source: prep.source, prompt: prep.prompt, mapping: prep.mapping, options: prep.options, models: prep.models }) });
+      await goto(`${APP}/#create`);
+    }
+    await click('#taskChoices [data-task="animate"]');
+    eq(await js('[...document.querySelectorAll("#targetSelect option")].map(o => o.value).sort().join()'), 'ltx-2-3,minimax-h3,minimax-h3-orbit', 'Model lists the models that animate a picture');
+    await choose('#targetSelect', 'minimax-h3-orbit');
+    eq(await text('#themeOpt'), 'not needed', 'nothing to write');
+    assert((await js('document.querySelector("#theme").placeholder')).includes('Nothing to write'), 'and the idea box says why');
+    assert(!(await visible('#surpriseBtn')), 'no Brain, so no surprise idea');
+    eq(await text('#takesLabel'), 'Videos', 'how many videos of its one prompt');
+    await click('#varSeg button[data-value="1"]');
+    eq(await text('#genLabel'), 'Make video', 'the button says what it makes');
+    await click('#generateBtn');
+    await waitFor('!document.querySelector("#stageError").hidden', 'it asks for the picture');
+    assert((await text('#stageError')).includes('Add a picture'), 'the picture is what it needs');
+    await click('#stageError .x');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
+    const calls = mockCalls();
+    const before = comfy.prompts.length;
+    await click('#generateBtn');
+    await genDone();
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'rendered with no click', 15000);
+    await waitFor('fetch("/api/renders").then(r => r.json()).then(l => !l.length)', 'and the render is done');
+    eq(mockCalls(), calls, 'no Brain was asked');
+    eq(await value('.take .prompt-text'), fixed, 'the take is the prompt the LoRA was trained on');
+    eq(comfy.prompts.length, before + 1, 'one render');
+    const sent = comfy.prompts.at(-1).prompt;
+    eq(sent['8'].inputs.prompt, fixed, 'ComfyUI got it word for word');
+    assert(sent['5'].inputs.image.startsWith('prompt-maker_') && JSON.stringify(sent['8'].inputs.first_frame) === '["5",0]' && JSON.stringify(sent['8'].inputs.last_frame) === '["5",0]', 'your picture is the first and the last frame');
+    assert((await text('#stageHead')).includes('MiniMax H3 360 Orbit\'s own prompt'), 'the stage says whose prompt it is');
+    assert(!(await visible('.take .refine')) && (await text('.take .change')).includes('trained on'), 'nothing for a Brain to change, and the take says why');
+    eq(sent['2'].inputs.lora_name, 'minimax_h3/minimax_h3_flf2v_lora_v1.safetensors', 'the orbit LoRA, found in its folder');
+    const entry = (await js('fetch("/api/history").then(r => r.json())'))[0];
+    assert(entry.manual && entry.fixed && !entry.llmModel && entry.imageFile, 'History keeps it as the model\'s prompt, with the picture');
+    const refused = await fetch(`${APP}/api/refine`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: APP }, body: JSON.stringify({ historyId: entry.id, index: 0, instruction: 'make it spin faster' }) });
+    eq(refused.status, 400, 'and the server won\'t rewrite it either');
+    assert(!(await js('document.querySelector("#manualMode").checked')), '✍️ your own prompt stays off');
+    await click('#imageClear');
   });
 
   await test('step 3: a workflow with two picture slots grows a second slot; both go to the Brain and the render, an empty optional one is left out', async () => {
@@ -5771,7 +5818,8 @@ esac
     await click('.tabs button[data-view="gallery"]');
     await waitFor('document.querySelectorAll("#reelGrid .reel-cell").length > 0', 'gallery');
     eq(await count(`#reelGrid [src*="${file}"], #reelGrid [src*="moved-video_0"]`), 0, 'no tile for them, not even a blank one');
-    eq(await text('#galleryCount'), String(await count('#reelGrid .reel-cell')), 'and the count agrees');
+    // (The grid draws a page of tiles at a time, so the count is checked against the renders that are still there.)
+    eq(await text('#galleryCount'), String(await js('fetch("/api/history").then(r => r.json()).then(l => l.reduce((n, e) => n + e.variations.reduce((m, v) => m + (v.renders || []).reduce((k, r) => k + r.files.length, 0), 0), 0))')), 'and the count agrees');
     await click('.tabs button[data-view="history"]');
     await waitFor('document.querySelectorAll(".hcard").length > 0', 'history');
     eq(await count(`.hcard [src*="${file}"], .hcard [src*="moved-video_0"]`), 0, 'no History card shows them');
@@ -6094,7 +6142,7 @@ esac
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
 
     // Every built-in model comes with its workflows, each added by itself, next to the ones you have.
-    for (const id of ['krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'ltx-2-3-t2v', 'minimax-h3', 'minimax-h3-t2v', 'minimax-h3-ref', 'wan-animate-2', 'krea-2-character', 'z-image-turbo', 'qwen-image-edit']) {
+    for (const id of ['krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'ltx-2-3-t2v', 'minimax-h3', 'minimax-h3-t2v', 'minimax-h3-ref', 'minimax-h3-image', 'minimax-h3-image-edit', 'minimax-h3-orbit', 'wan-animate-2', 'krea-2-character', 'z-image-turbo', 'qwen-image-edit']) {
       assert((await fs.readdir(path.join(dir, id)).catch(() => [])).length, `${id} ships with a workflow`);
     }
     const startersFile = path.join(dataDir, 'starters.json');

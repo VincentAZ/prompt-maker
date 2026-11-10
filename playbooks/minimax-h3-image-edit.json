@@ -1,0 +1,72 @@
+{
+  "id": "minimax-h3-image-edit",
+  "name": "MiniMax H3 Image Edit",
+  "kind": "image",
+  "task": "edit",
+  "description": "Edit a picture in big, sharp detail: change what you say, keep the rest, bring in up to two more pictures.",
+  "guide": {
+    "bestFor": "Edits that must stay true to your picture: a new product in the same spot, new clothes on the same person, new words on a sign, a new background, or something from a second picture brought in. The result comes out large (4 megapixels).",
+    "youNeed": "The picture you want to change, and a ComfyUI from 10 November 2026 or newer (MiniMax H3 Image arrived then).",
+    "steps": [
+      "Add your picture in step ③. Two more slots take pictures to bring into it (a product, a person, a style).",
+      "In step ②, say what should change: \"put the bottle from the second picture on the table\", \"make it a snowy evening\".",
+      "Press Generate. The app writes it the way this model reads edits: what stays, what changes and how it looks.",
+      "Render, and compare it with your picture."
+    ],
+    "tryThese": [
+      "replace the car with a pastel pink ice-cream truck in the same spot",
+      "change the shop sign to read \"OPEN LATE\" in the same lettering",
+      "make it a winter evening: snow on the ground, warm light in the windows"
+    ]
+  },
+  "color": "#9061f9",
+  "instructions": "# MiniMax H3 Image Edit\n\n## What it is\n- MiniMax H3 Image in editing mode: it receives the attached pictures as <Picture 1>, <Picture 2>, <Picture 3> (in the order of step ③; <Picture 1> is the picture being edited) and reads one description of the finished result.\n- It runs in 6 distilled steps with guidance 1: no negative prompt. The result keeps <Picture 1>'s shape.\n- It was trained on edit descriptions written by MiniMax's own prompt enhancer. Write the prompt the way that enhancer does.\n\n## Prompt format\nOne continuous English paragraph with no line breaks, headings or lists, in three parts, in this order:\n1. Definitions. Name each source element that stays visible or lends a property, with its picture and a few visible cues: \"The woman in a red coat in <Picture 1> is <Subject 1>.\" \"The glass perfume bottle in <Picture 2> is <Subject 2>.\" Use one number per element. Define an element only when it needs its own judgment (it moves, changes, or is donated); don't split a person into face, hair and clothes when they move together.\n2. Overview and relationships. One sentence that starts with \"The target image\" and summarises the result with the Subject tokens. Then one separate clause per Subject, each with exactly one relationship:\n   - \"<Subject N> is fully preserved.\" (nothing about it changes: write only this sentence, never describe it again)\n   - partially preserved: name what is kept and what changes, from what to what.\n   - attribute transfer: which property of which Subject goes onto which carrier (\"<Subject 1> supplies the exact color transferred to <Subject 2>.\").\n   - weak reference: the general style, palette or mood borrowed, and what may vary.\n3. Changed and new details only. Describe richly what changes or is new: its materials, shapes, colors, placement, lighting, shadows, reflections, contact and how it sits in the scene. Never re-describe what is preserved; use a bare <Subject N> only as an anchor (\"A new luminous pearl rests beside <Subject 1>.\").\n- Refer to the result only as \"the target image\". Narrate the result, not the instruction: never \"change\", \"generate\" or \"please\".\n- New text on the picture: give its complete exact wording in single quotes, its place and its lettering. Text that changes: write the whole new line.\n- With a theme that is vague (\"make it nicer\"), choose the change the picture best supports and describe it concretely.\n- With no theme, write one tasteful improvement (cleaner light, a tidier background) and keep everything else fully preserved.\n\n## Correct pattern\nThe black horse in <Picture 1> is <Subject 1>. The target image shows <Subject 1> beside a newly added luminous pearl. <Subject 1> is fully preserved. The pearl is the size of a fist, pale and iridescent, resting on the dark soil beside the horse's front hooves and casting a cool blue glow across the ground and the lower edge of its legs.\n\n## What to avoid\n- A full caption of the whole picture: what isn't changed is only named, never described.\n- Merging several Subjects into one relationship clause, or calling a Subject fully preserved and then describing it.\n- Inventing details of the source that aren't visible; guessing unreadable text.\n- Quality tags, weights and keyword lists.\n\n## Image roles\n- The attached image is <Picture 1>, the picture being edited; the theme is the edit. Whatever the role says, write the edit description for this picture.\n\n## Length\n- The length target counts the whole paragraph. A small edit needs little; a new background, a new design or new text gets the detail it needs in part 3.",
+  "examples": [
+    "The vintage yellow taxi parked at the curb in <Picture 1> is <Subject 1>. The brick shopfront and the sidewalk behind it in <Picture 1> are <Subject 2>. The target image shows a pastel pink ice-cream truck parked in the place of <Subject 1>, in the same side profile at the curb, in front of <Subject 2>. <Subject 2> is fully preserved. The truck is a rounded 1950s step van in soft strawberry pink with a cream lower band and chrome bumpers, a scalloped white-and-mint awning over a wide service window on its side, and the window glowing warm yellow from inside, where a row of cone-shaped lamps hangs above a steel counter. Hand-painted cream letters along the side panel read 'Scoops & Co.' above a painted triple-scoop cone. Its whitewall tyres rest in the same spot on the asphalt, its reflection softly mirrored in the shop window, and its shadow falls toward the curb in the same direction as the other shadows in the street."
+  ],
+  "aspectRatios": [
+    "1:1",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "16:9",
+    "9:16"
+  ],
+  "resolutions": [
+    "2048×2048",
+    "2368×1792",
+    "1792×2368",
+    "2496×1664",
+    "1664×2496",
+    "2720×1536",
+    "1536×2720"
+  ],
+  "durations": [],
+  "defaults": {
+    "aspectRatio": "1:1",
+    "resolution": "2048×2048",
+    "duration": "",
+    "temperature": 0.7,
+    "length": "medium"
+  },
+  "lengthGuide": {
+    "short": "≈50–90 words",
+    "medium": "≈100–170 words",
+    "long": "≈180–300 words"
+  },
+  "comfyTemplates": [
+    {
+      "name": "image_minimax_h3_image_edit",
+      "title": "MiniMax H3 Image: Image Edit",
+      "note": "ComfyUI's template, with its prompt enhancer (a second text model); the picture is scaled to 4 megapixels first."
+    }
+  ],
+  "sources": [
+    "https://blog.comfy.org/p/minimax-h3-image-is-now-available",
+    "https://huggingface.co/Comfy-Org/MiniMax-H3-Image",
+    "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image",
+    "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_minimax_h3_image_edit.json"
+  ],
+  "updatedAt": "2026-11-10"
+}
