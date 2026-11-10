@@ -6,7 +6,7 @@
   "description": "Edit a picture in big, sharp detail: change what you say, keep the rest, bring in up to two more pictures.",
   "guide": {
     "bestFor": "Edits that must stay true to your picture: a new product in the same spot, new clothes on the same person, new words on a sign, a new background, or something from a second picture brought in. The result comes out large (4 megapixels).",
-    "youNeed": "The picture you want to change, and a ComfyUI from 10 November 2026 or newer (MiniMax H3 Image arrived then).",
+    "youNeed": "The picture you want to change, and ComfyUI 0.45.0 or newer (MiniMax H3 Image arrived with it; ⬆ Update ComfyUI gets it in one click).",
     "steps": [
       "Add your picture in step ③. Two more slots take pictures to bring into it (a product, a person, a style).",
       "In step ②, say what should change: \"put the bottle from the second picture on the table\", \"make it a snowy evening\".",

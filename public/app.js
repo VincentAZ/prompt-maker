@@ -3390,6 +3390,8 @@ function errorTitle(msg) {
   if (/ran out of room|token limit|thinking/i.test(msg)) return ['🧠', 'The Brain ran out of room'];
   if (/No Brain selected/i.test(msg)) return ['🧠', 'No Brain selected'];
   if (/in ComfyUI yet/i.test(msg)) return ['⬇', /needs a file /.test(msg) ? 'A file to get first' : 'A few files to get first'];
+  if (/needs a newer ComfyUI/i.test(msg)) return ['⬆', 'ComfyUI needs an update'];
+  if (/node packs?, which/i.test(msg)) return ['⬇', 'A node pack to add first'];
   return ['⚠️', 'That didn\'t work'];
 }
 
@@ -3402,18 +3404,22 @@ function showError(msg) {
   const comfyDown = /reach ComfyUI/i.test(msg);
   const canStartComfy = comfyDown && state.comfy?.local !== false; // one on another computer can't be started from here
   const filesToGet = /in ComfyUI yet/i.test(msg) && /Model files/.test(msg); // the model's files: ⬇ Model files gets them
+  const comfyOld = /needs a newer ComfyUI/i.test(msg) && state.comfy?.local !== false; // the nodes come with a newer ComfyUI
+  const packToAdd = state.comfy?.local !== false && /node packs?, which/i.test(msg) ? /Click ⬇ Install ([\w.-]+)/.exec(msg)?.[1] : ''; // a pack the workflow names
   // ComfyUI's own words (which step, the raw error) go under Details; what to do about it comes first.
   const step = /^ComfyUI failed at #\S+ ([^:]+): /.exec(msg)?.[1];
   const body = step
     ? `<p>ComfyUI stopped while working on the step “${esc(step.trim())}”. Often it ran out of memory, or a model file or setting in the workflow is wrong. Render again, or open the workflow in ComfyUI to check it.</p><details class="e-details"><summary>Details</summary><p>${esc(msg)}</p></details>`
     : `<p>${esc(msg)}</p>`;
-  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b>${body}${filesToGet ? '<button type="button" class="btn small primary e-files">⬇ Get the files</button>' : ''}${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}${canStartComfy ? '<button type="button" class="btn small primary e-comfy">▶ Start ComfyUI</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
+  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b>${body}${filesToGet ? '<button type="button" class="btn small primary e-files">⬇ Get the files</button>' : ''}${comfyOld ? '<button type="button" class="btn small primary e-update">⬆ Update ComfyUI</button>' : ''}${packToAdd ? `<button type="button" class="btn small primary e-pack" data-pack="${esc(packToAdd)}">⬇ Install ${esc(packToAdd)}</button>` : ''}${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}${canStartComfy ? '<button type="button" class="btn small primary e-comfy">▶ Start ComfyUI</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
   card.hidden = false;
   card.dataset.comfyDown = comfyDown ? '1' : '';
   card.style.setProperty('--eh', `${card.offsetHeight + (parseFloat(getComputedStyle(card.parentElement).rowGap) || 0)}px`);
   $('.x', card).addEventListener('click', () => showError(''));
   $('.e-start', card)?.addEventListener('click', e => startLmStudio(e.currentTarget));
   $('.e-files', card)?.addEventListener('click', () => openModelFiles({ modelId: state.modelId }));
+  $('.e-update', card)?.addEventListener('click', e => updateComfyUi(e.currentTarget));
+  $('.e-pack', card)?.addEventListener('click', e => installNodePack(e.currentTarget, e.currentTarget.dataset.pack));
   $('.e-comfy', card)?.addEventListener('click', e => {
     const btn = e.currentTarget;
     btn.disabled = true;
@@ -7030,8 +7036,10 @@ function renderServices(st) {
         : { dot: 'bad', text: lms.local ? 'Off' : 'Off (it runs on another computer)', start: lms.local, stop: false });
   $('[data-act="lms-setup"]').hidden = !lmsMissing || lms.setup?.state === 'running';
   const busy = $('.svc[data-svc="comfy"]').dataset.busy;
-  row('comfy', comfy.running
-    ? { dot: 'ok', text: `Running${comfy.gpu ? ` · ${comfy.gpu}` : ''}`, start: false, stop: comfy.local && !busy }
+  row('comfy', busy === 'update'
+    ? { dot: 'warn', text: 'Updating… it starts again on its own', start: false, stop: false }
+    : comfy.running
+    ? { dot: 'ok', text: `Running${comfy.version ? ` · version ${comfy.version}` : ''}${comfy.gpu ? ` · ${comfy.gpu}` : ''}`, start: false, stop: comfy.local && !busy }
     : comfy.starting || busy === 'start'
       ? { dot: 'warn', text: 'Starting… (up to a minute)', start: false, stop: false }
       : comfy.setup?.state === 'running'
@@ -7039,6 +7047,7 @@ function renderServices(st) {
         : { dot: 'bad', text: !comfy.local ? 'Off (it runs on another computer)' : comfy.launch ? 'Off' : 'Not on this computer yet. Set it up here, or enter its folder under ComfyUI below', start: comfy.local && Boolean(comfy.launch), stop: false });
   $('[data-act="comfy-setup"]', $('.svc[data-svc="comfy"]')).hidden = comfy.running || comfy.starting || busy === 'start' || !comfy.local || Boolean(comfy.launch) || comfy.setup?.state === 'running';
   $('[data-act="model-files"]').hidden = !comfy.local || !state.workflows.length;
+  $('[data-act="comfy-update"]').hidden = !comfy.updatable || Boolean(busy) || comfy.starting || comfy.setup?.state === 'running';
   const ff = st.ffmpeg; // (missing from an older server still running: see svcStale)
   row('ffmpeg', !ff
     ? { dot: '', text: 'Known once Prompt Maker restarts' }
@@ -7096,6 +7105,50 @@ async function startComfyUi() {
     delete row.dataset.busy;
     await loadServices();
   }
+}
+
+// ⬆ Update ComfyUI (one Prompt Maker set up): the server stops it, brings it up to date, installs its packages and
+// starts it again; this waits for it to answer, then checks every workflow again. btn shows the step under way.
+const updateComfyUi = btn => comfyJob(btn, '/api/comfy/update', {}, {
+  start: '⬆ Updating ComfyUI… it stops, updates and starts again (a few minutes)',
+  done: r => (r.version && r.version !== r.before ? `✓ ComfyUI ${r.version} is running` : `✓ ComfyUI is up to date${r.version ? ` (${r.version})` : ''} and running`),
+  clears: /needs a newer ComfyUI/,
+});
+// ⬇ Install a node pack a workflow Prompt Maker ships names: added to ComfyUI, which restarts to load it.
+const installNodePack = (btn, name) => comfyJob(btn, '/api/comfy/nodes/install', { name }, {
+  start: `⬇ Installing ${name}… ComfyUI restarts to load it`,
+  done: r => `✓ ${r.name}${r.version ? ` ${r.version}` : ''} is in ComfyUI`,
+  clears: /node packs?, which/,
+});
+async function comfyJob(btn, url, body, { start, done, clears }) {
+  const label = btn?.textContent;
+  if (btn) btn.disabled = true;
+  const row = $('.svc[data-svc="comfy"]');
+  row.dataset.busy = 'update';
+  if (state.services) renderServices(state.services);
+  toast(start);
+  let result = null, failed = '';
+  try {
+    await streamApi(url, body, ev => {
+      if (ev.type === 'status') { if (btn?.isConnected) btn.textContent = `⏳ ${ev.text}`; $('.svc-state', row).textContent = ev.text; }
+      else if (ev.type === 'done') result = ev;
+      else if (ev.type === 'error') failed = ev.message;
+    });
+  } catch (err) { failed = friendly(err); }
+  if (!failed && result) {
+    for (let i = 0; i < 90; i++) { // ComfyUI loads its nodes before it answers
+      if ((await loadComfyStatus())?.ok) break;
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  delete row.dataset.busy;
+  if (btn?.isConnected) { btn.disabled = false; btn.textContent = label; }
+  await loadServices();
+  if (failed || !result) return toast(`⚠️ ${failed || "That didn't finish."}`, true);
+  toast(done(result));
+  if (clears.test($('#stageError').textContent)) showError('');
+  checkedModels.clear();
+  await loadHealth({ fresh: true });
 }
 
 // ↻ Restart Prompt Maker: the server starts again and this page waits for it, then reloads itself.
@@ -7203,6 +7256,7 @@ async function serviceAction(btn) {
   if (act === 'comfy-start') return startComfyUi();
   if (act === 'app-restart') return restartApp();
   if (act === 'comfy-setup') return openComfySetup();
+  if (act === 'comfy-update') return updateComfyUi(btn);
   if (act === 'lms-setup') return openLmsSetup();
   if (act === 'ffmpeg-setup') return openFfmpegSetup();
   if (act === 'model-files') return openModelFiles();
@@ -8709,12 +8763,24 @@ function renderModelNotice() {
     // A node ComfyUI doesn't offer: its pack didn't load (the log says why) or isn't installed. Nothing to download here.
     const c = state.comfy;
     const restartable = c?.ok && c.local !== false;
+    const newer = nodes.find(n => n.needs); // the nodes come with a newer ComfyUI, not a node pack
+    if (newer) {
+      box.innerHTML = `<p>⬆ “${esc(flow.name)}” needs a newer ComfyUI: version ${esc(newer.needs)} or later, and yours is ${esc(newer.have)}. Its ${nodes.length === 1 ? 'node comes' : 'nodes come'} with that update, so it can't render yet.</p>
+        <p class="hint">${restartable ? '<button type="button" class="btn small primary" data-act="mm-update">⬆ Update ComfyUI</button> ' : 'Update ComfyUI on the computer it runs on. '}<button type="button" class="btn small" data-act="mm-recheck">↻ Check again</button></p>`;
+      return;
+    }
+    const toAdd = [...new Map(nodes.filter(n => n.install).map(n => [n.install.name, n.install])).values()];
+    if (toAdd.length && nodes.every(n => n.install)) { // the node pack the workflow names isn't in ComfyUI: one click adds it
+      box.innerHTML = `<p>⬇ “${esc(flow.name)}” needs the ${toAdd.map(p => `<a href="${esc(p.repo)}" target="_blank" rel="noopener noreferrer">${esc(p.name)}</a>`).join(' and ')} node pack${toAdd.length > 1 ? 's' : ''}, which ${toAdd.length > 1 ? "aren't" : "isn't"} in your ComfyUI yet, so it can't render.</p>
+        <p class="hint">${restartable ? toAdd.map(p => `<button type="button" class="btn small primary" data-act="mm-pack" data-pack="${esc(p.name)}">⬇ Install ${esc(p.name)}</button> `).join('') : 'Install it in ComfyUI on the computer it runs on. '}<button type="button" class="btn small" data-act="mm-recheck">↻ Check again</button></p>`;
+      return;
+    }
     const row = n => `<li><code>${esc(n.type)}</code><span class="mm-where">${esc(n.nodes.join(', '))}</span><span class="mm-act"><span class="mm-none">${n.pack
       ? `Its node pack <b>${esc(n.pack)}</b> didn't load when ComfyUI started${n.reason ? `: ${esc(n.reason)}` : ''}.`
       : 'No node pack ComfyUI loaded has it.'}</span></span></li>`;
     const fix = nodes.some(n => n.pack)
       ? 'Fix the pack in ComfyUI (Manager → Try fix, or install what it says is missing), then restart ComfyUI.'
-      : 'Install the pack that has it (ComfyUI Manager → Install Missing Custom Nodes), then restart ComfyUI.';
+      : `Install the pack that has it (ComfyUI Manager → Install Missing Custom Nodes), then restart ComfyUI. If it's one of ComfyUI's own nodes, updating ComfyUI brings it${state.services?.comfy?.updatable ? ': <button type="button" class="btn small" data-act="mm-update">⬆ Update ComfyUI</button>' : '.'}`;
     box.innerHTML = `<p>⚠️ “${esc(flow.name)}” uses ${nodes.length === 1 ? 'a node' : `${nodes.length} nodes`} your ComfyUI doesn't have right now, so it can't render:</p>
       <ul>${nodes.map(row).join('')}</ul>
       <p class="hint">${fix} ${restartable ? '<button type="button" class="btn small" data-act="mm-restart">↻ Restart ComfyUI</button> ' : ''}<button type="button" class="btn small" data-act="mm-recheck">↻ Check again</button></p>`;
@@ -8759,6 +8825,8 @@ $('#wfpModels').addEventListener('click', e => {
   if (!b) return;
   const missing = state.wfMissing.get($('#wfpSelect').value) || [];
   if (b.dataset.act === 'mm-restart') return restartComfyUi();
+  if (b.dataset.act === 'mm-update') return updateComfyUi(b);
+  if (b.dataset.act === 'mm-pack') return installNodePack(b, b.dataset.pack);
   if (b.dataset.act === 'mm-recheck') return loadHealth({ fresh: true }).then(() => toast(flowTrouble($('#wfpSelect').value) ? 'Checked: still missing' : 'Checked: it can render now'));
   if (b.dataset.act === 'mm-get') downloadModels(missing.filter(m => m.file === b.dataset.file));
   else if (b.dataset.act === 'mm-all') downloadModels(missing.filter(m => m.download && !['running', 'done'].includes(downloadFor(m)?.state)));

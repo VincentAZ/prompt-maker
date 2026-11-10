@@ -1,6 +1,7 @@
 {
   "format": "prompt-maker-workflow",
   "name": "Krea 2 Character: same person, new picture",
+  "nodePacks": [{ "name": "comfyui-krea2edit", "repo": "https://github.com/lbouaraba/comfyui-krea2edit", "nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"] }],
   "note": "Keeps the person in step ③ (face, hair, build) in a new scene. Krea 2 Turbo with the Krea 2 Identity Edit LoRA, 10 steps, likeness dial at 4. Needs the comfyui-krea2edit nodes.",
   "prompt": {
     "29": {

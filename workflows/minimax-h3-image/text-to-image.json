@@ -1,7 +1,8 @@
 {
  "format": "prompt-maker-workflow",
  "name": "MiniMax H3 Image: a picture from your words",
- "note": "Makes a picture from your prompt at the size in step ④ (4 megapixels to start; it works best from 4 to 20). ComfyUI’s text-to-image template without its prompt enhancer (the Brain writes the prompt): 6 steps, no negative prompt; only ComfyUI’s own nodes. Needs ComfyUI from 10 November 2026 or newer.",
+ "comfyui": "0.45.0",
+ "note": "Makes a picture from your prompt at the size in step ④ (4 megapixels to start; it works best from 4 to 20). ComfyUI’s text-to-image template without its prompt enhancer (the Brain writes the prompt): 6 steps, no negative prompt; only ComfyUI’s own nodes. Needs ComfyUI 0.45.0 or newer (⬆ Update ComfyUI brings it).",
  "prompt": {
   "1": {
    "inputs": {

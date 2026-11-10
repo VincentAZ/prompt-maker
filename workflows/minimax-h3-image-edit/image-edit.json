@@ -1,7 +1,8 @@
 {
  "format": "prompt-maker-workflow",
  "name": "MiniMax H3 Image Edit: edit your picture",
- "note": "Changes the picture in step ③ the way your prompt says and keeps the rest; the result keeps the picture’s shape at 4 megapixels. ComfyUI’s image-edit template without its prompt enhancer (the Brain writes the prompt): 6 steps, no negative prompt; only ComfyUI’s own nodes. Two more slots in step ③ take pictures to bring into it, left out when empty. Needs ComfyUI from 10 November 2026 or newer.",
+ "comfyui": "0.45.0",
+ "note": "Changes the picture in step ③ the way your prompt says and keeps the rest; the result keeps the picture’s shape at 4 megapixels. ComfyUI’s image-edit template without its prompt enhancer (the Brain writes the prompt): 6 steps, no negative prompt; only ComfyUI’s own nodes. Two more slots in step ③ take pictures to bring into it, left out when empty. Needs ComfyUI 0.45.0 or newer (⬆ Update ComfyUI brings it).",
  "prompt": {
   "1": {
    "inputs": {

@@ -1,6 +1,7 @@
 {
   "format": "prompt-maker-workflow",
   "name": "Krea 2 Character: into your picture",
+  "nodePacks": [{ "name": "comfyui-krea2edit", "repo": "https://github.com/lbouaraba/comfyui-krea2edit", "nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"] }],
   "note": "Puts the person from step ③'s \"Person\" slot into the picture in its first slot (the place): its setting, light and framing stay, the person keeps their face, hair and build. Krea 2 Turbo with the Krea 2 Identity Edit LoRA v1.2 (two-picture edit), 10 steps. Needs the comfyui-krea2edit nodes (v1.2 or newer).",
   "prompt": {
     "29": {

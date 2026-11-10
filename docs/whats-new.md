@@ -2,6 +2,12 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.74.0
+
+**⬆ Update ComfyUI, in one click.** MiniMax H3 Image and MiniMax H3 Image Edit need ComfyUI 0.45.0 or newer, the update that brought their node. On an older ComfyUI a render said *install the node pack that has it*, and no node pack has it. Now the workflow says what it needs where you pick it, *needs a newer ComfyUI: version 0.45.0 or later, and yours is 0.42.0*, and so does a render, with **⬆ Update ComfyUI**. One click stops ComfyUI, brings it up to date, installs its new packages and starts it again; your models, renders and node packs stay. The ComfyUI row in **Settings → Services** now says which version runs and has the same **⬆ Update**.
+
+**⬇ Install a workflow's node pack.** Krea 2 Character uses the comfyui-krea2edit nodes, and the ComfyUI Prompt Maker sets up doesn't come with ComfyUI Manager, so *Manager → Install Missing Custom Nodes* couldn't be followed. Its notice now offers **⬇ Install comfyui-krea2edit**, which adds the pack and restarts ComfyUI. Prompt Maker installs only the packs its own workflows name, and both buttons leave a ComfyUI you installed yourself alone.
+
 ## Update in 1.73.0
 
 **MiniMax H3 Image.** MiniMax's new open image model, from words (**Make a picture**) and as an editor (**Edit a picture**). It follows long, exact descriptions and renders large: 4 megapixels to start, up to 16 (its best) in Size, if your graphics card has the memory. Posters, packaging, infographics and product sheets come out with their text spelled right. The Brain writes the long caption MiniMax's own prompt enhancer would, so the workflows leave that second text model out. **MiniMax H3 Image Edit** reads your picture as `<Picture 1>` and two optional pictures as `<Picture 2>` and `<Picture 3>`, and the Brain writes the edit the way MiniMax trained it: what each element is, what stays, and only what changes. Its result keeps your picture's shape at 4 megapixels. Both run in 6 steps and need a ComfyUI from 10 November 2026 or newer (the update that brought MiniMax H3 Image); ⬇ Model files gets the diffusion model and its VAE, and the text encoder is the one MiniMax H3's video models already use.

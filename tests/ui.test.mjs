@@ -6165,6 +6165,59 @@ esac
     await goto(APP);
   });
 
+  await test('workflows: one that needs a newer ComfyUI or a node pack says which, with ⬆ Update ComfyUI or ⬇ Install, and never touches a ComfyUI Prompt Maker didn\'t set up', async () => {
+    const add = async (starter, modelId) => {
+      const prep = await (await fetch(`${APP}/api/workflows/prepare`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starter }) })).json();
+      assert(prep.prompt, `${starter} prepares`);
+      const saved = await (await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ modelId, name: prep.name, source: prep.source, prompt: prep.prompt, mapping: prep.mapping, options: prep.options, models: prep.models }) })).json();
+      return saved.id || saved.workflow?.id;
+    };
+    const stream = async (url, body) => (await (await fetch(`${APP}${url}`, { method: 'POST', headers: { 'content-type': 'application/json', Origin: APP }, body: JSON.stringify(body) })).text()).trim().split('\n').map(l => JSON.parse(l));
+    const image = await add('minimax-h3-image/text-to-image.json', 'minimax-h3-image');
+    const krea = await add('krea-2-character/identity-edit.json', 'krea-2-character');
+    // The mock ComfyUI has every node the shipped workflows use: these three are taken out for this test.
+    const away = Object.fromEntries(['MiniMaxH3ImageConditioning', 'Krea2EditModelPatch', 'Krea2EditGroundedEncode'].map(t => [t, OBJECT_INFO[t]]));
+    for (const t of Object.keys(away)) delete OBJECT_INFO[t];
+    try {
+      // The mock ComfyUI is 0.38: MiniMax H3 Image's node came with 0.45, so it's an update, not a node pack.
+      const im = await (await fetch(`${APP}/api/workflows/${image}/models?fresh=1`)).json();
+      const node = im.nodes.find(n => n.type === 'MiniMaxH3ImageConditioning');
+      assert(node && node.needs === '0.45.0' && node.have === '0.38.0-mock' && !node.install, `the node comes with ComfyUI 0.45.0: ${JSON.stringify(im.nodes)}`);
+      const said = modelsLib.describeMissingNodes(im.nodes);
+      assert(said.includes('needs a newer ComfyUI') && said.includes('0.45.0') && !said.includes('Install Missing Custom Nodes'), `says update, not a node pack: ${said}`);
+      // Krea 2 Character names its node pack: one click installs it.
+      const kr = await (await fetch(`${APP}/api/workflows/${krea}/models?fresh=1`)).json();
+      assert(kr.nodes.length === 2 && kr.nodes.every(n => n.install?.name === 'comfyui-krea2edit' && n.install.repo === 'https://github.com/lbouaraba/comfyui-krea2edit'), `the pack it names: ${JSON.stringify(kr.nodes)}`);
+      assert(modelsLib.describeMissingNodes(kr.nodes).includes('Click ⬇ Install comfyui-krea2edit'), 'and the message says so');
+      eq(modelsLib.olderThan('0.42.0', '0.45.0'), true, '0.42 is older than 0.45');
+      eq(modelsLib.olderThan('0.45.1', '0.45.0'), false, '0.45.1 is not');
+      // Only packs Prompt Maker's own workflows name, and only into a ComfyUI it set up (the mock's isn't).
+      const evil = await stream('/api/comfy/nodes/install', { name: 'some-other-pack' });
+      assert(evil.at(-1).type === 'error' && evil.at(-1).message.includes('only installs the node packs its own workflows name'), `an unknown pack is refused: ${JSON.stringify(evil)}`);
+      const notOurs = await stream('/api/comfy/nodes/install', { name: 'comfyui-krea2edit' });
+      assert(notOurs.at(-1).type === 'error' && notOurs.at(-1).message.includes("wasn't set up by Prompt Maker"), `a ComfyUI Prompt Maker didn't set up is left alone: ${JSON.stringify(notOurs)}`);
+      const update = await stream('/api/comfy/update', {});
+      assert(update.at(-1).type === 'error' && update.at(-1).message.includes("wasn't set up by Prompt Maker"), `and isn't updated either: ${JSON.stringify(update)}`);
+      assert(await (await fetch(`http://127.0.0.1:${COMFY_PORT}/system_stats`)).ok, 'ComfyUI was never stopped for it');
+      // On Create, the notice under the workflow says it, with the button.
+      await js(`localStorage.setItem("pm.wf.minimax-h3-image", ${JSON.stringify(JSON.stringify(image))})`);
+      await goto(`${APP}/#create`);
+      await click('.model-card[data-id="minimax-h3-image"]');
+      await waitFor('(document.querySelector("#wfpModels")?.textContent || "").includes("needs a newer ComfyUI") && !!document.querySelector("#wfpModels [data-act=mm-update]")', 'the notice offers ⬆ Update ComfyUI', 10000);
+      assert(!(await text('#wfpModels')).includes('Install Missing Custom Nodes'), 'and no node pack to look for');
+      await js(`localStorage.setItem("pm.wf.krea-2-character", ${JSON.stringify(JSON.stringify(krea))})`);
+      await click('.model-card[data-id="krea-2-character"]');
+      await waitFor('!!document.querySelector("#wfpModels [data-act=mm-pack][data-pack=comfyui-krea2edit]")', 'the Krea 2 notice offers ⬇ Install comfyui-krea2edit', 10000);
+    } finally {
+      Object.assign(OBJECT_INFO, away);
+      for (const id of [image, krea]) {
+        await fetch(`${APP}/api/workflows/${id}/models?fresh=1`); // the server's node list and check over every workflow see them back
+        await fetch(`${APP}/api/workflows/${id}`, { method: 'DELETE', headers: { Origin: APP } });
+      }
+      await fetch(`${APP}/api/comfy/health?fresh=1`);
+    }
+  });
+
   await test('settings: ⬆ Updates says which version this is and checks on click; ↻ Restart is offered', async () => {
     await click('.tabs button[data-view="settings"]');
     await waitFor('/You have Prompt Maker \\d/.test(document.querySelector("#updNow").textContent)', 'the version and how it was installed');

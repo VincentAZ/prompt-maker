@@ -849,6 +849,8 @@ async function servicesStatus() {
       autostart: settings.comfyAutostart,
       launch: launch.dir ? { dir: launch.dir, command: [launch.python, ...launch.pre, 'main.py', ...launch.args].join(' '), from: launch.from } : null,
       setup: comfySetup.current(), // the one-click set-up, while it runs (or how it ended)
+      version: comfyStatus?.version || '',
+      updatable: services.isLocalUrl(settings.comfyUrl) && (await comfySetup.updatable(launch.dir)), // one Prompt Maker set up: ⬆ Update ComfyUI
     },
     ffmpeg: { ok: ffmpeg.ok, via: ffmpeg.via, version: ffmpeg.version, supported: ffmpeg.supported, setup: ffmpeg.job }, // the video tools, and their set-up while it runs
   };
@@ -1330,6 +1332,30 @@ async function packForNode(settings, type, opts) {
   return np.packs.get(type);
 }
 
+// What a workflow Prompt Maker ships needs from ComfyUI, from its file in workflows/: comfyui, the oldest version it
+// works with (''), and nodePacks, the node packs it uses: [{ name, repo, nodes }]. Nothing for one of your own.
+const starterNeedsCache = new Map();
+const readNeeds = file => ({
+  comfyui: typeof file.comfyui === 'string' ? file.comfyui : '',
+  nodePacks: (Array.isArray(file.nodePacks) ? file.nodePacks : []).filter(p => /^[\w.-]+$/.test(p?.name || '') && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(p?.repo || '') && Array.isArray(p.nodes)),
+});
+async function starterNeeds(workflow) {
+  const key = String(workflow?.source || '').startsWith('starter:') ? workflow.source.slice('starter:'.length).replace(/\.json$/, '') : '';
+  if (!key || !/^[\w-]+\/[\w-]+$/.test(key)) return readNeeds({});
+  if (!starterNeedsCache.has(key)) starterNeedsCache.set(key, readNeeds(JSON.parse(await fs.readFile(path.join(STARTERS_DIR, `${key}.json`), 'utf8').catch(() => '{}'))));
+  return starterNeedsCache.get(key);
+}
+// Every node pack a shipped workflow names: the only ones ⬇ Install may add (never an address from the page).
+async function shippedNodePacks() {
+  const out = new Map();
+  for (const dir of await fs.readdir(STARTERS_DIR).catch(() => [])) {
+    for (const f of (await fs.readdir(path.join(STARTERS_DIR, dir)).catch(() => [])).filter(x => x.endsWith('.json'))) {
+      for (const p of (await starterNeeds({ source: `starter:${dir}/${f}` })).nodePacks) out.set(p.name, p);
+    }
+  }
+  return out;
+}
+
 // The model files a workflow needs that ComfyUI doesn't have (with their download links), as the render would use
 // it: a LoRA switched off doesn't count, and the nodes it uses that ComfyUI doesn't offer (with the pack that failed
 // to load, when the log says). fresh: ask ComfyUI again (a model was just added). Returns { info, missing, fixes, nodes }.
@@ -1342,10 +1368,21 @@ async function workflowModels(workflow, base, { fresh = false } = {}) {
     nodes = models.checkNodes(workflow.prompt, info);
   }
   if (nodes.length) {
-    const settings = await store.getSettings();
-    for (const n of nodes) {
-      const pack = await packForNode(settings, n.type, { fresh });
-      if (pack) Object.assign(n, { pack: pack.pack, reason: pack.reason });
+    // A workflow Prompt Maker ships says which ComfyUI it needs: older than that, the nodes come with an update,
+    // not a node pack (MiniMax H3 Image's arrived in ComfyUI 0.45.0).
+    const { comfyui: needs, nodePacks } = await starterNeeds(workflow);
+    const have = needs ? (await comfy.status(base).catch(() => null))?.version || '' : '';
+    if (needs && models.olderThan(have, needs)) for (const n of nodes) Object.assign(n, { needs, have });
+    else {
+      const settings = await store.getSettings();
+      for (const n of nodes) {
+        const pack = await packForNode(settings, n.type, { fresh });
+        if (pack) Object.assign(n, { pack: pack.pack, reason: pack.reason });
+        else { // not there at all: the pack the workflow names, which ⬇ Install adds
+          const named = nodePacks.find(p => p.nodes.includes(n.type));
+          if (named) n.install = { name: named.name, repo: named.repo };
+        }
+      }
     }
   }
   let probe;
@@ -1970,6 +2007,51 @@ async function route(req, res) {
   if (p === '/api/setup/run' && m === 'POST') return sendJson(res, 200, await firstSetup.start(await store.getSettings(), { startComfy: startComfyAt }));
   if (p === '/api/setup/job' && m === 'GET') return sendJson(res, 200, firstSetup.current() || { state: 'none' });
   if (p === '/api/comfy/setup/job' && m === 'GET') return sendJson(res, 200, comfySetup.current() || { state: 'none' });
+  // ⬆ Update ComfyUI (one Prompt Maker set up): stopped, brought up to date, its packages in, started again.
+  if (p === '/api/comfy/update' && m === 'POST') {
+    const settings = await store.getSettings();
+    const stream = openStream(res);
+    try {
+      if (!services.isLocalUrl(settings.comfyUrl)) throw store.httpError(400, 'ComfyUI runs on another computer: update it there.');
+      const queue = await fetch(`${settings.comfyUrl.replace(/\/+$/, '')}/queue`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => null);
+      if (queue && (queue.queue_running?.length || queue.queue_pending?.length)) throw store.httpError(409, 'ComfyUI is rendering right now. Update it once that\'s done.');
+      const launch = await services.comfyLaunch(settings);
+      const r = await comfySetup.update(launch.dir || comfySetup.comfyDirOf(settings), {
+        stop: () => services.stopComfy(settings, () => comfyUp(settings)),
+        start: () => services.startComfy(settings),
+        say: text => stream.send({ type: 'status', text }),
+      });
+      nodePacks.at = 0; // a new ComfyUI: its log and nodes are asked again
+      stream.send({ type: 'done', ...r });
+    } catch (err) {
+      stream.send({ type: 'error', message: err.message });
+    }
+    return stream.end();
+  }
+  // ⬇ Install a node pack a shipped workflow names, into the ComfyUI Prompt Maker set up; ComfyUI restarts with it.
+  if (p === '/api/comfy/nodes/install' && m === 'POST') {
+    const settings = await store.getSettings();
+    const body = await readBody(req);
+    const stream = openStream(res);
+    try {
+      const pack = (await shippedNodePacks()).get(String(body.name || ''));
+      if (!pack) throw store.httpError(400, 'Prompt Maker only installs the node packs its own workflows name.');
+      if (!services.isLocalUrl(settings.comfyUrl)) throw store.httpError(400, `ComfyUI runs on another computer: install ${pack.name} there (${pack.repo}).`);
+      const queue = await fetch(`${settings.comfyUrl.replace(/\/+$/, '')}/queue`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => null);
+      if (queue && (queue.queue_running?.length || queue.queue_pending?.length)) throw store.httpError(409, 'ComfyUI is rendering right now. Install it once that\'s done.');
+      const launch = await services.comfyLaunch(settings);
+      const r = await comfySetup.installPack(launch.dir || comfySetup.comfyDirOf(settings), pack, {
+        stop: () => services.stopComfy(settings, () => comfyUp(settings)),
+        start: () => services.startComfy(settings),
+        say: text => stream.send({ type: 'status', text }),
+      });
+      nodePacks.at = 0;
+      stream.send({ type: 'done', ...r });
+    } catch (err) {
+      stream.send({ type: 'error', message: err.message });
+    }
+    return stream.end();
+  }
   if (p === '/api/comfy/setup/cancel' && m === 'POST') return sendJson(res, 200, comfySetup.cancel() || { state: 'none' });
   if (p === '/api/comfy/setup/fix' && m === 'POST') return sendJson(res, 200, await comfySetup.fix(String((await readBody(req)).what || '')));
   // ⬆ A newer Prompt Maker, and ↻ a restart, from Settings.

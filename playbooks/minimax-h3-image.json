@@ -6,7 +6,7 @@
   "description": "Very large, detailed pictures from your words, including posters and readable text.",
   "guide": {
     "bestFor": "Big, sharp pictures packed with detail: photos, posters, packaging, infographics and cards with text that reads right. It follows long descriptions closely.",
-    "youNeed": "Nothing but an idea, and a ComfyUI from 10 November 2026 or newer (MiniMax H3 Image arrived then).",
+    "youNeed": "Nothing but an idea, and ComfyUI 0.45.0 or newer (MiniMax H3 Image arrived with it; ⬆ Update ComfyUI gets it in one click).",
     "steps": [
       "In step ②, say what the picture is: who or what, where, and any words that must appear on it.",
       "Press Generate. The app writes the long, exact description this model likes.",
