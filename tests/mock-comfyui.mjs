@@ -124,6 +124,26 @@ function wsFrame(text) {
 const agreed = new Set(); // accounts that clicked Agree on the gated model's page since the mock started (POST /hf/agree)
 // A "model" the fake Hugging Face (/hf/<name>) hands out.
 export const MODEL_BYTES = Buffer.alloc(300 * 1024, 7);
+// POST /hf/newer: its maker puts out another big_model.safetensors (same size, other bytes), as of now.
+const newer = { n: 0, at: 0 };
+export const modelBytesNow = () => (newer.n ? Buffer.alloc(MODEL_BYTES.length, 7 + newer.n) : MODEL_BYTES);
+
+// The fake Civitai (PM_CIVITAI_API points here): four LoRAs. Film Grain Pro has two versions (v2 the newer),
+// Members Only Look downloads only with the key civitai_test_key_0123456789, After Dark is adult, Motion Boost Plus
+// is for another model. Each version's file is 200 KB of one byte, so its SHA-256 tells which it is.
+export const CIVITAI_KEY = 'civitai_test_key_0123456789';
+export const civitaiBytes = versionId => Buffer.alloc(200 * 1024, versionId % 251);
+const civitaiVersion = (id, name, baseModel, publishedAt, file, extra = {}) => ({
+  id, name, baseModel, publishedAt, availability: 'Public', trainedWords: extra.words || [],
+  files: [{ id: id * 10, name: file, type: 'Model', primary: true, sizeKB: 200, hashes: { SHA256: crypto.createHash('sha256').update(civitaiBytes(id)).digest('hex').toUpperCase() }, downloadUrl: `/api/download/models/${id}` }],
+  images: [{ url: `CIVITAI/civitai/img/${id}.png`, type: 'image', nsfwLevel: 1 }],
+});
+const CIVITAI = [
+  { id: 101, name: 'Film Grain Pro', description: '<p>Adds <b>fine film grain</b> &amp; soft halation.</p><ul><li>Works best at strength 0.6</li></ul><script>window.pwned = 1</script>', nsfw: false, creator: { username: 'grainmaker' }, stats: { downloadCount: 15300, thumbsUpCount: 420 }, modelVersions: [civitaiVersion(1012, 'v2.0', 'Krea 2', '2026-06-01T10:00:00.000Z', 'film_grain_pro.safetensors', { words: ['grainy film'] }), civitaiVersion(1011, 'v1.0', 'Krea 2', '2026-01-15T10:00:00.000Z', 'film_grain_pro.safetensors', { words: ['grainy film'] })] },
+  { id: 102, name: 'Members Only Look', nsfw: false, gated: true, creator: { username: 'studio_b' }, stats: { downloadCount: 900, thumbsUpCount: 31 }, modelVersions: [civitaiVersion(1021, 'v1.0', 'Krea 2 Turbo', '2026-03-01T10:00:00.000Z', 'Members Only [Look] é.safetensors')] },
+  { id: 103, name: 'After Dark', nsfw: true, paid: true, creator: { username: 'nightowl' }, stats: { downloadCount: 700, thumbsUpCount: 12 }, modelVersions: [civitaiVersion(1031, 'v1.0', 'Krea 2', '2026-02-01T10:00:00.000Z', 'after_dark.safetensors')] },
+  { id: 104, name: 'Motion Boost Plus', nsfw: false, creator: { username: 'mover' }, stats: { downloadCount: 5000, thumbsUpCount: 88 }, modelVersions: [civitaiVersion(1041, 'v1.0', 'LTXV 2.3', '2026-04-01T10:00:00.000Z', 'motion_boost_plus.safetensors')] },
+];
 
 // Files in a folder and its subfolders, as ComfyUI lists them ("sub/name.safetensors").
 function filesIn(dir, prefix = '') {
@@ -166,7 +186,8 @@ function withJob(png) {
   return Buffer.concat([png.subarray(0, ihdrEnd), chunk, png.subarray(ihdrEnd)]);
 }
 
-export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
+// previews: pictures the fake Civitai shows for its LoRAs ([{ type, body }], in turn), instead of the plain PNG.
+export function startMockComfy(port, { png: plain, root = null, mp4 = null, previews = [] }) {
   const png = withJob(plain);
   let outputDir = null; // where it saves instead of root/output (as if started with --output-directory)
   const prompts = [];
@@ -232,6 +253,9 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
     running = null;
   }
 
+  // The LoRAs it offers: the fixed ones, plus whatever is in root/models/loras (a LoRA just downloaded).
+  const lorasNow = () => [...new Set([...OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0], ...(root ? filesIn(path.join(root, 'models', 'loras')) : [])])];
+
   const handler = async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const json = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
@@ -243,6 +267,7 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
     if (p === '/object_info') {
       const info = structuredClone(OBJECT_INFO);
       if (root) info.CheckpointLoaderSimple.input.required.ckpt_name[0].push(...filesIn(path.join(root, 'models', 'checkpoints')));
+      info.LoraLoaderModelOnly.input.required.lora_name[0] = lorasNow();
       return json(200, info);
     }
     if (p === '/internal/folder_paths') return json(200, root ? { custom_nodes: [path.join(root, 'custom_nodes')], checkpoints: [path.join(root, 'models', 'checkpoints')], loras: [path.join(root, 'models', 'loras')] } : {});
@@ -254,10 +279,52 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
       return ['Bearer hf_test_ok', 'Bearer hf_test_terms'].includes(auth) ? json(200, { name: 'tester', fullname: 'A Tester', auth: { type: 'access_token', accessToken: { role: 'read' } } }) : json(401, { error: 'Invalid credentials in Authorization header' });
     }
     if (p === '/hf/agree' && req.method === 'POST') { agreed.add('Bearer hf_test_terms'); return json(200, {}); } // that account clicks Agree
+    if (p === '/hf/newer' && req.method === 'POST') { newer.n++; newer.at = Date.now(); return json(200, {}); }
+    // What a repo's files are right now (size, SHA-256, last change): the check for newer versions asks this.
+    if (/^\/api\/models\/.+\/paths-info\/[^/]+$/.test(p) && req.method === 'POST') {
+      const bytes = modelBytesNow();
+      return json(200, (JSON.parse(raw.toString() || '{}').paths || []).map(file => ({ type: 'file', path: file, size: bytes.length, lfs: { oid: crypto.createHash('sha256').update(bytes).digest('hex'), size: bytes.length }, lastCommit: { date: new Date(newer.at || Date.UTC(2025, 0, 1)).toISOString() } })));
+    }
     if (p.startsWith('/hf/')) {
       if (p.startsWith('/hf/gated/') && req.headers.authorization !== 'Bearer hf_test_ok' && !agreed.has(req.headers.authorization)) return json(req.headers.authorization === 'Bearer hf_test_terms' ? 403 : 401, { error: 'Access to this model is restricted.' });
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': MODEL_BYTES.length });
-      return res.end(MODEL_BYTES);
+      return res.end(p.endsWith('/big_model.safetensors') ? modelBytesNow() : MODEL_BYTES);
+    }
+    // The fake Civitai (see CIVITAI above).
+    if (p === '/api/v1/enums') return json(200, { ActiveBaseModel: ['Krea 2', 'Krea 2 Turbo', 'LTXV 2.3', 'SDXL 1.0', 'Other'] });
+    if (p === '/api/v1/me') return req.headers.authorization === `Bearer ${CIVITAI_KEY}` ? json(200, { id: 7, username: 'tester' }) : json(401, { error: 'Unauthorized' });
+    if (p.startsWith('/api/v1/') || p.startsWith('/api/download/models/') || p.startsWith('/civitai/img/')) {
+      const here = `http://${req.headers.host}`;
+      const out = m => JSON.parse(JSON.stringify(m).replaceAll('CIVITAI', here));
+      const versions = CIVITAI.flatMap(m => m.modelVersions.map(v => ({ ...v, modelId: m.id, model: { name: m.name }, gated: m.gated })));
+      // (A paid model's versions carry paidAccess, and download for nobody: no account here has unlocked it.)
+      for (const m of CIVITAI) if (m.paid) for (const v of m.modelVersions) v.paidAccess = { permanent: true, endsAt: null };
+      let hit;
+      if (p === '/api/v1/models') {
+        const bases = url.searchParams.getAll('baseModels');
+        const query = (url.searchParams.get('query') || '').toLowerCase();
+        const items = CIVITAI.filter(m => m.modelVersions.some(v => bases.includes(v.baseModel)) && (!query || m.name.toLowerCase().includes(query)) && (url.searchParams.get('nsfw') === 'true' || !m.nsfw));
+        if (url.searchParams.get('sort') === 'Newest') items.sort((a, b) => b.modelVersions[0].publishedAt.localeCompare(a.modelVersions[0].publishedAt));
+        return json(200, { items: items.map(out), metadata: {} });
+      }
+      if ((hit = p.match(/^\/api\/v1\/models\/(\d+)$/))) { const m = CIVITAI.find(x => x.id === Number(hit[1])); return m ? json(200, out(m)) : json(404, { error: 'Not found' }); }
+      if ((hit = p.match(/^\/api\/v1\/model-versions\/by-hash\/(\w+)$/))) { const v = versions.find(x => x.files[0].hashes.SHA256 === hit[1].toUpperCase()); return v ? json(200, out(v)) : json(404, { error: 'Not found' }); }
+      if ((hit = p.match(/^\/api\/v1\/model-versions\/(\d+)$/))) { const v = versions.find(x => x.id === Number(hit[1])); return v ? json(200, out(v)) : json(404, { error: 'Not found' }); }
+      if ((hit = p.match(/^\/api\/download\/models\/(\d+)$/))) {
+        const v = versions.find(x => x.id === Number(hit[1]));
+        if (!v) return json(404, { error: 'Not found' });
+        if (v.gated && req.headers.authorization !== `Bearer ${CIVITAI_KEY}`) return json(401, { error: 'Unauthorized' });
+        if (v.paidAccess) return json(req.headers.authorization === `Bearer ${CIVITAI_KEY}` ? 403 : 401, { error: 'Unauthorized' });
+        const bytes = civitaiBytes(v.id);
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length });
+        return res.end(bytes);
+      }
+      if (p.startsWith('/civitai/img/')) {
+        const pic = previews.length ? previews[CIVITAI.findIndex(m => m.modelVersions.some(v => p.endsWith(`/${v.id}.png`))) % previews.length] || previews[0] : { type: 'image/png', body: png };
+        res.writeHead(200, { 'Content-Type': pic.type, 'Content-Length': pic.body.length });
+        return res.end(pic.body);
+      }
+      return json(404, { error: 'Not found' });
     }
     if (p === '/experiment/models/loras') {
       return json(200, OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0].map(name => {
@@ -265,7 +332,7 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null }) {
         return { name, pathIndex: 0, modified: st ? st.mtimeMs / 1000 : 1700000000, created: 1700000000, size: st ? st.size : 1 };
       }));
     }
-    if (p === '/models/loras') return json(200, OBJECT_INFO.LoraLoaderModelOnly.input.required.lora_name[0]);
+    if (p === '/models/loras') return json(200, lorasNow());
     if (p === '/api/userdata') return json(200, [{ path: 'Mock T2I.json', size: 2000, modified: saved.modified }, { path: '.index.json', size: 10, modified: 0 }]);
     if (p === `/api/userdata/${encodeURIComponent('workflows/Mock T2I.json')}` || p === '/api/userdata/workflows/Mock T2I.json' || decodeURIComponent(p) === '/api/userdata/workflows/Mock T2I.json') return json(200, saved.json);
     if (p === '/templates/video_wan_animate2.json') return json(200, WAN_TEMPLATE);

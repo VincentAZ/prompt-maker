@@ -8,7 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 import zlib from 'node:zlib';
 import { startMock } from './mock-lmstudio.mjs';
-import { startMockComfy, SAVED_WORKFLOW, OBJECT_INFO, MODEL_BYTES } from './mock-comfyui.mjs';
+import { startMockComfy, SAVED_WORKFLOW, OBJECT_INFO, MODEL_BYTES, modelBytesNow, CIVITAI_KEY, civitaiBytes } from './mock-comfyui.mjs';
 import { convertUiWorkflow, pruneToOutputs } from '../lib/comfy-convert.js';
 import * as wfLib from '../lib/workflows.js';
 import * as modelsLib from '../lib/models.js';
@@ -481,7 +481,7 @@ esac
   // A saved workflow whose checkpoint ComfyUI doesn't have yet, with the download link ComfyUI's templates carry.
   const bigModelWorkflowFile = path.join(tmp, 'needs-big-model.json');
   const bigModel = structuredClone(SAVED_WORKFLOW);
-  Object.assign(bigModel.nodes.find(n => n.type === 'CheckpointLoaderSimple'), { widgets_values: ['big_model.safetensors'], properties: { models: [{ name: 'big_model.safetensors', url: `http://127.0.0.1:${COMFY_PORT}/hf/big_model.safetensors`, directory: 'checkpoints' }] } });
+  Object.assign(bigModel.nodes.find(n => n.type === 'CheckpointLoaderSimple'), { widgets_values: ['big_model.safetensors'], properties: { models: [{ name: 'big_model.safetensors', url: `http://127.0.0.1:${COMFY_PORT}/hf/demo/resolve/main/big_model.safetensors`, directory: 'checkpoints' }] } });
   await fs.writeFile(bigModelWorkflowFile, JSON.stringify(bigModel));
   // One whose checkpoint Hugging Face hands only to a signed-in account (FLUX 3 Klein's are like that).
   const gatedWorkflowFile = path.join(tmp, 'needs-gated-model.json');
@@ -526,13 +526,13 @@ case "$*" in
 esac
 `, { mode: 0o755 });
   const fakeNvidiaSmi = path.join(setupDir, 'nvidia-smi');
-  await fs.writeFile(fakeNvidiaSmi, '#!/bin/sh\necho "NVIDIA GeForce RTX 4090, 580.65.06"\n', { mode: 0o755 });
+  await fs.writeFile(fakeNvidiaSmi, '#!/bin/sh\ncase "$*" in *memory.total*) echo 24564;; *) echo "NVIDIA GeForce RTX 4090, 580.65.06";; esac\n', { mode: 0o755 });
 
   // A fake LM Studio home: its server logs quote every request, and deleting from History must clean them.
   const lmsHome = path.join(tmp, 'lmstudio-home');
   await fs.mkdir(path.join(lmsHome, 'server-logs', '2026-10'), { recursive: true });
   // PM_MODEL_HOSTS: model downloads may come from the mock ComfyUI's fake Hugging Face.
-  const appEnv = { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, PM_DESKTOP_DIR: desktopDir, GIO_BIN: '/bin/true', SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_PKEXEC_BIN: fakePkexec, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none', PM_LMS_INSTALL_SH: `http://127.0.0.1:${INSTALL_PORT}/install.sh`, PM_FIRST_BRAIN: 'qwen/qwen3-vl-8b', PM_FFMPEG_URL: `http://127.0.0.1:${INSTALL_PORT}/ffmpeg.tar.xz`, PM_HF_API: `http://127.0.0.1:${COMFY_PORT}` };
+  const appEnv = { ...process.env, PORT: String(APP_PORT), PROMPT_MAKER_DATA: dataDir, LMS_BIN: fakeLms, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, PM_DESKTOP_DIR: desktopDir, GIO_BIN: '/bin/true', SYSTEMCTL_BIN: fakeSystemctl, SYSTEMD_RUN_BIN: fakeSystemdRun, XDG_MIME_BIN: '/bin/true', PM_MODEL_HOSTS: '127.0.0.1', PROMPT_MAKER_VOICE_PYTHON: path.join(ROOT, 'tests', 'mock-voice-python.sh'), PROMPT_MAKER_VOICE_WORKER: path.join(ROOT, 'tests', 'mock-voice-worker.mjs'), LMSTUDIO_HOME: lmsHome, PM_PKEXEC_BIN: fakePkexec, PM_GIT_BIN: fakeGit, PM_PYTHON_BIN: fakePython, PM_NVIDIA_SMI_BIN: fakeNvidiaSmi, PM_LSPCI_BIN: '/bin/true', PM_UV_BIN: 'none', PM_LMS_INSTALL_SH: `http://127.0.0.1:${INSTALL_PORT}/install.sh`, PM_FIRST_BRAIN: 'qwen/qwen3-vl-8b', PM_FFMPEG_URL: `http://127.0.0.1:${INSTALL_PORT}/ffmpeg.tar.xz`, PM_HF_API: `http://127.0.0.1:${COMFY_PORT}`, PM_CIVITAI_API: `http://127.0.0.1:${COMFY_PORT}` };
   let app = null;
   let appLog = '';
   // The app server (started again by the test of a restart mid-render; its log is kept across starts).
@@ -3694,6 +3694,8 @@ esac
     await click('#llmPick');
     await type('#llmSearch', '8b vision');
     eq(await js('[...document.querySelectorAll("#llmList [role=option]")].map(o => o.dataset.id).join()'), 'mock/vision-8b', 'every word must match');
+    assert((await text('#llmList [role="option"] .brain-size')).includes('6.2 GB') && await js('Boolean(document.querySelector("#llmList [role=option] .brain-size .fit-dot.ok"))'), `its size, with a green dot: it fits the 24 GB card: ${await text('#llmList [role="option"] .d')}`);
+    assert((await js('document.querySelector("#llmList [role=option] .brain-size").title')).includes('Fits your graphics card (24 GB)'), 'and says so in words');
     await type('#llmSearch', 'mock');
     await press('ArrowDown');
     eq(await js('document.querySelector("#llmList .active").dataset.i'), '1', 'arrow moves the highlight');
@@ -4511,6 +4513,107 @@ esac
     } finally {
       loras.splice(loras.indexOf('krea2/baked_in_v2.safetensors'), 3);
       await fs.rm(path.join(comfyRoot, 'models/loras/krea2/baked_in_v3.safetensors'), { force: true });
+      await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: ${JSON.stringify({ tweaks: before.tweaks, added: before.added })} }) })`);
+      await goto(`${APP}/#create`);
+    }
+  });
+
+  await test('LoRAs: ⬇ Get more lists Civitai\'s for the model and puts them in its folder; a newer version offers Replace mine or Keep both', async () => {
+    const lora = sel => `#wfpLoras ${sel}`;
+    const dir = path.join(comfyRoot, 'models/loras/krea2');
+    const names = () => js('[...document.querySelectorAll("#loraDlg .ld-card .ld-name")].map(b => b.textContent).join(",")');
+    const act = version => `#loraDlg .ld-act[data-version="${version}"]`;
+    const mine = file => `#loraDlg [data-ld-act="mine"][data-file="krea2/${file}"]`;
+    const same = async (file, version) => (await fs.readFile(path.join(dir, file)).catch(() => Buffer.alloc(0))).equals(civitaiBytes(version));
+    const id = await value('#wfpSelect');
+    const before = await js(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)}).loras)`);
+    try {
+      await goto(`${APP}/#create`);
+      await openPanel('create-render-adv');
+      await click(lora('[data-act="lora-get"]'));
+      await waitFor('document.querySelector("#loraDlg").open && document.querySelectorAll("#loraDlg .ld-card").length > 0', 'Civitai\'s LoRAs');
+      assert((await text('#loraDlgTitle')).includes('Krea 2 RAW'), 'the dialog names the model');
+      eq(await names(), 'Film Grain Pro,Members Only Look,After Dark', 'only the ones made for this model (Krea 2 and Krea 2 Turbo), not LTX\'s');
+      // A click on one opens it inside the app: what its maker wrote, as plain text, and its versions.
+      await js('document.querySelector("#loraDlg .ld-card .ld-thumb").click()');
+      await waitFor('document.querySelector("#loraDlg .ld-d-head h3")?.textContent === "Film Grain Pro"', 'its own screen, in the dialog');
+      const about = await text('#loraDlg .ld-detail');
+      assert(about.includes('Adds fine film grain & soft halation.') && about.includes('• Works best at strength 0.6') && !about.includes('pwned') && !(await js('window.pwned')), `its maker's words, as text: ${about}`);
+      eq(await js('document.querySelectorAll("#loraDlg .ld-version option").length'), 2, 'both versions to pick from');
+      assert(await js('Boolean(document.querySelector("#loraDlg .ld-detail [data-act=\'ld-get\']"))'), 'and ⬇ Get right there');
+      await click('#loraDlg [data-act="ld-back"]');
+      await waitFor('document.querySelectorAll("#loraDlg .ld-card").length === 3', 'back to the list');
+      await waitFor('document.querySelector("#loraDlg .ld-card img")?.naturalWidth > 0', 'a preview, loaded through Prompt Maker');
+      assert((await js('document.querySelector("#loraDlg .ld-card img").getAttribute("src")')).startsWith('/api/loras/image?'), 'the page loads nothing from elsewhere');
+      assert((await text('#loraDlg .ld-card')).includes('by grainmaker') && (await text('#loraDlg .ld-card')).includes('v2.0') && (await text('#loraDlg .ld-card')).includes('Its words: grainy film'), `maker, version and its words: ${await text('#loraDlg .ld-card')}`);
+      assert((await text(act(1012))).includes('⬇ Get'), 'one click to get it');
+      await shot('42b-lora-get-more');
+
+      await click('#loraDlg .ld-more summary');
+      assert((await text('#loraDlg .ld-more-body')).includes('models/loras/krea2') && (await text('#loraDlg .ld-base')).includes('Krea 2, Krea 2 Turbo (chosen for you)'), 'the ⚙ says what was matched and where they go');
+      await click('#loraDlg .ld-adult');
+      await waitFor('document.querySelectorAll("#loraDlg .ld-card").length === 2', 'adult LoRAs hidden on request');
+      await click('#loraDlg .ld-adult');
+      await waitFor('document.querySelectorAll("#loraDlg .ld-card").length === 3', 'and shown again (the default)');
+      await click('#loraDlg .ld-more summary');
+      await type('#loraDlg .ld-q', 'members');
+      await waitFor('document.querySelectorAll("#loraDlg .ld-card").length === 1', 'search narrows it');
+
+      // Its maker asks for an account: the key goes in once, then it downloads like the rest.
+      assert((await text('#ldCivitai')).includes('Many makers let only signed-in Civitai accounts download'), 'not connected: a short note up front');
+      await click(`${act(1021)} [data-act="ld-get"]`);
+      await waitFor(`document.querySelector('${act(1021)} .mm-none')?.textContent.includes('only signed-in accounts') && document.querySelector('${act(1021)} [data-act="ld-key-on"]')`, 'it says an account is needed, with Connect Civitai on the card');
+      await waitFor('document.querySelector("#ldCivitai").textContent.includes("Connect your free account once")', 'and the note at the top says so too');
+      await click(`${act(1021)} [data-act="ld-key-on"]`);
+      await type('#ldKey', 'not_the_right_key_at_all');
+      await click('#ldCivitai [data-act="ld-key-save"]');
+      await waitFor('document.querySelector("#ldCivitai .ld-key-err")?.textContent.includes("didn\'t accept")', 'a wrong key is refused');
+      await type('#ldKey', CIVITAI_KEY);
+      await click('#ldCivitai [data-act="ld-key-save"]');
+      await waitFor('document.querySelector("#ldCivitai").textContent.includes("connected as tester")', 'connected');
+      // One sold for Buzz: it says so, links its page on Civitai to unlock it, and says so again when Civitai refuses.
+      await type('#loraDlg .ld-q', 'after');
+      await waitFor(`document.querySelector('${act(1031)}')?.textContent.includes('asks for Buzz')`, 'a paid LoRA says it asks for Buzz', 10000);
+      assert(await js(`Boolean(document.querySelector('${act(1031)} a[href*="/models/103"][target="_blank"]'))`), 'with 💎 Unlock on Civitai, to its page');
+      await click(`${act(1031)} [data-act="ld-get"]`);
+      await waitFor(`document.querySelector('${act(1031)}')?.textContent.includes("hasn't unlocked this one yet")`, 'not unlocked: it says so', 10000);
+      await type('#loraDlg .ld-q', 'members');
+      await waitFor('document.querySelectorAll("#loraDlg .ld-card").length === 1', 'back to the members-only one');
+      await waitFor(`document.querySelector('${act(1021)} .mm-ok')?.textContent.includes('Here')`, 'the refused one is fetched again on its own, and downloaded', 10000);
+      assert(await same('Members Only _Look_ e.safetensors', 1021), 'in the model\'s folder, under a name ComfyUI can load');
+      await click(`${act(1021)} [data-act="ld-use"]`);
+      await waitFor(`fetch('/api/workflows').then(r => r.json()).then(l => l.find(w => w.id === ${q(id)}).loras.added.some(a => a.name === 'krea2/Members Only _Look_ e.safetensors' && a.strength === 1))`, '＋ Use it adds it to the workflow at strength 1');
+      assert((await text(act(1021))).includes('In this workflow'), 'and says so');
+
+      // A LoRA added by hand (an older version of Film Grain Pro) is recognised by what's in it, and its newer version offered.
+      await fs.writeFile(path.join(dir, 'hand_added.safetensors'), civitaiBytes(1011));
+      await click('#loraDlg [data-ld-tab="mine"]');
+      await click('#loraDlg [data-act="ld-check"]');
+      await waitFor(`document.querySelector('${mine('hand_added.safetensors')} .ld-new')?.textContent.includes('v2.0 is out')`, 'the newer version is offered');
+      assert((await text('#ldList')).includes('Film Grain Pro') && (await text('#ldList')).includes('v1.0'), 'it says what the file is');
+      assert((await text(mine('Members Only _Look_ e.safetensors'))).includes('Newest'), 'the one just downloaded is the newest');
+      await waitFor(`document.querySelector('${lora('.lora-updates')}')?.textContent.includes('1 update')`, 'Fine-tune → Rendering says an update is out');
+      await click(`${mine('hand_added.safetensors')} [data-act="ld-both"]`);
+      await waitFor(`document.querySelector('${mine('hand_added.safetensors')}')?.textContent.includes('Keeping yours')`, 'Keep both: the old one stays and stops offering it');
+      assert(await same('film_grain_pro.safetensors', 1012) && await same('hand_added.safetensors', 1011), 'the new version sits next to the old one');
+      await click(`${mine('hand_added.safetensors')} [data-act="ld-skip"]`);
+      await waitFor(`!!document.querySelector('${mine('hand_added.safetensors')} [data-act="ld-replace"]')`, 'offered again on request');
+      await click(`${mine('hand_added.safetensors')} [data-act="ld-replace"]`);
+      await waitFor(`document.querySelector('${mine('hand_added.safetensors')}')?.textContent.includes('Newest')`, 'Replace mine: it is the newest now');
+      assert(await same('hand_added.safetensors', 1012), 'the new version took the old file\'s place, under its name');
+      assert(!(await js(`!!document.querySelector('${lora('.lora-updates')}')`)), 'no update left to offer');
+      await shot('42c-lora-yours');
+
+      await click('#loraDlg [data-ld-tab="find"]');
+      await type('#loraDlg .ld-q', 'grain');
+      await waitFor(`document.querySelector('${act(1012)} .mm-ok')?.textContent.includes('Here')`, 'Find more marks the ones already here');
+      await click('#ldClose');
+      await click(lora('[data-act="lora-add"]'));
+      await waitFor(`[...document.querySelectorAll('${lora('.lp-list button')}')].some(b => b.dataset.lora === 'krea2/film_grain_pro.safetensors')`, '＋ Add LoRA lists what was downloaded');
+      await click(lora('[data-act="lora-add"]'));
+    } finally {
+      for (const f of ['Members Only _Look_ e.safetensors', 'hand_added.safetensors', 'film_grain_pro.safetensors']) await fs.rm(path.join(dir, f), { force: true });
+      await js(`fetch('/api/loras/civitai', { method: 'DELETE' })`);
       await js(`fetch('/api/workflows/${id}', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loras: ${JSON.stringify({ tweaks: before.tweaks, added: before.added })} }) })`);
       await goto(`${APP}/#create`);
     }
@@ -5646,6 +5749,59 @@ esac
     await click('#mfClose');
     } finally {
       await js('document.querySelector("#modelFilesDlg").close(); 1'); // (a failure above would leave it over every test after this one)
+    }
+    await click('.tabs button[data-view="create"]');
+  });
+
+  await test('⬇ Model files: a newer version of a file that is here: 🆕, then Keep both or Replace mine', async () => {
+    const dir = path.join(comfyRoot, 'models', 'checkpoints');
+    const got = path.join(dir, 'big_model.safetensors');
+    const section = `[...document.querySelectorAll("#mfList .mf-model")].find(s => s.querySelector("h3").textContent.includes("Krea 2 RAW"))`;
+    const row = `[...${section}.querySelectorAll("li")].find(li => li.textContent.includes("big_model.safetensors"))`;
+    const putOut = () => fetch(`http://127.0.0.1:${COMFY_PORT}/hf/newer`, { method: 'POST' });
+    try {
+    await click('.tabs button[data-view="models"]');
+    await click('#catalogFiles');
+    await waitFor('document.querySelector("#mfTotal").textContent.includes("No newer versions")', 'up to date: it says so', 10000);
+    assert(await js(`${row}.textContent.includes("✓ Here") && !${row}.querySelector('[data-act="mf-replace"]')`), 'and the file is just here');
+
+    // Its maker puts out another one (same size): ↻ Check for updates reads yours and finds it isn't the same.
+    await putOut();
+    await click('#mfCheck');
+    await waitFor(`${row}.querySelector('[data-act="mf-replace"]') && ${row}.querySelector('[data-act="mf-keep"]')`, 'Replace mine and Keep both', 10000);
+    assert(await js(`${row}.textContent.includes("A newer one is out")`), `in plain words: ${await js(`${row}.textContent`)}`);
+    assert(await js(`${section}.querySelector(".mf-sum").textContent.includes("1 newer")`), 'the model counts it');
+    eq(await js('document.querySelector("#catalogFiles").dataset.new'), '1', 'and the ⬇ Model files button shows 🆕 1');
+
+    // Not now: it stops offering this version, until asked to show it again.
+    await js(`${row}.querySelector('[data-act="mf-skip"]').click()`);
+    await waitFor(`${row}.querySelector('[data-act="mf-unskip"]') && !${row}.querySelector('[data-act="mf-replace"]')`, 'not offered any more', 10000);
+    eq(await js('document.querySelector("#catalogFiles").dataset.new') || '', '', 'the 🆕 is gone from the button');
+    await js(`${row}.querySelector('[data-act="mf-unskip"]').click()`);
+    await waitFor(`${row}.querySelector('[data-act="mf-keep"]')`, 'offered again', 10000);
+
+    // Keep both: the new one takes the name, the old one stays next to it.
+    await js(`${row}.querySelector('[data-act="mf-keep"]').click()`);
+    await toastText('is in ComfyUI now');
+    await waitFor(`${row}.textContent.includes("✓ Here") && !${row}.querySelector('[data-act="mf-replace"]')`, 'here, nothing newer', 10000);
+    assert((await fs.readFile(got)).equals(modelBytesNow()), 'the file is the new one');
+    const kept = (await fs.readdir(dir)).filter(n => n.startsWith('big_model (before '));
+    eq(kept.length, 1, `the old one is kept under a name that says since when: ${kept}`);
+    assert((await fs.readFile(path.join(dir, kept[0]))).equals(MODEL_BYTES), 'and it is the old file');
+    await fs.rm(path.join(dir, kept[0]));
+
+    // Another one: Replace mine leaves one file.
+    await putOut();
+    await click('#mfCheck');
+    await waitFor(`${row}.querySelector('[data-act="mf-replace"]')`, 'offered', 10000);
+    await js(`${row}.querySelector('[data-act="mf-replace"]').click()`);
+    await toastText('is in ComfyUI now');
+    await waitFor(`${row}.textContent.includes("✓ Here") && !${row}.querySelector('[data-act="mf-replace"]')`, 'here, nothing newer', 10000);
+    assert((await fs.readFile(got)).equals(modelBytesNow()), 'the file is the newest one');
+    eq((await fs.readdir(dir)).filter(n => n.startsWith('big_model')).length, 1, 'and it is the only one');
+    await click('#mfClose');
+    } finally {
+      await js('document.querySelector("#modelFilesDlg").close(); 1');
     }
     await click('.tabs button[data-view="create"]');
   });
@@ -7315,6 +7471,35 @@ esac
     await toastText('Settings saved');
     await goto(`${APP}/#create`);
     eq(await count('[data-prompt-set]'), 0, 'deleting all sets clears Creator choices');
+  });
+
+  await test('⚙ More under How the Brain thinks: Top K, Min P, Repeat penalty and Seed go to LM Studio when set, and nothing when empty', async () => {
+    const fields = { '#sTopK': '30', '#sMinP': '0.07', '#sRepeat': '1.1', '#sSeed': '42' };
+    const history = () => fetch(`${APP}/api/history`).then(r => r.json()).then(l => l.map(e => e.id));
+    const before = new Set(await history());
+    try {
+      await click('.tabs button[data-view="settings"]');
+      await js('document.querySelector("#sBrainMore").open = true; 1');
+      for (const id of Object.keys(fields)) eq(await js(`document.querySelector(${q(id)}).value`), '', `${id} starts empty (LM Studio's own)`);
+      for (const [id, v] of Object.entries(fields)) await js(`(el => { el.value = ${q(v)}; el.dispatchEvent(new Event('input', { bubbles: true })); })(document.querySelector(${q(id)})); 1`);
+      await click('#settingsForm button[type="submit"]');
+      await waitFor(`fetch('/api/settings').then(r => r.json()).then(s => s.brainSampling?.topK === 30)`, 'saved');
+      eq(JSON.stringify((await (await fetch(`${APP}/api/settings`)).json()).brainSampling), JSON.stringify({ topK: 30, minP: 0.07, repeatPenalty: 1.1, seed: 42 }), 'all four, as numbers');
+      await click('.tabs button[data-view="create"]');
+      await type('#theme', 'a lighthouse keeper making tea');
+      await click('#generateBtn');
+      await genDone();
+      const sent = lastCall();
+      eq([sent.top_k, sent.min_p, sent.repeat_penalty, sent.seed].join(), '30,0.07,1.1,42', 'LM Studio gets them');
+    } finally {
+      await fetch(`${APP}/api/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brainSampling: { topK: '', minP: '', repeatPenalty: '', seed: '' } }) });
+      await reloadPage();
+    }
+    await type('#theme', 'a lighthouse keeper making tea');
+    await click('#generateBtn');
+    await genDone();
+    eq([lastCall().top_k, lastCall().min_p, lastCall().repeat_penalty, lastCall().seed].join(), ',,,', 'emptied: none of them is sent');
+    for (const id of (await history()).filter(id => !before.has(id))) await fetch(`${APP}/api/history/${id}`, { method: 'DELETE' }); // (leaves History as it was)
   });
 
   await test('no console errors', async () => {

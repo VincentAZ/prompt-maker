@@ -49,6 +49,7 @@ You don't write the long, technical prompts these models want. You type a few wo
 - **Pictures and videos from a few words, or from your own photo.** Choose a task from the icon row—make or edit a picture, keep the same person, animate a picture, copy movement, or make a video—then describe your idea. Hover or focus an icon for its full name. The app picks a suitable model and remembers your choices; its model menu stays folded unless you want to change that choice. Write up to four prompt variations, or make images and videos directly. Every detail you typed stays in the prompt: each take is checked against your idea, and what the Brain changed is put back.
 - **The same person in every shot.** Drop in one picture of someone and they stay themselves in new places, new light, new scenes. See below.
 - **Make it again from a file.** Drop in a picture or video made with ComfyUI, A1111, Forge or Civitai and **📜 Recipe inside** puts its prompt, model, LoRAs, seed and size back in one click.
+- **LoRAs that fit your model, one click away.** **⬇ Get more** lists the LoRAs made for the model you picked, downloads them into the right folder, and tells you when a newer version is out.
 - **Clips that carry on.** Turn any still into a video, then the next scene from the next still, and join them. The film above is four of these.
 - **A voice for your character.** Describe a voice in plain words, hear it, keep it by name and have your character say a line in a video.
 - **Your best work stays findable.** Library holds your artwork: rate it with stars, choose **Select → two pictures → Compare 2**, or pick any number and **⬇ Download** them in one .zip. **Saved prompts** holds the automatically saved prompts and sessions: bookmark the ones you want to reuse. **Hide from Create** tidies your workspace while keeping the artwork in Library.
@@ -63,6 +64,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 </div>
 
 ## What's new
+
+**1.75.0 — ⬇ Get more LoRAs, for the model you're on.** In **Fine-tune → Rendering**, **⬇ Get more** lists the LoRAs on Civitai made for the selected model and nothing else, with previews; **⬇ Get** puts one straight into that model's folder in ComfyUI and **＋ Use it** adds it to the workflow. The **Yours** tab says when a LoRA you have has a newer version out: **Replace mine** or **Keep both**. **⬇ Model files** does the same for the big model files, when their maker changes one on Hugging Face. [See it](docs/screenshots/loras.png).
 
 **1.74.0 — ⬆ Update ComfyUI, in one click.** MiniMax H3 Image and Image Edit (1.73.0) need ComfyUI 0.45.0, and a render on an older one said to install a node pack that doesn't exist. Now a workflow that needs a newer ComfyUI says so, with **⬆ Update ComfyUI**: it stops ComfyUI, updates it, installs its packages and starts it again (also in **Settings → Services**). Krea 2 Character's node pack, which the ComfyUI Prompt Maker sets up never had, installs in one click too: **⬇ Install comfyui-krea2edit**. Both for the ComfyUI Prompt Maker set up; one you installed yourself is left alone.
 

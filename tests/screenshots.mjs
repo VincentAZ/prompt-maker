@@ -4,10 +4,10 @@
 //         Start it with PORT=5320 PROMPT_MAKER_DATA=<folder> node server.js
 //   CLEAN (port 5321): an empty data folder, isolated XDG_CONFIG_HOME/XDG_DATA_HOME, and service commands disabled.
 //   Override DEMO, CLEAN and CDP_PORT for other local ports, CHROME_DIR for the browser profile. No conversation is generated for the Ask screenshot.
-// Then:  node tests/screenshots.mjs create gallery models voices comfy-setup lms-setup model-files hugging-face ask   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
+// Then:  node tests/screenshots.mjs create fine-tune loras gallery models voices comfy-setup lms-setup model-files hugging-face ask   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
 // Look at every picture before it ships: no prompts or personal names. Models shows the chooser, not example prompts.
 // shots.mjs: sharp 1760x1100 screenshots of the running demo apps, no prompt text on screen.
-// usage: node shots.mjs <name>...   (names: create gallery models voices comfy-setup lms-setup model-files ask)
+// usage: node shots.mjs <name>...   (names: create fine-tune loras gallery models voices comfy-setup lms-setup model-files ask)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 
@@ -68,6 +68,14 @@ const steps = {
     await open(`${DEMO}/#create`);
     await js("document.querySelector('#openCreateOptions').click(); 1");
     await sleep(1000); await shot('fine-tune');
+  },
+  // ⬇ Get more: the LoRAs made for the model. The DEMO copy asks the mock's made-up Civitai (PM_CIVITAI_API), never the real one.
+  async loras() {
+    await open(`${DEMO}/#create`);
+    await js("document.querySelector('#openCreateOptions').click(); 1");
+    await sleep(1000);
+    await js(`document.querySelector('#wfpLoras [data-act="lora-get"]').click(); 1`);
+    await sleep(3000); await shot('loras');
   },
   async gallery() {
     await open(`${DEMO}/#gallery`);

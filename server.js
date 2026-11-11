@@ -27,6 +27,7 @@ import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cl
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
+import * as loras from './lib/loras.js';
 import * as recipe from './lib/recipe.js';
 import { planZip, writeZip } from './lib/zip.js';
 import { convertUiWorkflow, isApiWorkflow, isUiWorkflow, pruneToOutputs, ConvertError } from './lib/comfy-convert.js';
@@ -222,6 +223,9 @@ function sampling(settings, temperature, llm) {
     top_p: settings.topP,
     max_tokens: settings.maxTokens,
   };
+  // ⚙ More: only LM Studio takes these (most cloud services refuse one or another), and only the ones set.
+  const more = settings.brainSampling || {};
+  if (!llm.cloud) for (const [key, name] of [['topK', 'top_k'], ['minP', 'min_p'], ['repeatPenalty', 'repeat_penalty'], ['seed', 'seed']]) if (more[key] !== null && more[key] !== undefined) opts[name] = more[key];
   // Reasoning models think for thousands of tokens by default; prompt writing rarely needs it.
   if (llm.thinking !== 'default') opts.reasoning_effort = llm.thinking === 'off' ? 'none' : llm.thinking;
   return opts;
@@ -1462,6 +1466,14 @@ async function modelFiles(settings, { sizes = false, fresh = false } = {}) {
   }
   return { comfy: Boolean(info), downloads: models.listDownloads(), huggingface: await models.hfStatus(), models: out };
 }
+// The files of ⬇ Model files that are here and came from Hugging Face (one per file), with ComfyUI's model folders:
+// what the check for newer versions looks at. folders null: ComfyUI is off, or on another computer.
+async function filesHere(settings) {
+  const d = await modelFiles(settings);
+  const folders = d.comfy ? await comfy.modelFolders(settings.comfyUrl).catch(() => null) : null;
+  const files = [...new Map(d.models.flatMap(m => m.files).filter(f => f.have === true && f.download).map(f => [f.file, f])).values()];
+  return { comfy: d.comfy, folders, files };
+}
 
 // Called whenever ComfyUI answers: a check when it just came back (its node packs may differ) or is ten minutes old.
 function comfyAnswered(settings, ok) {
@@ -1894,7 +1906,7 @@ async function route(req, res) {
   // Your renders, pictures and videos are as private as the API: another website can't fetch them either.
   if (/^\/(api|renders|videos|images)\//.test(p) && !isTrustedRequest(req)) return sendJson(res, 403, { error: 'Forbidden' });
 
-  if (p === '/api/models' && m === 'GET') return sendJson(res, 200, await store.listModels());
+  if (p === '/api/models' && m === 'GET') return sendJson(res, 200, (await store.listModels()).map(x => ({ ...x, family: loras.familyOf(x) })));
   if (p === '/api/models' && m === 'POST') {
     const body = await readBody(req);
     const items = Array.isArray(body) ? body : [body];
@@ -1914,6 +1926,20 @@ async function route(req, res) {
   if (p === '/api/models/hidden' && m === 'GET') return sendJson(res, 200, await store.hiddenBuiltins());
   // ⬇ Model files: every model file every workflow of every model needs, present or not, with its link and size.
   if (p === '/api/models/files' && m === 'GET') return sendJson(res, 200, await modelFiles(await store.getSettings(), { sizes: url.searchParams.has('sizes'), fresh: url.searchParams.has('fresh') }));
+  // Newer versions of the model files that are here (lib/models.js: fileUpdates).
+  if (p === '/api/models/updates' && m === 'POST') {
+    const body = await readBody(req);
+    const { comfy: up, folders, files } = await filesHere(await store.getSettings());
+    if (!folders) return sendJson(res, 200, { files: {}, unread: 0, offline: false, comfy: up, local: false });
+    return sendJson(res, 200, { ...(await models.fileUpdates(files, folders, { identify: Boolean(body.identify), fresh: Boolean(body.fresh) })), comfy: true, local: true });
+  }
+  if (p === '/api/models/updates/skip' && m === 'POST') {
+    const body = await readBody(req);
+    const { folders, files } = await filesHere(await store.getSettings());
+    const f = files.find(x => x.file === body.file);
+    if (!folders || !f) return sendJson(res, 404, { error: "That file isn't one of ComfyUI's any more." });
+    return sendJson(res, 200, await models.skipUpdate(f, folders, body.on !== false));
+  }
   // Your Hugging Face account, for the files behind one (⬇ Model files): connect with a token, see who, forget it.
   if (p === '/api/huggingface' && m === 'GET') return sendJson(res, 200, await models.hfStatus());
   if (p === '/api/huggingface' && m === 'POST') return sendJson(res, 200, await models.hfConnect((await readBody(req)).token));
@@ -1961,7 +1987,10 @@ async function route(req, res) {
     try {
       const [models, notes, history, clouds] = await Promise.all([listLlms(base), store.getBrainNotes(), store.listHistory(), cloud.listModels()]);
       const records = brainRecords(history);
-      return sendJson(res, 200, { ok: true, startedAt: STARTED_AT, url: base, models: [...models, ...clouds].map(m => ({ ...m, ...brainView(notes[m.id]), record: records[m.id] || null })) });
+      // The graphics card's memory, for "does this Brain fit": this computer's, so only for an LM Studio on it
+      // (ComfyUI knows it too, for a card nvidia-smi doesn't).
+      const gpuMemory = !services.isLocalUrl(base) ? 0 : (await comfySetup.gpuMemory()) || (services.isLocalUrl(settings.comfyUrl) && (await comfy.status(settings.comfyUrl).catch(() => null))?.vramTotal) || 0;
+      return sendJson(res, 200, { ok: true, startedAt: STARTED_AT, url: base, gpuMemory, models: [...models, ...clouds].map(m => ({ ...m, ...brainView(notes[m.id]), record: records[m.id] || null })) });
     } catch (err) {
       // LM Studio is down, but cloud Brains still work.
       const clouds = await cloud.listModels().catch(() => []);
@@ -2404,6 +2433,50 @@ async function route(req, res) {
       return sendJson(res, 200, { loras: [], error: err.message });
     }
   }
+  // ⬇ Get more LoRAs: the ones Civitai has for a model, into that model's folder in ComfyUI (lib/loras.js).
+  if (p === '/api/loras/civitai' && m === 'GET') return sendJson(res, 200, await loras.status());
+  if (p === '/api/loras/civitai' && m === 'POST') return sendJson(res, 200, await loras.connect((await readBody(req)).key));
+  if (p === '/api/loras/civitai' && m === 'DELETE') return sendJson(res, 200, await loras.forget());
+  if (p === '/api/loras/search' && m === 'GET') {
+    const settings = await store.getSettings();
+    const model = await store.getModel(url.searchParams.get('model') || '').catch(() => null);
+    if (!model) return sendJson(res, 404, { error: 'Model not found' });
+    const known = await loras.allBases();
+    const plan = loras.planFor(model, settings.loraBases?.[model.id], known);
+    const have = await comfy.loraList(settings.comfyUrl).catch(() => null);
+    const found = await loras.search({ bases: plan.bases, q: url.searchParams.get('q') || '', sort: url.searchParams.get('sort') || '', cursor: url.searchParams.get('cursor') || '', adult: settings.loraAdult !== false, kind: plan.kind }, have);
+    return sendJson(res, 200, { ...found, ...plan, known, adult: settings.loraAdult !== false, civitai: await loras.status(), comfy: Boolean(have) });
+  }
+  if (p === '/api/loras/model' && m === 'GET') {
+    const settings = await store.getSettings();
+    const model = await store.getModel(url.searchParams.get('model') || '').catch(() => null);
+    const plan = model ? loras.planFor(model, settings.loraBases?.[model.id], await loras.allBases()) : { bases: [] };
+    const have = await comfy.loraList(settings.comfyUrl).catch(() => null);
+    return sendJson(res, 200, await loras.details(url.searchParams.get('id'), { bases: plan.bases, list: have, adult: settings.loraAdult !== false }));
+  }
+  if (p === '/api/loras/get' && m === 'POST') {
+    const settings = await store.getSettings();
+    const body = await readBody(req);
+    const dirs = (await comfy.modelFolders(settings.comfyUrl))?.loras;
+    return sendJson(res, 200, await loras.get(dirs, { versionId: body.versionId, folder: body.folder, replace: body.replace, beside: body.beside }));
+  }
+  if (p === '/api/loras/updates' && m === 'POST') {
+    const settings = await store.getSettings();
+    const body = await readBody(req);
+    const have = await comfy.loraList(settings.comfyUrl).catch(() => null);
+    if (!have) return sendJson(res, 200, { files: [], unread: 0, offline: false, comfy: false, civitai: await loras.status() });
+    const dirs = (await comfy.modelFolders(settings.comfyUrl).catch(() => null))?.loras || null;
+    return sendJson(res, 200, { ...(await loras.updates(have, dirs, { folder: String(body.folder || ''), identify: Boolean(body.identify), fresh: Boolean(body.fresh) })), comfy: true, local: Boolean(dirs), civitai: await loras.status() });
+  }
+  if (p === '/api/loras/skip' && m === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, await loras.skip(String(body.file || ''), body.versionId));
+  }
+  if (p === '/api/loras/image' && m === 'GET') {
+    const pic = await loras.image(url.searchParams.get('u'), { big: url.searchParams.has('big') });
+    res.writeHead(200, { 'Content-Type': pic.type, 'Content-Length': pic.body.length, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+    return res.end(pic.body);
+  }
   if (p === '/api/comfy/workflows' && m === 'GET') {
     const settings = await store.getSettings();
     return sendJson(res, 200, await comfy.savedWorkflows(settings.comfyUrl));
@@ -2439,7 +2512,7 @@ async function route(req, res) {
   if (p === '/api/comfy/downloads' && m === 'POST') {
     const settings = await store.getSettings();
     const body = await readBody(req);
-    return sendJson(res, 200, await models.startDownload(await comfy.modelFolders(settings.comfyUrl), { name: body.name, folder: body.folder, url: body.url }));
+    return sendJson(res, 200, await models.startDownload(await comfy.modelFolders(settings.comfyUrl), { name: body.name, folder: body.folder, url: body.url, replace: ['replace', 'keep'].includes(body.replace) ? body.replace : '' }));
   }
   if ((match = p.match(/^\/api\/comfy\/downloads\/([\w-]+)\/cancel$/)) && m === 'POST') return sendJson(res, 200, { ok: models.cancelDownload(match[1]) });
   if ((match = p.match(/^\/api\/workflows\/([\w-]+)\/refresh$/)) && m === 'POST') {

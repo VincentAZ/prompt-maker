@@ -814,6 +814,15 @@
             <label class="field"><span>Top P</span><input id="sTopP" type="number" min="0" max="1" step="0.01"><small class="hint">Lower is more focused. Temperature is set per run on the Create page.</small></label>
             <label class="field"><span>Max tokens</span><input id="sMax" type="number" min="256" max="32768" step="256"><small class="hint">The cap on each answer. Raise it if thinking is on.</small></label>
           </div>
+          <details class="brain-more" id="sBrainMore"><summary>⚙ More (LM Studio Brains only)</summary>
+            <p class="hint">Empty means LM Studio's own setting, which suits most Brains. Cloud Brains ignore these.</p>
+            <div class="grid-3">
+              <label class="field"><span>Top K</span><input id="sTopK" type="number" min="1" max="500" step="1" placeholder="LM Studio's"><small class="hint">Picks each word from only this many likely ones. 20–40 reins in a Brain that wanders off.</small></label>
+              <label class="field"><span>Min P</span><input id="sMinP" type="number" min="0" max="1" step="0.01" placeholder="LM Studio's"><small class="hint">Drops words much less likely than the best one. 0.05–0.1 keeps small Brains on track.</small></label>
+              <label class="field"><span>Repeat penalty</span><input id="sRepeat" type="number" min="0.5" max="2" step="0.01" placeholder="LM Studio's"><small class="hint">Above 1 stops a Brain repeating itself. 1.05–1.15 is plenty; more garbles the prompt.</small></label>
+              <label class="field"><span>Seed</span><input id="sSeed" type="number" min="0" step="1" placeholder="Random"><small class="hint">The same idea and settings then give the same prompt again, to compare Brains fairly. Every take of a run comes out alike, so leave it empty to create.</small></label>
+            </div>
+          </details>
           <label class="check-row"><input type="checkbox" id="sCheckTheme"> <span>✓ Check each prompt against your idea</span></label>
           <p class="hint">On by default. After each take, one more short Brain call compares it with what you typed and puts back any detail it changed (a color, a count, a place). The take says what was put back. Off is a few seconds faster per take.</p>
         </section>
@@ -1061,15 +1070,34 @@
   <dialog id="modelFilesDlg" class="modal cloud-dialog model-files-dlg" aria-labelledby="modelFilesTitle" data-not-assistant>
     <form method="dialog" class="modal-body">
       <h2 id="modelFilesTitle">⬇ Model files</h2>
-      <p>Each model needs a few big files in ComfyUI: the model itself, a text encoder that reads your prompt, a VAE that makes the pixels, sometimes a LoRA or a vision encoder. Get them here, one model at a time or all at once. They come from Hugging Face and go straight into ComfyUI's models folder; a download that stops carries on from where it was.</p>
+      <p>Each model needs a few big files in ComfyUI: the model itself, a text encoder that reads your prompt, a VAE that makes the pixels, sometimes a LoRA or a vision encoder. Get them here, one model at a time or all at once. They come from Hugging Face and go straight into ComfyUI's models folder; a download that stops carries on from where it was. When a model's maker puts out a newer version of a file you have, it says so here.</p>
       <p class="hint" id="mfState"></p>
       <div id="mfHf" class="mf-hf" hidden></div>
       <div id="mfList" class="mf-list"></div>
       <p id="mfResult" class="test-result" hidden></p>
       <div class="row cloud-dialog-acts">
         <span class="hint mf-total" id="mfTotal"></span>
+        <button type="button" class="btn" id="mfCheck" title="Asks Hugging Face whether a newer version of a file you have is out. Nothing is downloaded until you say so" hidden>↻ Check for updates</button>
         <button type="button" class="btn primary" id="mfAll" hidden>⬇ Get everything</button>
         <button value="no" class="btn" id="mfClose">Close</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="loraDlg" class="modal cloud-dialog model-files-dlg lora-dlg" aria-labelledby="loraDlgTitle" data-not-assistant>
+    <form method="dialog" class="modal-body">
+      <h2 id="loraDlgTitle">🧬 LoRAs</h2>
+      <p id="ldIntro">A LoRA is a small add-on file that teaches a model one thing: a style, a look, a kind of motion. Each is made for one model, so these are only the ones made for this one. They come from Civitai, where their makers share them, and go straight into this model's folder in ComfyUI.</p>
+      <div class="seg ld-tabs" role="tablist">
+        <button type="button" role="tab" data-ld-tab="find" class="active" aria-selected="true">Find more</button>
+        <button type="button" role="tab" data-ld-tab="mine" aria-selected="false">Yours</button>
+      </div>
+      <div id="ldCivitai" class="mf-hf" hidden></div>
+      <div id="ldBar" class="ld-bar"></div>
+      <p class="hint" id="ldState" hidden></p>
+      <div id="ldList" class="mf-list ld-list"></div>
+      <div class="row cloud-dialog-acts">
+        <span class="hint mf-total" id="ldFoot"></span>
+        <button value="no" class="btn" id="ldClose">Close</button>
       </div>
     </form>
   </dialog>

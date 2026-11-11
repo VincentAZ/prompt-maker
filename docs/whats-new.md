@@ -2,6 +2,20 @@
 
 The notes that used to live in the README, newest first. Older versions are in the [releases](https://github.com/VincentAZ/prompt-maker/releases) and the git history.
 
+## Update in 1.75.0
+
+**⬇ Get more LoRAs, for the model you're on.** A LoRA is made for one model, and finding the ones that fit yours meant searching Civitai and dropping files into the right folder by hand. In **Fine-tune → Rendering**, **⬇ Get more** (next to ＋ Add LoRA) now lists the LoRAs on Civitai made for the selected model and nothing else, each with a preview, its maker, its version and the words that switch it on. **⬇ Get** downloads one straight into the model's folder in ComfyUI, **＋ Use it** adds it to the workflow, and it is in ＋ Add LoRA from then on. Click a LoRA to read about it without leaving the app: more pictures, what its maker wrote, its versions. Search, sort by most downloaded, best rated or newest; adult LoRAs show as Civitai has them (⚙ → untick **Show adult LoRAs** to leave them out). A LoRA whose maker asks for an account says so and **Connect Civitai** walks you through it, once. Only `.safetensors` files are downloaded, each checked against the fingerprint Civitai lists.
+
+**🆕 A newer version of your LoRA.** The **Yours** tab lists the LoRAs in the model's folder and **↻ Check for updates** asks Civitai about each (one you added yourself is recognised by a fingerprint of the file; the file never leaves your computer). When its maker has put out a newer version: **Replace mine** puts the new one in the old file's place, under the same name, so every workflow that uses it gets it; **Keep both** downloads it next to the old one. Fine-tune → Rendering shows **🆕 1 update** when there is one.
+
+**🆕 And of the big model files.** **⬇ Model files** now asks Hugging Face whether a model's maker changed a file since you got it (nothing is downloaded by that). One that changed says **🆕 A newer one is out**: **Replace mine** puts the new file in the old one's place, **Keep both** does the same and keeps yours next to it under a name with the date, **Not now** leaves things as they are. The ⬇ Model files buttons show 🆕 when there is something, and **↻ Check for updates** asks afresh.
+
+**Render with the whole family.** A take's 🎨 Render menu now also lists the workflows of the other models in its family of the same kind (MiniMax H3 Image and MiniMax H3 Image Edit; Krea 2 RAW, its Edit and Character), each under its model's name. One that needs a picture the take doesn't have is greyed.
+
+**⚙ More Brain settings.** Settings → How the Brain thinks has a **⚙ More** fold with **Top K**, **Min P**, **Repeat penalty** and **Seed**, for LM Studio Brains. Empty means LM Studio's own setting, so nothing changes until you set one.
+
+**Does this Brain fit my graphics card?** The Brain menu and the Brains page now show each local Brain's size with a green, yellow or red dot: it fits, it's a tight fit and will write slower, or it's too big for the card.
+
 ## Update in 1.74.0
 
 **⬆ Update ComfyUI, in one click.** MiniMax H3 Image and MiniMax H3 Image Edit need ComfyUI 0.45.0 or newer, the update that brought their node. On an older ComfyUI a render said *install the node pack that has it*, and no node pack has it. Now the workflow says what it needs where you pick it, *needs a newer ComfyUI: version 0.45.0 or later, and yours is 0.42.0*, and so does a render, with **⬆ Update ComfyUI**. One click stops ComfyUI, brings it up to date, installs its new packages and starts it again; your models, renders and node packs stay. The ComfyUI row in **Settings → Services** now says which version runs and has the same **⬆ Update**.

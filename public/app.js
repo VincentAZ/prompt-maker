@@ -1116,6 +1116,7 @@ function loadLlms() {
     state.appDown = Boolean(res.appDown);
     state.llmOk = res.ok;
     state.llmError = res.error || '';
+    if (res.ok) state.gpuMemory = res.gpuMemory || 0;
     if (res.ok) state.llms = res.models; // offline: keep last-known names for the picker
     else if (res.models?.length) state.llms = [...state.llms.filter(m => !m.cloud), ...res.models]; // cloud Brains still work
     renderLlmSelect();
@@ -1470,6 +1471,24 @@ async function rateLlmInMenu(btn) {
   $('#llmSearch').focus();
 }
 
+// Whether a Brain fits the graphics card: its file, a tenth more for what it's working on, and 1.5 GB for the rest.
+// ok: all of it on the card (fast). tight: part of it runs beside the card (slower). no: far too big (very slow, or
+// it won't load). null: not a local Brain, or the size or the card isn't known.
+function brainCardFit(m) {
+  if (!m?.sizeBytes || m.cloud || !state.gpuMemory) return null;
+  const need = m.sizeBytes * 1.1 + 1.5 * 2 ** 30;
+  const card = `${Math.round(state.gpuMemory / 2 ** 30)} GB`;
+  return need <= state.gpuMemory ? { level: 'ok', text: `Fits your graphics card (${card})` }
+    : need <= state.gpuMemory * 1.35 ? { level: 'tight', text: `A tight fit for your graphics card (${card}): part of it runs beside the card, so it writes slower` }
+      : { level: 'no', text: `Too big for your graphics card (${card}): very slow, or it won't load` };
+}
+// A Brain's size on disk, with a green, yellow or red dot for brainCardFit.
+function brainSizeHtml(m) {
+  if (!m?.sizeBytes || m.cloud) return '';
+  const fit = brainCardFit(m);
+  return `<span class="brain-size"${fit ? ` title="${esc(fit.text)}"` : ''}>${fit ? `<i class="fit-dot ${fit.level}" aria-hidden="true"></i>` : ''}${(m.sizeBytes / 1e9).toFixed(1)} GB${fit ? `<span class="sr-only">: ${esc(fit.text)}</span>` : ''}</span>`;
+}
+
 function renderLlmMenu() {
   const q = $('#llmSearch').value.trim();
   const current = state.settings?.llmModel || '';
@@ -1484,7 +1503,7 @@ function renderLlmMenu() {
     const provider = m.id ? (m.cloud || 'LM Studio') : '';
     const badges = [provider, m.id && writesDarkScenes(m) && 'Dark scenes'].filter(Boolean)
       .map((text, k) => `<span class="llm-meta${k === 0 ? ' provider' : ''}">${esc(text)}</span>`).join('');
-    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="llm-option-check" aria-hidden="true">✓</span><span class="llm-option-copy"><span class="n">${highlight(m.id ? brainDisplayName(m) : m.name, q)}</span><span class="d">${badges}${details.map(x => `<span>${esc(x)}</span>`).join('')}</span></span>${m.id ? llmFaces(m) : ''}</li>`;
+    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="llm-option-check" aria-hidden="true">✓</span><span class="llm-option-copy"><span class="n">${highlight(m.id ? brainDisplayName(m) : m.name, q)}</span><span class="d">${badges}${m.id ? brainSizeHtml(m) : ''}${details.map(x => `<span>${esc(x)}</span>`).join('')}</span></span>${m.id ? llmFaces(m) : ''}</li>`;
   };
   const html = llmMenuGroups(q, suggested).filter(g => g.items.length)
     .map(g => (g.title ? `<li class="grp" role="presentation">${esc(g.title)}</li>` : '') + g.items.map(option).join('')).join('');
@@ -3490,7 +3509,7 @@ function renderSharedBar(entry, running) {
   if (!first) { body.innerHTML = '<p class="muted small">Select a take above to change its render settings.</p>'; return; }
   const card = { model: first.model, el: body, rb: structuredClone(first.rb), shared: true };
   card.rb.panelOpen = true;
-  body.innerHTML = `<p class="muted small">Showing Take ${first.index + 1}’s settings. Each change applies to all selected takes; their other settings stay as they are.</p><div class="render-bar"><span class="rb-title">🎨 Render</span><select class="rb-wf" aria-label="Workflow for selected takes">${workflowsFor(first.model.id).map(f => `<option value="${esc(f.id)}"${f.id === card.rb.workflowId ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select><div class="seg rb-count" role="radiogroup" aria-label="Renders per selected take">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div><button type="button" class="btn small primary rb-go">▶ Render selected (${targets().length})</button><div class="rb-panel" aria-label="Selected takes’ settings"></div></div>`;
+  body.innerHTML = `<p class="muted small">Showing Take ${first.index + 1}’s settings. Each change applies to all selected takes; their other settings stay as they are.</p><div class="render-bar"><span class="rb-title">🎨 Render</span><select class="rb-wf" aria-label="Workflow for selected takes">${renderFlowOptions(first.model, card.rb.workflowId, entry)}</select><div class="seg rb-count" role="radiogroup" aria-label="Renders per selected take">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div><button type="button" class="btn small primary rb-go">▶ Render selected (${targets().length})</button><div class="rb-panel" aria-label="Selected takes’ settings"></div></div>`;
   card.changed = change => {
     for (const target of targets()) {
       if (change.reset) target.rb.size = target.rb.seed = target.rb.overrides = target.rb.loras = null;
@@ -6313,7 +6332,7 @@ function brainCard(m, fit, model, inUse, q = '') {
       ${m.cloud ? `<span class="tag cloud" title="Your prompts go to ${esc(m.cloud)}">☁️ ${esc(m.cloud)}</span>` : m.loaded ? '<span class="tag">loaded</span>' : ''}
       <span class="tag">${m.vision ? '👁 sees images' : m.vision === false ? 'text-only' : 'vision unknown'}</span>
       ${m.tools ? '<span class="tag" title="Trained for tool calling, which ✦ Ask uses">🛠 tools</span>' : ''}
-      ${size ? `<span class="muted small">${esc(size)}</span>` : ''}
+      ${size ? `<span class="muted small">${esc(size)}</span>` : ''}${(fit => (fit ? `<span class="muted small brain-size"><i class="fit-dot ${fit.level}" aria-hidden="true"></i>${esc(fit.text)}</span>` : ''))(brainCardFit(m))}
       ${lastUsedAt(m) ? `<span class="muted small">· used ${timeAgo(lastUsedAt(m))}</span>` : ''}
       <span class="brain-actions">
         ${m.id === inUse ? '' : '<button type="button" class="btn small" data-act="use">▶ Use</button>'}
@@ -7047,6 +7066,7 @@ function renderServices(st) {
         : { dot: 'bad', text: !comfy.local ? 'Off (it runs on another computer)' : comfy.launch ? 'Off' : 'Not on this computer yet. Set it up here, or enter its folder under ComfyUI below', start: comfy.local && Boolean(comfy.launch), stop: false });
   $('[data-act="comfy-setup"]', $('.svc[data-svc="comfy"]')).hidden = comfy.running || comfy.starting || busy === 'start' || !comfy.local || Boolean(comfy.launch) || comfy.setup?.state === 'running';
   $('[data-act="model-files"]').hidden = !comfy.local || !state.workflows.length;
+  if (comfy.running && comfy.local && state.workflows.length) peekModelUpdates();
   $('[data-act="comfy-update"]').hidden = !comfy.updatable || Boolean(busy) || comfy.starting || comfy.setup?.state === 'running';
   const ff = st.ffmpeg; // (missing from an older server still running: see svcStale)
   row('ffmpeg', !ff
@@ -7752,7 +7772,7 @@ $('#ffmpegSetupDlg').addEventListener('close', () => { clearTimeout(fsu.poll); i
 // One list for every model: each file its workflows load (the model, its text encoder, VAE, LoRA…), ✓ when ComfyUI
 // has it, its size and ⬇ Get when it doesn't, a bar while it downloads; ⬇ Get all per model, and for everything.
 // The downloads are the same as Fine-tune → Rendering's (they run in the server and go on through a reload).
-const mf = { data: null, loading: null, focus: null, scrolled: false, hfForm: false, hfToken: '', hfTokenVisible: false, hfChecking: false, hfError: '' };
+const mf = { data: null, updates: null, checking: false, seq: 0, loading: null, focus: null, scrolled: false, hfForm: false, hfToken: '', hfTokenVisible: false, hfChecking: false, hfError: '' };
 
 async function openModelFiles({ modelId = null } = {}) {
   const dlg = $('#modelFilesDlg');
@@ -7769,7 +7789,42 @@ async function loadModelFiles({ fresh = false } = {}) {
   mf.loading ??= api(`/api/models/files?sizes=1${fresh ? '&fresh=1' : ''}`).then(d => { mf.data = d; }, err => { $('#mfResult').hidden = false; $('#mfResult').className = 'test-result bad'; $('#mfResult').textContent = friendly(err); }).finally(() => { mf.loading = null; });
   await mf.loading;
   renderModelFiles();
+  if (mf.data?.comfy && mf.checking !== 'all') loadModelUpdates(); // the files that are here: is a newer one out?
 }
+// Newer versions of the files that are here, asked of Hugging Face (nothing is downloaded). identify: ↻ Check for
+// updates, which also reads the files that can't be told without (a minute for a big one, once).
+async function loadModelUpdates({ identify = false } = {}) {
+  const seq = ++mf.seq; // (a look started later wins: ↻ Check for updates over the one the list made on its own)
+  mf.checking = identify ? 'all' : 'quick';
+  if (identify) renderModelFiles();
+  try {
+    const got = await api('/api/models/updates', { method: 'POST', body: { identify, fresh: identify } });
+    if (seq !== mf.seq) return;
+    mf.updates = got;
+    modelUpdates.at = Date.now();
+    modelUpdates.n = Object.values(got.files).filter(u => u.update).length;
+  } catch (err) {
+    if (seq !== mf.seq) return;
+    if (identify) toast(friendly(err), true);
+  }
+  mf.checking = false;
+  renderModelFiles();
+  renderModelUpdatesBadge();
+}
+// 🆕 on the ⬇ Model files buttons: how many files have a newer version out, asked at most every six hours.
+const modelUpdates = { at: 0, n: 0 };
+function renderModelUpdatesBadge() {
+  for (const b of [$('#catalogFiles'), $('[data-act="model-files"]')]) {
+    if (!b) continue;
+    if (modelUpdates.n) { b.dataset.new = modelUpdates.n; b.title = `${b.title.split(' · ')[0]} · a newer version of ${modelUpdates.n === 1 ? 'one file' : `${modelUpdates.n} files`} is out`; } else { delete b.dataset.new; b.title = b.title.split(' · ')[0]; }
+  }
+}
+function peekModelUpdates() {
+  if (Date.now() - modelUpdates.at < 6 * 3600_000) return;
+  modelUpdates.at = Date.now();
+  api('/api/models/updates', { method: 'POST', body: {} }).then(d => { modelUpdates.n = Object.values(d.files).filter(u => u.update).length; renderModelUpdatesBadge(); }, () => {});
+}
+const mfDate = d => { const t = new Date(d); return Number.isNaN(t.getTime()) ? '' : t.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); };
 // A download that finished earlier this session counts only while ComfyUI can't say; once it says the file isn't
 // there (deleted since), the record is stale.
 const mfDownload = f => { const d = downloadFor(f); return d?.state === 'done' && f.have === false ? null : d; };
@@ -7788,6 +7843,7 @@ function renderModelFiles() {
     $('#mfHf').hidden = true;
     $('#mfTotal').textContent = '';
     $('#mfAll').hidden = true;
+    $('#mfCheck').hidden = true;
     return;
   }
   const startable = state.comfy && !state.comfy.ok && state.comfy.local !== false && state.comfy.found !== false;
@@ -7798,23 +7854,28 @@ function renderModelFiles() {
   const row = (f, m) => {
     const dl = mfDownload(f);
     const only = m.workflows > 1 && f.workflows?.length && f.workflows.length < m.workflows; // one variant's file, not every workflow's
+    const up = f.have === true ? mf.updates?.files?.[f.file] : null;
+    const progress = dl?.state === 'running';
     let act;
-    if (f.have === true) act = '<span class="mm-ok">✓ Here</span>';
-    else if (dl?.state === 'running') act = `<span class="mm-prog"><span class="mm-bar" style="width:${dl.total ? Math.round((dl.received / dl.total) * 100) : 0}%"></span></span><span class="mm-pct">${dl.total ? `${Math.round((dl.received / dl.total) * 100)}% of ${sizeLabel(dl.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="mf-cancel" data-id="${esc(dl.id)}" aria-label="Stop downloading ${esc(f.file)}">✕</button>`;
+    if (f.have === true && !progress && up?.update && dl?.update && dl.state === 'done' && (!up.update.sha256 || dl.sha256 === up.update.sha256)) act = '<span class="mm-ok">✓ Here, the new one</span>'; // (until the next look at Hugging Face says so too)
+    else if (f.have === true && !progress && up?.update) act = `${dl?.state === 'error' && dl.update && dl.error !== 'Cancelled' ? `<span class="mm-err">${linkify(dl.error)}</span>` : ''}<span class="mf-new">🆕 A newer one is out${mfDate(up.update.date) ? ` (${esc(mfDate(up.update.date))})` : ''}</span><button type="button" class="btn small primary" data-act="mf-replace" data-file="${esc(f.file)}" title="The new file takes the place of yours, under the same name, once it has all arrived">Replace mine</button><button type="button" class="btn small" data-act="mf-keep" data-file="${esc(f.file)}" title="The new file gets this name, so your workflows use it. Yours stays next to it, renamed “… (before today's date)”">Keep both</button><button type="button" class="btn small" data-act="mf-skip" data-file="${esc(f.file)}" title="Keep yours and don't offer this version again">Not now</button>`;
+    else if (f.have === true && !progress) act = `<span class="mm-ok">✓ Here</span>${up?.skipped ? `<button type="button" class="btn small" data-act="mf-unskip" data-file="${esc(f.file)}" title="You said “not now” to a newer version: show it again">🆕 newer one out</button>` : ''}`;
+    else if (progress) act = `<span class="mm-prog"><span class="mm-bar" style="width:${dl.total ? Math.round((dl.received / dl.total) * 100) : 0}%"></span></span><span class="mm-pct">${dl.total ? `${Math.round((dl.received / dl.total) * 100)}% of ${sizeLabel(dl.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="mf-cancel" data-id="${esc(dl.id)}" aria-label="Stop downloading ${esc(f.file)}">✕</button>`;
     else if (dl?.state === 'done') act = '<span class="mm-ok">✓ Downloaded</span>';
     else if (f.gated === 'terms') act = '<span class="mm-none">Accept its terms first (one step left: see the top of this screen).</span>';
     else if (f.gated) act = `<span class="mm-none">${hf ? 'Hugging Face no longer accepts your token: see the top of this screen.' : 'Needs a free Hugging Face account: see the top of this screen.'}</span>`;
     else if (f.download) act = `${dl?.state === 'error' ? `<span class="mm-err">${linkify(dl.error)}</span>` : ''}<button type="button" class="btn small primary" data-act="mf-get" data-file="${esc(f.file)}" ${d.comfy ? '' : 'disabled title="Start ComfyUI first"'}>${dl?.state === 'error' ? '↻ Try again' : '⬇ Get'}</button>`;
     else if (/^https?:\/\//.test(f.url || '')) act = `<span class="mm-none">Get it from <a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(new URL(f.url).hostname)}</a> and put it in models/${esc(f.folder || '…')}.</span>`;
     else act = `<span class="mm-none">No download link: get it where the workflow came from, into models/${esc(f.folder || '…')}.</span>`;
-    const size = f.have === true ? '' : f.size ? sizeLabel(f.size) : '';
+    const size = up?.update && !progress ? sizeLabel(up.update.size) : f.have === true ? '' : f.size ? sizeLabel(f.size) : '';
     return `<li class="${f.have === true ? 'have' : ''}"><span class="mf-role">${esc(f.role)}${only ? `<small class="mf-for">only for ${esc(f.workflows.map(mfFlowShort).join(', '))}</small>` : ''}</span><code title="${esc(f.name)}${f.workflows?.length > 1 ? ` · used by ${esc(f.workflows.join(', '))}` : ''}">${esc(f.file)}</code><span class="mf-size">${size}</span><span class="mm-act">${act}</span></li>`;
   };
   list.innerHTML = d.models.map(m => {
     const missing = mfMissing(m);
     const toGet = mfToGet(m);
     const running = m.files.filter(f => mfDownload(f)?.state === 'running').length;
-    const sum = !d.comfy && !missing.length ? '' : !missing.length ? `<span class="mm-ok">✓ All ${m.files.length} files here</span>`
+    const newer = m.files.filter(f => f.have === true && mf.updates?.files?.[f.file]?.update).length;
+    const sum = !d.comfy && !missing.length ? '' : !missing.length ? `<span class="mm-ok">✓ All ${m.files.length} files here</span>${newer ? ` · 🆕 ${newer} newer` : ''}`
       : running ? `Downloading ${running} of ${m.files.length}…` : `${missing.length} of ${m.files.length} files to get${mfSizeLabel(missing) ? ` · ${mfSizeLabel(missing)}` : ''}`;
     const all = toGet.length > 1 ? `<button type="button" class="btn small primary" data-act="mf-model" data-id="${esc(m.id)}" ${d.comfy ? '' : 'disabled title="Start ComfyUI first"'}>⬇ Get all for this model${mfSizeLabel(toGet) ? ` (${mfSizeLabel(toGet, { about: false })})` : ''}</button>` : '';
     return `<section class="mf-model" data-id="${esc(m.id)}"><header><h3>${m.kind === 'video' ? '🎬' : '📷'} ${esc(m.name)}</h3><span class="mf-sum">${sum}</span>${all}</header><ul>${m.files.map(f => row(f, m)).join('')}</ul></section>`;
@@ -7824,7 +7885,15 @@ function renderModelFiles() {
     if (sec) { list.prepend(sec); sec.classList.add('focus'); if (!mf.scrolled) { mf.scrolled = true; sec.scrollIntoView({ block: 'start' }); } }
   }
   const everything = d.models.flatMap(mfToGet);
-  $('#mfTotal').textContent = everything.length > 1 ? `${everything.length} files to get for all models${mfSizeLabel(everything) ? `: ${mfSizeLabel(everything)}` : ''}` : '';
+  const u = mf.updates;
+  const newer = u ? Object.values(u.files).filter(x => x.update).length : 0;
+  const news = mf.checking === 'all' ? 'Looking for newer versions (a big file can take a minute to read)…'
+    : !u || !u.local ? '' : newer ? `🆕 ${newer === 1 ? 'A newer version of one file is' : `Newer versions of ${newer} files are`} out.`
+      : u.unread ? `${u.unread === 1 ? 'One file' : `${u.unread} files`} may have a newer version: ↻ Check for updates reads ${u.unread === 1 ? 'it' : 'them'} to be sure.`
+        : u.offline ? "Hugging Face couldn't be asked about newer versions just now." : 'No newer versions of your files are out.';
+  $('#mfTotal').textContent = [everything.length > 1 ? `${everything.length} files to get for all models${mfSizeLabel(everything) ? `: ${mfSizeLabel(everything)}` : ''}` : '', news].filter(Boolean).join(' · ');
+  $('#mfCheck').hidden = !d.comfy || u?.local === false;
+  $('#mfCheck').disabled = mf.checking === 'all';
   $('#mfAll').hidden = everything.length <= 1;
   $('#mfAll').disabled = !d.comfy;
 }
@@ -7932,7 +8001,14 @@ $('#modelFilesDlg').addEventListener('click', async e => {
   else if (b.dataset.act === 'mf-hf-save') connectHuggingFace($('#mfHfToken')?.value || '');
   else if (b.dataset.act === 'mf-hf-off') { b.disabled = true; await api('/api/huggingface', { method: 'DELETE' }).catch(err => toast(friendly(err), true)); await reloadModelFiles(); }
   else if (b.dataset.act === 'mf-recheck') { b.disabled = true; await reloadModelFiles({ fresh: true }); }
-  else if (b.dataset.act === 'mf-get') downloadModels(files.filter(f => f.file === b.dataset.file).slice(0, 1));
+  else if (b.dataset.act === 'mf-replace' || b.dataset.act === 'mf-keep') {
+    const f = files.find(x => x.file === b.dataset.file);
+    if (f) downloadModels([{ ...f, name: f.at || f.name, replace: b.dataset.act === 'mf-keep' ? 'keep' : 'replace' }]);
+  } else if (b.dataset.act === 'mf-skip' || b.dataset.act === 'mf-unskip') {
+    b.disabled = true;
+    await api('/api/models/updates/skip', { method: 'POST', body: { file: b.dataset.file, on: b.dataset.act === 'mf-skip' } }).catch(err => toast(friendly(err), true));
+    await loadModelUpdates();
+  } else if (b.dataset.act === 'mf-get') downloadModels(files.filter(f => f.file === b.dataset.file).slice(0, 1));
   else if (b.dataset.act === 'mf-model') downloadModels(mfToGet(mf.data.models.find(m => m.id === b.dataset.id) || { files: [] }));
   else if (b.dataset.act === 'mf-cancel') api(`/api/comfy/downloads/${b.dataset.id}/cancel`, { method: 'POST' }).then(pollDownloads, () => {});
   else if (b.dataset.act === 'mf-start') {
@@ -7942,6 +8018,7 @@ $('#modelFilesDlg').addEventListener('click', async e => {
   }
 });
 $('#mfAll').addEventListener('click', () => { if (mf.data) downloadModels(mf.data.models.flatMap(mfToGet)); });
+$('#mfCheck').addEventListener('click', () => loadModelUpdates({ identify: true }));
 $('#modelFilesDlg').addEventListener('close', () => { mf.focus = null; mf.hfForm = false; mf.hfToken = ''; mf.hfTokenVisible = false; mf.hfChecking = false; mf.hfError = ''; });
 // A set-up that just finished (ComfyUI, or the first start on Windows) opens this next, so the files come right after.
 const OPEN_FILES_KEY = 'pm-open-model-files';
@@ -7954,12 +8031,17 @@ function openFilesIfAsked() {
 $('#sComfyFiles').addEventListener('click', () => openModelFiles());
 $('#catalogFiles').addEventListener('click', () => openModelFiles());
 
+// ⚙ More under How the Brain thinks: the field, and its setting in brainSampling.
+const BRAIN_MORE = [['#sTopK', 'topK'], ['#sMinP', 'minP'], ['#sRepeat', 'repeatPenalty'], ['#sSeed', 'seed']];
 function renderSettings() {
   const s = state.settings;
   if (!s) return;
   $('#sUrl').value = s.lmStudioUrl;
   $('#sTopP').value = s.topP;
   $('#sMax').value = s.maxTokens;
+  const more = s.brainSampling || {};
+  for (const [id, key] of BRAIN_MORE) $(id).value = more[key] ?? '';
+  $('#sBrainMore').open ||= Object.values(more).some(v => v !== null && v !== undefined); // (one set: shown)
   $('#sComfyUrl').value = s.comfyUrl || '';
   $('#sComfyResult').hidden = true;
   $('#sComfyCleanup').checked = Boolean(s.comfyCleanup);
@@ -8011,7 +8093,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     state.settings = await api('/api/settings', {
       method: 'PUT',
-      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, thinking: $('#sThinking').value, checkTheme: $('#sCheckTheme').checked, masterPrompt: $('#sMaster').value, promptSets: readPromptSets(), assistantComputer: $('#sComputer').checked },
+      body: { lmStudioUrl: $('#sUrl').value, comfyUrl: $('#sComfyUrl').value, comfyCleanup: $('#sComfyCleanup').checked, comfyOutputDir: $('#sComfyDir').value, comfyDir: $('#sComfyFolder').value, comfyArgs: $('#sComfyArgs').value, topP: $('#sTopP').value, maxTokens: $('#sMax').value, brainSampling: Object.fromEntries(BRAIN_MORE.map(([id, key]) => [key, $(id).value.trim()])), thinking: $('#sThinking').value, checkTheme: $('#sCheckTheme').checked, masterPrompt: $('#sMaster').value, promptSets: readPromptSets(), assistantComputer: $('#sComputer').checked },
     });
     renderSettings();
     toast('💾 Settings saved');
@@ -8025,6 +8107,24 @@ $('#settingsForm').addEventListener('submit', async e => {
 // ---------- ComfyUI: status & workflows ----------
 
 const workflowsFor = modelId => state.workflows.filter(w => w.modelId === modelId);
+// The workflows a take of this model can render with: its own, then those of the models of its family and kind
+// (MiniMax H3 Image's take can render with MiniMax H3 Image Edit's too). [{ model, flows }], its own model first.
+function renderFlowGroups(model) {
+  if (!model) return [];
+  const kin = state.models.filter(x => x.id !== model.id && x.kind === model.kind && model.family && x.family === model.family);
+  return [model, ...kin].map(m => ({ model: m, flows: workflowsFor(m.id) })).filter(g => g.flows.length);
+}
+const renderFlowsFor = model => renderFlowGroups(model).flatMap(g => g.flows);
+// The Render picker's options: grouped by model when there are several. A workflow that needs a picture or a motion
+// video the take doesn't have is shown, greyed, with what it needs.
+function renderFlowOptions(model, current, entry = state.entry) {
+  const groups = renderFlowGroups(model);
+  const opt = f => {
+    const lacks = f.maps?.image && !entry?.imageFile ? 'needs a picture' : f.maps?.video && !entry?.video?.file ? 'needs a motion video' : '';
+    return `<option value="${esc(f.id)}"${f.id === current ? ' selected' : ''}${lacks ? ' disabled' : ''}>${esc(f.name)}${lacks ? ` (${lacks})` : ''}</option>`;
+  };
+  return groups.length > 1 ? groups.map(g => `<optgroup label="${esc(g.model.name)}">${g.flows.map(opt).join('')}</optgroup>`).join('') : groups.flatMap(g => g.flows).map(opt).join('');
+}
 
 // The workflow ▶ Render uses for a model: the one picked last, else the first. One choice per model,
 // shared by the Create panel and every take's render bar.
@@ -8035,7 +8135,7 @@ function activeWorkflowId(modelId) {
 }
 
 function pickWorkflow(modelId, id) {
-  saved.set(`wf.${modelId}`, id);
+  if (workflowsFor(modelId).some(f => f.id === id)) saved.set(`wf.${modelId}`, id); // (one of a sibling model's: for these takes only)
   state.cards.forEach(c => {
     if (c.model?.id !== modelId || !c.rb) return;
     const changed = c.rb.workflowId !== id;
@@ -8318,6 +8418,418 @@ $('#wfpBackground').addEventListener('click', async e => {
   }
 });
 
+// ---------- ⬇ Get more LoRAs: the ones made for the model, from Civitai, and newer versions of yours ----------
+// Find more: Civitai's LoRAs for the picked model (it says which model each is made for), each with a preview and
+// ⬇ Get, which puts it in the model's folder in ComfyUI's loras folder, where ＋ Add LoRA lists it. Yours: the
+// LoRAs in that folder, what each is, and 🆕 when its maker has put out a newer version: Replace mine (the new one
+// takes the old file's place and name, so every workflow gets it) or Keep both. The downloads are the model files'.
+const ld = { modelId: null, tab: 'find', q: '', sort: 'downloads', data: null, items: [], next: '', loading: false, error: '', seq: 0, mine: null, checking: false, folder: '', detail: null, keyForm: false, key: '', keyChecking: false, keyError: '' };
+const ldModel = () => modelById(ld.modelId);
+// A LoRA by the version on offer: the one open on its own screen, or one in the list.
+const ldItem = versionId => { const d = ld.detail?.data; const v = d?.versions.find(x => x.id === versionId); return v ? { ...d, version: v, have: v.have, older: v.older } : ld.items.find(i => i.version.id === versionId); };
+const ldJob = versionId => state.downloads.find(d => d.lora?.versionId === versionId);
+const ldCount = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+const ldDate = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); };
+// Where this model's LoRAs go: its folder in ComfyUI's loras folder, or the one Prompt Maker makes for it.
+const ldFolder = () => { const m = ldModel(); return (m && loraFolderFor(m).folder) || ld.data?.folder || ''; };
+
+async function openLoras({ tab = 'find' } = {}) {
+  const m = currentModel();
+  if (!m) return;
+  const dlg = $('#loraDlg');
+  if (ld.modelId !== m.id) Object.assign(ld, { modelId: m.id, q: '', data: null, items: [], next: '', error: '', mine: null });
+  ld.tab = tab;
+  ld.detail = null;
+  $('#loraDlgTitle').textContent = `🧬 LoRAs for ${m.name}`;
+  if (!dlg.open) dlg.showModal();
+  renderLoraDlg();
+  pollDownloads();
+  ensureLoraList().then(() => { if (dlg.open) loadLoraMine(); });
+  if (!ld.data) await loadLoraFind();
+}
+
+async function loadLoraFind({ more = false } = {}) {
+  const seq = ++ld.seq;
+  ld.loading = true;
+  ld.error = '';
+  if (!more) { ld.items = []; ld.next = ''; }
+  renderLoraDlg();
+  try {
+    const p = new URLSearchParams({ model: ld.modelId, q: ld.q, sort: ld.sort });
+    if (more && ld.next) p.set('cursor', ld.next);
+    const d = await api(`/api/loras/search?${p}`);
+    if (seq !== ld.seq) return;
+    ld.data = d;
+    ld.items = more ? [...ld.items, ...d.items.filter(i => !ld.items.some(o => o.id === i.id))] : d.items;
+    ld.next = d.next;
+  } catch (err) {
+    if (seq !== ld.seq) return;
+    ld.error = friendly(err);
+  }
+  ld.loading = false;
+  renderLoraDlg();
+}
+
+// identify: also read the LoRAs you added yourself, once each, to recognise them (↻ Check for updates).
+async function loadLoraMine({ identify = false, fresh = false } = {}) {
+  if (ld.checking) return;
+  ld.checking = identify || fresh;
+  if (ld.checking) renderLoraDlg();
+  const folder = ldFolder();
+  try {
+    const d = await api('/api/loras/updates', { method: 'POST', body: { folder, identify, fresh } });
+    ld.mine = { ...d, folder };
+    loraUpdates.set(folder, { at: Date.now(), n: d.files.filter(f => f.update).length });
+  } catch (err) {
+    ld.mine = { files: [], unread: 0, error: friendly(err), folder };
+  }
+  ld.checking = false;
+  renderLoraDlg();
+  renderLoraPanel();
+}
+
+// The 🆕 chip in Fine-tune → Rendering: how many of the model's LoRAs have a newer version out, asked at most every
+// six hours per folder (and whenever ⬇ Get more is open).
+const loraUpdates = new Map(); // folder → { at, n }
+function loraUpdateCount() {
+  const m = currentModel();
+  return m && state.loraList ? loraUpdates.get(loraFolderFor(m).folder)?.n || 0 : 0;
+}
+function peekLoraUpdates() {
+  const m = currentModel();
+  if (!m) return;
+  const { folder } = loraFolderFor(m);
+  if (Date.now() - (loraUpdates.get(folder)?.at || 0) < 6 * 3600_000) return;
+  loraUpdates.set(folder, { at: Date.now(), n: loraUpdates.get(folder)?.n || 0 });
+  api('/api/loras/updates', { method: 'POST', body: { folder } }).then(d => {
+    const n = d.files.filter(f => f.update).length;
+    loraUpdates.set(folder, { at: Date.now(), n });
+    if (n) renderLoraPanel();
+  }, () => {});
+}
+
+const ldProgress = d => `<span class="mm-prog"><span class="mm-bar" style="width:${d.total ? Math.round((d.received / d.total) * 100) : 0}%"></span></span><span class="mm-pct">${d.total ? `${Math.round((d.received / d.total) * 100)}% of ${sizeLabel(d.total)}` : 'Starting…'}</span><button type="button" class="icon-btn" data-act="ld-cancel" data-id="${esc(d.id)}" aria-label="Stop downloading ${esc(d.file)}">✕</button>`;
+// What a LoRA on Civitai offers right now: ⬇ Get, how far it is, or ✓ Here with ＋ Use it.
+function ldFindAct(it) {
+  const v = it.version;
+  const d = ldJob(v.id);
+  const file = d?.state === 'done' ? d.name : it.have;
+  if (d?.state === 'running') return ldProgress(d);
+  if (file) {
+    const flow = ld.modelId === state.modelId ? activeFlow() : null;
+    const use = !flow ? '' : loraInFlow(flow, file) ? '<span class="muted small">In this workflow</span>' : `<button type="button" class="btn small primary" data-act="ld-use" data-file="${esc(file)}" title="Adds it to the workflow at strength 1">＋ Use it</button>`;
+    return `<span class="mm-ok">✓ Here</span>${use}`;
+  }
+  if (!v.file) return '<span class="mm-none">Not a file Prompt Maker takes: see its page.</span>';
+  if (v.early) return '<span class="mm-none">Early access: on its page for now.</span>';
+  const off = ld.data?.comfy ? '' : 'disabled title="Start ComfyUI first"';
+  if (v.paid) return ldPaidAct(it.page, v, d, off);
+  if (d?.state === 'error' && d.needs === 'civitai' && !ldCivitaiOn()) return `<span class="mm-none">🔒 Its maker lets only signed-in accounts download it.</span><button type="button" class="btn small primary" data-act="ld-key-on">Connect Civitai</button>`;
+  return `${d?.state === 'error' && d.error !== 'Cancelled' ? `<span class="mm-err">${linkify(d.error)}</span>` : ''}${it.older ? '<span class="muted small">You have an older version</span>' : ''}<button type="button" class="btn small primary" data-act="ld-get" data-version="${v.id}" ${off}>${d?.state === 'error' && d.error !== 'Cancelled' ? '↻ Try again' : `⬇ Get${v.size ? ` · ${sizeLabel(v.size)}` : ''}`}</button>`;
+}
+// A LoRA its maker sells for Buzz (Civitai's points): Civitai lets apps neither see the price nor buy, so it's
+// unlocked on its page there (in the browser); ⬇ Get works here once the connected account has it.
+function ldPaidAct(page, v, d, off = '') {
+  const failed = d?.state === 'error' && d.error !== 'Cancelled';
+  const unlock = `<a class="btn small" href="${esc(page)}" target="_blank" rel="noopener noreferrer" title="Opens its page on Civitai in your browser, where it shows the price in Buzz and your Buzz, and unlocks it">💎 Unlock on Civitai ↗</a>`;
+  if (!ldCivitaiOn()) return `<span class="mm-none">💎 Its maker asks for Buzz (Civitai's points) to download it. The price is on its page; it needs your Civitai account.</span>${unlock}<button type="button" class="btn small primary" data-act="ld-key-on">Connect Civitai</button>`;
+  return `<span class="mm-none">${failed ? linkify(d.error) : "💎 Its maker asks for Buzz (Civitai's points). Unlock it on its page on Civitai (the price and your Buzz are shown there), then ⬇ Get it here."}</span>${unlock}<button type="button" class="btn small primary" data-act="ld-get" data-version="${v.id}" ${off}>${failed ? '↻ Try again' : `⬇ Get${v.size ? ` · ${sizeLabel(v.size)}` : ''}`}</button>`;
+}
+// One of your LoRAs: up to date, or 🆕 with Replace mine / Keep both.
+function ldMineAct(f) {
+  const u = f.update;
+  const d = u && ldJob(u.versionId);
+  if (d?.state === 'running') return ldProgress(d);
+  if (u && d?.state === 'error' && d.needs === 'civitai' && !ldCivitaiOn()) return `<span class="ld-new">🆕 ${esc(u.name || 'A newer version')} is out</span><span class="mm-none">🔒 Its maker lets only signed-in accounts download it.</span><button type="button" class="btn small primary" data-act="ld-key-on">Connect Civitai</button>`;
+  if (u) return `${d?.state === 'error' && d.error !== 'Cancelled' ? `<span class="mm-err">${linkify(d.error)}</span>` : ''}<span class="ld-new">🆕 ${esc(u.name || 'A newer version')} is out${ldDate(u.published) ? ` (${esc(ldDate(u.published))})` : ''}${u.size ? ` · ${sizeLabel(u.size)}` : ''}</span>
+    ${u.paid ? `<span class="mm-none">💎 Its maker asks for Buzz for it: unlock it on Civitai first.</span><a class="btn small" href="${esc(u.page)}" target="_blank" rel="noopener noreferrer">💎 Unlock on Civitai ↗</a>` : ''}
+    <button type="button" class="btn small primary" data-act="ld-replace" data-file="${esc(f.file)}" data-version="${u.versionId}" title="The new version takes the old file's place and keeps its name, so every workflow that uses it gets the new one. The old version is gone.">Replace mine</button>
+    <button type="button" class="btn small" data-act="ld-both" data-file="${esc(f.file)}" data-version="${u.versionId}" title="Downloads the new version next to the one you have. Pick either in ＋ Add LoRA.">Keep both</button>
+    <button type="button" class="icon-btn" data-act="ld-skip" data-file="${esc(f.file)}" data-version="${u.versionId}" aria-label="Keep ${esc(loraShort(f.file))} as it is: don't offer this version again" title="Keep mine, don't offer this version again">✕</button>`;
+  if (f.skipped) return `<span class="muted small">Keeping yours</span><button type="button" class="btn small" data-act="ld-skip" data-file="${esc(f.file)}" data-version="" title="Offer the newer version again">Show the newer one</button>`;
+  if (f.known) return f.gone ? '<span class="muted small">No longer on Civitai</span>' : '<span class="mm-ok">✓ Newest</span>';
+  return `<span class="muted small">${f.unread ? 'Not looked up yet' : 'Not on Civitai'}</span>`;
+}
+
+function renderLoraActs() {
+  if (!$('#loraDlg').open) return;
+  renderLoraCivitai(); // (a download that was just refused for want of an account brings its box)
+  for (const el of $$('#ldList [data-ld-act]')) {
+    const html = el.dataset.ldAct === 'find' ? (it => (it ? ldFindAct(it) : ''))(ldItem(Number(el.dataset.version)))
+      : (f => (f ? ldMineAct(f) : ''))(ld.mine?.files.find(x => x.file === el.dataset.file));
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+}
+
+function renderLoraDlg() {
+  const dlg = $('#loraDlg');
+  if (!dlg.open) return;
+  const m = ldModel();
+  const d = ld.data;
+  for (const b of $$('.ld-tabs button', dlg)) {
+    const on = b.dataset.ldTab === ld.tab;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+    if (b.dataset.ldTab === 'mine') b.textContent = ld.mine?.files.length ? `Yours (${ld.mine.files.length})` : 'Yours';
+  }
+  renderLoraCivitai();
+  const bar = $('#ldBar');
+  const stateEl = $('#ldState');
+  const list = $('#ldList');
+  if (ld.detail) return renderLoraDetail(bar, stateEl, list);
+  const folder = ldFolder();
+  const keep = document.activeElement?.closest?.('#ldBar') ? [...document.activeElement.classList].find(c => c.startsWith('ld-')) : null;
+  const moreOpen = Boolean($('.ld-more', bar)?.open);
+  if (ld.tab === 'find') {
+    const bases = d?.bases || [];
+    bar.innerHTML = `
+      <input type="search" class="ld-q" placeholder="Search LoRAs for ${esc(m?.name || 'this model')}…" aria-label="Search LoRAs on Civitai" value="${esc(ld.q)}">
+      <select class="ld-sort" aria-label="Order">
+        ${[['downloads', 'Most downloaded'], ['rated', 'Best rated'], ['newest', 'Newest']].map(([v, t]) => `<option value="${v}"${ld.sort === v ? ' selected' : ''}>${t}</option>`).join('')}
+      </select>
+      <details class="ld-more"${moreOpen ? ' open' : ''}><summary title="Which model on Civitai, and adult LoRAs" aria-label="More choices">⚙</summary>
+        <div class="ld-more-body">
+          <label>Made for <select class="ld-base" aria-label="The model on Civitai these LoRAs are made for">
+            <option value="">${d?.auto === false ? 'Let Prompt Maker choose' : bases.length ? `${esc(bases.join(', '))} (chosen for you)` : 'Pick the model…'}</option>
+            ${(d?.known || []).map(b => `<option value="${esc(b)}"${d?.auto === false && bases[0] === b ? ' selected' : ''}>${esc(b)}</option>`).join('')}
+          </select></label>
+          <label class="check"><input type="checkbox" class="ld-adult"${d?.adult === false ? '' : ' checked'}> Show adult LoRAs</label>
+          <span class="hint">They go in ComfyUI's <code>models/loras${folder ? `/${esc(folder)}` : ''}</code>.</span>
+        </div>
+      </details>`;
+    const why = ld.error ? `🔌 ${esc(ld.error)}`
+      : d && !bases.length ? `Prompt Maker couldn't tell what Civitai calls ${esc(m?.name || 'this model')}. Click ⚙ and pick it under <b>Made for</b>.`
+        : d && !d.comfy ? "ComfyUI isn't answering, so nothing can be downloaded yet. Start it (Settings → Services), then open this again."
+          : ld.loading && !ld.items.length ? 'Asking Civitai…'
+            : d && !ld.items.length ? (ld.q ? `Nothing on Civitai for “${esc(ld.q)}” made for ${esc(bases.join(', '))}.` : `Nothing on Civitai made for ${esc(bases.join(', '))} yet.`) : '';
+    stateEl.hidden = !why;
+    stateEl.innerHTML = why;
+    list.className = 'mf-list ld-list ld-grid';
+    list.innerHTML = ld.items.map(it => `
+      <article class="ld-card">
+        <button type="button" class="ld-thumb" data-act="ld-open" data-id="${it.id}" data-version="${it.version.id}" title="${esc(it.name)}: more pictures, and what its maker says about it" aria-label="More about ${esc(it.name)}">${it.image ? `<img loading="lazy" alt="" src="${esc(it.image)}">` : ''}<span class="ld-thumb-none" aria-hidden="true">🧬</span></button>
+        <div class="ld-info">
+          <button type="button" class="ld-name ld-link" data-act="ld-open" data-id="${it.id}" data-version="${it.version.id}" title="${esc(it.name)}">${esc(it.name)}</button>
+          <small>${it.creator ? `by ${esc(it.creator)} · ` : ''}⬇ ${ldCount(it.downloads)}${it.likes ? ` · 👍 ${ldCount(it.likes)}` : ''}</small>
+          <small>${esc(it.version.name)}${it.version.base ? ` · for ${esc(it.version.base)}` : ''}</small>
+          ${it.version.words.length ? `<small class="ld-words" title="Put ${it.version.words.length > 1 ? 'one of these' : 'this'} in your idea to switch the LoRA on: ${esc(it.version.words.join(', '))}">Its words: ${esc(it.version.words.join(', '))}</small>` : ''}
+        </div>
+        <div class="mm-act ld-act" data-ld-act="find" data-version="${it.version.id}"></div>
+      </article>`).join('') + (ld.next ? `<button type="button" class="btn ld-next" data-act="ld-more" ${ld.loading ? 'disabled' : ''}>${ld.loading ? 'Asking Civitai…' : 'Show more'}</button>` : '');
+    $('#ldFoot').textContent = ld.items.length ? 'Previews and files come from Civitai. Nothing is downloaded until you click.' : '';
+  } else {
+    const mine = ld.mine;
+    const n = mine?.files.length || 0;
+    const updates = mine?.files.filter(f => f.update).length || 0;
+    bar.innerHTML = `<span class="ld-mine-sum">${!mine ? 'Looking at your LoRAs…' : `${n} LoRA${n === 1 ? '' : 's'} in <code>models/loras${mine.folder ? `/${esc(mine.folder)}` : ''}</code>${updates ? ` · <b>🆕 ${updates} with a newer version</b>` : ''}`}</span>
+      <button type="button" class="btn small ld-check" data-act="ld-check" ${ld.checking || !mine ? 'disabled' : ''}>${ld.checking ? 'Checking…' : '↻ Check for updates'}</button>`;
+    const why = mine?.error ? `🔌 ${esc(mine.error)}`
+      : mine && mine.comfy === false ? "ComfyUI isn't answering, so it can't be told which LoRAs you have. Start it, then open this again."
+        : ld.checking ? 'Asking Civitai about each one. A LoRA you added yourself is read once to recognise it, which can take a minute the first time.'
+          : mine?.offline ? "Civitai couldn't be reached for some of them. Try ↻ Check for updates again in a moment."
+            : mine?.unread ? `${mine.unread} of them ${mine.unread === 1 ? "hasn't" : "haven't"} been looked up yet (you added ${mine.unread === 1 ? 'it' : 'them'} yourself). ↻ Check for updates reads each one once to recognise it; only a fingerprint of the file is sent to Civitai.`
+              : mine && !n ? `No LoRAs for ${esc(m?.name || 'this model')} yet. Find more has the ones made for it.` : '';
+    stateEl.hidden = !why;
+    stateEl.innerHTML = why;
+    list.className = 'mf-list ld-list';
+    list.innerHTML = n ? `<section class="mf-model"><ul>${mine.files.map(f => `
+      <li class="ld-mine"><span class="ld-mine-name"><b title="${esc(f.file)}">${esc(loraShort(f.file))}</b>${f.known ? `<small><button type="button" class="ld-link" data-act="ld-open" data-id="${f.modelId}" data-version="${f.versionId}" title="More about it: pictures, and what its maker says">${esc(f.name || 'On Civitai')}</button>${f.version ? ` · ${esc(f.version)}` : ''}</small>` : ''}</span>
+        <span class="mm-act" data-ld-act="mine" data-file="${esc(f.file)}"></span></li>`).join('')}</ul></section>` : '';
+    $('#ldFoot').textContent = '';
+  }
+  renderLoraActs();
+  if (keep) { const el = $(`.${keep}`, bar); el?.focus(); if (el?.classList.contains('ld-q')) el.setSelectionRange(el.value.length, el.value.length); }
+}
+
+// One LoRA's own screen, inside the dialog: what its page on Civitai shows (pictures, its maker's words, versions).
+async function openLoraDetail(id, versionId) {
+  ld.detail = { id, versionId, data: null, error: '' };
+  renderLoraDlg();
+  $('#ldList').scrollTop = 0;
+  const dt = ld.detail;
+  try {
+    dt.data = await api(`/api/loras/model?id=${id}&model=${encodeURIComponent(ld.modelId || '')}`);
+    if (!dt.data.versions.some(v => v.id === dt.versionId)) dt.versionId = dt.data.versions[0]?.id;
+  } catch (err) {
+    dt.error = friendly(err);
+  }
+  if (ld.detail === dt) renderLoraDlg();
+}
+function renderLoraDetail(bar, stateEl, list) {
+  const dt = ld.detail;
+  const d = dt.data;
+  const v = d?.versions.find(x => x.id === dt.versionId);
+  bar.innerHTML = `<button type="button" class="btn small" data-act="ld-back">← Back to the list</button>${d?.versions.length > 1 ? `<label class="ld-ver">Version <select class="ld-version" aria-label="Version">${d.versions.map(x => `<option value="${x.id}"${x.id === dt.versionId ? ' selected' : ''}>${esc(x.name)}${ldDate(x.published) ? ` · ${esc(ldDate(x.published))}` : ''}${x.have ? ' · yours' : ''}</option>`).join('')}</select></label>` : ''}`;
+  stateEl.hidden = Boolean(d) && !dt.error;
+  stateEl.innerHTML = dt.error ? `🔌 ${esc(dt.error)}` : 'Asking Civitai…';
+  list.className = 'mf-list ld-list ld-detail';
+  $('#ldFoot').textContent = '';
+  if (!d || !v) { list.innerHTML = ''; return; }
+  const text = (title, body) => (body ? `<section class="ld-d-text"><h4>${title}</h4><p>${linkify(body)}</p></section>` : '');
+  list.innerHTML = `
+    <header class="ld-d-head">
+      <div class="ld-d-title"><h3>${esc(d.name)}</h3>
+        <small>${d.creator ? `by ${esc(d.creator)} · ` : ''}⬇ ${ldCount(d.downloads)}${d.likes ? ` · 👍 ${ldCount(d.likes)}` : ''} · ${esc(v.name)}${v.base ? ` · for ${esc(v.base)}` : ''}${ldDate(v.published) ? ` · ${esc(ldDate(v.published))}` : ''}</small></div>
+      <div class="mm-act ld-act" data-ld-act="find" data-version="${v.id}"></div>
+    </header>
+    ${v.words.length ? `<p class="ld-d-words">Put ${v.words.length > 1 ? 'one of these' : 'this'} in your idea to switch it on: ${v.words.map(w => `<code>${esc(w)}</code>`).join(' ')}</p>` : ''}
+    ${v.images.length ? `<div class="ld-d-pics">${v.images.map(src => `<img loading="lazy" alt="" src="${esc(src)}">`).join('')}</div>` : ''}
+    ${text('About this version', v.notes)}
+    ${text('From its maker', d.description)}
+    <p class="hint">This is what its page on Civitai says. Comments and the rest are <a href="${esc(d.page)}" target="_blank" rel="noopener noreferrer">on Civitai</a> (opens in your browser).</p>`;
+  renderLoraActs();
+}
+
+const ldCivitaiOn = () => Boolean((ld.data?.civitai || ld.mine?.civitai)?.connected);
+// Some makers hand their LoRA only to a signed-in Civitai account: one API key, pasted once here.
+function renderLoraCivitai() {
+  const box = $('#ldCivitai');
+  const c = ld.data?.civitai || ld.mine?.civitai || {};
+  const asked = state.downloads.some(d => d.needs === 'civitai' && d.state === 'error');
+  const set = html => { if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; } }; // (redrawn while a download runs: only when it changed)
+  box.hidden = false; // (not connected: a short note up front, as many makers ask for an account)
+  if (box.hidden) return;
+  box.classList.toggle('on', Boolean(c.connected));
+  if (c.connected) {
+    set(`<p>Civitai: connected${c.user ? ` as <b>${esc(c.user)}</b>` : ''}. <button type="button" class="btn small" data-act="ld-key-off">Disconnect</button></p>`);
+    return;
+  }
+  if (!ld.keyForm) {
+    box.classList.toggle('quiet', !asked);
+    set(asked ? '<p>🔒 Some makers let only signed-in Civitai accounts download their LoRA. Connect your free account once, and Prompt Maker gets those for you: <button type="button" class="btn small primary" data-act="ld-key-on">Connect Civitai</button></p>'
+      : '<p>Many makers let only signed-in Civitai accounts download their LoRA. <button type="button" class="btn small" data-act="ld-key-on">Connect Civitai</button> once (free) and ⬇ Get works for all of them.</p>');
+    return;
+  }
+  if ($('#ldKey', box)) { // (kept through the redraws a running download makes: only what changed)
+    $('[data-act="ld-key-save"]', box).disabled = ld.keyChecking;
+    $('[data-act="ld-key-save"]', box).textContent = ld.keyChecking ? 'Checking…' : 'Connect account';
+    $('.ld-key-err', box).innerHTML = ld.keyError ? linkify(ld.keyError) : '';
+    return;
+  }
+  box.dataset.html = '';
+  box.innerHTML = `<p><b>Connect Civitai</b></p>
+    <ol>
+      <li><a href="https://civitai.com/login" target="_blank" rel="noopener noreferrer"><b>Sign in to Civitai</b></a> (making an account is free).</li>
+      <li>Open <a href="https://civitai.com/user/account" target="_blank" rel="noopener noreferrer"><b>your account settings</b></a>, scroll down to <b>API Keys</b>, click <b>Add API key</b>, name it, and copy the key it shows. Paste it below.</li>
+    </ol>
+    <label class="mf-hf-label" for="ldKey">Civitai API key</label>
+    <div class="row"><input id="ldKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the key" aria-describedby="ldKeyPrivacy"><button type="button" class="btn small primary" data-act="ld-key-save">Connect account</button><button type="button" class="btn small" data-act="ld-key-cancel">Not now</button></div>
+    <p id="ldKeyPrivacy" class="hint">Saved only in Prompt Maker's data folder, readable only by you. It is sent only to civitai.com.</p>
+    <span class="mm-err ld-key-err"></span>`;
+  const input = $('#ldKey');
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('[data-act="ld-key-save"]', box).click(); } }); // (Enter would close the dialog)
+  input.focus();
+}
+
+async function getLora(body, label) {
+  const m = ldModel();
+  ld.folder = body.replace ? '' : body.folder;
+  try {
+    const d = await api('/api/loras/get', { method: 'POST', body });
+    state.downloads = [...state.downloads.filter(x => x.id !== d.id), d];
+  } catch (err) {
+    toast(`Couldn't get ${label}: ${friendly(err)}`, true);
+  }
+  renderLoraActs();
+  pollDownloads();
+  return m;
+}
+
+// A LoRA just arrived: ComfyUI's list is asked again, so ＋ Add LoRA has it, and the model keeps the folder it went in.
+async function loraArrived(jobs) {
+  for (const j of jobs) loraFilesNow.delete(j.name);
+  await loadLoraList();
+  const m = ldModel();
+  if (m && ld.folder && jobs.some(j => !j.lora.replace) && loraFolderFor(m).folder !== ld.folder && (state.loraList || []).some(n => loraFolderOf(n) === ld.folder)) {
+    state.settings.loraFolders = { ...state.settings.loraFolders, [m.id]: ld.folder };
+    api('/api/settings', { method: 'PUT', body: { loraFolders: { [m.id]: ld.folder } } }).catch(() => {});
+  }
+  loraUpdates.clear();
+  renderLoraPanel();
+  if ($('#loraDlg').open) loadLoraMine({ fresh: true });
+}
+
+// A preview Civitai won't hand out goes away (the 🧬 behind it shows). (No inline onerror: the page's CSP forbids it.)
+$('#loraDlg').addEventListener('error', e => { if (e.target.tagName === 'IMG') e.target.remove(); }, true);
+let ldSearchTimer;
+$('#loraDlg').addEventListener('input', e => {
+  if (!e.target.classList.contains('ld-q')) return;
+  ld.q = e.target.value;
+  clearTimeout(ldSearchTimer);
+  ldSearchTimer = setTimeout(() => loadLoraFind(), 450);
+});
+$('#loraDlg').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.classList.contains('ld-q')) { e.preventDefault(); clearTimeout(ldSearchTimer); loadLoraFind(); } }); // (Enter would close the dialog)
+$('#loraDlg').addEventListener('change', async e => {
+  const m = ldModel();
+  if (e.target.classList.contains('ld-sort')) { ld.sort = e.target.value; loadLoraFind(); }
+  else if (e.target.classList.contains('ld-version') && ld.detail) { ld.detail.versionId = Number(e.target.value); renderLoraDlg(); }
+  else if (e.target.classList.contains('ld-adult')) {
+    state.settings.loraAdult = e.target.checked;
+    await api('/api/settings', { method: 'PUT', body: { loraAdult: e.target.checked } }).catch(err => toast(friendly(err), true));
+    loadLoraFind();
+  } else if (e.target.classList.contains('ld-base') && m) {
+    const bases = e.target.value ? [e.target.value] : [];
+    state.settings.loraBases = { ...state.settings.loraBases, [m.id]: bases };
+    await api('/api/settings', { method: 'PUT', body: { loraBases: { [m.id]: bases } } }).catch(err => toast(friendly(err), true));
+    loadLoraFind();
+  }
+});
+$('#loraDlg').addEventListener('click', async e => {
+  const tab = e.target.closest('[data-ld-tab]');
+  if (tab) { ld.tab = tab.dataset.ldTab; ld.detail = null; renderLoraDlg(); if (ld.tab === 'mine' && !ld.mine) loadLoraMine(); return; }
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const act = b.dataset.act;
+  const version = Number(b.dataset.version);
+  if (act === 'ld-more') loadLoraFind({ more: true });
+  else if (act === 'ld-open') openLoraDetail(Number(b.dataset.id), version);
+  else if (act === 'ld-back') { ld.detail = null; renderLoraDlg(); }
+  else if (act === 'ld-get') { b.disabled = true; const it = ldItem(version); getLora({ versionId: version, folder: ldFolder() }, it?.name || 'that LoRA'); }
+  else if (act === 'ld-replace') { b.disabled = true; getLora({ versionId: version, replace: b.dataset.file }, loraShort(b.dataset.file)); }
+  else if (act === 'ld-both') { b.disabled = true; getLora({ versionId: version, folder: loraFolderOf(b.dataset.file), beside: b.dataset.file }, loraShort(b.dataset.file)); }
+  else if (act === 'ld-skip') { b.disabled = true; await api('/api/loras/skip', { method: 'POST', body: { file: b.dataset.file, versionId: version || null } }).catch(err => toast(friendly(err), true)); loraUpdates.clear(); loadLoraMine({ fresh: false }); }
+  else if (act === 'ld-check') loadLoraMine({ identify: true, fresh: true });
+  else if (act === 'ld-cancel') api(`/api/comfy/downloads/${b.dataset.id}/cancel`, { method: 'POST' }).then(pollDownloads, () => {});
+  else if (act === 'ld-use') {
+    const flow = activeFlow();
+    if (!flow || loraInFlow(flow, b.dataset.file)) return;
+    flow.loras.added.push({ name: b.dataset.file, strength: 1, on: true });
+    saveLoras(flow, { now: true });
+    renderLoraPanel();
+    renderLoraActs();
+    announce(`Added ${loraShort(b.dataset.file)} at strength 1`);
+  } else if (act === 'ld-key-on') { ld.keyForm = true; ld.keyError = ''; renderLoraCivitai(); }
+  else if (act === 'ld-key-cancel') { ld.keyForm = false; ld.keyError = ''; $('#ldCivitai').innerHTML = ''; $('#ldCivitai').dataset.html = ''; renderLoraCivitai(); }
+  else if (act === 'ld-key-off') { b.disabled = true; const c = await api('/api/loras/civitai', { method: 'DELETE' }).catch(() => null); if (c) { if (ld.data) ld.data.civitai = c; if (ld.mine) ld.mine.civitai = c; } renderLoraCivitai(); }
+  else if (act === 'ld-key-save') {
+    ld.keyChecking = true;
+    ld.keyError = '';
+    renderLoraCivitai();
+    try {
+      const c = await api('/api/loras/civitai', { method: 'POST', body: { key: $('#ldKey')?.value || '' } });
+      if (ld.data) ld.data.civitai = c;
+      if (ld.mine) ld.mine.civitai = c;
+      ld.keyForm = false;
+      ld.keyChecking = false;
+      // The ones refused for want of an account are fetched again, now signed in.
+      const refused = state.downloads.filter(d => d.needs === 'civitai' && d.state === 'error' && d.lora);
+      state.downloads = state.downloads.filter(d => !refused.includes(d));
+      for (const d of refused) getLora(d.lora.replace ? { versionId: d.lora.versionId, replace: d.name } : { versionId: d.lora.versionId, folder: loraFolderOf(d.name), beside: d.lora.beside }, loraShort(d.name));
+      if (refused.length) toast(`🔓 Civitai connected: getting ${refused.length === 1 ? loraShort(refused[0].name) : `the ${refused.length} LoRAs it refused`} now`);
+      $('#ldCivitai').innerHTML = '';
+      $('#ldCivitai').dataset.html = '';
+      renderLoraCivitai();
+      renderLoraActs();
+    } catch (err) {
+      ld.keyChecking = false;
+      ld.keyError = friendly(err);
+      renderLoraCivitai();
+      $('#ldKey')?.select();
+    }
+  }
+});
+$('#loraDlg').addEventListener('close', () => { ld.keyForm = false; ld.keyError = ''; ld.keyChecking = false; $('#ldCivitai').innerHTML = ''; $('#ldCivitai').dataset.html = ''; clearTimeout(ldSearchTimer); });
+
 // ---------- create: Fine-tune → Rendering, LoRAs ----------
 // A workflow's LoRAs: its own (switch off or re-weight them) plus ones you add from the model's LoRA folder.
 // Saved on the workflow in your data folder; renders record what they used.
@@ -8429,6 +8941,7 @@ function renderLoraPanel() {
   if (!flow) { box.innerHTML = ''; return; }
   const { own, added } = flowLoras(flow);
   if (!state.loraList && (own.length || added.length) && !loadLoraList.busy) { loadLoraList.busy = true; loadLoraList().finally(() => { loadLoraList.busy = false; if (state.loraList?.length) renderLoraPanel(); }); }
+  if (state.loraList?.length) peekLoraUpdates();
   const newer = l => { const n = newestLora(l.name); return n && !saved.get(loraSkipKey(l.name, n.name), false) ? n : null; };
   const focus = document.activeElement?.closest?.('#wfpLoras') ? { key: document.activeElement.closest('[data-key]')?.dataset.key, cls: [...document.activeElement.classList].find(c => c.startsWith('lr-')) || document.activeElement.dataset.act } : null;
   const row = (l, key) => `
@@ -8443,6 +8956,8 @@ function renderLoraPanel() {
     <div class="lora-head">
       <span class="lora-label">🧬 LoRAs</span>
       <span class="muted small">${own.length || added.length ? `${loraCount(flow)} on` : 'none yet'}</span>
+      ${(n => (n ? `<button type="button" class="chip-btn lora-updates" data-act="lora-updates" title="A newer version of ${n === 1 ? 'one of your LoRAs' : `${n} of your LoRAs`} is out on Civitai">🆕 ${n} update${n === 1 ? '' : 's'}</button>` : ''))(loraUpdateCount())}
+      <button type="button" class="chip-btn" data-act="lora-get" title="LoRAs made for ${esc(currentModel()?.name || 'this model')}, from Civitai, straight into its folder in ComfyUI">⬇ Get more</button>
       <button type="button" class="chip-btn" data-act="lora-add" aria-expanded="${state.loraPicker.open}">＋ Add LoRA</button>
     </div>
     ${own.length || added.length ? `<ul class="lora-list">${own.map(l => row(l, l.key)).join('')}${added.map((l, i) => row(l, `+${i}`)).join('')}</ul>` : ''}
@@ -8478,7 +8993,8 @@ function renderLoraPicker() {
     ${!folder && auto && folders.length ? `<p class="muted small">No folder matched ${esc(m.name)}, so these are all your LoRAs. Pick its folder above.</p>` : ''}
     <ul class="lp-list">${items.length
       ? items.map(n => `<li><button type="button" data-lora="${esc(n)}" title="${esc(n)}"><span>${esc(loraShort(n))}</span>${folder ? '' : `<small>${esc(loraFolderOf(n))}</small>`}</button></li>`).join('')
-      : `<li class="lp-empty">${state.loraError ? `🔌 ${esc(state.loraError)}` : q ? 'No matches.' : `No more LoRAs in ${folder ? `${esc(folder)}/` : 'ComfyUI'}.`}</li>`}</ul>`;
+      : `<li class="lp-empty">${state.loraError ? `🔌 ${esc(state.loraError)}` : q ? 'No matches.' : `No more LoRAs in ${folder ? `${esc(folder)}/` : 'ComfyUI'}.`}</li>`}</ul>
+    <button type="button" class="btn small lp-get" data-act="lora-get">⬇ Get more LoRAs for ${esc(m.name)}</button>`;
   if (hadFocus) { const s = $('.lp-search', pick); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
 }
 
@@ -8552,6 +9068,8 @@ $('#wfpLoras').addEventListener('click', e => {
   const flow = activeFlow();
   if (!flow) return;
   const key = b.closest('[data-key]')?.dataset.key;
+  if (b.dataset.act === 'lora-get') return openLoras();
+  if (b.dataset.act === 'lora-updates') return openLoras({ tab: 'mine' });
   if (b.dataset.act === 'lora-add') {
     state.loraPicker.open = !state.loraPicker.open;
     renderLoraPanel();
@@ -8809,7 +9327,7 @@ function renderModelNotice() {
 async function downloadModels(list) {
   for (const m of list) {
     try {
-      const d = await api('/api/comfy/downloads', { method: 'POST', body: { name: m.name, folder: m.folder, url: m.url } });
+      const d = await api('/api/comfy/downloads', { method: 'POST', body: { name: m.name, folder: m.folder, url: m.url, replace: m.replace } });
       state.downloads = [...state.downloads.filter(x => x.id !== d.id), d];
     } catch (err) {
       toast(`Couldn't download ${m.file}: ${err.message}`, true);
@@ -8856,6 +9374,8 @@ async function pollDownloads() {
   renderModelNotice();
   if (finished.length && mf.data && $('#modelFilesDlg').open) loadModelFiles(); // ✓ Here, once ComfyUI lists it
   else renderModelFiles();
+  if (finished.some(d => d.lora)) loraArrived(finished.filter(d => d.lora));
+  renderLoraActs();
   if (list.some(d => d.state === 'running')) downloadTimer = setTimeout(pollDownloads, 1000);
 }
 
@@ -9366,7 +9886,7 @@ function renderZone(card) {
   if (!zone || !entry || card.interrupted) { if (zone) zone.hidden = true; return; }
   const writing = !entry.id; // greyed out until the take is written, so the take doesn't grow when it's done
   const model = card.model;
-  const flows = model ? workflowsFor(model.id) : [];
+  const flows = renderFlowsFor(model);
   zone.hidden = false;
   zone.inert = writing;
   let bar = '';
@@ -9376,7 +9896,7 @@ function renderZone(card) {
     const name = card.el.getAttribute('aria-label');
     bar = `<div class="render-bar">
       <span class="rb-title">🎨 Render</span>
-      <select class="rb-wf" aria-label="Workflow for ${esc(name)}">${flows.map(f => `<option value="${esc(f.id)}"${f.id === card.rb.workflowId ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
+      <select class="rb-wf" aria-label="Workflow for ${esc(name)}">${renderFlowOptions(model, card.rb.workflowId, entry)}</select>
       <button type="button" class="icon-btn rb-tune" title="This take's settings: shape, size, duration, seed, steps, CFG, sampler and LoRA strengths, for its renders only" aria-label="This take's settings" aria-expanded="${card.rb.panelOpen ? 'true' : 'false'}">⚙</button>
       <div class="seg rb-count" role="radiogroup" aria-label="How many renders">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div>
       <button type="button" class="chip-btn rb-seed" aria-pressed="${card.rb.lockSeed}"></button>
@@ -9706,7 +10226,7 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   if (cardDirty(card)) await saveEdit(card, { quiet: true });
   if (!state.comfy?.ok) await loadComfyStatus();
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
-  if (!setup) saved.set(`wf.${card.model.id}`, flow.id);
+  if (!setup && flow.modelId === card.model.id) saved.set(`wf.${card.model.id}`, flow.id);
   const runId = crypto.randomUUID(); // the page's name for the job, so it can listen for it before the server has it
   // ⚙ The take's own settings (size, seed, sampler, LoRAs) go with it; a queued order's setup wins over them.
   // (A queued order, a batch or a chain keeps the size its prompt was written for.)

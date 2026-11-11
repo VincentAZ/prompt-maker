@@ -131,6 +131,9 @@ fieldset { border: 1px solid var(--line); border-radius: var(--radius-md); paddi
 fieldset legend { padding: 0 6px; }
 .grid-3, .grid-4, .grid-5 { display: grid; gap: 14px; }
 .grid-3 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.brain-more { margin: 4px 0 2px; }
+.brain-more > summary { cursor: pointer; font-weight: 700; font-size: 13.5px; padding: 4px 0; }
+.brain-more > .hint { margin: 2px 0 10px; }
 .grid-4 { grid-template-columns: 2fr 1fr 110px; }
 .grid-5 { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 
@@ -187,6 +190,11 @@ fieldset legend { padding: 0 6px; }
 .llm-list [role="option"] .d > span:not(.llm-meta)::before { content: "·"; margin-right: 7px; color: var(--muted); }
 .llm-list [role="option"] .d > span:first-child::before { content: none; }
 .llm-meta { padding: 1px 6px; border-radius: 999px; background: var(--panel-3); color: var(--text-2); font-size: 11px; font-weight: 750; }
+.brain-size { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fit-dot { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; background: var(--muted); vertical-align: baseline; }
+.fit-dot.ok { background: var(--ok); }
+.fit-dot.tight { background: var(--warn); }
+.fit-dot.no { background: var(--danger); }
 .llm-meta.provider { background: color-mix(in srgb, var(--hot) 10%, var(--panel-3)); color: var(--text); }
 .llm-faces { display: flex; flex: none; align-self: start; margin: -3px -6px 0 0; }
 .llm-faces button { padding: 2px 2px; border: 0; background: none; font-size: 17px; line-height: 1; filter: grayscale(1); opacity: 0.4; }
@@ -1201,7 +1209,9 @@ dialog.modal[open] { animation: pop 0.2s ease both; }
 .loras { display: flex; flex-direction: column; gap: 8px; }
 .lora-head { display: flex; align-items: center; gap: 8px; }
 .lora-label { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.lora-head .chip-btn { margin-left: auto; }
+.lora-head .chip-btn:first-of-type { margin-left: auto; }
+.lora-head .lora-updates { border-color: color-mix(in srgb, var(--ice) 45%, transparent); background: color-mix(in srgb, var(--ice) 12%, transparent); color: var(--ice); font-weight: 700; }
+.lora-pick .lp-get { align-self: flex-start; }
 .lora-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .lora-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 70px; grid-template-areas: "on name act" "range range num"; align-items: center; gap: 4px 10px; padding: 8px 8px 8px 10px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
 .lora-row .switch { grid-area: on; }
@@ -1685,6 +1695,7 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .model-files-dlg .cloud-dialog-acts { flex: none; overflow: visible; } /* (the buttons never shrink away under a long list) */
 /* Your Hugging Face account, for the files behind one */
 .mf-hf { flex: none; padding: 10px 14px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--warn) 8%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); font-size: 13.5px; display: grid; gap: 8px; }
+.mf-hf.quiet { background: var(--panel-2); border-color: var(--line); color: var(--text-2); padding: 6px 12px; }
 .mf-hf.on { background: var(--panel-2); border-color: var(--line); }
 .mf-hf p { margin: 0; }
 .mf-hf ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
@@ -1694,8 +1705,71 @@ dialog.jobs-dlg { width: min(860px, calc(100vw - 32px)); }
 .mf-hf .hint { margin-top: -3px; }
 .mf-hf .mm-err { color: var(--danger); font-size: 12.5px; }
 .mf-total { margin-right: auto; }
+.mf-new { color: var(--hot); font-size: 12.5px; font-weight: 700; }
+.btn[data-new]::after { content: ' 🆕 ' attr(data-new); }
 #brainsGet { align-items: center; gap: 12px; flex-wrap: wrap; }
 @media (max-width: 640px) { .mf-role { flex-basis: 100%; } }
+
+/* ⬇ Get more LoRAs: Civitai's for the model (Find more), and yours with their newer versions (Yours) */
+.modal.lora-dlg { width: min(1000px, calc(100vw - 32px)); max-width: none; }
+.lora-dlg .modal-body { height: calc(100vh - 48px); }
+.lora-dlg .modal-body > .ld-tabs { display: flex; flex-direction: row; align-self: flex-start; flex: none; gap: 2px; padding: 3px; overflow: visible; }
+.ld-tabs button { padding: 7px 16px; white-space: nowrap; }
+.lora-dlg .modal-body > .ld-bar { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; padding: 0; overflow: visible; }
+.lora-dlg .modal-body > .ld-list { padding: 0 2px 0 0; }
+.lora-dlg .modal-body > .ld-grid { display: grid; }
+.ld-bar .ld-q { flex: 1 1 240px; min-width: 0; }
+.ld-bar .ld-sort { width: auto; }
+.ld-more { position: relative; }
+.ld-more summary { list-style: none; cursor: pointer; padding: 7px 11px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--panel-2); }
+.ld-more summary::-webkit-details-marker { display: none; }
+.ld-more-body { position: absolute; right: 0; top: calc(100% + 6px); z-index: 3; width: min(340px, 80vw); padding: 12px; display: grid; gap: 10px; font-size: 13.5px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 18px 40px -18px #000a; }
+.ld-more-body label { display: grid; gap: 4px; }
+.ld-more-body label.check { display: flex; align-items: center; gap: 8px; }
+.ld-more-body label.check input { width: auto; }
+.ld-mine-sum { flex: 1 1 240px; font-size: 13.5px; color: var(--text-2); }
+.ld-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; align-content: start; grid-auto-rows: max-content; } /* (max-content: a long list must scroll, not squeeze its cards down to the picture) */
+.ld-card { display: flex; flex-direction: column; min-width: 0; border-radius: var(--radius-md); background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+button.ld-thumb { width: 100%; padding: 0; border: 0; border-radius: 0; cursor: pointer; font: inherit; color: inherit; }
+.ld-link { padding: 0; border: 0; background: none; font: inherit; font-weight: inherit; color: inherit; text-align: left; cursor: pointer; }
+.ld-link:hover, .ld-link:focus-visible { text-decoration: underline; }
+b + small .ld-link, small .ld-link { color: var(--ice); }
+.ld-name.ld-link { font-weight: 700; }
+.ld-ver { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13.5px; }
+.ld-ver select { width: auto; }
+.ld-detail { gap: 14px; }
+.ld-d-head { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; flex: none; }
+.ld-d-title { flex: 1 1 260px; min-width: 0; display: grid; gap: 2px; }
+.ld-d-title h3 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+.ld-d-title small { font-size: 12.5px; color: var(--text-2); }
+.ld-d-head .ld-act { margin: 0; padding: 0; }
+.ld-d-words { margin: 0; flex: none; font-size: 13.5px; }
+.ld-d-words code { padding: 1px 6px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); user-select: all; }
+.ld-d-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; flex: none; }
+.ld-d-pics img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: var(--radius-md); background: var(--panel-2); }
+.ld-d-text { flex: none; }
+.ld-d-text h4 { margin: 0 0 4px; font-size: 13.5px; }
+.ld-d-text p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; color: var(--text-2); }
+.ld-detail > .hint { flex: none; margin: 0; }
+.ld-thumb { position: relative; display: block; flex: none; aspect-ratio: 4 / 5; background: var(--panel-3, var(--panel)); }
+.ld-thumb img { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; }
+.ld-thumb-none { position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px; opacity: 0.3; }
+.ld-info { display: grid; gap: 2px; padding: 8px 10px 0; min-width: 0; }
+.ld-name { font-size: 13.5px; }
+.ld-name, .ld-info small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ld-info small { font-size: 11.5px; color: var(--text-2); }
+.ld-card .ld-act { margin: auto 0 0; padding: 8px 10px 10px; }
+.ld-next { grid-column: 1 / -1; justify-self: center; }
+.ld-mine-name { flex: 1 1 220px; min-width: 0; display: grid; gap: 1px; }
+.ld-mine-name b { overflow-wrap: anywhere; }
+.ld-mine-name small { font-size: 12px; color: var(--text-2); }
+.ld-new { color: var(--ice); font-weight: 700; font-size: 12.5px; }
+.lora-dlg .mm-act { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
+.lora-dlg .mm-prog { flex: 1 1 60px; max-width: 110px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--hot) 12%, transparent); overflow: hidden; }
+.lora-dlg .mm-bar { display: block; height: 100%; background: var(--hot, var(--sun)); transition: width .4s; }
+.lora-dlg .mm-pct { font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.lora-dlg .mm-ok { color: var(--ok); }
+.lora-dlg .mm-err, .lora-dlg .mm-none { color: var(--danger); font-size: 12.5px; overflow-wrap: anywhere; }
 
 /* Creator workspace: the task and idea lead; model mechanics stay one click away. */
 .director { --bar-fade: 12px; box-shadow: none; backdrop-filter: none; background: var(--panel-solid); }

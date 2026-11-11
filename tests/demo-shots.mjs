@@ -1,6 +1,6 @@
 // Builds the DEMO (5320) and CLEAN (5321) copies tests/screenshots.mjs needs, from the mocks and docs/renders, takes
 // the named shots, then stops everything. No personal data: sample renders, empty prompts, seed 0, neutral paths.
-//   node tests/demo-shots.mjs create gallery models voices comfy-setup lms-setup model-files ask   → /tmp/promptmaker-demo/shots/*.png
+//   node tests/demo-shots.mjs create fine-tune loras gallery models voices comfy-setup lms-setup model-files ask   → /tmp/promptmaker-demo/shots/*.png
 // Then copy the pngs into docs/screenshots (gallery and ask as .jpg: ffmpeg -q:v 4), and look at every one first.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -18,7 +18,9 @@ for (const d of ['demo/renders', 'data', 'home', 'comfy', 'shots', 'chrome']) aw
 
 const MOCK = 12420, COMFY = 12421;
 const mock = startMock(MOCK); await mock.start();
-const comfy = startMockComfy(COMFY, { png: await fs.readFile(path.join(ROOT, 'docs/screenshots/create.png')), root: path.join(BASE, 'comfy') }); await comfy.start();
+// (The LoRAs shot lists the mock's made-up Civitai LoRAs, with sample renders as their previews.)
+const previews = await Promise.all(['woman-cafe', 'lighthouse-storm', 'surfer-sunset', 'mountain-lake'].map(async n => ({ type: 'image/webp', body: await fs.readFile(path.join(ROOT, 'docs/renders', `${n}.webp`)) })));
+const comfy = startMockComfy(COMFY, { png: await fs.readFile(path.join(ROOT, 'docs/screenshots/create.png')), root: path.join(BASE, 'comfy'), previews }); await comfy.start();
 
 // DEMO: nine rated sample renders, no prompts.
 const demo = path.join(BASE, 'demo');
@@ -36,7 +38,7 @@ for (const [i, name] of pics.entries()) {
 }
 await fs.writeFile(path.join(demo, 'history.json'), JSON.stringify(history, null, 2));
 
-const env = { ...process.env, HOME: path.join(BASE, 'home'), XDG_CONFIG_HOME: path.join(BASE, 'home/.config'), XDG_DATA_HOME: path.join(BASE, 'home/.local/share'), SYSTEMCTL_BIN: '/bin/true', LMS_BIN: path.join(BASE, 'home/.lmstudio/bin/lms'), PM_RAM_DIR: path.join(BASE, 'ram') }; // (no lms there: LM Studio counts as not on the computer, for the lms-setup shot)
+const env = { ...process.env, HOME: path.join(BASE, 'home'), XDG_CONFIG_HOME: path.join(BASE, 'home/.config'), XDG_DATA_HOME: path.join(BASE, 'home/.local/share'), SYSTEMCTL_BIN: '/bin/true', LMS_BIN: path.join(BASE, 'home/.lmstudio/bin/lms'), PM_RAM_DIR: path.join(BASE, 'ram'), PM_CIVITAI_API: `http://127.0.0.1:${COMFY}` }; // (no lms there: LM Studio counts as not on the computer, for the lms-setup shot)
 const servers = [];
 const startApp = (port, data) => new Promise((resolve, reject) => {
   const p = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...env, PORT: String(port), PROMPT_MAKER_DATA: data }, stdio: ['ignore', 'pipe', 'pipe'] });
