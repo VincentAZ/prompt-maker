@@ -9074,7 +9074,7 @@ $('#wfpLoras').addEventListener('click', e => {
     state.loraPicker.open = !state.loraPicker.open;
     renderLoraPanel();
     if (state.loraPicker.open) {
-      if (!state.loraList || state.loraError) loadLoraList();
+      loadLoraList(); // asks ComfyUI again each time, so a file you just put in the folder is there
       $('#wfpLoras .lp-search')?.focus();
     }
   } else if (b.dataset.lora) {

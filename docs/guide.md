@@ -646,7 +646,7 @@ Fine-tune → Rendering shows the **🧬 LoRAs** of the picked workflow:
   - **Switching one off** leaves it out of the render entirely, so its file isn't even loaded.
   - **Strength 0 isn't off**: a LoRA left on at 0 still goes in at 0, because some LoRAs change the render even there. Use the switch to leave one out.
   - **↺** puts the workflow's strength back.
-- **＋ Add LoRA** lists only the LoRAs for the selected model. Prompt Maker matches the model to its folder in ComfyUI's `models/loras` (e.g. `krea2/` for Krea 2 RAW, `LTX_2.3/` for LTX 2.3). If the match is wrong, pick the folder in the list. Search narrows it down, and the LoRA goes in at strength 1.
+- **＋ Add LoRA** lists only the LoRAs for the selected model. Prompt Maker matches the model to its folder in ComfyUI's `models/loras` (e.g. `krea2/` for Krea 2 RAW, `LTX_2.3/` for LTX 2.3). If the match is wrong, pick the folder in the list. Search narrows it down, and the LoRA goes in at strength 1. It asks ComfyUI for the list each time you open it, so a LoRA you copy into the folder yourself shows up at once (if it still doesn't, check it's in the model's folder, or choose *All folders*).
 - **Added LoRAs go in right after the workflow's model loader,** so there's nothing to wire up in ComfyUI.
 - **⬇ Get more** finds LoRAs made for the selected model and downloads them into that folder: see [Getting more LoRAs](#getting-more-loras--get-more) below.
 - **A workflow that renders in pieces** (like SCAIL 2, where each piece loads its own copy of the same LoRAs) shows each LoRA once, marked *×2 pieces*: its switch and strength set every piece.
