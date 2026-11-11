@@ -3730,6 +3730,9 @@ esac
     const reverseNames = await js('[...document.querySelectorAll("#llmList .grp:last-of-type ~ [role=option]")].map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
     eq(reverseNames.join('|'), [...names].reverse().join('|'), 'clicking Name again sorts Z to A');
     eq(await text('#llmSortDirection'), '↓ Z–A', 'the reverse direction is visible');
+    await choose('#llmSort', 'size');
+    eq(await text('#llmSortDirection'), '↓ Biggest first', 'size sorts biggest first');
+    assert((await text('#llmList')).includes('Size not known'), 'Brains with no size wait in their own group');
     await choose('#llmSort', 'smart');
     // Filters: any number at once, with counts; All clears them.
     await click('#llmFilters [data-trait="vision"]');

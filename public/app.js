@@ -1279,6 +1279,11 @@ const byRecent = (a, b) => lastUsedAt(b).localeCompare(lastUsedAt(a)) || byName(
 const byBrainSort = (sort, direction) => {
   if (sort === 'name') return direction === 'asc' ? byName : (a, b) => byName(b, a);
   if (sort === 'recent') return direction === 'desc' ? byRecent : (a, b) => lastUsedAt(a).localeCompare(lastUsedAt(b)) || byName(a, b);
+  if (sort === 'size') return (a, b) => {
+    const as = a.cloud ? 0 : a.sizeBytes || 0, bs = b.cloud ? 0 : b.sizeBytes || 0;
+    if (Boolean(as) !== Boolean(bs)) return as ? -1 : 1; // Cloud Brains and unknown sizes stay last in either direction.
+    return (direction === 'asc' ? as - bs : bs - as) || byName(a, b);
+  };
   if (sort === 'rating') return (a, b) => {
     const ar = Number(a.rating || 0), br = Number(b.rating || 0);
     if (Boolean(ar) !== Boolean(br)) return ar ? -1 : 1; // Not rated stays after the rated ones in either direction.
@@ -1287,9 +1292,10 @@ const byBrainSort = (sort, direction) => {
   return byName;
 };
 const brainSortLabel = (sort, direction, active) => {
-  if (!active) return { recent: 'Last used', name: 'Name', rating: 'Your rating' }[sort] || (sort === 'fit' ? 'Best fit' : 'Smart');
+  if (!active) return { recent: 'Last used', name: 'Name', size: 'Size', rating: 'Your rating' }[sort] || (sort === 'fit' ? 'Best fit' : 'Smart');
   if (sort === 'recent') return direction === 'asc' ? 'First used ↑' : 'Last used ↓';
   if (sort === 'name') return direction === 'asc' ? 'Name A–Z ↑' : 'Name Z–A ↓';
+  if (sort === 'size') return direction === 'asc' ? 'Smallest first ↑' : 'Biggest first ↓';
   if (sort === 'rating') return direction === 'asc' ? 'Rating 😞–🤩 ↑' : 'Rating 🤩–😞 ↓';
   return sort === 'fit' ? 'Best fit' : 'Smart';
 };
@@ -1312,6 +1318,7 @@ function renderLlmSortControl() {
   direction.textContent = {
     recent: llmSortDirection === 'asc' ? '↑ Oldest first' : '↓ Newest first',
     name: llmSortDirection === 'asc' ? '↑ A–Z' : '↓ Z–A',
+    size: llmSortDirection === 'asc' ? '↑ Smallest first' : '↓ Biggest first',
     rating: llmSortDirection === 'asc' ? '↑ Lowest first' : '↓ Highest first',
   }[llmSort];
   direction.setAttribute('aria-label', `Reverse order: ${direction.textContent.replace(/^[↑↓] /, '')}`);
@@ -1338,8 +1345,9 @@ function renderLlmPick() {
 // The menu's groups for the search and sort: [{ title?, items: [brain] }]. "Auto" is { id: '' }.
 // Filters for the Brain menu and Models → Brains. Pick any number of traits (a Brain needs all of them) and any
 // number of providers (a Brain from any of them); nothing picked shows every Brain.
-// Brains whose authors tuned them to write dark, violent or disturbing scenes (horror, war, crime) without balking.
-const writesDarkScenes = m => /uncensor|abliterat|heretic|unfilter|unalign|dolphin|\bderestrict/i.test(`${m.name} ${m.id}`);
+// Brains whose authors tuned them to write dark, violent or disturbing scenes (horror, war, crime) without balking,
+// including any labeled NSFW.
+const writesDarkScenes = m => /uncensor|abliterat|heretic|unfilter|unalign|dolphin|\bderestrict|nsfw/i.test(`${m.name} ${m.id}`);
 const BRAIN_TRAITS = {
   thinking: { label: '🧠 Thinking', test: m => m.reasoning || m.thinkSwitch || ['trick', 'stubborn'].includes(m.thinkOff) || /think|reason|deepseek.*r1|qwq/i.test(`${m.name} ${m.id}`) },
   vision: { label: '👁 Vision', test: m => m.vision },
@@ -1419,6 +1427,14 @@ function llmMenuGroups(q, suggested) {
     return [{ items: hits.map(x => x.m) }];
   }
   if (llmSort === 'name') return [...head, { title: inUse.length ? 'All Brains' : '', items: [...others].sort(byBrainSort('name', llmSortDirection)) }];
+  if (llmSort === 'size') {
+    return [
+      ...head,
+      { title: 'On this computer', items: others.filter(m => !m.cloud && m.sizeBytes).sort(byBrainSort('size', llmSortDirection)) },
+      { title: 'Size not known', items: others.filter(m => !m.cloud && !m.sizeBytes).sort(byName) },
+      { title: '☁️ Cloud (sends your prompts to the provider)', items: others.filter(m => m.cloud).sort(byName) },
+    ];
+  }
   if (llmSort === 'rating') {
     const values = llmSortDirection === 'asc' ? [-1, 1, 2, 3] : [3, 2, 1, -1];
     return [
@@ -6275,6 +6291,7 @@ function renderBrains() {
     fit: (a, b) => (b.m.id === inUse) - (a.m.id === inUse) || b.fit.score - a.fit.score || (b.m.stats?.runs || 0) - (a.m.stats?.runs || 0) || byName(a.m, b.m),
     recent: (a, b) => byBrainSort('recent', brainSortDirection)(a.m, b.m),
     name: (a, b) => byBrainSort('name', brainSortDirection)(a.m, b.m),
+    size: (a, b) => byBrainSort('size', brainSortDirection)(a.m, b.m),
     rating: (a, b) => byBrainSort('rating', brainSortDirection)(a.m, b.m),
   }[brainSort] || (() => 0);
   $('#brainFilters').innerHTML = brainFilterControls(brainFilter);
