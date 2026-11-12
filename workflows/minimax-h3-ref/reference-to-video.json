@@ -1,7 +1,7 @@
 {
   "format": "prompt-maker-workflow",
   "name": "MiniMax H3 Reference: your person in a video",
-  "note": "Puts the person in step ③ into a new clip with sound. ComfyUI’s reference-to-video template, 20 steps (no turbo LoRA); only ComfyUI’s own nodes. A second slot in step ③ takes another picture of the same person (left out when empty).",
+  "note": "Puts the person in step ③ into a new clip with sound. ComfyUI’s reference-to-video template, 20 steps (no turbo LoRA); only ComfyUI’s own nodes. A second slot in step ③ takes another picture of the same person, and up to 7 more bring in other people, things or places (9 in all, the most the model takes); an empty slot is left out.",
   "prompt": {
     "92": {
       "inputs": {
@@ -241,6 +241,34 @@
         "ref_images.ref_image_1": [
           "139",
           0
+        ],
+        "ref_images.ref_image_2": [
+          "140",
+          0
+        ],
+        "ref_images.ref_image_3": [
+          "141",
+          0
+        ],
+        "ref_images.ref_image_4": [
+          "142",
+          0
+        ],
+        "ref_images.ref_image_5": [
+          "143",
+          0
+        ],
+        "ref_images.ref_image_6": [
+          "144",
+          0
+        ],
+        "ref_images.ref_image_7": [
+          "145",
+          0
+        ],
+        "ref_images.ref_image_8": [
+          "146",
+          0
         ]
       },
       "class_type": "MiniMaxH3ReferenceToVideo",
@@ -273,6 +301,69 @@
       },
       "_meta": {
         "title": "Another picture of them"
+      }
+    },
+    "140": {
+      "inputs": {
+        "image": "example.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Picture 3"
+      }
+    },
+    "141": {
+      "inputs": {
+        "image": "example.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Picture 4"
+      }
+    },
+    "142": {
+      "inputs": {
+        "image": "example.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Picture 5"
+      }
+    },
+    "143": {
+      "inputs": {
+        "image": "example.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Picture 6"
+      }
+    },
+    "144": {
+      "inputs": {
+        "image": "example.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Picture 7"
+      }
+    },
+    "145": {
+      "inputs": {
+        "image": "example.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Picture 8"
+      }
+    },
+    "146": {
+      "inputs": {
+        "image": "example.png"
+      },
+      "class_type": "LoadImage",
+      "_meta": {
+        "title": "Picture 9"
       }
     }
   },
@@ -326,6 +417,55 @@
         "input": "image",
         "label": "Another picture of them",
         "hint": "the same person from another angle or in other light, so the likeness holds; never a second person",
+        "optional": true
+      },
+      {
+        "node": "140",
+        "input": "image",
+        "label": "Picture 3",
+        "hint": "<Picture 3>: something else for the clip (another person, a thing, an outfit or a place); define it as its own Subject and say what it does",
+        "optional": true
+      },
+      {
+        "node": "141",
+        "input": "image",
+        "label": "Picture 4",
+        "hint": "<Picture 4>: something else for the clip (another person, a thing, an outfit or a place); define it as its own Subject and say what it does",
+        "optional": true
+      },
+      {
+        "node": "142",
+        "input": "image",
+        "label": "Picture 5",
+        "hint": "<Picture 5>: something else for the clip (another person, a thing, an outfit or a place); define it as its own Subject and say what it does",
+        "optional": true
+      },
+      {
+        "node": "143",
+        "input": "image",
+        "label": "Picture 6",
+        "hint": "<Picture 6>: something else for the clip (another person, a thing, an outfit or a place); define it as its own Subject and say what it does",
+        "optional": true
+      },
+      {
+        "node": "144",
+        "input": "image",
+        "label": "Picture 7",
+        "hint": "<Picture 7>: something else for the clip (another person, a thing, an outfit or a place); define it as its own Subject and say what it does",
+        "optional": true
+      },
+      {
+        "node": "145",
+        "input": "image",
+        "label": "Picture 8",
+        "hint": "<Picture 8>: something else for the clip (another person, a thing, an outfit or a place); define it as its own Subject and say what it does",
+        "optional": true
+      },
+      {
+        "node": "146",
+        "input": "image",
+        "label": "Picture 9",
+        "hint": "<Picture 9>: something else for the clip (another person, a thing, an outfit or a place); define it as its own Subject and say what it does",
         "optional": true
       }
     ]

@@ -2,7 +2,7 @@
  "format": "prompt-maker-workflow",
  "name": "MiniMax H3 Image Edit: edit your picture",
  "comfyui": "0.45.0",
- "note": "Changes the picture in step ③ the way your prompt says and keeps the rest; the result keeps the picture’s shape at 4 megapixels. ComfyUI’s image-edit template without its prompt enhancer (the Brain writes the prompt): 6 steps, no negative prompt; only ComfyUI’s own nodes. Two more slots in step ③ take pictures to bring into it, left out when empty. Needs ComfyUI 0.45.0 or newer (⬆ Update ComfyUI brings it).",
+ "note": "Changes the picture in step ③ the way your prompt says and keeps the rest; the result keeps the picture’s shape at 4 megapixels. ComfyUI’s image-edit template without its prompt enhancer (the Brain writes the prompt): 6 steps, no negative prompt; only ComfyUI’s own nodes. Up to 15 more pictures in step ③ (16 in all, the model's most) bring things into it; an empty slot is left out. Needs ComfyUI 0.45.0 or newer (⬆ Update ComfyUI brings it).",
  "prompt": {
   "1": {
    "inputs": {
@@ -63,6 +63,58 @@
     ],
     "images.image_3": [
      "14",
+     0
+    ],
+    "images.image_4": [
+     "15",
+     0
+    ],
+    "images.image_5": [
+     "16",
+     0
+    ],
+    "images.image_6": [
+     "17",
+     0
+    ],
+    "images.image_7": [
+     "18",
+     0
+    ],
+    "images.image_8": [
+     "19",
+     0
+    ],
+    "images.image_9": [
+     "20",
+     0
+    ],
+    "images.image_10": [
+     "21",
+     0
+    ],
+    "images.image_11": [
+     "22",
+     0
+    ],
+    "images.image_12": [
+     "23",
+     0
+    ],
+    "images.image_13": [
+     "24",
+     0
+    ],
+    "images.image_14": [
+     "25",
+     0
+    ],
+    "images.image_15": [
+     "26",
+     0
+    ],
+    "images.image_16": [
+     "27",
      0
     ]
    },
@@ -195,6 +247,123 @@
    "_meta": {
     "title": "One more"
    }
+  },
+  "15": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 4"
+   }
+  },
+  "16": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 5"
+   }
+  },
+  "17": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 6"
+   }
+  },
+  "18": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 7"
+   }
+  },
+  "19": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 8"
+   }
+  },
+  "20": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 9"
+   }
+  },
+  "21": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 10"
+   }
+  },
+  "22": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 11"
+   }
+  },
+  "23": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 12"
+   }
+  },
+  "24": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 13"
+   }
+  },
+  "25": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 14"
+   }
+  },
+  "26": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 15"
+   }
+  },
+  "27": {
+   "inputs": {
+    "image": "example.png"
+   },
+   "class_type": "LoadImage",
+   "_meta": {
+    "title": "Picture 16"
+   }
   }
  },
  "mapping": {
@@ -242,6 +411,97 @@
     "input": "image",
     "label": "One more",
     "hint": "<Picture 3>: a third picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "15",
+    "input": "image",
+    "label": "Picture 4",
+    "hint": "<Picture 4>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "16",
+    "input": "image",
+    "label": "Picture 5",
+    "hint": "<Picture 5>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "17",
+    "input": "image",
+    "label": "Picture 6",
+    "hint": "<Picture 6>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "18",
+    "input": "image",
+    "label": "Picture 7",
+    "hint": "<Picture 7>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "19",
+    "input": "image",
+    "label": "Picture 8",
+    "hint": "<Picture 8>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "20",
+    "input": "image",
+    "label": "Picture 9",
+    "hint": "<Picture 9>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "21",
+    "input": "image",
+    "label": "Picture 10",
+    "hint": "<Picture 10>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "22",
+    "input": "image",
+    "label": "Picture 11",
+    "hint": "<Picture 11>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "23",
+    "input": "image",
+    "label": "Picture 12",
+    "hint": "<Picture 12>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "24",
+    "input": "image",
+    "label": "Picture 13",
+    "hint": "<Picture 13>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "25",
+    "input": "image",
+    "label": "Picture 14",
+    "hint": "<Picture 14>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "26",
+    "input": "image",
+    "label": "Picture 15",
+    "hint": "<Picture 15>: one more picture to bring in, the same way",
+    "optional": true
+   },
+   {
+    "node": "27",
+    "input": "image",
+    "label": "Picture 16",
+    "hint": "<Picture 16>: one more picture to bring in, the same way",
     "optional": true
    }
   ]

@@ -476,6 +476,9 @@ esac
   // A workflow with two picture slots: the picture to edit and an optional "Another picture" (with a helper of its own).
   const twoPicFile = path.join(tmp, 'mock-two-pics.json');
   await fs.writeFile(twoPicFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'Picture to edit' } }, 12: { class_type: 'LoadImage', inputs: { image: 'example_2.png' }, _meta: { title: 'Another picture' } }, 13: { class_type: 'VAEEncode', inputs: { pixels: ['12', 0], vae: ['4', 2] }, _meta: { title: 'VAE Encode (another)' } } }));
+  // One that takes five pictures (like MiniMax H3 Image Edit's sixteen): the picture to edit and four optional ones.
+  const manyPicFile = path.join(tmp, 'mock-many-pics.json');
+  await fs.writeFile(manyPicFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), ...Object.fromEntries([11, 12, 13, 14, 15].map((id, i) => [id, { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: i ? `Picture ${i + 1}` : 'Picture to edit' } }])) }));
   await fs.writeFile(i2vWorkflowFile, JSON.stringify({ ...pruneToOutputs(convertUiWorkflow(SAVED_WORKFLOW, OBJECT_INFO), OBJECT_INFO), 11: { class_type: 'LoadImage', inputs: { image: 'example.png' }, _meta: { title: 'First frame' } } }));
 
   // A saved workflow whose checkpoint ComfyUI doesn't have yet, with the download link ComfyUI's templates carry.
@@ -622,7 +625,11 @@ esac
     assert(!(await js('document.querySelector("#quickModelChoice").open')), 'the quick model chooser starts folded');
     await click('#quickModelChoice summary');
     assert(await visible('#targetSelect'), 'opening Model reveals its chooser');
+    await click('#taskChoices .task-choice[aria-pressed="true"]');
+    assert(await js('document.querySelector("#quickModelChoice").open'), 'picking a task leaves Model open');
+    eq(await js('localStorage.getItem("pm.quickModelOpen")'), 'true', 'and Model remembers it was left open');
     await click('#quickModelChoice summary');
+    eq(await js('localStorage.getItem("pm.quickModelOpen")'), 'false', 'or folded');
     assert(!(await js('document.querySelector("#modelChoice").open')), 'model choices start folded');
     assert(!(await js('document.querySelector("#modelGuide").open')), 'the guide starts folded');
     assert(!(await js('document.querySelector("#writingOptions").open')), 'precise dials start folded');
@@ -1248,7 +1255,7 @@ esac
     mock.loseTemp(null);
   });
 
-  await test('a Brain with little room: fewer examples go along so the take fits; too little for any: plain words; more room from Brains', async () => {
+  await test('a Brain with little room is given more by itself so the take fits; too little for any: plain words; more room from Brains', async () => {
     // Krea 2 RAW gets thirty long example prompts (to exercise context trimming).
     const before = await (await fetch(`${APP}/api/models/krea2-raw`)).json();
     const had = new Set((await (await fetch(`${APP}/api/history`)).json()).map(x => x.id));
@@ -1265,9 +1272,10 @@ esac
       assert(await js('document.querySelector("#stageError").hidden'), `no error shown (${await text('#stageError')})`);
       eq(await count('.take .prompt-text:not([hidden])'), 1, 'the take came');
       const sent = mock.log.slice(calls).find(b => JSON.stringify(b.messages).includes('ROOMTEST'));
-      const kept = (sent.messages[0].content.match(/^Example \d+:/gm) || []).length;
-      assert(kept > 0 && kept < 30, `fewer examples went along: ${kept} of 30`);
+      eq((sent.messages[0].content.match(/^Example \d+:/gm) || []).length, 30, 'every example went along');
+      assert(mock.roomOf('mock/tiny-room') > 7000, `LM Studio loaded it again with more room: ${mock.roomOf('mock/tiny-room')}`);
       eq(mock.log.slice(calls).filter(b => JSON.stringify(b.messages).includes('ROOMTEST')).length, 1, 'fitted before asking: asked once');
+      await fetch(`${APP}/api/lmstudio/room`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'mock/tiny-room', contextLength: 7000 }) });
       // A Brain with room for nothing: the error says the numbers and the way out, in plain words.
       await choose('#llmSelect', 'mock/no-room');
       await type('#theme', 'ROOMTEST2 a lighthouse at dawn');
@@ -1276,6 +1284,8 @@ esac
       const err = await text('#stageError');
       assert(/needs about [\d,]+ tokens and Mock No Room 1B has room for 1,000, the most it can take\. Pick a Brain with more room/.test(err), `plain words with the numbers: ${err}`);
       assert(!mock.log.slice(calls).some(b => JSON.stringify(b.messages).includes('ROOMTEST2')), 'not even asked: it could not fit');
+      assert(await visible('#stageError .e-brain') && (await text('#stageError .e-brain')).startsWith('🔁 Write it with '), 'one click moves to a Brain with room and writes again');
+      assert(!(await visible('#stageError .e-room')), 'no more room to give a Brain at its most');
       // More room, from the Brain's card: the Room menu loads it again in LM Studio with the size picked.
       await click('.tabs button[data-view="brains"]');
       await js('document.querySelector("#brainsNew").open = true');
@@ -4008,6 +4018,39 @@ esac
     eq(refused.status, 400, 'and the server won\'t rewrite it either');
     assert(!(await js('document.querySelector("#manualMode").checked')), '✍️ your own prompt stays off');
     await click('#imageClear');
+  });
+
+  await test('step 3: a workflow that takes many pictures shows one empty slot at a time; several picked at once fill the next ones', async () => {
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="krea2-raw"]');
+    await openPanel('create-render');
+    await click((await visible('#wfpAdd')) ? '#wfpAdd' : '#wfpAddFirst');
+    await waitFor('document.querySelector("#wfDialog").open', 'dialog open');
+    await click('.wf-tabs button[data-value="upload"]');
+    await setFiles('#wfFile', [manyPicFile]);
+    await waitFor('!document.querySelector("#wfSetup").hidden', 'setup step');
+    await type('#wfName', 'Mock many pics');
+    await click('#wfSave');
+    await toastText('is ready');
+    await waitFor('!document.querySelector("#extraSlots").hidden', 'the extra slots show');
+    eq(await count('#extraSlots .xslot'), 1, 'one empty slot, not four');
+    assert((await text('#extraSlots .xslot-label')).includes('up to 5 pictures in all'), 'it says how many the workflow takes');
+    await setFiles('#extraSlots .xslot input[type="file"]', [fixture, fixture, fixture]);
+    await waitFor('document.querySelectorAll("#extraSlots .xslot.filled").length === 3', 'three pictures fill three slots');
+    eq(await count('#extraSlots .xslot'), 4, 'and the next empty one shows');
+    await click('#extraSlots .xslot[data-slot="0"] [data-act="clear"]');
+    await waitFor('document.querySelectorAll("#extraSlots .xslot.filled").length === 2', 'one removed');
+    eq(await js('[...document.querySelectorAll("#extraSlots .xslot")].map(x => x.classList.contains("filled") ? 1 : 0).join("")'), '110', 'the ones after it move up: no gap');
+    await setFiles('#extraSlots .xslot[data-slot="2"] input[type="file"]', [fixture, fixture, fixture]);
+    await toastText('left out');
+    await waitFor('document.querySelectorAll("#extraSlots .xslot.filled").length === 4', 'all slots full');
+    for (let n = 3; n >= 0; n--) { await click('#extraSlots .xslot[data-slot="0"] [data-act="clear"]'); await waitFor(`document.querySelectorAll("#extraSlots .xslot.filled").length === ${n}`, 'emptied'); }
+    await click('#wfpEdit');
+    await waitFor('document.querySelector("#wfDialog").open && !document.querySelector("#wfDelete").hidden', 'editing it');
+    await click('#wfDelete');
+    await click('#wfDelete');
+    await waitFor('!document.querySelector("#wfDialog").open', 'deleted');
+    await waitFor('document.querySelector("#extraSlots").hidden', 'slots gone with the workflow');
   });
 
   await test('step 3: a workflow with two picture slots grows a second slot; both go to the Brain and the render, an empty optional one is left out', async () => {
@@ -7011,6 +7054,11 @@ esac
     eq(mockCalls() - calls, 1, 'only the take is written');
     const t = ev.find(e => e.type === 'done').text;
     assert(t.includes('violet, round') && t.includes('platinum pixie cut') && !t.includes('copper'), 'your traits, not the old ones');
+    // 🪞 Recreate: the same picture again, the person kept (the generator still gets the picture).
+    ev = await events({ modelId: 'krea-2-character', variations: 1, theme: '', imageFile: img, imageRole: 'recreate', characterSheet: 'Eyes: violet, round' });
+    const ask = JSON.stringify(mock.log.at(-1).messages);
+    assert(ask.includes('role = \\"recreate\\"') && ask.includes('as the person to keep') && !ask.includes('will NOT receive'), 'the Brain recreates the picture, knowing the generator keeps the person');
+    eq(ev.find(e => e.type === 'saved').entry.imageRole, 'recreate', 'saved as a recreate');
     // MiniMax H3 Reference puts the traits in the person's line.
     ev = await events({ modelId: 'minimax-h3-ref', variations: 1, theme: 'running for a tram', imageFile: img, characterSheet: 'Eyes: violet, round' });
     assert(ev.find(e => e.type === 'done').text.includes('violet, round'), 'the trait reaches the video prompt');
@@ -7024,6 +7072,8 @@ esac
     await setFiles('#imageInput', [fixture]);
     await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
     assert(await visible('#sheetBlock'), 'the sheet box shows');
+    eq(await js('[...document.querySelectorAll("#roleBlock .role")].filter(b => !b.hidden).map(b => b.querySelector("b").textContent).join("|")'), 'New scene|Recreate', 'the person goes somewhere new, or this picture is made again');
+    eq(await js('document.querySelector("#roleBlock .role.active")?.dataset.value'), 'character', 'somewhere new by default');
     eq(await value('#sheetText'), '', 'empty until Generate');
     await click('#varSeg button[data-value="1"]');
     await type('#theme', 'reading in a library');

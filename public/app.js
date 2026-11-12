@@ -645,8 +645,10 @@ function syncResolution() {
 }
 
 // The image roles a model offers: its own list (e.g. only "character" for Wan Animate 2), else reference and recreate,
-// plus animate on video models. The role actually used is the one picked if offered, else the first.
-const rolesFor = m => (m?.imageRoles?.length ? m.imageRoles : ['reference', 'recreate', ...(m?.kind === 'video' ? ['animate'] : [])]);
+// plus animate on video models. A picture model that keeps a person can also recreate the picture (same person, same
+// shot). The role actually used is the one picked if offered, else the first.
+const rolesFor = m => (m?.imageRoles?.length ? withRecreate(m, m.imageRoles) : ['reference', 'recreate', ...(m?.kind === 'video' ? ['animate'] : [])]);
+const withRecreate = (m, roles) => (m.characterSheet && m.kind === 'image' && !roles.includes('recreate') ? [...roles, 'recreate'] : roles);
 const effectiveRole = () => {
   const offered = rolesFor(currentModel());
   return offered.includes(state.imageRole) ? state.imageRole : offered[0];
@@ -1922,6 +1924,10 @@ function themePlaceholder() {
     $('#theme').placeholder = 'Type or paste your prompt. It goes to the model exactly as you write it.';
     return;
   }
+  if (state.image && effectiveRole() === 'recreate') { // nothing to write: what's typed are changes to the picture
+    $('#theme').placeholder = 'Nothing needed: press Generate to make this picture again. Or type changes, e.g. in a red dress, at night… (optional)';
+    return;
+  }
   const staging = Boolean(currentModel()?.motionVideo);
   const list = staging ? SETTINGS : animating() ? MOTIONS : SURPRISES;
   const ex = list[phIdx % list.length];
@@ -1987,13 +1993,15 @@ function chooseTask(id) {
   const m = models.find(m => m.id === remembered) || models.find(m => m.id === task.prefer) || models[0];
   if (!m) return;
   selectModel(m.id);
-  $('#quickModelChoice').open = false;
   $('#modelChoice').open = false;
   setCreateWorkspace('create');
   $('#theme').focus({ preventScroll: true });
 }
 $('#taskChoices').addEventListener('click', e => chooseTask(e.target.closest('[data-task]')?.dataset.task));
-$('#targetSelect').addEventListener('change', e => { selectModel(e.target.value); $('#quickModelChoice').open = false; });
+$('#targetSelect').addEventListener('change', e => selectModel(e.target.value));
+// The Model fold under the task buttons stays open or folded as you left it.
+$('#quickModelChoice').open = saved.get('quickModelOpen', false);
+$('#quickModelChoice').addEventListener('toggle', e => saved.set('quickModelOpen', e.target.open));
 
 function renderModelChips() {
   const grid = $('#modelChips');
@@ -2140,7 +2148,13 @@ const ROLE_HINTS = {
   character: ['Your character performs the motion video\'s moves; your theme sets the place and the camera.', 'Your character performs the motion video\'s moves, somewhere the AI picks to suit them.'],
 };
 
-const SHEET_HINT = ['Keeps this person: their face, eyes, hair and build go into every take; your theme sets the scene.', 'Keeps this person: their face, eyes, hair and build go into every take, somewhere the AI picks.'];
+const SHEET_HINT = {
+  character: ['Keeps this person: their face, eyes, hair and build go into every take; your theme sets the scene.', 'Keeps this person: their face, eyes, hair and build go into every take, somewhere the AI picks.'],
+  recreate: ['Keeps this person and makes this picture again: same pose, clothes, place and light, with your theme as changes.', 'Keeps this person and makes this picture again: same pose, clothes, place and light.'],
+};
+// On a model that keeps a person, the two ways read as what you get, not as character animation.
+const ROLE_WORDS = { character: ['Character', 'It does the moves'], recreate: ['Recreate', 'Rebuild this image'] };
+const PERSON_ROLE_WORDS = { character: ['New scene', 'Same person, somewhere new'], recreate: ['Recreate', 'Same person, this picture'] };
 
 function renderRole() {
   const m = currentModel();
@@ -2150,7 +2164,14 @@ function renderRole() {
   // How the Brain uses the image: with your own prompt it goes into the workflow as it is, so there's nothing to pick.
   $('#roleBlock').hidden = !hasImage || offered.length < 2 || state.manual || Boolean(m?.noImage); // one way to use it: nothing to pick
   $('#roleHint').hidden = !hasImage || state.manual || Boolean(m?.noImage);
-  for (const b of $$('#roleBlock .role')) b.hidden = !offered.includes(b.dataset.value);
+  // In the model's own order (New scene before Recreate), moved only when it differs: a move drops keyboard focus.
+  const shown = $$('#roleBlock .role').filter(b => offered.includes(b.dataset.value)).map(b => b.dataset.value);
+  if (shown.join() !== offered.filter(r => shown.includes(r)).join()) for (const r of offered) { const b = $(`#roleBlock .role[data-value="${r}"]`); if (b) $('#roleBlock').append(b); }
+  for (const b of $$('#roleBlock .role')) {
+    b.hidden = !offered.includes(b.dataset.value);
+    const words = (m?.characterSheet ? PERSON_ROLE_WORDS : ROLE_WORDS)[b.dataset.value];
+    if (words) { b.querySelector('b').textContent = words[0]; b.querySelector('small').textContent = words[1]; }
+  }
   setActive($('#roleBlock'), role);
   // Character animation: your inputs takes the character and the motion video (also for a chain step that animates one).
   const motion = Boolean(m?.motionVideo);
@@ -2161,11 +2182,13 @@ function renderRole() {
   $('#dropzone').setAttribute('aria-disabled', String(noImage));
   $('#dropzone').tabIndex = noImage ? -1 : 0;
   $('#dzGallery').disabled = noImage;
-  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another target model.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it. A picture or video you made brings its recipe.';
+  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another target model.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render: put them somewhere new, or recreate this picture.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it. A picture or video you made brings its recipe.';
+  // What to drop, said where you drop it: a person model wants a clear photo of the person.
+  $('#dropzone .dz-title').innerHTML = m?.characterSheet && !state.manual && !noImage ? 'Drop a clear photo of the person, paste it, or <u>browse</u>' : 'Drop an image or a video you made, paste it, or <u>browse</u>';
   $('#imageStepTitle').textContent = motion ? 'Character & motion' : noImage ? 'No image' : 'Add an image';
   $('#imageStepOpt').textContent = noImage ? (hasImage ? 'this model works from words: your picture is set aside' : 'this model works from words') : motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
-  $('#roleHint').textContent = m?.characterSheet ? SHEET_HINT[hasTheme ? 0 : 1] : ROLE_HINTS[role][hasTheme ? 0 : 1];
+  $('#roleHint').textContent = (m?.characterSheet ? SHEET_HINT[role] || SHEET_HINT.character : ROLE_HINTS[role])[hasTheme ? 0 : 1];
   $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual || Boolean(m?.noImage);
   try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of your inputs
   $('#turnaroundBtn').hidden = m?.kind !== 'image';
@@ -2619,15 +2642,20 @@ function renderExtraSlots() {
   const slots = pictureSlots().slice(1);
   box.hidden = !slots.length;
   if (!slots.length) { box.innerHTML = ''; return; }
+  // A model can take many pictures (MiniMax H3 Image Edit: 16): the slots filled or needed show, and one empty slot
+  // after them to add the next, so a long row of empty boxes never fills step ③.
+  const last = slots.reduce((n, sl, i) => (!sl.optional || state.extras[i] ? i : n), -1);
   box.innerHTML = slots.map((sl, i) => {
+    if (i > last + 1) return '';
     const img = state.extras[i];
     const name = sl.label || `Picture ${i + 2}`;
+    const more = !img && sl.optional && slots.length > 2 ? ` · up to ${slots.length + 1} pictures in all` : '';
     return `<div class="xslot${img ? ' filled' : ''}" data-slot="${i}">
-      <span class="xslot-label">🖼️ ${esc(name)}<small>${sl.optional ? 'optional' : 'needed'}</small></span>
+      <span class="xslot-label">🖼️ ${esc(name)}<small>${sl.optional ? 'optional' : 'needed'}${more}</small></span>
       ${sl.hint ? `<span class="xslot-hint">${esc(sl.hint)}</span>` : ''}
       ${img ? `<img src="${img.dataUrl || `/images/${esc(img.file)}`}" alt="${esc(name)}">` : ''}
       <span class="xslot-acts">${img ? `<button type="button" class="btn small" data-act="replace">Replace</button><button type="button" class="btn small" data-act="gallery">Library</button><button type="button" class="btn small danger" data-act="clear">Remove</button>` : `<button type="button" class="btn small primary" data-act="replace">＋ Add</button><button type="button" class="btn small" data-act="gallery">🖼️ Library</button>`}</span>
-      <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" hidden>
+      <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp"${img ? '' : ' multiple'} hidden>
     </div>`;
   }).join('');
 }
@@ -2664,12 +2692,31 @@ $('#extraSlots').addEventListener('click', e => {
   const i = Number(slot.dataset.slot);
   if (b.dataset.act === 'replace') $('input[type="file"]', slot).click();
   else if (b.dataset.act === 'gallery') openImagePicker('image', { slot: i + 1 });
-  else if (b.dataset.act === 'clear') { state.extras[i] = null; setExtras(state.extras.map(x => x?.file || null)); renderWorkflowWarning(); }
+  else if (b.dataset.act === 'clear') { removeExtra(i); renderWorkflowWarning(); }
 });
+// Removing a picture from a run of optional slots moves the ones after it up, so the pictures stay numbered in
+// order (the model reads them as Picture 2, 3… with no gap).
+function removeExtra(i) {
+  const slots = pictureSlots().slice(1);
+  const files = state.extras.map(x => x?.file || null);
+  let end = i;
+  while (slots[i]?.optional && slots[end + 1]?.optional) end++;
+  for (let k = i; k < end; k++) files[k] = files[k + 1];
+  files[end] = null;
+  setExtras(files);
+}
+// Several pictures at once (picked or dropped) fill this slot and the empty slots after it.
+function loadExtraFiles(i, files) {
+  const pics = [...files].filter(f => f.type.startsWith('image/'));
+  const slots = pictureSlots().slice(1);
+  const free = slots.map((_, k) => k).filter(k => k === i || (k > i && !state.extras[k]));
+  pics.slice(0, free.length).forEach((f, n) => loadExtraFile(free[n], f));
+  if (pics.length > free.length) toast(`🖼️ ${pics.length - free.length} picture${pics.length - free.length === 1 ? '' : 's'} left out: this workflow takes ${slots.length + 1} in all.`, true);
+}
 $('#extraSlots').addEventListener('change', e => {
   const slot = e.target.closest('.xslot');
   if (!slot || e.target.type !== 'file') return;
-  loadExtraFile(Number(slot.dataset.slot), e.target.files[0]);
+  loadExtraFiles(Number(slot.dataset.slot), e.target.files);
   e.target.value = '';
 });
 // A picture dropped on a slot lands in that slot (anywhere else on the page: the first).
@@ -2683,8 +2730,7 @@ $('#extraSlots').addEventListener('drop', e => {
   slot.classList.remove('drag');
   dragDepth = 0;
   $('#dropOverlay').hidden = true;
-  const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
-  if (file) loadExtraFile(Number(slot.dataset.slot), file);
+  loadExtraFiles(Number(slot.dataset.slot), e.dataTransfer.files);
 });
 
 // Drop an image anywhere on the Create page; never let the browser navigate to a dropped file.
@@ -3423,6 +3469,7 @@ function errorTitle(msg) {
   if (/Prompt Maker server/i.test(msg)) return ['🔌', 'Lost the app server'];
   if (/can't see images|text-only/i.test(msg)) return ['🙈', 'This Brain can\'t see images'];
   if (/ran out of room|token limit|thinking/i.test(msg)) return ['🧠', 'The Brain ran out of room'];
+  if (/needs about [\d,]+ tokens and /.test(msg)) return ['🧠', 'Too much for this Brain'];
   if (/No Brain selected/i.test(msg)) return ['🧠', 'No Brain selected'];
   if (/in ComfyUI yet/i.test(msg)) return ['⬇', /needs a file /.test(msg) ? 'A file to get first' : 'A few files to get first'];
   if (/needs a newer ComfyUI/i.test(msg)) return ['⬆', 'ComfyUI needs an update'];
@@ -3441,17 +3488,42 @@ function showError(msg) {
   const filesToGet = /in ComfyUI yet/i.test(msg) && /Model files/.test(msg); // the model's files: ⬇ Model files gets them
   const comfyOld = /needs a newer ComfyUI/i.test(msg) && state.comfy?.local !== false; // the nodes come with a newer ComfyUI
   const packToAdd = state.comfy?.local !== false && /node packs?, which/i.test(msg) ? /Click ⬇ Install ([\w.-]+)/.exec(msg)?.[1] : ''; // a pack the workflow names
+  // Too much for the Brain: one click gives it more room, or moves to a Brain that has it, and writes again.
+  const need = Number(/needs about ([\d,]+) tokens and /.exec(msg)?.[1].replace(/,/g, '')) || 0;
+  const brain = need ? llmById(state.settings?.llmModel) : null;
+  const roomFor = l => ROOM_SIZES.find(r => r >= (need + 1000) * 1.15) || l.context;
+  const growTo = brain && /Give it more room/.test(msg) && brain.context ? Math.min(roomFor(brain), brain.context) : 0;
+  const bigger = need ? state.llms.find(l => l.id !== brain?.id && !l.cloud && (l.context || 0) >= (need + 1000) * 1.15 && (!state.image || l.vision !== false)) : null;
   // ComfyUI's own words (which step, the raw error) go under Details; what to do about it comes first.
   const step = /^ComfyUI failed at #\S+ ([^:]+): /.exec(msg)?.[1];
   const body = step
     ? `<p>ComfyUI stopped while working on the step “${esc(step.trim())}”. Often it ran out of memory, or a model file or setting in the workflow is wrong. Render again, or open the workflow in ComfyUI to check it.</p><details class="e-details"><summary>Details</summary><p>${esc(msg)}</p></details>`
     : `<p>${esc(msg)}</p>`;
-  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b>${body}${filesToGet ? '<button type="button" class="btn small primary e-files">⬇ Get the files</button>' : ''}${comfyOld ? '<button type="button" class="btn small primary e-update">⬆ Update ComfyUI</button>' : ''}${packToAdd ? `<button type="button" class="btn small primary e-pack" data-pack="${esc(packToAdd)}">⬇ Install ${esc(packToAdd)}</button>` : ''}${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}${canStartComfy ? '<button type="button" class="btn small primary e-comfy">▶ Start ComfyUI</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
+  card.innerHTML = `<span class="e-ico" aria-hidden="true">${ico}</span><div><b>${esc(title)}</b>${body}${filesToGet ? '<button type="button" class="btn small primary e-files">⬇ Get the files</button>' : ''}${comfyOld ? '<button type="button" class="btn small primary e-update">⬆ Update ComfyUI</button>' : ''}${packToAdd ? `<button type="button" class="btn small primary e-pack" data-pack="${esc(packToAdd)}">⬇ Install ${esc(packToAdd)}</button>` : ''}${growTo ? `<button type="button" class="btn small primary e-room">🧠 Give it room for ${roomLabel(growTo)} and write again</button>` : ''}${bigger ? `<button type="button" class="btn small${growTo ? '' : ' primary'} e-brain" data-id="${esc(bigger.id)}">🔁 Write it with ${esc(bigger.name)}</button>` : ''}${canStart ? '<button type="button" class="btn small primary e-start">▶ Start LM Studio server</button>' : ''}${canStartComfy ? '<button type="button" class="btn small primary e-comfy">▶ Start ComfyUI</button>' : ''}</div><button type="button" class="icon-btn x" aria-label="Dismiss error">✕</button>`;
   card.hidden = false;
   card.dataset.comfyDown = comfyDown ? '1' : '';
   card.style.setProperty('--eh', `${card.offsetHeight + (parseFloat(getComputedStyle(card.parentElement).rowGap) || 0)}px`);
   $('.x', card).addEventListener('click', () => showError(''));
   $('.e-start', card)?.addEventListener('click', e => startLmStudio(e.currentTarget));
+  $('.e-room', card)?.addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = `⏳ Loading ${brain.name} again with more room…`;
+    try {
+      const { llm } = await api('/api/lmstudio/room', { method: 'POST', body: { model: brain.id, contextLength: growTo } });
+      Object.assign(brain, llm);
+    } catch (err) {
+      if (btn.isConnected) { btn.disabled = false; btn.textContent = `🧠 Give it room for ${roomLabel(growTo)} and write again`; }
+      return toast(err.message, true);
+    }
+    showError('');
+    $('#generateBtn').click();
+  });
+  $('.e-brain', card)?.addEventListener('click', async e => {
+    await setBrain(e.currentTarget.dataset.id);
+    showError('');
+    $('#generateBtn').click();
+  });
   $('.e-files', card)?.addEventListener('click', () => openModelFiles({ modelId: state.modelId }));
   $('.e-update', card)?.addEventListener('click', e => updateComfyUi(e.currentTarget));
   $('.e-pack', card)?.addEventListener('click', e => installNodePack(e.currentTarget, e.currentTarget.dataset.pack));
@@ -10511,7 +10583,7 @@ async function continueFrom(it, { animate, character = false }) {
 const GATES = ['pick', 'brain', 'auto'];
 const USE_LABEL = { animate: 'first frame', reference: 'reference', recreate: 'recreate', character: 'character' };
 // How a Then step's model can use the image of the step before: first frame first on video models.
-const chainUses = m => (m?.imageRoles?.length ? m.imageRoles : m?.kind === 'video' ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate']);
+const chainUses = m => (m?.imageRoles?.length ? withRecreate(m, m.imageRoles) : m?.kind === 'video' ? ['animate', 'reference', 'recreate'] : ['reference', 'recreate']);
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || lo));
 const outputNoun = (m, n) => `${n} ${m?.kind === 'video' ? (n === 1 ? 'video' : 'videos') : (n === 1 ? 'still' : 'stills')}`;
 

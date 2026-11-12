@@ -7,7 +7,7 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import * as store from './lib/store.js';
-import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, setRoom, loadAlone } from './lib/lmstudio.js';
+import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, setRoom, loadAlone, ROOM_SIZES } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
@@ -23,7 +23,7 @@ import * as update from './lib/update.js';
 import { spawn } from 'node:child_process';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
-import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, setsStatus, fitToRoom, estimateTokens, tooBigMessage, OVERFLOW, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet, buildSurpriseMessages, cleanSurprise, lookOf } from './lib/prompt.js';
+import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, setsStatus, fitToRoom, estimateTokens, tooBigMessage, ANSWER_ROOM, OVERFLOW, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet, buildSurpriseMessages, cleanSurprise, lookOf } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
 import * as models from './lib/models.js';
@@ -325,15 +325,37 @@ const brainFailure = (outcome, message) => Object.assign(store.httpError(502, me
 // The room a local Brain was loaded with (null when unknown, or for a cloud Brain, which has plenty).
 const brainRoom = llm => (llm.cloud ? null : llm.contextLoaded || llm.context || null);
 
-// Builds a request that fits the Brain's room (fewer example prompts when it must, said in the status line), or
-// throws the plain-words error when it can't fit at all. build(model) makes the messages.
-function fitRequest(llm, model, build, onStatus) {
+// Builds a request that fits the Brain's room, or throws the plain-words error when it can't fit at all.
+// build(model) makes the messages. A local Brain loaded with less room than it can take is first loaded again with
+// enough (said in the status line), so nobody has to go to the Brains page for it; only when that can't be done
+// do fewer example prompts go along.
+async function fitRequest(settings, llm, model, build, onStatus) {
+  if (!brainRoom(llm)) return build(model);
+  const grew = await growRoom(settings, llm, estimateTokens(build(model)) + ANSWER_ROOM, onStatus);
   const room = brainRoom(llm);
-  if (!room) return build(model);
   const fit = fitToRoom(model, room, build);
-  if (!fit.fits) throw brainFailure('room', tooBigMessage(llm, room, estimateTokens(fit.messages)));
+  if (!fit.fits) throw brainFailure('room', tooBigMessage(llm, room, estimateTokens(fit.messages), { couldntGrow: grew === false }));
   if (fit.dropped) onStatus?.(`${llm.name} has room for ${room.toLocaleString('en-US')} tokens: fewer example prompts go along, so the request fits.`);
   return fit.messages;
+}
+
+// Returns true when it loaded the Brain with more room, false when that failed, undefined when it wasn't needed.
+async function growRoom(settings, llm, need, onStatus) {
+  const room = brainRoom(llm);
+  if (llm.cloud || !room || need <= room || !(llm.context > room)) return undefined;
+  const next = Math.min(ROOM_SIZES.find(r => r > room && r >= need * 1.15) || llm.context, llm.context);
+  onStatus?.(`Giving ${llm.name} more room (${next.toLocaleString('en-US')} tokens) so your request fits. Loading it again takes a moment…`);
+  const remember = (id, r) => (r ? store.noteBrain(id, { room: r }).catch(() => {}) : null);
+  try {
+    const grown = await withGpu('brain', settings, {}, () => setRoom(settings.lmStudioUrl, llm.id, next, { onUnload: remember, onStatus }));
+    llm.contextLoaded = grown.contextLoaded || next;
+    llm.loaded = true;
+    await remember(llm.id, llm.contextLoaded);
+    return true;
+  } catch (err) {
+    console.warn(`[room] couldn't give ${llm.name} more room: ${err.message}`);
+    return false;
+  }
 }
 
 // LM Studio said the request didn't fit after all: the same plain words, with the numbers.
@@ -349,9 +371,11 @@ async function recordRun(llm, outcome, t0, warm) {
   await store.recordBrainRun(llm.id, { outcome, seconds: warm ? secondsSince(t0) : null }).catch(() => {});
 }
 
-// The image role used: one the model offers (its imageRoles, else reference / recreate, plus animate for video).
+// The image role used: one the model offers (its imageRoles, else reference / recreate, plus animate for video; a
+// picture model that keeps a person can also recreate the picture).
 function roleFor(model, wanted) {
-  const offered = model.imageRoles?.length ? model.imageRoles : ['reference', 'recreate', ...(model.kind === 'video' ? ['animate'] : [])];
+  const own = model.imageRoles?.length && model.characterSheet && model.kind === 'image' ? [...new Set([...model.imageRoles, 'recreate'])] : model.imageRoles;
+  const offered = own?.length ? own : ['reference', 'recreate', ...(model.kind === 'video' ? ['animate'] : [])];
   return offered.includes(wanted) ? wanted : offered[0];
 }
 
@@ -402,12 +426,13 @@ async function spokenLine(settings, line) {
   return { voice: r.voice, text: line.text, file: r.file, seconds: r.seconds };
 }
 
+const MAX_PICTURES = 16; // the most pictures a workflow takes (MiniMax H3 Image Edit's limit)
 // The other picture slots of step ③: their stored files (checked), the slots' names and hints (from the picked
 // workflow), and the pictures as the Brain sees them. Slot 1 is the first picture (imageFile); these are 2, 3…
 async function extraPictures(body, imageFile) {
-  const files = (Array.isArray(body.images) ? body.images : []).slice(0, 6).map(f => (typeof f === 'string' && /^[a-f0-9]{20}\.(jpg|png|webp)$/.test(f) ? f : null));
+  const files = (Array.isArray(body.images) ? body.images : []).slice(0, MAX_PICTURES - 1).map(f => (typeof f === 'string' && /^[a-f0-9]{20}\.(jpg|png|webp)$/.test(f) ? f : null));
   while (files.length && files.at(-1) === null) files.pop();
-  const slots = (Array.isArray(body.imageSlots) ? body.imageSlots : []).slice(0, 7).map(x => ({ label: String(x?.label || '').trim().slice(0, 40), hint: String(x?.hint || '').trim().slice(0, 300), optional: x?.optional === true }));
+  const slots = (Array.isArray(body.imageSlots) ? body.imageSlots : []).slice(0, MAX_PICTURES).map(x => ({ label: String(x?.label || '').trim().slice(0, 40), hint: String(x?.hint || '').trim().slice(0, 300), optional: x?.optional === true }));
   const imageDataUrls = [];
   for (const f of files) imageDataUrls.push(f ? await store.readImageDataUrl(f) : null);
   return { images: files, imageSlots: files.length || slots.length > 1 ? slots : [], imageDataUrls: imageFile ? imageDataUrls : [] };
@@ -536,7 +561,7 @@ async function generate(req, res) {
       }
     }
     for (let index = 0; index < count; index++) {
-      messages = fitRequest(llm, modelFor(model, settings), m => buildGenerateMessages(masterFor(settings), m, { ...params, sourcePrompt: source?.text, video: brainVideo, extraImages: imageDataUrls }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] }), text => stream.send({ type: 'status', text }));
+      messages = await fitRequest(settings, llm, modelFor(model, settings), m => buildGenerateMessages(masterFor(settings), m, { ...params, sourcePrompt: source?.text, video: brainVideo, extraImages: imageDataUrls }, imageDataUrl, { index: had.length + index, count: had.length + count, previous: [...had, ...texts] }), text => stream.send({ type: 'status', text }));
       if (setsStatus(settings)) stream.send({ type: 'status', text: setsStatus(settings) });
       const t0 = Date.now();
       const warm = llm.loaded !== false;
@@ -656,7 +681,7 @@ async function refine(req, res) {
   const stream = await startStream(res, settings, llm, 1, seesImages);
   let messages = null;
   try {
-    messages = fitRequest(llm, modelFor(model, settings), m => buildRefineMessages(masterFor(settings), m, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo, extraImages }, imageDataUrl, current, instruction), text => stream.send({ type: 'status', text }));
+    messages = await fitRequest(settings, llm, modelFor(model, settings), m => buildRefineMessages(masterFor(settings), m, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo, extraImages }, imageDataUrl, current, instruction), text => stream.send({ type: 'status', text }));
     const t0 = Date.now();
     let reasoning = '';
     const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
@@ -967,6 +992,7 @@ const STARTERS_ADDED = path.join(store.DATA_DIR, 'starters.json');
 const startersAdded = () => fs.readFile(STARTERS_ADDED, 'utf8').then(JSON.parse).catch(() => ({}));
 const addedKeys = v => (Array.isArray(v) ? v : v ? [v] : []);
 let addingStarters = null;
+const triedUpdate = new Set();
 function addStarters() {
   addingStarters ??= (async () => {
     const added = await startersAdded();
@@ -991,6 +1017,14 @@ function addStarters() {
       }
     }
     if (changed) await fs.writeFile(STARTERS_ADDED, JSON.stringify(added, null, 2) + '\n');
+    // A starter that now takes more pictures (MiniMax H3 Image Edit: 3 → 16) updates the copy you have, keeping your
+    // settings and LoRAs.
+    for (const flow of flows.filter(f => f.source?.startsWith('starter:') && !triedUpdate.has(f.id))) {
+      triedUpdate.add(flow.id); // (once a run: a failed update isn't tried at every look)
+      const shipped = await fs.readFile(starterFile(flow.source.slice('starter:'.length)) || '', 'utf8').then(JSON.parse).catch(() => null);
+      if ((shipped?.mapping?.images?.length || 0) <= (flow.mapping?.images?.length || 0)) continue;
+      await refreshWorkflow(flow, {}).catch(err => console.warn(`Couldn't update the starter workflow ${flow.name}: ${err.message}`));
+    }
   })().finally(() => { addingStarters = null; });
   return addingStarters;
 }
