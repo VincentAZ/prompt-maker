@@ -1313,6 +1313,36 @@ esac
     }
   });
 
+  await test('a Brain that sees pictures is loaded with a step a picture fits in, and one that dies mid-answer is asked again', async () => {
+    // Loaded with LM Studio's own step (512 tokens): a picture would kill it, so it's loaded again first.
+    const had = new Set((await (await fetch(`${APP}/api/history`)).json()).map(x => x.id));
+    const modelBefore = await js('document.querySelector(".model-card.active")?.dataset.id'); // (the tests after this one count Krea entries)
+    await click('.tabs button[data-view="create"]');
+    await choose('#llmSelect', 'mock/vision-8b');
+    mock.setBatch('mock/vision-8b', 512);
+    await click('.model-card[data-id="krea2-raw"]');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'picture in');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'BATCHTEST a harbour at dawn');
+    await click('#generateBtn');
+    await genDone();
+    assert(await js('document.querySelector("#stageError").hidden'), `no error (${await text('#stageError')})`);
+    eq(mock.batchOf('mock/vision-8b'), 2048, 'loaded again with a step a picture fits in');
+    // The model dies mid-request anyway: loaded again and asked once more, no error shown.
+    const calls = mock.log.length;
+    await type('#theme', 'CRASHTEST a harbour at dusk');
+    await click('#generateBtn');
+    await genDone();
+    assert(await js('document.querySelector("#stageError").hidden'), `no error after the crash (${await text('#stageError')})`);
+    eq(await count('.take .prompt-text:not([hidden])'), 1, 'the take came');
+    eq(mock.log.slice(calls).filter(b => JSON.stringify(b.messages).includes('CRASHTEST a harbour')).length >= 2, true, 'asked again after the crash');
+    await click('#imageClear');
+    for (const e of (await (await fetch(`${APP}/api/history`)).json()).filter(x => !had.has(x.id))) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE' });
+    if (modelBefore) await click(`.model-card[data-id="${modelBefore}"]`);
+    await goto(`${APP}/#create`);
+  });
+
   await test('one Brain at a time: asking a Brain unloads the others, and it comes back with the room it had', async () => {
     mock.resetLoaded();
     eq(mock.loadedKeys().length, 4, 'four loaded, as the mock starts');

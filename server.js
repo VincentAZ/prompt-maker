@@ -7,7 +7,7 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import * as store from './lib/store.js';
-import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, setRoom, loadAlone, ROOM_SIZES } from './lib/lmstudio.js';
+import { listLlms, streamCompletion, EMPTY_THINK, assertLocalUrl, startServer, setRoom, loadAlone, ROOM_SIZES, MIN_ROOM } from './lib/lmstudio.js';
 import * as assistant from './lib/assistant.js';
 import * as autostart from './lib/autostart.js';
 import * as services from './lib/services.js';
@@ -235,7 +235,9 @@ function sampling(settings, temperature, llm) {
 async function ensureAlone(settings, llm, onStatus = () => {}) {
   const notes = await store.getBrainNotes().catch(() => ({}));
   const remember = (id, room) => (room ? store.noteBrain(id, { room }).catch(() => {}) : null);
-  const out = await loadAlone(settings.lmStudioUrl, llm.id, { contextLength: notes[llm.id]?.room || null, onUnload: remember, onStatus }).catch(err => { if (isOutOfMemory(err)) throw memoryError(err); return null; });
+  // A room picked on the Brains page is kept as it is; any other gets at least MIN_ROOM.
+  const note = notes[llm.id] || {};
+  const out = await loadAlone(settings.lmStudioUrl, llm.id, { contextLength: note.room || null, floor: note.roomPicked ? null : MIN_ROOM, onUnload: remember, onStatus }).catch(err => { if (isOutOfMemory(err)) throw memoryError(err); return null; });
   if (out?.loaded) await remember(llm.id, out.llm.contextLoaded);
   return out;
 }
@@ -247,7 +249,17 @@ async function complete(settings, llm, body, options) {
   if (llm.cloud) return completeNow(settings, llm, body, options);
   return withGpu('brain', settings, options, async () => {
     await ensureAlone(settings, llm, options.onStatus);
-    return completeNow(settings, llm, body, options);
+    try {
+      return await completeNow(settings, llm, body, options);
+    } catch (err) {
+      // The model process died mid-request (LM Studio says "terminated"): loaded again (with the step size a
+      // picture needs) and asked once more, so a crash costs a few seconds, not the take.
+      if (options.signal?.aborted || !/terminated|crashed|exited unexpectedly|model.*(?:unloaded|not loaded)/i.test(err.message || '')) throw err;
+      console.warn(`[brain] ${llm.name} stopped (${err.message}): loading it again and asking once more`);
+      options.onStatus?.(`${llm.name} stopped in LM Studio. Loading it again and asking once more…`);
+      await ensureAlone(settings, llm, options.onStatus);
+      return completeNow(settings, llm, body, options);
+    }
   });
 }
 async function completeNow(settings, llm, body, { signal, onUpdate, onStatus }) {
@@ -2192,7 +2204,7 @@ async function route(req, res) {
     const settings = await store.getSettings();
     const remember = (id, room) => (room ? store.noteBrain(id, { room }).catch(() => {}) : null);
     const llm = await withGpu('brain', settings, {}, () => setRoom(settings.lmStudioUrl, String(body.model || ''), body.contextLength, { onUnload: remember }));
-    await remember(llm.id, llm.contextLoaded || Number(body.contextLength));
+    await store.noteBrain(llm.id, { room: llm.contextLoaded || Number(body.contextLength), roomPicked: true }).catch(() => {});
     return sendJson(res, 200, { llm });
   }
   if (p === '/api/lmstudio/start' && m === 'POST') {

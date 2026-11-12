@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs';
 const MODELS = [
   { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b', config: { context_length: 32768 } }] },
   // Loaded with little room: ✦ Ask folds a long chat on it after a few rounds.
-  { key: 'mock/small-room', display_name: 'Mock Small Room 8B', type: 'llm', params_string: '8B', max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/small-room', config: { context_length: 12288 } }] },
+  { key: 'mock/small-room', display_name: 'Mock Small Room 8B', type: 'llm', params_string: '8B', max_context_length: 12288, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/small-room', config: { context_length: 12288 } }] },
   // Loaded with a small room (and one with almost none): a request that doesn't fit is refused like LM Studio does.
   { key: 'mock/tiny-room', display_name: 'Mock Tiny Room 4B', type: 'llm', params_string: '4B', max_context_length: 32768, capabilities: { vision: false }, loaded_instances: [{ id: 'mock/tiny-room', config: { context_length: 7000 } }] },
   { key: 'mock/no-room', display_name: 'Mock No Room 1B', type: 'llm', params_string: '1B', max_context_length: 1000, capabilities: { vision: false }, loaded_instances: [{ id: 'mock/no-room', config: { context_length: 1000 } }] },
@@ -26,6 +26,9 @@ const INITIAL = new Map(MODELS.map(m => [m.key, structuredClone(m.loaded_instanc
 const DEFAULT_ROOM = Object.fromEntries(MODELS.map(m => [m.key, m.loaded_instances?.[0]?.config?.context_length || 32768]));
 const resetLoaded = () => { for (const m of MODELS) m.loaded_instances = structuredClone(INITIAL.get(m.key)); };
 export const loadedKeys = () => MODELS.filter(m => m.loaded_instances?.length).map(m => m.key);
+// The tokens a Brain takes in one step (LM Studio's physical batch): a picture must fit in one, or the model dies.
+export const batchOf = key => MODELS.find(m => m.key === key)?.loaded_instances?.[0]?.config?.physical_batch_size ?? null;
+export function setBatch(key, n) { for (const i of MODELS.find(m => m.key === key)?.loaded_instances || []) i.config.physical_batch_size = n; }
 export const roomOf = key => MODELS.find(m => m.key === key)?.loaded_instances?.[0]?.config?.context_length ?? null;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -199,6 +202,7 @@ export function startMock(port) {
   const log = [];
   let server;
   let overflowed = false; // "overflow once": the chat doesn't fit, once
+  const crashed = new Set(); // the CRASHTEST requests that already died once
   let lostTemp = null; // "TEMPTEST": LM Studio's scratch folder is gone, until the app puts it back (set by the test)
 
   const handler = async (req, res) => {
@@ -222,7 +226,7 @@ export function startMock(port) {
       const m = MODELS.find(x => x.key === body.model);
       if (!m) return json(404, { error: { type: 'model_not_found', message: `Model ${body.model} not found in downloaded models` } });
       const id = `${m.key}${m.loaded_instances?.length ? `:${m.loaded_instances.length + 1}` : ''}`;
-      (m.loaded_instances ||= []).push({ id, config: { context_length: body.context_length || DEFAULT_ROOM[m.key] } });
+      (m.loaded_instances ||= []).push({ id, config: { context_length: body.context_length || DEFAULT_ROOM[m.key], physical_batch_size: body.physical_batch_size || 512 } });
       await sleep(300);
       return json(200, { type: 'llm', instance_id: id, load_time_seconds: 0.3, status: 'loaded' });
     }
@@ -241,6 +245,14 @@ export function startMock(port) {
     if (thinkingOver) body = { ...body, messages: body.messages.slice(0, -1) };
     const allText = body.messages.map(m => textOf(m.content)).join('\n');
     if (allText.includes('FAILTEST')) return json(500, { error: { message: 'Mock failure: the model crashed' } });
+    // A picture bigger than the step it was loaded with kills the model process, as Gemma does: LM Studio says
+    // "terminated" (and loads it again by itself, with the same step). "CRASHTEST" dies once, whatever the step.
+    const picture = body.messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
+    const step = asked?.loaded_instances?.[0]?.config?.physical_batch_size;
+    if ((picture && step != null && step < 1024) || (allText.includes('CRASHTEST') && !crashed.has(allText))) {
+      crashed.add(allText);
+      return json(400, { error: 'terminated' });
+    }
     if (lostTemp && allText.includes('TEMPTEST') && !existsSync(lostTemp)) {
       return json(400, { error: { message: `Failed to load model "mock-7b". Error: ENOENT: no such file or directory, mkdtemp '${lostTemp}/lmstudio-chat-template-XbR2DR'` } });
     }
@@ -365,7 +377,7 @@ export function startMock(port) {
   return {
     log,
     loseTemp: dir => { lostTemp = dir; },
-    resetLoaded, loadedKeys, roomOf,
+    resetLoaded, loadedKeys, roomOf, batchOf, setBatch,
     start: listen,
     stop: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }),
   };
