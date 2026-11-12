@@ -3017,7 +3017,7 @@ async function loadVideoFile(file, { quiet = false } = {}) {
     setVideo({
       file: name, preview: prep.preview || null, sheet, seconds: Math.round(seconds * 100) / 100, frames: sheet ? SHEET_FRAMES : 0,
       width, height, ratio: width && height ? width / height : null, fps: prep.info?.fps || null, ffmpeg: prep.ffmpeg, url: playable ? url : null,
-      bars: prep.info?.bars || null,
+      bars: prep.info?.bars || null, ...videoPace(prep.info),
     });
     const aspect = shapeIcon() === '🕺' ? matchImageAspect() : null; // with a character, the clip takes its shape
     if (quiet) return;
@@ -3030,14 +3030,14 @@ async function loadVideoFile(file, { quiet = false } = {}) {
 }
 
 // Swaps the motion video for a copy made by ffmpeg: at 24 fps (so a fast phone video doesn't take 5× as long),
-// without its black bars (crop), or a part of it (trim: { start, seconds }).
+// without its black bars (crop), a part of it (trim: { start, seconds }), or smooth (its gaps filled, black flashes out).
 async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
   const v = state.video;
   if (!v?.file) return;
   const label = btn?.textContent;
   if (btn) {
     btn.disabled = true;
-    btn.textContent = { crop: '⏳ Cropping…', trim: '⏳ Cutting…', retime: '⏳ Making a 24 fps copy…' }[kind];
+    btn.textContent = { crop: '⏳ Cropping…', trim: '⏳ Cutting…', retime: '⏳ Making a 24 fps copy…', smooth: '⏳ Smoothing… (takes a while)' }[kind];
   }
   try {
     const r = await api(`/api/videos/${encodeURIComponent(v.file)}/${kind}`, { method: 'POST', body: kind === 'retime' ? { fps: 24 } : part || {} });
@@ -3047,7 +3047,8 @@ async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
     if (quiet) return r;
     toast(kind === 'crop' ? `✂️ Now using your motion video without its black bars · aspect ${$('#aspect').value}`
       : kind === 'trim' ? `✂️ Now using ${secsLabel(r.info?.seconds || part.seconds)} of your motion video, from ${secsLabel(part.start)}`
-        : '🕺 Now using a 24 fps copy of your motion video');
+        : kind === 'smooth' ? '✨ Now using a smooth copy of your motion video'
+          : '🕺 Now using a 24 fps copy of your motion video');
     return r;
   } catch (err) {
     if (quiet) throw err;
@@ -3068,6 +3069,8 @@ async function videoCopy(btn, kind, part = null, { quiet = false } = {}) {
 // O end, Space play. It starts out as long as the picked workflow animates (81 frames for some), else all of it.
 // Frames count at the video's frame rate: a = first frame kept, b = the frame after the last one.
 const trimFps = () => state.video?.fps || 24;
+// The video's own frames that a workflow's `frames` cover (renders may take it at another rate: renderFps).
+const trimFramesFor = frames => Math.round((frames * trimFps()) / (renderFps(state.video) || trimFps()));
 const trimTotal = () => Math.max(1, Math.round((state.video?.seconds || 0) * trimFps()));
 const clockLabel = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(2).padStart(5, '0')}`;
 const tv = () => $('#trimVideo');
@@ -3081,7 +3084,7 @@ function openTrim() {
   if (!v?.file || !src) return;
   const total = trimTotal();
   const flow = activeFlow();
-  state.trim = { a: 0, b: Math.min(total, typeof flow?.motionFrames === 'number' ? flow.motionFrames : total) };
+  state.trim = { a: 0, b: Math.min(total, typeof flow?.motionFrames === 'number' ? trimFramesFor(flow.motionFrames) : total) };
   $('#motionPreview').pause();
   const video = tv();
   if (video.getAttribute('src') !== src) video.src = src;
@@ -3140,7 +3143,7 @@ function syncTrim({ fields = true } = {}) {
   }
   const flow = activeFlow();
   const n = t.b - t.a;
-  $('#trimNote').textContent = `Frames ${t.a + 1}–${t.b} · ${n} frames · ${secsLabel(n / fps)} (${clockLabel(t.a / fps)} → ${clockLabel(t.b / fps)})${typeof flow?.motionFrames === 'number' && n > flow.motionFrames + 1 ? ` · “${flow.name}” animates the first ${flow.motionFrames} of them` : ''}`;
+  $('#trimNote').textContent = `Frames ${t.a + 1}–${t.b} · ${n} frames · ${secsLabel(n / fps)} (${clockLabel(t.a / fps)} → ${clockLabel(t.b / fps)})${typeof flow?.motionFrames === 'number' && n > trimFramesFor(flow.motionFrames) + 1 ? ` · “${flow.name}” animates the first ${trimFramesFor(flow.motionFrames)} of them` : ''}`;
   $('#trimGo').disabled = n >= total; // the whole video: nothing to cut
 }
 
@@ -3269,7 +3272,7 @@ function setVideo(v) {
     : '⏳ Reading the video…';
   renderMotionHint();
   syncHolds();
-  saved.set('video', v?.file ? { file: v.file, preview: v.preview, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, ratio: v.ratio, fps: v.fps, ffmpeg: v.ffmpeg, bars: v.bars || null } : null);
+  saved.set('video', v?.file ? { file: v.file, preview: v.preview, sheet: v.sheet, seconds: v.seconds, frames: v.frames, width: v.width, height: v.height, ratio: v.ratio, fps: v.fps, ffmpeg: v.ffmpeg, bars: v.bars || null, ...videoPace(v) } : null);
   if (!v && old) {
     const m = currentModel();
     if (m?.motionVideo && !m.aspectRatios.includes($('#aspect').value) && $('#aspect').value !== state.sizeShape) { // the video's own ratio goes with it
@@ -3282,7 +3285,20 @@ function setVideo(v) {
   if (state.chain.steps.length) renderChainEditor(); // a character step needs it
 }
 
-// Under the motion video: how it's used, or what to know about this one (no preview here, a high frame rate).
+// How evenly a motion video's frames come and where it flashes black, as ffmpeg found (lib/videotools.js pace, flashes).
+const videoPace = i => ({ uneven: Boolean(i?.uneven), steadyFps: i?.steadyFps || null, missing: i?.missing || 0, flashes: Array.isArray(i?.flashes) ? i.flashes : [] });
+
+// The frame rate renders take the motion video at: a steady copy of a fast or uneven one (server.js, at render).
+function renderFps(v) {
+  if (!v?.fps || !v.ffmpeg || !(v.fps > 30 || v.uneven)) return v?.fps || null;
+  return Math.max(8, Math.min(24, Math.round(v.uneven && v.steadyFps ? v.steadyFps : 24)));
+}
+
+// A motion video that visibly skips: frames missing here and there (more than a few), or a black flash.
+const videoSkips = v => Boolean(v?.file) && ((v.missing || 0) >= Math.max(3, Math.round((v.seconds || 0) * (v.fps || 0) * 0.03)) || (v.flashes || []).length > 0);
+
+// Under the motion video: how it's used, or what to know about this one (no preview here, a high or uneven frame rate,
+// skips).
 function renderMotionHint() {
   const v = state.video;
   const hint = $('#motionHint');
@@ -3301,6 +3317,12 @@ function renderMotionHint() {
     parts.push(v.ffmpeg
       ? `🎞 ${Math.round(v.fps)} fps: renders use a 24 fps copy, so the moves keep their speed and it takes less time.`
       : `⚠️ ${Math.round(v.fps)} fps: Wan Animate 2 uses every frame, so the moves play ${Math.round((v.fps / 24) * 10) / 10}× too fast. With ffmpeg installed, Prompt Maker renders from a 24 fps copy.`);
+  } else if (v?.uneven) { // only ffmpeg can tell, so a copy can be made
+    parts.push(`🎞 Its frame rate changes as it plays (phones and screen recorders do that), which would make the moves speed up and slow down: renders use a steady ${renderFps(v)} fps copy, the rate it keeps up all through.`);
+  }
+  if (videoSkips(v)) {
+    const flash = (v.flashes || []).length;
+    parts.push(`⚠️ It skips: ${[v.missing ? `${v.missing} frames are missing` : '', flash ? `it flashes black at ${secsLabel(v.flashes[0].at)}${flash > 1 ? ` (and ${flash - 1} more times)` : ''}` : ''].filter(Boolean).join(' and ')}. The clip would skip with it. ✨ Smooth it fills in the gaps${flash ? ' and takes out the black' : ''} (a few seconds for each second of video).`);
   }
   hint.innerHTML = parts.length ? parts.map(esc).join(' ') : 'The clip is as long as this video. Its frames are used one for one, so a 16–24 fps video moves naturally.';
   if (v?.file && v.ffmpeg === false && state.services?.ffmpeg?.supported !== false) { // one click sets it up, and the video is looked at again
@@ -3310,6 +3332,10 @@ function renderMotionHint() {
   if (v?.bars && v.ffmpeg) {
     hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoCrop">✂️ Crop the bars</button>');
     $('#videoCrop').addEventListener('click', e => videoCopy(e.currentTarget, 'crop'));
+  }
+  if (videoSkips(v) && v.ffmpeg) {
+    hint.insertAdjacentHTML('beforeend', ' <button type="button" class="chip-btn" id="videoSmooth">✨ Smooth it</button>');
+    $('#videoSmooth').addEventListener('click', e => videoCopy(e.currentTarget, 'smooth'));
   }
   $('#videoTrim').hidden = !(v?.file && v.ffmpeg && v.seconds > 1); // cutting needs ffmpeg
 }
@@ -3327,7 +3353,7 @@ function restoreVideo(v) {
   if (v?.file && v.bars === undefined) {
     api(`/api/videos/${encodeURIComponent(v.file)}/prepare`, { method: 'POST', body: { preview: false } }).then(prep => {
       if (state.video?.file !== v.file) return;
-      setVideo({ ...state.video, bars: prep.info?.bars || null, fps: state.video.fps || prep.info?.fps || null, ffmpeg: prep.ffmpeg });
+      setVideo({ ...state.video, bars: prep.info?.bars || null, ...videoPace(prep.info), fps: state.video.fps || prep.info?.fps || null, ffmpeg: prep.ffmpeg });
     }).catch(() => {});
   }
 }
@@ -4194,7 +4220,7 @@ $('#reelGrid').addEventListener('click', async e => {
   const n = reelItems.findIndex(x => reelKey(x) === cell?.dataset.key);
   const it = reelItems[n];
   if (!it) return;
-  if (b.dataset.act === 'open') return openLightbox(reelItems, n, { fromGallery: inGallery(), filtered: true });
+  if (b.dataset.act === 'open') return openLightbox(reelItems, n, { fromGallery: inGallery(), fromReel: true, filtered: true });
   if (b.dataset.act === 'hide') {
     const want = !it.render.hidden;
     try {
@@ -4535,7 +4561,7 @@ $('#reelSort').addEventListener('change', e => { saved.set('reelSort', e.target.
 $('#reelCompare').addEventListener('click', () => {
   const items = reelItems.filter(it => reelPicked.has(reelKey(it)));
   if (items.length !== 2) return;
-  openLightbox(items, 1, { fromGallery: inGallery(), compare: true });
+  openLightbox(items, 1, { fromGallery: inGallery(), fromReel: true, compare: true });
 });
 
 // The renders picked, in grid order.
@@ -9253,9 +9279,10 @@ function renderWorkflowWarning() {
 function clipNote(flow) {
   const v = state.video;
   const f = flow.motionFrames;
-  if (!currentModel()?.motionVideo || !v?.seconds || !v.fps || typeof f !== 'number' || f >= Math.round(v.seconds * v.fps) - 1) return '';
+  const fps = renderFps(v);
+  if (!currentModel()?.motionVideo || !v?.seconds || !fps || typeof f !== 'number' || f >= Math.round(v.seconds * fps) - 1) return '';
   const all = workflowsFor(state.modelId).find(w => w.motionFrames === 'all');
-  return `“${flow.name}” animates ${f} frames: the first ${secsLabel(f / v.fps)} of your ${secsLabel(v.seconds)} motion video. ${all ? `For all of it, pick “${all.name}”. To pick which part, use` : 'To pick which part, use'} ✂️ Trim in your inputs.`;
+  return `“${flow.name}” animates ${f} frames: the first ${secsLabel(f / fps)} of your ${secsLabel(v.seconds)} motion video. ${all ? `For all of it, pick “${all.name}”. To pick which part, use` : 'To pick which part, use'} ✂️ Trim in your inputs.`;
 }
 
 function renderStaleNotice() {
@@ -11305,13 +11332,14 @@ async function openRun(entry) {
 
 // pin: the render kept on the left while you compare (⇆ Compare), or null. shown: what the stage holds now, so
 // rating or redrawing the side panel doesn't start a playing video again.
-const lb = { items: [], index: 0, fromGallery: false, returnFocus: null, pin: null, shown: '' };
+const lb = { items: [], index: 0, fromGallery: false, fromReel: false, returnFocus: null, pin: null, shown: '' };
 
-function openLightbox(items, index, { fromGallery = false, compare = false, filtered = false } = {}) {
+function openLightbox(items, index, { fromGallery = false, fromReel = false, compare = false, filtered = false } = {}) {
   lb.items = [...items];
   lb.filtered = filtered; // what Your renders' filters let through: a render rated out of them leaves
   lb.index = index;
   lb.fromGallery = fromGallery;
+  lb.fromReel = fromReel; // opened from Your renders (on Create or in the Library)
   lb.pin = compare ? items[0] : null;
   lb.returnFocus = document.activeElement;
   $('#lightbox').hidden = false;
@@ -11330,8 +11358,8 @@ function closeLightbox() {
   lb.pin = null;
   document.body.style.overflow = '';
   const seen = lb.items[lb.index];
-  if (lb.fromGallery && seen) {
-    // The Library marks the render you looked at last (you may have browsed on from the one you opened).
+  if ((lb.fromGallery || lb.fromReel) && seen) {
+    // Your renders and the Library mark the render you looked at last (you may have browsed on from the one you opened).
     state.gallerySeen = galleryKey(seen);
     const tile = markSeen();
     if (tile) {
@@ -11347,7 +11375,7 @@ function closeLightbox() {
 const galleryKey = it => `${it.render.id}/${it.file.file}`;
 function markSeen() {
   let hit = null;
-  $$('#reelGrid > .reel-cell').forEach(t => { const on = inGallery() && t.dataset.key === state.gallerySeen; t.classList.toggle('seen', on); if (on) hit = $('.rtile', t); });
+  $$('#reelGrid > .reel-cell').forEach(t => { const on = t.dataset.key === state.gallerySeen; t.classList.toggle('seen', on); if (on) hit = $('.rtile', t); });
   return hit;
 }
 
@@ -12219,7 +12247,7 @@ const TOOLS = [
   T('clear_image', 'Remove the image from your inputs.'),
   T('use_motion_video', 'Set the motion video in your inputs for a character-animation model (Wan Animate 2): the character copies its moves. From a folder (list_folder lists videos too), or a video render (take and render; or the one in the lightbox when neither is given). Switches to that model if needed.', { folder: S('The folder, as list_folder took it'), file: S('The video file name, from list_folder'), take: I('Take number of a video render'), render: I('1 = newest render of that take') }),
   T('clear_motion_video', 'Remove the motion video from your inputs.'),
-  T('edit_motion_video', 'Change the motion video in your inputs (needs ffmpeg; each makes a copy and uses it): use only part of it (start and seconds, e.g. the stretch the workflow animates), crop the black bars around its picture, or make a 24 fps copy of a fast one.', { start: N('Use part of it: seconds from its start'), seconds: N('Use part of it: how many seconds'), crop_bars: B('Crop the black bars around the picture'), fps24: B('Make a 24 fps copy') }),
+  T('edit_motion_video', 'Change the motion video in your inputs (needs ffmpeg; each makes a copy and uses it): use only part of it (start and seconds, e.g. the stretch the workflow animates), crop the black bars around its picture, make a 24 fps copy of a fast one, or smooth one that skips (fills in its missing frames and takes out black flashes; slow, a few seconds per second of video).', { start: N('Use part of it: seconds from its start'), seconds: N('Use part of it: how many seconds'), crop_bars: B('Crop the black bars around the picture'), fps24: B('Make a 24 fps copy'), smooth: B('Smooth a video that skips') }),
   T('character_from_render', 'Make a still render the character for Wan Animate 2: switches to that model and attaches the still. Then set a motion video (use_motion_video) and a theme for the place and camera, and generate.', { take: I('Take number; default 1'), render: I('1 = newest render of that take') }),
   T('pick_workflow', 'Pick the ComfyUI workflow that renders the takes (Fine-tune → Rendering).', { name: S('Workflow name') }, ['name']),
   T('add_lora', 'Add a LoRA (from the model\'s LoRA folder) to the picked workflow.', { name: S('LoRA name or part of it'), strength: N('Strength, usually 0.3–1.2; default 1') }, ['name']),
@@ -12511,7 +12539,7 @@ function assistantState() {
     ...(m?.characterSheet && state.image && !state.manual ? { character_sheet: state.sheet.trim() || 'not written yet: Generate writes it from the image first (your inputs, the user can edit it)' } : {}),
     ...(state.manual ? { own_prompt: 'on: the user\'s ✍️ switch under Your idea. Generate sends the theme word for word as the prompt (no Brain) and renders it, and dials.takes is how many renders. Only the user switches it' } : {}),
     image: state.image ? { role: effectiveRole(), from: state.image.source ? takeLabel(state.image.source) : 'uploaded' } : null,
-    ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, fps: state.video.fps || null, ready: Boolean(state.video.file), ...(state.video.bars ? { black_bars: `picture is ${state.video.bars.width}×${state.video.bars.height}` } : {}), workflow_animates: activeFlow()?.motionFrames === 'all' ? 'the whole video' : typeof activeFlow()?.motionFrames === 'number' ? `${activeFlow().motionFrames} frames` : 'unknown' } : null } : {}),
+    ...(m?.motionVideo ? { motion_video: state.video ? { seconds: state.video.seconds, size: `${state.video.width}×${state.video.height}`, fps: state.video.fps || null, ready: Boolean(state.video.file), ...(state.video.bars ? { black_bars: `picture is ${state.video.bars.width}×${state.video.bars.height}` } : {}), ...(videoSkips(state.video) ? { skips: `${state.video.missing || 0} frames missing, ${(state.video.flashes || []).length} black flashes: edit_motion_video smooth fixes it` } : {}), ...(renderFps(state.video) !== state.video.fps ? { renders_at: `${renderFps(state.video)} fps (a steady copy)` } : {}), workflow_animates: activeFlow()?.motionFrames === 'all' ? 'the whole video' : typeof activeFlow()?.motionFrames === 'number' ? `${activeFlow().motionFrames} frames` : 'unknown' } : null } : {}),
     dials: m && {
       aspect: $('#aspect').value, aspects: m.aspectRatios,
       resolution: $('#resolution').value, resolutions: m.resolutions,
@@ -13443,7 +13471,7 @@ const TOOL_IMPL = {
     return { summary: `Motion video → ${name} (${secsLabel(state.video.seconds || 0)})` };
   },
   clear_motion_video: () => { setVideo(null); return { summary: 'Motion video removed' }; },
-  edit_motion_video: async ({ start, seconds, crop_bars: crop, fps24 }) => {
+  edit_motion_video: async ({ start, seconds, crop_bars: crop, fps24, smooth }) => {
     if (!state.video?.file) throw new Error('There is no motion video in your inputs yet.');
     if (!state.video.ffmpeg) throw new Error('Changing the video needs ffmpeg, which isn\'t installed on this computer.');
     const done = [];
@@ -13462,7 +13490,11 @@ const TOOL_IMPL = {
       await videoCopy(null, 'retime', null, { quiet: true });
       done.push('24 fps');
     }
-    if (!done.length) throw new Error('Say what to change: start and seconds, crop_bars or fps24.');
+    if (smooth) {
+      await videoCopy(null, 'smooth', null, { quiet: true });
+      done.push('smoothed');
+    }
+    if (!done.length) throw new Error('Say what to change: start and seconds, crop_bars, fps24 or smooth.');
     return { summary: `Motion video → ${done.join(', ')}` };
   },
   character_from_render: async ({ take, render }) => {

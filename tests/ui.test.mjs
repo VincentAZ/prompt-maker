@@ -2875,7 +2875,14 @@ esac
     assert(await js('document.querySelector("#reelGrid .reel-cell:nth-of-type(3)").classList.contains("seen")'), 'the one you browsed to, not the one you opened');
     assert(await js('document.activeElement === document.querySelector("#reelGrid .reel-cell.seen .rtile")'), 'and focus is back on it');
     await click('.tabs button[data-view="create"]');
-    await waitFor('document.querySelector("#view-create #reel") && !document.querySelector("#reelGrid .reel-cell.seen")', 'back on Create, the same box, unmarked');
+    await waitFor('document.querySelector("#view-create #reel") && document.querySelector("#reelGrid .reel-cell:nth-of-type(3)").classList.contains("seen")', 'back on Create, the same box, still marked');
+    // Your renders on Create rings what you looked at last too.
+    if (await js('!!document.querySelector("#tabRenders") && document.querySelector("#tabRenders").getAttribute("aria-selected") !== "true"')) await click('#tabRenders');
+    await click('#reelGrid .reel-cell:nth-of-type(1) .rtile');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'lightbox, from Create');
+    await press('Escape');
+    eq(await count('#reelGrid .reel-cell.seen'), 1, 'one render ringed on Create');
+    assert(await js('document.querySelector("#reelGrid .reel-cell:nth-of-type(1)").classList.contains("seen")'), 'the one you looked at, on Create');
   });
 
   await test('your renders: every render, from before start-up too, in one grid; filters, drag to arrange, height, picture size, full screen', async () => {
@@ -6129,6 +6136,52 @@ esac
     await toastText('of your motion video, from 2s');
     await waitFor('/🕺 4(\\.\\d)?s ·/.test(document.querySelector("#mzInfo").textContent) && !document.querySelector("#trimDlg").open', 'now that part alone (48 frames at 12 fps)');
     await waitFor('!(document.querySelector("#wfpWarn")?.textContent || "").includes("animates")', 'and the workflow does all of it');
+    await click('#videoClear');
+    await click('#imageClear');
+    await click('.model-card[data-id="krea2-raw"]');
+  });
+
+  await test('motion video: one that skips renders at the rate it keeps up, and ✨ Smooth it fills the gaps and takes out a black flash', async () => {
+    // 30 fps with every 4th frame missing (it keeps up 15 fps all through) and a black flash at 0.67 s, as a phone
+    // or screen recorder that can't keep up makes them.
+    const clip = path.join(tmp, 'screen-skips.mp4');
+    const made = await new Promise(resolve => {
+      const p = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x240:rate=30', '-t', '4', '-vf', "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='eq(n,20)',select='not(eq(mod(n,4),3))'", '-fps_mode', 'vfr', '-pix_fmt', 'yuv420p', clip], { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', code => resolve(code === 0));
+    });
+    if (!made) return console.log('      (skipped: ffmpeg not installed)');
+    await click('.tabs button[data-view="create"]');
+    await click('.model-card[data-id="wan-animate-2"]');
+    if (await visible('.dz-preview')) await click('#imageClear');
+    await setFiles('#videoInput', [clip]);
+    await waitFor('document.querySelector("#mzInfo").textContent.includes("23 fps")', 'the motion video is in, at its average rate', 15000);
+    await waitFor('!!document.querySelector("#videoSmooth")', 'it offers to smooth it');
+    const hint = await text('#motionHint');
+    assert(hint.includes('frame rate changes as it plays') && hint.includes('steady 15 fps copy'), `its notes say renders use the rate it keeps up: ${hint}`);
+    assert(hint.includes('29 frames are missing and it flashes black at 0.7s'), `and what skips: ${hint}`);
+    await setFiles('#imageInput', [portrait]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'the character is in');
+
+    // Rendered as it is: ComfyUI gets a steady copy at 15 fps (a faster one would show frames twice, then jump).
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'uneven pace check');
+    await click('#generateBtn');
+    await genDone();
+    const entry = (await (await fetch(`${APP}/api/history`)).json()).find(e => e.theme === 'uneven pace check');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    for (let i = 0; i < 100 && comfy.prompts.length === before; i++) await sleep(50);
+    await waitFor('!document.querySelector(".take .rtile.running")', 'rendered', 10000);
+    eq(comfy.uploads.at(-1), `prompt-maker_${entry.video.file.replace(/\.\w+$/, '.15fps.mp4')}`, 'ComfyUI got the 15 fps copy');
+    assert(!(await fs.readdir(path.join(dataDir, 'videos'))).some(f => f.includes('retime-')), 'the copy is removed after the render');
+
+    // ✨ Smooth it: a steady 24 fps copy, its gaps filled and the flash gone, and nothing more to fix.
+    await click('#videoSmooth');
+    await toastText('smooth copy of your motion video', 60000);
+    await waitFor('document.querySelector("#mzInfo").textContent.includes("24 fps") && !document.querySelector("#videoSmooth")', 'now a smooth 24 fps video');
+    const after = await text('#motionHint');
+    assert(!after.includes('skips') && !after.includes('changes as it plays'), `nothing left to warn about: ${after}`);
     await click('#videoClear');
     await click('#imageClear');
     await click('.model-card[data-id="krea2-raw"]');

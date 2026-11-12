@@ -1586,12 +1586,16 @@ async function renderTake(req, res) {
   if (workflow.mapping.video && entry.video?.file) {
     const file = store.videoPath(entry.video.file);
     await fs.access(file).catch(() => { throw store.httpError(404, 'This take\'s motion video is missing from the data folder.'); });
-    let info = entry.video.seconds && entry.video.fps ? entry.video : await videotools.probe(file);
+    // Asked of the file itself: a take saved before `uneven` was known doesn't have it.
+    let info = (await videotools.probe(file)) || (entry.video.seconds && entry.video.fps ? entry.video : null);
     // Wan Animate 2 takes the video's frames one for one: from a 60 fps phone video its 81 frames are 1.4 s, and the
-    // moves play fast. Over 30 fps, ComfyUI gets a 24 fps copy (made for this render, then removed).
-    const fps = 24;
+    // moves play fast. From one whose frame rate changes as it plays, the clip (at the average rate) speeds up and
+    // slows down. Over 30 fps or uneven, ComfyUI gets a steady copy (made for this render, then removed): at 24 fps,
+    // or at the rate an uneven one keeps up all through when that's less (a faster copy would show a frame twice where
+    // the video has a gap, then jump).
+    const fps = Math.max(8, Math.min(24, Math.round(info?.uneven && info.steadyFps ? info.steadyFps : 24)));
     let copy = null;
-    if (info?.fps > 30 && fps < info.fps && (await videotools.hasFfmpeg())) {
+    if (((info?.fps > 30 && fps < info.fps) || info?.uneven) && (await videotools.hasFfmpeg())) {
       copy = await videotools.retime(file, fps).catch(err => { console.warn(`Couldn't make a ${fps} fps copy of the motion video: ${err.message}`); return null; });
       if (copy) info = (await videotools.probe(copy)) || { ...info, fps };
     }
@@ -2240,7 +2244,9 @@ async function route(req, res) {
     let preview = null;
     if (body.preview && ffmpeg) preview = path.basename(await videotools.preview(file).catch(err => { console.warn(`Couldn't make a preview of ${match[1]}: ${err.message}`); return ''; })) || null;
     const bars = info ? await videotools.bars(file, info).catch(() => null) : null;
-    return sendJson(res, 200, { ffmpeg, info: info && bars ? { ...info, bars } : info, preview });
+    // Black flashes, looked for in videos up to 3 minutes (every frame is decoded).
+    const flashes = info?.seconds && info.seconds <= 180 ? await videotools.flashes(file, info.frames || Infinity).catch(() => []) : [];
+    return sendJson(res, 200, { ffmpeg, info: info ? { ...info, ...(bars ? { bars } : {}), flashes } : info, preview });
   }
   // A copy without the black bars around the picture (they'd be part of the moves, and set the video's shape).
   if ((match = p.match(/^\/api\/videos\/([\w.]+)\/crop$/)) && m === 'POST') {
@@ -2282,6 +2288,21 @@ async function route(req, res) {
     if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
     const fps = Math.min(60, Math.max(8, Math.round(Number((await readBody(req)).fps) || 24)));
     const tmp = await videotools.retime(file, fps);
+    try {
+      const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
+      return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  }
+  // ✨ A smooth copy of a video that skips: its black flashes out and its missing frames filled in, at 24 fps.
+  if ((match = p.match(/^\/api\/videos\/([\w.]+)\/smooth$/)) && m === 'POST') {
+    const file = store.videoPath(match[1]);
+    if (!file || !store.VIDEO_NAME.test(match[1])) throw store.httpError(404, 'That video isn\'t stored.');
+    if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Making a copy needs ffmpeg, which isn\'t installed on this computer.');
+    const info = await videotools.probe(file);
+    const drop = (await videotools.flashes(file, info?.frames || Infinity).catch(() => [])).map(f => f.frame);
+    const tmp = await videotools.smooth(file, { drop, fps: 24 });
     try {
       const name = await store.saveVideo(createReadStream(tmp), 'video/mp4');
       return sendJson(res, 200, { file: name, info: await videotools.probe(store.videoPath(name)) });
