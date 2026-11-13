@@ -1252,7 +1252,7 @@ const lastUsedAt = m => [m.stats?.lastUsed, m.record?.last].filter(Boolean).sort
 const escRe = str => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const searchWords = q => q.toLowerCase().split(/\s+/).filter(Boolean);
 let llmSort = saved.get('llmSort', 'smart');
-const naturalBrainSortDirection = sort => sort === 'name' ? 'asc' : 'desc';
+const naturalBrainSortDirection = sort => ['name', 'creator'].includes(sort) ? 'asc' : 'desc';
 const savedBrainSortDirection = (key, sort) => {
   const direction = saved.get(key, naturalBrainSortDirection(sort));
   return direction === 'asc' || direction === 'desc' ? direction : naturalBrainSortDirection(sort);
@@ -1280,6 +1280,12 @@ const byName = (a, b) => a.name.localeCompare(b.name);
 const byRecent = (a, b) => lastUsedAt(b).localeCompare(lastUsedAt(a)) || byName(a, b);
 const byBrainSort = (sort, direction) => {
   if (sort === 'name') return direction === 'asc' ? byName : (a, b) => byName(b, a);
+  if (sort === 'creator') return (a, b) => {
+    const ac = a.publisher || '', bc = b.publisher || '';
+    if (Boolean(ac) !== Boolean(bc)) return ac ? -1 : 1; // Unknown creators stay last in either direction.
+    const order = ac.localeCompare(bc, undefined, { sensitivity: 'base' });
+    return (direction === 'asc' ? order : -order) || byName(a, b);
+  };
   if (sort === 'recent') return direction === 'desc' ? byRecent : (a, b) => lastUsedAt(a).localeCompare(lastUsedAt(b)) || byName(a, b);
   if (sort === 'size') return (a, b) => {
     const as = a.cloud ? 0 : a.sizeBytes || 0, bs = b.cloud ? 0 : b.sizeBytes || 0;
@@ -1294,9 +1300,10 @@ const byBrainSort = (sort, direction) => {
   return byName;
 };
 const brainSortLabel = (sort, direction, active) => {
-  if (!active) return { recent: 'Last used', name: 'Name', size: 'Size', rating: 'Your rating' }[sort] || (sort === 'fit' ? 'Best fit' : 'Smart');
+  if (!active) return { recent: 'Last used', name: 'Name', creator: 'Creator', size: 'Size', rating: 'Your rating' }[sort] || (sort === 'fit' ? 'Best fit' : 'Smart');
   if (sort === 'recent') return direction === 'asc' ? 'First used ↑' : 'Last used ↓';
   if (sort === 'name') return direction === 'asc' ? 'Name A–Z ↑' : 'Name Z–A ↓';
+  if (sort === 'creator') return direction === 'asc' ? 'Creator A–Z ↑' : 'Creator Z–A ↓';
   if (sort === 'size') return direction === 'asc' ? 'Smallest first ↑' : 'Biggest first ↓';
   if (sort === 'rating') return direction === 'asc' ? 'Rating 😞–🤩 ↑' : 'Rating 🤩–😞 ↓';
   return sort === 'fit' ? 'Best fit' : 'Smart';
@@ -1320,6 +1327,7 @@ function renderLlmSortControl() {
   direction.textContent = {
     recent: llmSortDirection === 'asc' ? '↑ Oldest first' : '↓ Newest first',
     name: llmSortDirection === 'asc' ? '↑ A–Z' : '↓ Z–A',
+    creator: llmSortDirection === 'asc' ? '↑ A–Z' : '↓ Z–A',
     size: llmSortDirection === 'asc' ? '↑ Smallest first' : '↓ Biggest first',
     rating: llmSortDirection === 'asc' ? '↑ Lowest first' : '↓ Highest first',
   }[llmSort];
@@ -1428,7 +1436,7 @@ function llmMenuGroups(q, suggested) {
     hits.sort((a, b) => b.score - a.score || order(a.m, b.m));
     return [{ items: hits.map(x => x.m) }];
   }
-  if (llmSort === 'name') return [...head, { title: inUse.length ? 'All Brains' : '', items: [...others].sort(byBrainSort('name', llmSortDirection)) }];
+  if (['name', 'creator'].includes(llmSort)) return [...head, { title: inUse.length ? 'All Brains' : '', items: [...others].sort(byBrainSort(llmSort, llmSortDirection)) }];
   if (llmSort === 'size') {
     return [
       ...head,
@@ -6389,6 +6397,7 @@ function renderBrains() {
     fit: (a, b) => (b.m.id === inUse) - (a.m.id === inUse) || b.fit.score - a.fit.score || (b.m.stats?.runs || 0) - (a.m.stats?.runs || 0) || byName(a.m, b.m),
     recent: (a, b) => byBrainSort('recent', brainSortDirection)(a.m, b.m),
     name: (a, b) => byBrainSort('name', brainSortDirection)(a.m, b.m),
+    creator: (a, b) => byBrainSort('creator', brainSortDirection)(a.m, b.m),
     size: (a, b) => byBrainSort('size', brainSortDirection)(a.m, b.m),
     rating: (a, b) => byBrainSort('rating', brainSortDirection)(a.m, b.m),
   }[brainSort] || (() => 0);

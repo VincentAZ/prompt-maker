@@ -15,10 +15,10 @@ const MODELS = [
   // Loaded with a small room (and one with almost none): a request that doesn't fit is refused like LM Studio does.
   { key: 'mock/tiny-room', display_name: 'Mock Tiny Room 4B', type: 'llm', params_string: '4B', max_context_length: 32768, capabilities: { vision: false }, loaded_instances: [{ id: 'mock/tiny-room', config: { context_length: 7000 } }] },
   { key: 'mock/no-room', display_name: 'Mock No Room 1B', type: 'llm', params_string: '1B', max_context_length: 1000, capabilities: { vision: false }, loaded_instances: [{ id: 'mock/no-room', config: { context_length: 1000 } }] },
-  { key: 'mock/thinker', display_name: 'Mock Thinker 9B', type: 'llm', capabilities: { vision: true, reasoning: { allowed_options: ['off', 'on'], default: 'on' } }, loaded_instances: [] },
+  { key: 'mock/thinker', display_name: 'Mock Thinker 9B', publisher: 'Zeta Studio', type: 'llm', capabilities: { vision: true, reasoning: { allowed_options: ['off', 'on'], default: 'on' } }, loaded_instances: [] },
   { key: 'mock/fable', display_name: 'Mock Fable 27B', type: 'llm', capabilities: { vision: true }, loaded_instances: [] },
-  { key: 'mock/text-only', display_name: 'Mock Text 7B', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
-  { key: 'mock/fresh', display_name: 'Mock Fresh 3B', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
+  { key: 'mock/text-only', display_name: 'Mock Text 7B', publisher: 'Alpha Studio', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
+  { key: 'mock/fresh', display_name: 'Mock Fresh 3B', publisher: 'Alpha Studio', type: 'llm', capabilities: { vision: false }, loaded_instances: [] },
   { key: 'mock/embed', display_name: 'Embedder', type: 'embedding', loaded_instances: [] },
 ];
 // What each model is loaded with as a start, and the room LM Studio gives it when loaded without one asked.

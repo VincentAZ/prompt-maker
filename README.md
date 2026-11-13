@@ -65,6 +65,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.78.2 — sort Brains by creator.** Pick **Creator** in the Brain menu or on the Brains page to see makers from A–Z; reverse it for Z–A. Models from the same creator sort by name, and models without a known creator stay at the end.
+
 **1.78.1 — see who made your Brain.** The Brain picker and Brains page show **by [creator]** when LM Studio supplies the creator's name. Search by creator, model name, or both to tell similar models apart. [See the picker](docs/screenshots/brain-picker.png) · [See the Brains page](docs/screenshots/brains.png).
 
 **1.78.0 — motion videos that skip, fixed.** A phone or screen recorder that can't keep up leaves frames out and sometimes flashes black, and Wan Animate 2 copied both: the moves sped up, slowed down and hitched. Now renders take such a video at the rate it keeps up all through (an even 15 fps for one that films 30 and drops frames), and its notes say so. When frames are missing or it flashes black, **✨ Smooth it** swaps in a steady 24 fps copy with the gaps filled and the black taken out, to watch before you render.

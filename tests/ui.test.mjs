@@ -3729,7 +3729,7 @@ esac
     assert(await visible('#llmMenu'), 'menu opens');
     eq(await js('document.activeElement.id'), 'llmSearch', 'focus in the search box');
     eq(await text('#llmList [data-id="mock/vision-8b"] .brain-creator'), 'by Example Studio', 'creator is visible beside the model details');
-    eq(await count('#llmList [data-id="mock/fresh"] .brain-creator'), 0, 'unknown creators stay empty');
+    eq(await count('#llmList [data-id="mock/no-room"] .brain-creator'), 0, 'unknown creators stay empty');
     await type('#llmSearch', 'EXAMPLE vision');
     eq(await count('#llmList [role="option"]'), 1, 'search combines creator and model name, ignoring case');
     eq(await text('#llmList .brain-creator mark'), 'Example', 'creator match highlighted');
@@ -3782,6 +3782,13 @@ esac
     const reverseNames = await js('[...document.querySelectorAll("#llmList .grp:last-of-type ~ [role=option]")].map(o => o.querySelector(".n").textContent.replace("👁 ", ""))');
     eq(reverseNames.join('|'), [...names].reverse().join('|'), 'clicking Name again sorts Z to A');
     eq(await text('#llmSortDirection'), '↓ Z–A', 'the reverse direction is visible');
+    await choose('#llmSort', 'creator');
+    eq(await text('#llmSortDirection'), '↑ A–Z', 'creator starts A to Z');
+    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].filter(o => o.dataset.id && o.dataset.id !== "mock/vision-8b").slice(0, 3).map(o => o.dataset.id).join()'), 'mock/fresh,mock/text-only,mock/thinker', 'creator order, same-creator models ordered by name');
+    assert(!(await js('document.querySelector("#llmList [role=option]:last-child .brain-creator")')), 'unknown creator stays last');
+    await click('#llmSortDirection');
+    eq(await js('[...document.querySelectorAll("#llmList [role=option]")].filter(o => o.dataset.id && o.dataset.id !== "mock/vision-8b").slice(0, 3).map(o => o.dataset.id).join()'), 'mock/thinker,mock/fresh,mock/text-only', 'creator order reverses, name tie-break stays stable');
+    assert(!(await js('document.querySelector("#llmList [role=option]:last-child .brain-creator")')), 'unknown creator stays last when reversed');
     await choose('#llmSort', 'size');
     eq(await text('#llmSortDirection'), '↓ Biggest first', 'size sorts biggest first');
     assert((await text('#llmList')).includes('Size not known'), 'Brains with no size wait in their own group');
@@ -3835,6 +3842,12 @@ esac
     await click('.brain-sort button[data-sort="name"]');
     const reverseCards = await js('[...document.querySelectorAll("#brainList .brain .brain-name")].map(n => n.textContent)');
     eq(reverseCards.join('|'), [...cards].reverse().join('|'), 'cards reverse to Z to A');
+    await click('.brain-sort button[data-sort="creator"]');
+    eq(await text('.brain-sort button[data-sort="creator"]'), 'Creator A–Z ↑', 'creator direction visible on page');
+    eq(await js('[...document.querySelectorAll("#brainList .brain")].slice(0, 4).map(o => o.dataset.id).join()'), 'mock/fresh,mock/text-only,mock/vision-8b,mock/thinker', 'cards ordered by creator');
+    await click('.brain-sort button[data-sort="creator"]');
+    eq(await js('[...document.querySelectorAll("#brainList .brain")].slice(0, 4).map(o => o.dataset.id).join()'), 'mock/thinker,mock/vision-8b,mock/fresh,mock/text-only', 'card creator order reverses');
+    assert(!(await js('document.querySelector("#brainList .brain:last-child .brain-creator")')), 'unknown creator cards stay last');
     await click('.brain-sort button[data-sort="fit"]');
     await click('.tabs button[data-view="models"]');
   });

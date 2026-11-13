@@ -101,11 +101,12 @@ const steps = {
   },
   async ['brain-picker']() {
     await open(`${DEMO}/#create`);
-    await js("document.querySelector('#llmPick').click(); 1");
+    await js("document.querySelector('#llmPick').click(); const sort = document.querySelector('#llmSort'); sort.value = 'creator'; sort.dispatchEvent(new Event('change', { bubbles: true })); 1");
     await sleep(500); await shot('brain-picker');
   },
   async brains() {
     await open(`${DEMO}/#brains`);
+    await js("document.querySelector('.brain-sort button[data-sort=creator]').click(); 1");
     await sleep(500); await shot('brains');
   },
   async models() { await open(`${DEMO}/#models`); await sleep(1500); await shot('models'); },
