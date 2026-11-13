@@ -65,6 +65,8 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.78.1 — see who made your Brain.** The Brain picker and Brains page show **by [creator]** when LM Studio supplies the creator's name. Search by creator, model name, or both to tell similar models apart. [See the picker](docs/screenshots/brain-picker.png) · [See the Brains page](docs/screenshots/brains.png).
+
 **1.78.0 — motion videos that skip, fixed.** A phone or screen recorder that can't keep up leaves frames out and sometimes flashes black, and Wan Animate 2 copied both: the moves sped up, slowed down and hitched. Now renders take such a video at the rate it keeps up all through (an even 15 fps for one that films 30 and drops frames), and its notes say so. When frames are missing or it flashes black, **✨ Smooth it** swaps in a steady 24 fps copy with the gaps filled and the black taken out, to watch before you render.
 
 **1.75.0 — ⬇ Get more LoRAs, for the model you're on.** In **Fine-tune → Rendering**, **⬇ Get more** lists the LoRAs on Civitai made for the selected model and nothing else, with previews; **⬇ Get** puts one straight into that model's folder in ComfyUI and **＋ Use it** adds it to the workflow. The **Yours** tab says when a LoRA you have has a newer version out: **Replace mine** or **Keep both**. **⬇ Model files** does the same for the big model files, when their maker changes one on Hugging Face. [See it](docs/screenshots/loras.png).

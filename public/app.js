@@ -1210,7 +1210,7 @@ function renderLlmSelect() {
   }
   const label = m => {
     const speed = brainSpeed(m);
-    return [`${brainIcon(m)}${m.name}`, speed && `~${fmtSecs(speed.seconds)}`, !m.cloud && m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join('  · ');
+    return [`${brainIcon(m)}${m.name}`, m.publisher && `by ${m.publisher}`, speed && `~${fmtSecs(speed.seconds)}`, !m.cloud && m.loaded && 'loaded', isNewBrain(m) && 'new'].filter(Boolean).join('  · ');
   };
   const group = (title, list, why = () => '') => (list.length
     ? `<optgroup label="${esc(title)}">${list.map(m => `<option value="${esc(m.id)}">${esc(label(m) + why(m))}</option>`).join('')}</optgroup>`
@@ -1261,12 +1261,12 @@ let llmSortDirection = savedBrainSortDirection('llmSortDirection', llmSort);
 let llmActive = 0; // the highlighted option, picked by Enter
 
 // 0 if the Brain doesn't match the search; else higher for better matches. Every word typed must appear in its
-// name or id, in any order ("qwen 27" finds "Qwen3.8 27B …"); names that start with the search come first.
+// name, id or creator, in any order ("qwen 27" finds "Qwen3.8 27B …"); names that start with the search come first.
 function brainMatch(m, q) {
   const words = searchWords(q);
   if (!words.length) return 1;
   const name = m.name.toLowerCase();
-  if (!words.every(w => `${name} ${m.id.toLowerCase()}`.includes(w))) return 0;
+  if (!words.every(w => `${name} ${m.id.toLowerCase()} ${(m.publisher || '').toLowerCase()}`.includes(w))) return 0;
   return name.startsWith(words[0]) ? 3 : new RegExp(`(^|[^a-z0-9])${escRe(words[0])}`).test(name) ? 2 : 1;
 }
 
@@ -1521,7 +1521,7 @@ function renderLlmMenu() {
     const provider = m.id ? (m.cloud || 'LM Studio') : '';
     const badges = [provider, m.id && writesDarkScenes(m) && 'Dark scenes'].filter(Boolean)
       .map((text, k) => `<span class="llm-meta${k === 0 ? ' provider' : ''}">${esc(text)}</span>`).join('');
-    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="llm-option-check" aria-hidden="true">✓</span><span class="llm-option-copy"><span class="n">${highlight(m.id ? brainDisplayName(m) : m.name, q)}</span><span class="d">${badges}${m.id ? brainSizeHtml(m) : ''}${details.map(x => `<span>${esc(x)}</span>`).join('')}</span></span>${m.id ? llmFaces(m) : ''}</li>`;
+    return `<li role="option" id="llmOpt${i}" data-i="${i++}" data-id="${esc(m.id)}" aria-selected="${m.id === current}"><span class="llm-option-check" aria-hidden="true">✓</span><span class="llm-option-copy"><span class="n">${highlight(m.id ? brainDisplayName(m) : m.name, q)}</span><span class="d">${m.publisher ? `<span class="brain-creator">by ${highlight(m.publisher, q)}</span>` : ''}${badges}${m.id ? brainSizeHtml(m) : ''}${details.map(x => `<span>${esc(x)}</span>`).join('')}</span></span>${m.id ? llmFaces(m) : ''}</li>`;
   };
   const html = llmMenuGroups(q, suggested).filter(g => g.items.length)
     .map(g => (g.title ? `<li class="grp" role="presentation">${esc(g.title)}</li>` : '') + g.items.map(option).join('')).join('');
@@ -6443,6 +6443,7 @@ function brainCard(m, fit, model, inUse, q = '') {
   return `<li class="brain${m.id === inUse ? ' current' : ''}" data-id="${esc(m.id)}">
     <div class="brain-head">
       <span class="brain-name">${highlight(m.name, q)}</span>
+      ${m.publisher ? `<span class="brain-creator muted small">by ${highlight(m.publisher, q)}</span>` : ''}
       ${m.id === inUse ? '<span class="tag ok">in use</span>' : ''}
       ${m.cloud ? `<span class="tag cloud" title="Your prompts go to ${esc(m.cloud)}">☁️ ${esc(m.cloud)}</span>` : m.loaded ? '<span class="tag">loaded</span>' : ''}
       <span class="tag">${m.vision ? '👁 sees images' : m.vision === false ? 'text-only' : 'vision unknown'}</span>

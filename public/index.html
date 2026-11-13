@@ -64,7 +64,7 @@
       <select id="llmSelect" aria-label="Brain that writes the prompts" hidden></select>
       <button type="button" id="llmPick" class="llm-pick" aria-haspopup="dialog" aria-expanded="false" aria-controls="llmMenu"><span id="llmPickName"></span></button>
       <div id="llmMenu" class="llm-menu" role="dialog" aria-label="Pick the Brain" hidden>
-        <input id="llmSearch" type="search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="llmList">
+        <input id="llmSearch" type="search" placeholder="Search Brains or creators…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="llmList">
         <div id="llmFilters" class="brain-filters"></div>
         <div class="llm-sort">
           <label for="llmSort"><span>Sort by</span><select id="llmSort">
@@ -864,7 +864,7 @@
       <div class="page-head"><p class="eyebrow">Your studio</p><h1>Meet your Brains <span id="brainCount" class="count"></span></h1><p>The AI models that turn your ideas into prompts. Find the best fit from your own results.</p></div>
       <div id="brainsPane" class="brains-pane" hidden>
         <div class="brains-bar">
-          <input id="brainSearch" type="search" class="brain-search" placeholder="Search Brains…" autocomplete="off" spellcheck="false" aria-label="Search Brains by name">
+          <input id="brainSearch" type="search" class="brain-search" placeholder="Search Brains or creators…" autocomplete="off" spellcheck="false" aria-label="Search Brains by name or creator">
           <div id="brainFilters" class="brain-filters"></div>
           <div class="seg brain-sort" role="radiogroup" aria-label="Sort Brains">
             <button type="button" data-sort="fit" role="radio">Best fit</button>

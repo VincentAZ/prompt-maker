@@ -4,7 +4,7 @@
 //         Start it with PORT=5320 PROMPT_MAKER_DATA=<folder> node server.js
 //   CLEAN (port 5321): an empty data folder, isolated XDG_CONFIG_HOME/XDG_DATA_HOME, and service commands disabled.
 //   Override DEMO, CLEAN and CDP_PORT for other local ports, CHROME_DIR for the browser profile. No conversation is generated for the Ask screenshot.
-// Then:  node tests/screenshots.mjs create fine-tune loras gallery models voices comfy-setup lms-setup model-files hugging-face ask   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
+// Then:  node tests/screenshots.mjs create fine-tune loras gallery models brain-picker brains voices comfy-setup lms-setup model-files hugging-face ask desktop-shortcut   (pngs go to OUT, default /tmp/promptmaker-demo/shots)
 // Look at every picture before it ships: no prompts or personal names. Models shows the chooser, not example prompts.
 // shots.mjs: sharp 1760x1100 screenshots of the running demo apps, no prompt text on screen.
 // usage: node shots.mjs <name>...   (names: create fine-tune loras gallery models voices comfy-setup lms-setup model-files ask)
@@ -92,6 +92,21 @@ const steps = {
     await open(`${DEMO}/#settings`);
     await js("document.querySelector('[data-settings-tab=instructions]').click(); document.querySelector('#addPromptSet').click(); 1");
     await sleep(700); await shot('prompt-sets');
+  },
+  async ['desktop-shortcut']() {
+    await open(`${CLEAN}/#settings`);
+    // Service discovery may see an existing process outside the clean data folder. Hide its personal path.
+    await js("document.querySelector('#svcComfyHow').hidden = true; document.querySelector('#sDataDir').hidden = true; 1");
+    await shot('desktop-shortcut');
+  },
+  async ['brain-picker']() {
+    await open(`${DEMO}/#create`);
+    await js("document.querySelector('#llmPick').click(); 1");
+    await sleep(500); await shot('brain-picker');
+  },
+  async brains() {
+    await open(`${DEMO}/#brains`);
+    await sleep(500); await shot('brains');
   },
   async models() { await open(`${DEMO}/#models`); await sleep(1500); await shot('models'); },
   async voices() { await open(`${DEMO}/#voices`); await js("document.querySelector('#vDesc').value = ''; document.querySelector('#vText').value = ''; 1"); await sleep(1500); await shot('voices'); },

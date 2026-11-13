@@ -9,7 +9,7 @@ import http from 'node:http';
 import { existsSync } from 'node:fs';
 
 const MODELS = [
-  { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b', config: { context_length: 32768 } }] },
+  { key: 'mock/vision-8b', display_name: 'Mock Vision 8B', publisher: 'Example Studio', type: 'llm', params_string: '8B', quantization: { name: 'Q4_K_M' }, size_bytes: 6.2e9, max_context_length: 32768, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/vision-8b', config: { context_length: 32768 } }] },
   // Loaded with little room: ✦ Ask folds a long chat on it after a few rounds.
   { key: 'mock/small-room', display_name: 'Mock Small Room 8B', type: 'llm', params_string: '8B', max_context_length: 12288, capabilities: { vision: true, trained_for_tool_use: true }, loaded_instances: [{ id: 'mock/small-room', config: { context_length: 12288 } }] },
   // Loaded with a small room (and one with almost none): a request that doesn't fit is refused like LM Studio does.

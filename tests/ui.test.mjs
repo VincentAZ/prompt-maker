@@ -3728,6 +3728,11 @@ esac
     await click('#llmPick');
     assert(await visible('#llmMenu'), 'menu opens');
     eq(await js('document.activeElement.id'), 'llmSearch', 'focus in the search box');
+    eq(await text('#llmList [data-id="mock/vision-8b"] .brain-creator'), 'by Example Studio', 'creator is visible beside the model details');
+    eq(await count('#llmList [data-id="mock/fresh"] .brain-creator'), 0, 'unknown creators stay empty');
+    await type('#llmSearch', 'EXAMPLE vision');
+    eq(await count('#llmList [role="option"]'), 1, 'search combines creator and model name, ignoring case');
+    eq(await text('#llmList .brain-creator mark'), 'Example', 'creator match highlighted');
     await type('#llmSearch', 'think');
     eq(await count('#llmList [role="option"]'), 1, 'narrowed to one');
     eq(await text('#llmList [role="option"] mark'), 'Think', 'match highlighted');
@@ -3815,6 +3820,9 @@ esac
     // Models → Brains: search and sort
     await click('.tabs button[data-view="models"]');
     await click('.tabs button[data-view="brains"]');
+    await type('#brainSearch', 'example studio');
+    eq(await js('[...document.querySelectorAll("#brainList .brain")].map(b => b.dataset.id).join()'), 'mock/vision-8b', 'creator search also finds the Brain card');
+    eq(await text('#brainList .brain-creator'), 'by Example Studio', 'card shows the creator');
     await type('#brainSearch', 'fresh');
     eq(await js('[...document.querySelectorAll("#brainList .brain")].map(b => b.dataset.id).join()'), 'mock/fresh', 'search narrows the cards');
     await type('#brainSearch', 'zzz');
