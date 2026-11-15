@@ -36,6 +36,12 @@ for (const [i, name] of pics.entries()) {
   const createdAt = new Date(t += 3600e3).toISOString();
   history.unshift({ id, createdAt, favorite: false, modelId: 'krea2-raw', modelName: 'Krea 2 RAW', modelKind: 'image', theme: titles[i], variations: [{ versions: [{ text: '', instruction: null, createdAt }], renders: [{ id: randomUUID(), seed: 0, files: [{ file, kind: 'image', name: file }], rating: [3, 2, 3, 1, 2, 3, 2, 1, 3][i], count: 1, seedMode: 'random', overrides: {}, createdAt }] }] });
 }
+// Approved sample videos only: no source prompts or personal file names.
+for (const [name, title] of [['film-fisherman', 'Fisherman at the harbor'], ['wan-fisherman-moves', 'A moment on the dock'], ['ltx-woman-pier', 'An evening by the sea']]) {
+  const id = randomUUID(), renderId = randomUUID(), file = `${renderId}_0.mp4`, createdAt = new Date(t += 3600e3).toISOString();
+  await fs.copyFile(path.join(ROOT, 'docs/renders', `${name}.mp4`), path.join(demo, 'renders', file));
+  history.unshift({ id, createdAt, modelId: 'joined', modelName: 'Sample video', modelKind: 'video', theme: title, variations: [{ versions: [{ text: '', createdAt }], renders: [{ id: renderId, seed: 0, createdAt, files: [{ file, kind: 'video', name: file }] }] }] });
+}
 await fs.writeFile(path.join(demo, 'history.json'), JSON.stringify(history, null, 2));
 
 const env = { ...process.env, HOME: path.join(BASE, 'home'), XDG_CONFIG_HOME: path.join(BASE, 'home/.config'), XDG_DATA_HOME: path.join(BASE, 'home/.local/share'), SYSTEMCTL_BIN: '/bin/true', LMS_BIN: path.join(BASE, 'home/.lmstudio/bin/lms'), PM_RAM_DIR: path.join(BASE, 'ram'), PM_CIVITAI_API: `http://127.0.0.1:${COMFY}` }; // (no lms there: LM Studio counts as not on the computer, for the lms-setup shot)

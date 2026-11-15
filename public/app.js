@@ -1,5 +1,6 @@
 // Prompt Maker front end. Plain ES module, no dependencies, talks only to the local server.
 import { readRecipe } from './recipe.js';
+import { createVideoEditor } from './video-editor.js';
 import { normalizeSweep, sweepRows, sweepSetup } from './batches.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -656,8 +657,8 @@ const effectiveRole = () => {
 
 // ---------- navigation ----------
 
-const VIEWS = ['create', 'history', 'gallery', 'models', 'brains', 'voices', 'chains', 'batches', 'jobs', 'settings'];
-const VIEW_LABELS = { create: 'Create', history: 'Saved prompts', gallery: 'Library', models: 'Models & workflows', brains: 'Brains', voices: 'Voices', chains: 'Chains', batches: 'Batches', jobs: 'Jobs', settings: 'Settings' };
+const VIEWS = ['create', 'history', 'gallery', 'video-editor', 'models', 'brains', 'voices', 'chains', 'batches', 'jobs', 'settings'];
+const VIEW_LABELS = { create: 'Create', history: 'Saved prompts', gallery: 'Library', 'video-editor': 'Video editor', models: 'Models & workflows', brains: 'Brains', voices: 'Voices', chains: 'Chains', batches: 'Batches', jobs: 'Jobs', settings: 'Settings' };
 const isView = name => $(`#view-${name}`).classList.contains('active');
 
 // Textareas measured while hidden (or at another width) need re-measuring.
@@ -686,10 +687,12 @@ function showView(name, { push = true, byUser = false } = {}) {
   placeReel(name);
   const hash = `#${name}`;
   $('#studioPage').textContent = VIEW_LABELS[name];
-  $('#studioGroup').textContent = ['create', 'gallery', 'history'].includes(name) ? 'Workspace' : ['chains', 'batches', 'jobs'].includes(name) ? 'Automation' : 'Your studio';
+  $('#studioGroup').textContent = ['create', 'gallery', 'video-editor', 'history'].includes(name) ? 'Workspace' : ['chains', 'batches', 'jobs'].includes(name) ? 'Automation' : 'Your studio';
   document.title = `Prompt Maker · ${VIEW_LABELS[name]}`;
   setNavigation(false);
   if (push && location.hash !== hash) history.pushState(null, '', hash);
+  if (name !== 'video-editor') videoEditor.pause();
+  if (name === 'video-editor') videoEditor.load();
   if (name === 'history') loadHistory();
   if (name === 'models') renderModelCatalog();
   if (name === 'gallery') loadGallery();
@@ -761,21 +764,31 @@ async function joinVideos(items, title) {
   if (isView('gallery')) loadGallery(); else renderReel();
   return r;
 }
-$('#reelJoin').addEventListener('click', async () => {
-  const items = reelItems.filter(it => it.file.kind === 'video');
-  if (items.length < 2) return;
-  const b = $('#reelJoin');
-  b.disabled = true;
-  b.textContent = `Joining ${items.length} videos…`;
-  try {
-    const r = await joinVideos(items);
-    toast(`🎬 Joined ${items.length} videos into one${r.seconds ? ` (${Math.round(r.seconds)}s)` : ''}`, false, { label: 'Show', run: () => { const it = galleryItems().find(x => x.render.id === r.render.id); if (it) openLightbox([it], 0); } });
-  } catch (err) {
-    toast(`Couldn't join them: ${friendly(err)}`, true);
-  } finally {
-    b.disabled = false;
-    renderReel();
-  }
+const videoEditor = createVideoEditor({
+  api, esc,
+  items: history => history.flatMap(entry => entry.variations.flatMap((v, index) => (v.renders || []).flatMap(render => render.files.map(file => ({ entry, index, render, file }))))),
+  save: async (clips, title) => {
+    const r = await api('/api/renders/join', { method: 'POST', body: { clips, title } });
+    state.history = await api('/api/history').catch(() => state.history);
+    noteSession(r.entry); renderReel();
+    toast(`🎬 Joined ${clips.length} clip${clips.length === 1 ? '' : 's'} into “${r.entry.theme}”`);
+    return r;
+  },
+  watch: r => openLightbox([{ entry: r.entry, index: 0, render: r.render, file: r.render.files[0] }], 0),
+  library: () => showView('gallery', { byUser: true }),
+});
+function updateReelJoin(items = reelItems) {
+  const picked = items.filter(it => reelPicked.has(reelKey(it)));
+  const count = (picked.length ? picked : items).filter(it => it.file.kind === 'video').length;
+  $('#reelJoin').hidden = !reelOpen() || !count || reelFilter.hidden;
+  $('#reelJoin').textContent = `Edit / join ${count}${picked.length ? ' selected' : ''} video${count === 1 ? '' : 's'}`;
+}
+$('#reelJoin').addEventListener('click', () => {
+  const selected = reelItems.filter(it => reelPicked.has(reelKey(it)));
+  const items = (selected.length ? selected : reelItems).filter(it => it.file.kind === 'video');
+  if (!items.length) return toast('Select a video to edit.', true);
+  showView('video-editor', { byUser: true });
+  videoEditor.open(items);
 });
 
 // ---------- 🎙 Voices: describe a voice once, keep it by name, hear any line in it ----------
@@ -4013,9 +4026,7 @@ function renderReel() {
   $('#tabRenders').classList.toggle('busy', Boolean(rendering));
   $('#reelZoom').hidden = !open || none;
   $('#reelSelectAll').hidden = !open || !items.length;
-  const videosShown = items.filter(it => it.file.kind === 'video').length;
-  $('#reelJoin').hidden = !open || videosShown < 2 || reelFilter.hidden;
-  $('#reelJoin').textContent = `Join ${videosShown} videos`;
+  updateReelJoin(items);
   $('#reelFull').hidden = !open || (none && !full);
   $('#reelToggle').setAttribute('aria-expanded', open);
   $('#reelToggle').setAttribute('aria-label', open ? 'Hide your renders' : 'Show your renders');
@@ -4549,6 +4560,7 @@ const reelPick = cardPicker({
     $('#reelCompare').disabled = reelItems.filter(it => reelPick.keys.has(reelKey(it))).length !== 2;
     $('#reelSelDelete').disabled = !reelPick.keys.size;
     $('#reelSelDownload').disabled = !reelPick.keys.size;
+    updateReelJoin();
   },
 });
 const reelPicked = reelPick.keys;

@@ -82,6 +82,19 @@ const steps = {
     await pictures(210);
     await sleep(1800); await shot('gallery');
   },
+  async ['video-editor']() {
+    await open(`${DEMO}/#video-editor`);
+    await js(`document.querySelectorAll('#veLibrary [data-add]')[2].click(); document.querySelectorAll('#veLibrary [data-add]')[1].click(); document.querySelectorAll('#veLibrary [data-add]')[0].click(); 1`);
+    await sleep(1800);
+    await js(`document.querySelector('#veTimeline [data-action="select"]').click(); const start = document.querySelector('#veStart'); start.value = '0.5'; start.dispatchEvent(new Event('change', { bubbles: true })); const end = document.querySelector('#veEnd'); end.value = '3.5'; end.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#veTitle').value = 'An afternoon by the water'; document.querySelector('#vePlayer').currentTime = 1.5; 1`);
+    await js(`new Promise(resolve => { const video = document.querySelector('#vePlayer'); if (!video.seeking && video.readyState >= 2) resolve(); else { video.addEventListener('seeked', resolve, { once: true }); setTimeout(resolve, 4000); } })`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1560, deviceScaleFactor: 1, mobile: false });
+    await sleep(700); await shot('video-editor');
+    await js(`(() => { const strip = document.querySelector('#veTimeline'), clip = strip.children[2], target = strip.children[0].getBoundingClientRect(), dataTransfer = new DataTransfer(); const from = clip.getBoundingClientRect(); clip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer, clientX: from.left + 60, clientY: from.top + 20 })); strip.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer, clientX: target.left + 5, clientY: target.top + 70 })); })()`);
+    await sleep(150); await shot('video-editor-rearrange');
+    await js(`document.querySelector('#veTimeline li:last-child').dispatchEvent(new DragEvent('dragend', { bubbles: true })); 1`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1100, deviceScaleFactor: 1, mobile: false });
+  },
   async ask() {
     await open(`${DEMO}/#gallery`, true);
     await pictures(190);

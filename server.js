@@ -2431,32 +2431,37 @@ async function route(req, res) {
     const settings = await store.getSettings();
     return sendJson(res, 200, { detected: await comfy.detectOutputDir(settings.comfyUrl).catch(() => null), configured: settings.comfyOutputDir });
   }
-  // 🎬 Join videos: whole renders, in the order given, as one new video (its own History entry).
+  // Join whole renders or an editor sequence with per-file start/end times into a new History entry.
   if (p === '/api/renders/join' && m === 'POST') {
     const body = await readBody(req);
-    const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 60);
-    if (ids.length < 2) throw store.httpError(400, 'Pick at least two videos to join.');
+    const editing = Array.isArray(body.clips);
+    const requested = editing ? body.clips : (Array.isArray(body.ids) ? body.ids : []).map(id => ({ id: String(id) }));
+    if (requested.length < (editing ? 1 : 2)) throw store.httpError(400, 'Pick at least two videos to join, or one clip to edit.');
+    if (requested.length > 60) throw store.httpError(400, 'Use up to 60 clips in one video.');
+    if (requested.some(c => !c || typeof c.id !== 'string' || !c.id || (c.file != null && typeof c.file !== 'string') || (c.start != null && (!Number.isFinite(c.start) || c.start < 0)) || (c.end != null && (!Number.isFinite(c.end) || c.end <= (c.start ?? 0))))) throw store.httpError(400, 'Check each clip’s video, start and end.');
+    const ids = requested.map(c => c.id);
     if (!(await videotools.hasFfmpeg())) throw store.httpError(400, 'Joining videos needs ffmpeg on this computer (see Settings → Services).');
     const all = await store.listHistory();
-    const parts = ids.map(id => {
-      for (const e of all) for (const v of e.variations) for (const r of v.renders || []) if (r.id === id || r.id.startsWith(id)) return { e, r, file: r.files.find(f => f.kind === 'video') };
+    const parts = ids.map((id, i) => {
+      for (const e of all) for (const v of e.variations) for (const r of v.renders || []) if (r.id === id || (!editing && r.id.startsWith(id))) return { e, r, file: r.files.find(f => f.kind === 'video' && (!requested[i].file || f.file === requested[i].file)) };
       return null;
     });
     const lost = parts.findIndex(x => !x);
     if (lost >= 0) throw store.httpError(404, `There's no render with the id ${ids[lost]}.`);
     const still = parts.find(x => !x.file);
+    if (still && editing) throw store.httpError(400, 'One of the chosen video files is no longer available. Refresh your videos and choose it again.');
     if (still) throw store.httpError(400, `“${(still.e.theme || 'from an image').slice(0, 40)}” (take ${still.e.variations.findIndex(v => (v.renders || []).includes(still.r)) + 1}) is a picture, not a video.`);
     const id = crypto.randomUUID();
     const file = `${id}_1.mp4`;
     const t0 = Date.now();
-    await videotools.concat(parts.map(x => path.join(store.RENDERS_DIR, x.file.file)), path.join(store.RENDERS_DIR, file));
+    await videotools.concat(parts.map((x, i) => ({ file: path.join(store.RENDERS_DIR, x.file.file), start: requested[i].start, end: requested[i].end })), path.join(store.RENDERS_DIR, file));
     const info = await videotools.probe(path.join(store.RENDERS_DIR, file));
     const now = new Date().toISOString();
     const title = String(body.title || '').trim().slice(0, 120) || `Joined: ${parts.length} videos`;
     const render = {
       id, text: title, workflowName: 'Joined in Prompt Maker', seed: null, count: 1,
       size: info?.width ? `${info.width}×${info.height}` : null, duration: info?.seconds ? `${Math.round(info.seconds * 10) / 10}s` : null,
-      joined: parts.map(x => ({ entryId: x.e.id, renderId: x.r.id })),
+      joined: parts.map((x, i) => ({ entryId: x.e.id, renderId: x.r.id, ...(editing ? { file: x.file.file, start: requested[i].start ?? 0, end: requested[i].end ?? null } : {}) })),
       files: [{ file, kind: 'video', name: `${store.slugify(title).slice(0, 40) || 'joined'}_${id.slice(0, 6)}.mp4` }],
       createdAt: now, secs: Math.round((Date.now() - t0) / 100) / 10,
     };

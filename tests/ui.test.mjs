@@ -751,7 +751,7 @@ esac
 
   await test('studio navigation: every page, mobile menu, settings sections and pipeline keyboard', async () => {
     assert(await js('(() => { const ids = [...document.querySelectorAll("[id]")].map(el => el.id); return new Set(ids).size === ids.length; })()'), 'every control has a unique identity');
-    const pages = ['create', 'gallery', 'history', 'models', 'brains', 'voices', 'chains', 'batches', 'jobs', 'settings'];
+    const pages = ['create', 'gallery', 'video-editor', 'history', 'models', 'brains', 'voices', 'chains', 'batches', 'jobs', 'settings'];
     for (const width of [1440, 900, 390]) {
       await viewport(width, 900, width === 390);
       for (const page of pages) {
@@ -6767,6 +6767,120 @@ esac
     assert(!(await fs.readFile(path.join(dataDir, 'history.json.bak'), 'utf8')).includes('Nothing ever left my computer'), 'the copy of History from before no longer has the line');
   });
 
+  await test('video editor: choose clips, reorder, trim, preview and save without changing originals', async () => {
+    if (!(await clip)) return console.log('    (skipped: no ffmpeg)');
+    const specs = [{ title: 'Red scene', color: 'red', size: '160x90', length: 3, audio: true }, { title: 'Blue scene', color: 'blue', size: '90x160', length: 4 }, { title: 'Unused scene', color: 'green', size: '160x90', length: 2 }];
+    const fixtures = [];
+    for (const spec of specs) {
+      const id = crypto.randomUUID(), renderId = crypto.randomUUID(), file = `${renderId}_0.mp4`, createdAt = new Date().toISOString();
+      execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', `color=${spec.color}:s=${spec.size}:r=24:d=${spec.length}`, ...(spec.audio ? ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1'] : []), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', ...(spec.audio ? ['-c:a', 'aac'] : []), path.join(dataDir, 'renders', file)]);
+      fixtures.push({ id, theme: spec.title, modelId: 'joined', modelName: 'Sample video', modelKind: 'video', createdAt, variations: [{ versions: [{ text: '', createdAt }], renders: [{ id: renderId, seed: 0, createdAt, files: [{ file, kind: 'video', name: file }] }] }] });
+    }
+    const history = await (await fetch(`${APP}/api/history`)).json();
+    await fs.writeFile(path.join(dataDir, 'history.json'), JSON.stringify([...fixtures, ...history]));
+    await goto(`${APP}/#video-editor`);
+    await waitFor('document.querySelectorAll("#veLibrary [data-add]").length >= 3', 'video picker');
+    assert(await js('document.querySelector("#veSave").disabled'), 'empty film cannot be exported');
+    const red = fixtures[0].variations[0].renders[0], blue = fixtures[1].variations[0].renders[0];
+    const add = r => `#veLibrary [data-add="${r.id}/${r.files[0].file}"]`;
+    await click(add(red)); await click(add(blue));
+    await waitFor('!document.querySelector("#veSave").disabled', 'metadata loaded');
+    eq(await count('#veTimeline > li'), 2, 'only the chosen two videos');
+    const dragClip = async (nth, destination, capture = false) => {
+      const start = await locate(`#veTimeline li:nth-child(${nth}) .ve-drag-handle`);
+      assert(!start.err, 'drag grip is reachable');
+      const target = await js(`(() => { const wrap = document.querySelector('#veTimelineWrap').getBoundingClientRect(); const first = document.querySelector('#veTimeline li').getBoundingClientRect(); return { x: ${destination === 'first' ? 'first.left + 5' : 'wrap.right - 15'}, y: first.top + 65 }; })()`);
+      const intercepted = new Promise(resolve => cdp.on('Input.dragIntercepted', resolve));
+      await cdp.send('Input.setInterceptDrags', { enabled: true });
+      try {
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x, y: start.y });
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: start.x, y: start.y, button: 'left', buttons: 1, clickCount: 1 });
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: start.x + 16, y: start.y + 3, button: 'left', buttons: 1 });
+        const event = await Promise.race([intercepted, sleep(4000).then(() => { throw new Error('Native drag did not start'); })]);
+        for (const type of ['dragEnter', 'dragOver']) await cdp.send('Input.dispatchDragEvent', { type, x: target.x, y: target.y, data: event.data });
+        await waitFor('!document.querySelector("#veDropMarker").hidden && document.querySelector("#veTimeline .dragging")', 'drag destination and moving card visible');
+        assert((await text('#veDropMarker')).includes(destination === 'first' ? 'clip 1' : 'clip 2'), 'destination number shown');
+        if (capture) await shot('video-editor-rearrange');
+        await cdp.send('Input.dispatchDragEvent', { type: 'drop', x: target.x, y: target.y, data: event.data });
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 });
+      } finally { await cdp.send('Input.setInterceptDrags', { enabled: false }); }
+      await waitFor('document.querySelector("#veDropMarker").hidden && !document.querySelector("#veTimeline .dragging")', 'drag decorations clear after drop');
+    };
+    await dragClip(2, 'first', true);
+    assert((await js('document.querySelector("#veTimeline li").dataset.key')).startsWith(blue.id), 'native drag moves blue before red');
+    await dragClip(1, 'last');
+    assert((await js('document.querySelector("#veTimeline li:last-child").dataset.key')).startsWith(blue.id), 'drop in empty space appends blue');
+    await click('#veTimeline li:nth-child(2) [data-action="earlier"]');
+    assert((await js('document.querySelector("#veTimeline li").dataset.key')).startsWith(blue.id), 'blue moved first');
+    await click('#veTimeline li:first-child [data-action="select"]');
+    await type('#veStart', '0.5'); await press('Tab');
+    await type('#veEnd', '2'); await press('Tab');
+    await click('#veTimeline li:nth-child(2) [data-action="select"]');
+    await type('#veStart', '0.25'); await press('Tab');
+    await type('#veEnd', '1.5'); await press('Tab');
+    await click('#veTimeline li:nth-child(2) .ve-drag-handle');
+    await press('ArrowLeft');
+    assert((await js('document.querySelector("#veTimeline li").dataset.key')).startsWith(red.id), 'keyboard moves the focused clip');
+    eq(await value('#veStart'), '0.25', 'trim follows reordered clip');
+    await press('End');
+    assert((await js('document.querySelector("#veTimeline li:last-child").dataset.key')).startsWith(red.id), 'End moves the clip to the end');
+    await type('#veTitle', 'Two scenes');
+    await click('#vePlay');
+    await waitFor('document.querySelector("#veClipNumber").textContent.includes("Clip 2")', 'preview advances at trimmed end', 10000);
+    await waitFor('document.querySelector("#vePlay").textContent.includes("Preview film")', 'preview finishes', 10000);
+    await click('.tabs [data-view="gallery"]'); await click('.tabs [data-view="video-editor"]');
+    eq(await value('#veStart'), '0.25', 'edits survive switching tabs');
+    await viewport(390, 900, true);
+    assert(await js('document.documentElement.scrollWidth <= innerWidth + 1'), 'editor fits a phone');
+    await shot('video-editor-mobile');
+    await viewport(1440, 1100);
+    await shot('video-editor');
+    const originals = await Promise.all([red, blue].map(r => fs.readFile(path.join(dataDir, 'renders', r.files[0].file))));
+    await click('#veSave');
+    await waitFor('!document.querySelector("#veResult").hidden', 'saved film', 60000);
+    const made = (await (await fetch(`${APP}/api/history`)).json())[0], output = made.variations[0].renders[0];
+    eq(made.theme, 'Two scenes', 'film name saved');
+    eq(output.joined.map(c => c.renderId).join(','), `${blue.id},${red.id}`, 'saved in chosen order, unused clip excluded');
+    eq(output.joined[0].start, 0.5, 'blue starts at trim'); eq(output.joined[0].end, 2, 'blue ends at trim');
+    const out = path.join(dataDir, 'renders', output.files[0].file), info = await videotools.probe(out);
+    assert(Math.abs(info.seconds - 2.75) < 0.15, `trimmed durations add up: ${info.seconds}`);
+    eq(info.width, 90, 'first clip sets width'); eq(info.height, 160, 'first clip sets height');
+    const pixel = at => execFileSync('ffmpeg', ['-v', 'error', '-ss', String(at), '-i', out, '-vf', 'crop=2:2:44:78', '-frames:v', '1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-']);
+    const first = pixel(0.5), second = pixel(2);
+    assert(first[2] > first[0] + 100 && second[0] > second[2] + 100, 'actual film plays blue then red');
+    assert(execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', out], { encoding: 'utf8' }).includes('aac'), 'silent and short-audio sources export with sound track');
+    const loudness = at => {
+      const pcm = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(at), '-i', out, '-t', '0.15', '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', '-']);
+      let sum = 0; for (let i = 0; i < pcm.length; i += 2) sum += Math.abs(pcm.readInt16LE(i));
+      return sum / (pcm.length / 2);
+    };
+    assert(loudness(0.5) < 10 && loudness(1.8) > 100 && loudness(2.6) < 10, 'sound follows trims, with silence for the silent clip and after the short audio');
+    for (const [i, r] of [red, blue].entries()) assert(originals[i].equals(await fs.readFile(path.join(dataDir, 'renders', r.files[0].file))), 'source bytes unchanged');
+    const request = body => fetch(`${APP}/api/renders/join`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: APP }, body: JSON.stringify(body) });
+    for (const bad of [{ start: -1, end: 2 }, { start: 2, end: 1 }, { start: 0, end: 99 }, { start: '0', end: 1 }, { start: 0, end: 0.01 }]) {
+      eq((await request({ clips: [{ id: red.id, ...bad }] })).status, 400, 'invalid trim rejected');
+    }
+    eq((await request({ clips: [{ id: red.id, file: blue.files[0].file, start: 0, end: 1 }] })).status, 400, 'file must belong to the render');
+    eq((await request({ clips: Array.from({ length: 61 }, () => ({ id: red.id })) })).status, 400, 'clip limit enforced');
+    const single = await request({ clips: [{ id: red.id, start: 0.25, end: 1 }], title: 'One moment' });
+    eq(single.status, 200, 'one trimmed clip can be saved');
+    const singleResult = await single.json();
+    await click('#veViewResult');
+    await waitFor('!document.querySelector("#lightbox").hidden', 'saved film can be watched');
+    await press('Escape');
+    await click('#veOpenLibrary');
+    await click('#reelKinds [data-kind="video"]');
+    await click('#reelSelect');
+    await click(`#reelGrid [data-key="${red.id}/${red.files[0].file}"]`);
+    assert((await text('#reelJoin')).includes('1 selected video'), 'renders join button reflects selected videos');
+    await click('#reelJoin');
+    eq(await count('#veTimeline > li'), 1, 'only selected video opens in the editor');
+    assert((await js('document.querySelector("#veTimeline li").dataset.key')).startsWith(red.id), 'selected source is used');
+    for (const e of [...fixtures, made, singleResult.entry]) await fetch(`${APP}/api/history/${e.id}`, { method: 'DELETE', headers: { Origin: APP } });
+    await viewport(1440, 900);
+    await goto(`${APP}/#create`);
+  });
+
   await test('🎬 join videos: the ones shown in Your renders, in their order, become one video; the assistant joins too', async () => {
     if (!(await clip)) return console.log('    (skipped: no ffmpeg)');
     if (!(await (await fetch(`${APP}/api/workflows`)).json()).some(f => f.modelId === 'minimax-h3')) {
@@ -6797,6 +6911,8 @@ esac
     const n = Number((await text('#reelJoin')).match(/\d+/)[0]);
     assert(n >= 2, `counts them: ${await text('#reelJoin')}`);
     await click('#reelJoin');
+    await waitFor('!document.querySelector("#veSave").disabled', 'editor clips are ready');
+    await click('#veSave');
     await toastText('Joined', 60000).catch(async err => {
       const shown = await js('[...document.querySelectorAll("#reelGrid .reel-cell")].map(c => c.dataset.file).join(" ")');
       const have = (await (await fetch(`${APP}/api/history`)).json()).flatMap(e => e.variations.flatMap(v => (v.renders || []).flatMap(r => r.files.map(f => f.file)))).join(' ');
@@ -6815,6 +6931,7 @@ esac
     }))).reduce((a, b) => a + b, 0);
     assert(probe && partSecs > 0 && probe.seconds >= partSecs * 0.9 && probe.seconds <= partSecs * 1.1 + 0.5, `as long as all of them together: ${probe?.seconds}s for ${n} clips of ${partSecs}s`);
     eq(await count('#reelGrid .reel-card, #reelGrid .rcard, #reelGrid > *') > 0, true, 'it lands in the grid');
+    await click('#veOpenLibrary');
     await click('#reelKinds [data-kind=""]');
     await waitFor('document.querySelector("#toast").hidden', 'the toast goes', 12000);
 

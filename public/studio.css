@@ -247,6 +247,7 @@ body.narrow main { padding: 20px; }
 }
 @media (max-width: 760px) {
   :root { --sidebar-w: 0px; }
+  .brain-sort { flex-wrap: wrap; max-width: 100%; }
   .studio-sidebar { width: 230px; transform: translateX(-100%); transition: transform .18s; }
   .nav-close { display: grid; position: absolute; right: 7px; top: 5px; width: 24px; height: 24px; font-size: 19px; }
   .studio-sidebar .wordmark { display: block; }
@@ -450,3 +451,67 @@ main:has(#view-create.active) { padding: 20px 28px; }
 .shared-render-body { margin-top: 10px; }
 .shared-render-body .render-bar { width: 100%; }
 .stage-head .shared-render .shared-render-head .shared-toggle { margin-left: 0; }
+
+/* Video editor: library, large preview, and a filmstrip in play order. */
+.ve-layout { display: grid; grid-template-columns: minmax(210px, 280px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.ve-layout .card { padding: 20px; min-width: 0; }
+.ve-workspace { display: grid; gap: 22px; min-width: 0; }
+.ve-section-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.ve-section-head h2 { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
+.ve-section-head .hint { margin: 5px 0 0; }
+.ve-search, .ve-export > label { display: grid; gap: 7px; font-size: 12px; color: var(--muted); }
+.ve-search input, .ve-export input { width: 100%; }
+.ve-library-grid { display: grid; gap: 14px; max-height: 720px; overflow-y: auto; }
+.ve-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.ve-source video { grid-column: 1 / -1; width: 100%; height: 118px; object-fit: contain; border-radius: 7px; background: #151b19; }
+.ve-source > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+#view-video-editor .page-head { margin: 0 0 20px; }
+.ve-screen { position: relative; display: grid; place-items: center; background: #111714; border-radius: 8px; height: clamp(210px, 30vh, 330px); overflow: hidden; }
+.ve-screen video { position: absolute; inset: 0; min-width: 0; min-height: 0; width: 100%; height: 100%; object-fit: contain; }
+.ve-screen p { color: #d8dfd9; text-align: center; padding: 24px; }
+.ve-trim { border: 0; border-top: 1px solid var(--line); padding: 16px 0 0; margin: 20px 0 0; min-width: 0; }
+.ve-trim legend { font-size: 13px; padding-right: 10px; }
+.ve-trim-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.ve-trim-sliders label { display: grid; gap: 10px; font-size: 12px; }
+.ve-trim-sliders input { width: 100%; }
+.ve-trim-fields { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.ve-trim-fields label { display: grid; gap: 6px; font-size: 11px; color: var(--muted); }
+.ve-trim-fields input { width: 105px; }
+.ve-trim-fields button { min-height: 36px; }
+.ve-order-guide { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.ve-order-guide > span:first-child { color: var(--hot); font-weight: 600; }
+.ve-timeline-wrap { position: relative; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-3); overflow: hidden; }
+.ve-timeline-wrap.drag-active { border-color: var(--hot); background: color-mix(in srgb, var(--hot) 6%, var(--panel)); }
+.ve-timeline { list-style: none; display: flex; gap: 24px; overflow-x: auto; padding: 36px 22px 18px; margin: 0; min-height: 80px; }
+.ve-order-status { margin-top: 10px; min-height: 18px; font-size: 12px; }
+.ve-drop-marker { position: absolute; top: 32px; bottom: 15px; width: 4px; border-radius: 3px; background: var(--hot); box-shadow: 0 0 0 4px color-mix(in srgb, var(--hot) 15%, transparent); pointer-events: none; }
+.ve-drop-marker::after { content: ''; position: absolute; top: -5px; left: -4px; border: 6px solid transparent; border-top-color: var(--hot); }
+.ve-drop-marker > span { position: absolute; top: -27px; left: 50%; transform: translateX(-50%); padding: 4px 8px; border-radius: 5px; white-space: nowrap; font-size: 11px; font-weight: 600; background: var(--hot); color: var(--on-media); }
+.ve-clip { position: relative; flex: 0 0 200px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
+.ve-clip.dragging { opacity: .35; border-style: dashed; }
+.ve-clip:hover { border-color: var(--hot); }
+.ve-clip.active { border-color: var(--hot); box-shadow: 0 0 0 1px var(--hot); }
+.ve-clip > button { position: relative; display: grid; width: 100%; padding: 8px; gap: 8px; background: transparent; border: 0; text-align: left; color: var(--text); }
+.ve-clip > .ve-drag-handle { display: flex; align-items: center; gap: 5px; padding: 9px 8px; background: var(--panel-3); border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; cursor: grab; user-select: none; }
+.ve-clip > .ve-drag-handle:active { cursor: grabbing; }
+.ve-clip > .ve-drag-handle:hover { background: color-mix(in srgb, var(--hot) 10%, var(--panel)); color: var(--hot); }
+.ve-drag-handle svg { width: 12px; height: 16px; flex: none; fill: currentColor; }
+.ve-drag-handle b { margin-left: auto; font-size: 11px; color: var(--hot); }
+.ve-clip video { width: 100%; height: 84px; background: #151b19; border-radius: 4px; object-fit: contain; pointer-events: none; }
+.ve-clip b { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ve-clip small { font-size: 10px; color: var(--muted); }
+.ve-clip-actions { display: flex; justify-content: space-between; gap: 4px; padding: 0 8px 8px; }
+.ve-clip-actions .btn { padding: 4px 7px; font-size: 11px; }
+.ve-empty { padding: 24px; text-align: center; border: 1px dashed var(--line-2); border-radius: 7px; color: var(--muted); font-size: 13px; }
+.ve-export { display: flex; align-items: end; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); padding-top: 18px; margin-top: 10px; }
+.ve-export > label { flex: 1; max-width: 420px; }
+.ve-result { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px; border: 1px solid var(--hot); border-radius: 8px; }
+.ve-result b { color: var(--hot); font-size: 13px; margin-right: auto; }
+@media (max-width: 1100px) { .ve-layout { grid-template-columns: 200px minmax(0, 1fr); gap: 14px; } .ve-layout .card { padding: 14px; } }
+@media (max-width: 900px) {
+  .ve-layout { grid-template-columns: minmax(0, 1fr); }
+  .ve-library-grid { display: flex; overflow-x: auto; max-height: 230px; }
+  .ve-source { flex: 0 0 180px; }
+  .ve-screen { min-height: 180px; }
+}
+@media (max-width: 480px) { .ve-section-head { align-items: start; flex-wrap: wrap; } .ve-export { flex-wrap: wrap; } .ve-export > label { flex-basis: 100%; } .ve-trim-sliders { gap: 14px; } }

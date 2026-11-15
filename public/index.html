@@ -37,7 +37,7 @@
 <button type="button" id="navClose" class="icon-btn nav-close" aria-label="Close navigation">×</button>
 <a class="brand" href="#create" aria-label="Prompt Maker home"><img src="icon.svg?v=1.72.4" alt="" width="30" height="30"><span><span class="wordmark">prompt maker</span><small>Your local creative studio</small></span></a>
 <nav class="tabs" aria-label="Sections">
-<div class="nav-group"><p>Workspace</p><button type="button" data-view="create" aria-label="Create" title="Create"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>Create</span></button><button type="button" data-view="gallery" aria-label="Library" title="Library"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg><span>Library</span></button><button type="button" data-view="history" aria-label="Saved prompts" title="Saved prompts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg><span>Saved prompts</span><em id="historyBadge" class="badge" hidden></em></button></div>
+<div class="nav-group"><p>Workspace</p><button type="button" data-view="create" aria-label="Create" title="Create"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>Create</span></button><button type="button" data-view="gallery" aria-label="Library" title="Library"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg><span>Library</span></button><button type="button" data-view="video-editor" aria-label="Video editor" title="Video editor"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M3 15h18M8 4v16M16 4v16"/></svg><span>Video editor</span></button><button type="button" data-view="history" aria-label="Saved prompts" title="Saved prompts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg><span>Saved prompts</span><em id="historyBadge" class="badge" hidden></em></button></div>
 <div class="nav-group"><p>Your studio</p><button type="button" data-view="models" aria-label="Models & workflows" title="Models & workflows"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg><span>Models & workflows</span></button><button type="button" data-view="brains" aria-label="Brains" title="Brains"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4a3 3 0 0 0-5 3 4 4 0 0 0-1 7 3 3 0 0 0 6 4V4m6 0a3 3 0 0 1 5 3 4 4 0 0 1 1 7 3 3 0 0 1-6 4V4M9 9h6M9 15h6"/></svg><span>Brains</span></button><button type="button" data-view="voices" aria-label="Voices" title="Voices"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg><span>Voices</span></button></div>
 <div class="nav-group"><p>Automation</p><button type="button" data-view="chains" aria-label="Chains" title="Chains"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H6a4 4 0 0 0 0 8h3m6-8h3a4 4 0 0 1 0 8h-3M8 12h8"/></svg><span>Chains</span></button><button type="button" data-view="batches" aria-label="Batches" title="Batches"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>Batches</span></button><button type="button" data-view="jobs" aria-label="Jobs" title="Jobs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6V3h6v3M3 6h18v15H3zM3 11h18M10 11v3h4v-3"/></svg><span>Jobs</span></button></div>
 <div class="nav-bottom"><button type="button" data-view="settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>Settings</span></button></div></nav>
@@ -95,6 +95,46 @@
   </div>
 
   <main>
+    <section id="view-video-editor" class="view" aria-label="Video editor">
+      <header class="page-head"><h1>Video editor</h1><p>Pick your clips, put them in order, and keep just the moments you want.</p></header>
+      <div class="ve-layout">
+        <aside class="ve-library card" aria-label="Choose videos">
+          <div class="ve-section-head"><h2>Your videos</h2><button id="veRefresh" type="button" class="btn small">Refresh</button></div>
+          <label class="ve-search">Find a video<input id="veSearch" type="search" placeholder="Search your videos…"></label>
+          <p id="veLibraryNote" class="hint" role="status"></p><div id="veLibrary" class="ve-library-grid"></div>
+        </aside>
+        <div class="ve-workspace">
+          <section class="ve-preview card" aria-label="Clip preview and trim">
+            <div class="ve-section-head"><h2 id="veClipTitle">Preview</h2><span id="veClipNumber" class="hint"></span></div>
+            <div class="ve-screen"><video id="vePlayer" controls preload="metadata" playsinline></video><p id="vePreviewEmpty">Add a video below to start your film.</p></div>
+            <p id="vePreviewError" class="test-result bad" role="alert" hidden></p>
+            <fieldset id="veTrim" class="ve-trim" disabled>
+              <legend>Keep this part</legend>
+              <div class="ve-trim-sliders"><label>Start <input id="veStartRange" type="range" min="0" max="1" step="0.01" value="0"></label><label>End <input id="veEndRange" type="range" min="0" max="1" step="0.01" value="1"></label></div>
+              <div class="ve-trim-fields">
+                <label>Start (seconds)<input id="veStart" type="number" min="0" step="0.01" value="0"></label><button id="veSetStart" type="button" class="btn small">Start here</button>
+                <label>End (seconds)<input id="veEnd" type="number" min="0.1" step="0.01" value="1"></label><button id="veSetEnd" type="button" class="btn small">End here</button>
+                <button id="veResetTrim" type="button" class="btn small">Use whole clip</button>
+              </div>
+              <p id="veTrimNote" class="hint">Pause the preview at a moment, then choose Start here or End here.</p>
+            </fieldset>
+          </section>
+          <section class="ve-sequence card" aria-label="Video sequence">
+            <div class="ve-section-head"><div><h2>Your film <span id="veSummary" class="hint">0 clips</span></h2><p class="hint">Drag a clip to the line where you want it. Your film plays from left to right.</p></div><button id="vePlay" type="button" class="btn small" disabled>▶ Preview film</button></div>
+            <div class="ve-order-guide" aria-hidden="true"><span>▶ Film starts here</span><span>Play order →</span></div>
+            <div id="veTimelineWrap" class="ve-timeline-wrap">
+              <ol id="veTimeline" class="ve-timeline" aria-label="Clips in play order" aria-describedby="veOrderStatus"></ol>
+              <div id="veDropMarker" class="ve-drop-marker" hidden aria-hidden="true"><span>Drop here</span></div>
+            </div>
+            <p id="veOrderStatus" class="ve-order-status hint" role="status">Grab “Drag to move” on a clip, or use its arrow buttons.</p>
+            <p id="veEmpty" class="ve-empty">Choose <b>＋ Add</b> on a video to put it in your film.</p>
+            <div class="ve-export"><label>Name your film<input id="veTitle" maxlength="120" placeholder="My film"></label><button id="veSave" type="button" class="btn primary" disabled>Save video</button></div>
+            <p id="veStatus" class="hint" role="status">The original clips stay in your Library. Your saved film appears there too.</p>
+            <div id="veResult" class="ve-result" hidden><b>Video saved</b><button id="veViewResult" type="button" class="btn small">Watch video</button><a id="veDownload" class="btn small" download>Download</a><button id="veOpenLibrary" type="button" class="btn small">Open Library</button></div>
+          </section>
+        </div>
+      </div>
+    </section>
     <!-- ================= CREATE ================= -->
     <section id="view-create" class="view" aria-label="Create">
       <header class="create-heading"><div><h1>Create</h1></div><button type="button" id="newBtn" class="btn-new" title="New session: clears the theme, image and takes. Everything stays in Saved prompts." aria-label="New session">＋ New session</button></header>
@@ -412,7 +452,7 @@
               <button type="button" id="reelSelectNone" class="btn small" hidden>Select none</button>
               <button type="button" id="reelSelectAll" class="btn small" title="Pick every render shown (Ctrl+A), to download or delete them">Select all</button>
               <label id="reelZoom" class="reel-zoom" title="Picture size"><input type="range" id="reelSize" min="80" max="1000" step="10" value="160" aria-label="Picture size"></label>
-              <button type="button" id="reelJoin" class="btn small" title="Join the videos shown here, in this order, into one video" hidden>🎬 Join</button>
+              <button type="button" id="reelJoin" class="btn small" title="Choose, arrange and trim videos in the Video editor" hidden>🎬 Join</button>
               <button type="button" id="reelFull" class="btn small" aria-label="Full screen" title="Fill the window (Esc to go back)"><span class="ico" aria-hidden="true">⛶</span> <span class="lbl">Full screen</span></button>
             </div>
             <div id="reelBody" class="reel-body">

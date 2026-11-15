@@ -65,6 +65,12 @@ You don't write the long, technical prompts these models want. You type a few wo
 
 ## What's new
 
+**1.79.1 — see where your clips will land.** The Video editor has a clear **Drag to move** grip on each clip, a left-to-right film strip, and a green **Drop as clip…** line while you drag. The clip being moved fades so you can follow it. Drag near either edge to scroll a long film. Arrow buttons still work; with the grip focused, use the keyboard’s Left/Right arrows, Home or End. Your trims stay with their clips. [See the drag-and-drop guide](docs/screenshots/video-editor-rearrange.png).
+
+**1.79.0 — your video cutting room.** Open the new **Video editor** tab, or **Edit / join** above your renders. Pick only the videos you want, drag them into order (or use the arrows), and trim each clip with Start/End sliders, exact seconds, or **Start here / End here** on the preview. **Preview film** plays your trimmed sequence. Name it and **Save video** to keep a new film in the Library, with Watch and Download ready. A single trimmed clip can be saved too. Your original videos stay untouched. The renders button uses your selection when you have one; otherwise it brings in the videos shown. Clips keep their sound, and different sizes fit the first clip with padding. Up to 60 clips; saving needs ffmpeg, available in **Settings → Services**. Edits stay while you switch tabs; reloading the app starts a fresh edit. Brain sorting also wraps to fit a phone screen.
+
+<img src="docs/screenshots/video-editor.png" alt="Video editor: choose sample clips, trim a moment in the preview, and arrange a film in play order" width="900">
+
 **1.78.2 — sort Brains by creator.** Pick **Creator** in the Brain menu or on the Brains page to see makers from A–Z; reverse it for Z–A. Models from the same creator sort by name, and models without a known creator stay at the end.
 
 **1.78.1 — see who made your Brain.** The Brain picker and Brains page show **by [creator]** when LM Studio supplies the creator's name. Search by creator, model name, or both to tell similar models apart. [See the picker](docs/screenshots/brain-picker.png) · [See the Brains page](docs/screenshots/brains.png).
