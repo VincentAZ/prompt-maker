@@ -29,6 +29,30 @@ test('compression stays visible exactly once', () => {
   assert.equal(modelLabel('Example 27B','Q4_K_M'), 'Example 27B · Q4_K_M');
   assert.equal(modelLabel('Example 27B Q4_K_M','Q4_K_M'), 'Example 27B Q4_K_M');
 });
+test('more than twelve added local LoRAs survive saving, take setup and rendering', async () => {
+  const wf = await import('../lib/workflows.js');
+  await wf.initWorkflows();
+  const fixture = JSON.parse(await fs.readFile(new URL('../workflows/krea2-raw/text-to-image.json', import.meta.url), 'utf8'));
+  const added = Array.from({ length: 16 }, (_, i) => ({
+    name: `local/example_${i + 1}.safetensors`, strength: i === 12 ? -0.5 : 1, on: i !== 13,
+  }));
+  const saved = await wf.saveWorkflow({ ...fixture, modelId: 'krea2-raw', loras: { tweaks: {}, added } });
+  assert.deepEqual(saved.loras.added, added, 'saving must not silently discard later additions');
+  let reloaded = await wf.getWorkflow(saved.id);
+  assert.deepEqual(reloaded.loras.added, added, 'all choices persist on disk');
+  assert.deepEqual((await wf.listWorkflows()).find(w => w.id === saved.id).loras.added, added, 'the UI receives every addition');
+  added[12].strength = 0.75;
+  await wf.saveWorkflow({ loras: { tweaks: {}, added } }, reloaded);
+  reloaded = await wf.getWorkflow(saved.id);
+  assert.deepEqual(reloaded.loras.added, added, 'later additions remain adjustable');
+  const setup = wf.withSetup(reloaded, { loras: { tweaks: {}, added } });
+  assert.deepEqual(setup.loras.added, added, 'queued takes retain every choice');
+  const { prompt, applied } = wf.buildPrompt(setup, { text: '', seed: 0 });
+  assert.deepEqual(applied.loras.filter(l => l.added).map(({ name, strength }) => ({ name, strength })),
+    added.filter(l => l.on).map(({ name, strength }) => ({ name, strength })));
+  assert.deepEqual(Object.values(prompt).filter(n => n._meta?.title === 'LoRA (Prompt Maker)').map(n => n.inputs.lora_name),
+    added.filter(l => l.on).map(l => l.name), 'enabled additions reach ComfyUI; disabled ones stay out');
+});
 test('GPU handoff waits, cancels promptly, and unloads before the next owner', async () => {
   const calls = [];
   const srv = http.createServer(async (req,res) => {
