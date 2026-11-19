@@ -91,4 +91,48 @@ test('FLUX 3 Base variants are scrubbed and use Base sampling settings', async (
     for (const n of Object.values(w.prompt)) for (const v of Object.values(n.inputs)) if (Array.isArray(v)) assert(w.prompt[v[0]],`missing node ${v[0]}`);
   }
 });
+test('FLUX edit workflows reuse Base files and route only supplied references to both conditionings', async () => {
+  const wf = await import('../lib/workflows.js');
+  await wf.initWorkflows();
+  for (const quant of ['int8-convrot', 'bf16', 'nvfp4']) {
+    const read = file => fs.readFile(new URL(`../workflows/${file}`, import.meta.url), 'utf8').then(JSON.parse);
+    const fixture = await read(`flux-3-klein-base-edit/image-edit-${quant}.json`);
+    const base = await read(`flux-3-klein-base/text-to-image-${quant}.json`);
+    assert.deepEqual(fixture.models, base.models, 'existing downloads are reused');
+    const saved = await wf.saveWorkflow({ ...fixture, modelId: 'flux-3-klein-base-edit' });
+    const workflow = await wf.getWorkflow(saved.id);
+    assert.equal(wf.summary(workflow).maps.size, false, 'size comes from the reference, not the size picker');
+    assert.deepEqual(wf.summary(workflow).imageSlots.map(s => s.optional), [false, true, true]);
+    for (const imageNames of [['main.png'], ['main.png', 'second.png'], ['main.png', null, 'third.png'], ['main.png', 'second.png', 'third.png']]) {
+      const { prompt } = wf.buildPrompt(workflow, { text: 'The finished picture.', imageNames, seed: 42, resolution: '2048×2048' });
+      assert.equal(prompt['4'].inputs.text, 'The finished picture.');
+      assert.equal(prompt['5'].inputs.text, '');
+      assert.equal(prompt['7'].inputs.seed, 42);
+      assert.equal(prompt['7'].inputs.cfg, 3.5);
+      assert.equal(prompt['7'].inputs.steps, 50);
+      assert.deepEqual(['positive', 'negative', 'latent_image'].map(k => prompt['7'].inputs[k]), [['13', 0], ['13', 1], ['13', 2]]);
+      assert.deepEqual(prompt['13'].inputs.positive, ['4', 0]);
+      assert.deepEqual(prompt['13'].inputs.negative, ['5', 0]);
+      assert.equal(prompt['13'].inputs['resolution.megapixels'], 1);
+      for (let i = 0; i < 3; i++) {
+        assert.equal(prompt[String(10 + i)]?.inputs.image, imageNames[i] || undefined);
+        assert.deepEqual(prompt['13'].inputs[`images.image${i}`], imageNames[i] ? [String(10 + i), 0] : undefined);
+      }
+      for (const n of Object.values(prompt)) for (const v of Object.values(n.inputs)) if (Array.isArray(v)) assert(prompt[v[0]], `missing node ${v[0]}`);
+    }
+  }
+});
+test('editing prompts acknowledge the supplied picture and keep unrelated details across takes', async () => {
+  const { buildRequestText } = await import('../lib/prompt.js');
+  const model = JSON.parse(await fs.readFile(new URL('../playbooks/flux-3-klein-base-edit.json', import.meta.url), 'utf8'));
+  for (const imageRole of ['reference', 'recreate', 'character']) {
+    const request = buildRequestText(model, { hasImage: true, imageRole, theme: 'make the jacket blue', length: 'medium' }, { index: 1, count: 2, previous: ['Previous caption.'] });
+    assert(request.includes('generator WILL receive this picture'));
+    assert(!request.includes('will NOT receive'));
+    assert(request.includes('preserve everything outside that edit'));
+    assert(request.includes('Keep the picture’s framing, camera angle and lighting'));
+  }
+  const textOnly = buildRequestText({ ...model, task: 'picture' }, { hasImage: true, imageRole: 'reference', theme: 'a new scene', length: 'short' });
+  assert(textOnly.includes('will NOT receive'), 'text-to-image reference behavior is unchanged');
+});
 test.after(async () => { await fs.rm(scratch,{recursive:true,force:true}); });

@@ -123,6 +123,19 @@ const steps = {
     await sleep(500); await shot('brains');
   },
   async models() { await open(`${DEMO}/#models`); await sleep(1500); await shot('models'); },
+  async ['flux-edit']() {
+    await open(`${DEMO}/#create`);
+    await js(`document.querySelector('#taskChoices [data-task="edit"]').click(); document.querySelector('#quickModelChoice').open = true; const model = document.querySelector('#targetSelect'); model.value = 'flux-3-klein-base-edit'; model.dispatchEvent(new Event('change', { bubbles: true })); 1`);
+    await sleep(1500);
+    await js(`document.querySelector('#theme').value = ''; document.querySelector('#theme').dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#modelGuide').open = false; document.querySelector('.director-steps').scrollTop = 0; 1`);
+    const { root } = await cdp.send('DOM.getDocument', { depth: 1 });
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#imageInput' });
+    await cdp.send('DOM.setFileInputFiles', { nodeId, files: [new URL('../docs/renders/woman-cafe.webp', import.meta.url).pathname] });
+    await sleep(1000);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1400, deviceScaleFactor: 1, mobile: false });
+    await sleep(5000); await shot('flux-edit');
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1100, deviceScaleFactor: 1, mobile: false });
+  },
   async voices() { await open(`${DEMO}/#voices`); await js("document.querySelector('#vDesc').value = ''; document.querySelector('#vText').value = ''; 1"); await sleep(1500); await shot('voices'); },
   async themes() { await open(`${DEMO}/#create`); await js("document.querySelector('#uiThemeButton').click(); document.querySelector('[data-ui-theme-choice=midnight]').click(); document.querySelector('#uiThemeButton').click(); 1"); await sleep(700); await shot('themes'); },
   async ['comfy-setup']() {

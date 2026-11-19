@@ -3,7 +3,7 @@
 # ✦ Prompt Maker
 
 **Say what you want to see, in plain words, and get pictures and videos made on your own computer.**
-Start from an idea, a photo, or both. It writes for each model the way that model likes, keeps the same person from shot to shot and gives them a voice. Keep the ones you love, compare them side by side, find them again later. Twelve models are ready to go, more are on the way, and you can add your own. It's free, and it **runs on your own computer**: no account, no cloud, unless you add one.
+Start from an idea, a photo, or both. It writes for each model the way that model likes, keeps the same person from shot to shot and gives them a voice. Keep the ones you love, compare them side by side, find them again later. Sixteen models are ready to go, more are on the way, and you can add your own. It's free, and it **runs on your own computer**: no account, no cloud, unless you add one.
 
 ![Node 20.11+](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
@@ -64,6 +64,10 @@ You don't write the long, technical prompts these models want. You type a few wo
 </div>
 
 ## What's new
+
+**1.80.0 — edit with FLUX, and re-render with any model.** Choose **Edit → Model → FLUX 3 Klein Base Edit**, add your picture and say what should change. The Brain describes the finished picture; two optional picture slots can bring in a person, product or style. The result follows your first picture’s shape at about one megapixel. It reuses FLUX 3 Klein Base’s model files: INT8 by default, with BF16 and NVFP4 choices in **Fine-tune → Rendering** (NVFP4 needs Blackwell). Use a Brain that can see, and a current ComfyUI with FLUX 3 and Set Reference Multi Latent support. If writing your own prompt, describe the whole finished picture. Edits can also change details outside the requested area. Editing models now use your picture directly, without a Reference/Recreate choice; their Brain instructions keep unrelated framing and lighting consistent across takes. [See FLUX edit](docs/screenshots/flux-edit.png).
+
+**Re-render with any model.** The Render dropdown on each take and in **Render selected takes** lists every model under Picture, Edit, Person, Animate, Movement or Video. Pick another model to render the same prompt with it; 360 Orbit is labeled **uses its own prompt** and keeps its required trained wording. Models that need a missing picture or motion video stay visible with an explanation; models without a workflow say where to add one. Video choices show their duration controls even for a picture prompt. Create keeps its own model and workflow. [See the re-render controls](docs/screenshots/shared-render.png).
 
 **1.79.2 — added LoRAs stay saved.** Fine-tune → Rendering now keeps every LoRA you add, including ones you trained locally. Previously, an unseen limit silently dropped additions after the first 12. They now remain available when adjusting takes and after restarting, with their switches and strengths preserved. Re-add any LoRA that disappeared before this fix.
 
@@ -181,7 +185,7 @@ Once the app and your models are installed you can unplug the internet and keep 
 
 You need a computer with a good graphics card. Linux is where it's tested every day. The Windows installer and launcher have been tried on one Windows 11 PC so far; if something doesn't work there, please tell us.
 
-Fifteen models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **Z-Image Turbo**, **Qwen Image Edit**, **LTX 2.3** and **MiniMax H3** (each one model that animates your picture and one that makes the video from words alone, and MiniMax with a Reference version for your person and a 360° Orbit that circles your picture), **MiniMax H3 Image** (from words, and an Edit version), **Wan Animate 2**, and **FLUX 3 Klein Base** (INT8 ConvRot, BF16, or NVFP4 text-to-image workflows). [Add your own](docs/guide.md#adding-or-updating-a-model).
+Sixteen models are ready: **Krea 2 RAW** (text to image, image to image, and a Character version that keeps the same person), **Z-Image Turbo**, **Qwen Image Edit**, **LTX 2.3** and **MiniMax H3** (each one model that animates your picture and one that makes the video from words alone, and MiniMax with a Reference version for your person and a 360° Orbit that circles your picture), **MiniMax H3 Image** (from words, and an Edit version), **Wan Animate 2**, and **FLUX 3 Klein Base** (from words, and an **Edit** version; INT8 ConvRot, BF16, or NVFP4 workflows). [Add your own](docs/guide.md#adding-or-updating-a-model).
 
 ## More
 

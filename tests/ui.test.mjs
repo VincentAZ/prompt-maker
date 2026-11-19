@@ -647,7 +647,7 @@ esac
     assert(await js('document.querySelector("#theme").getBoundingClientRect().top < innerHeight - 150'), 'idea field is in the first laptop viewport');
     await click('#taskChoices [data-task="edit"]');
     assert((await text('#chosenModel')).includes('Edit'), 'the task chooses an editing model');
-    eq(await js('[...document.querySelectorAll("#targetSelect option")].map(o => o.value).sort().join()'), 'krea-2-raw-i2i,minimax-h3-image-edit,qwen-image-edit', 'Model lists the editing models only');
+    eq(await js('[...document.querySelectorAll("#targetSelect option")].map(o => o.value).sort().join()'), 'flux-3-klein-base-edit,krea-2-raw-i2i,minimax-h3-image-edit,qwen-image-edit', 'Model lists the editing models only');
     await click('#taskChoices [data-task="picture"]');
     await click('#askBtn');
     assert(await visible('#showResults'), 'laptop with Ask has workspace switching');
@@ -6408,6 +6408,134 @@ esac
     eq(await js('document.querySelector("#varSeg button.active, #varSeg [aria-pressed=true]")?.dataset.value'), '1', 'and the dial says 1 now');
   });
 
+  await test('FLUX edit: choose it, write from two pictures and render with the Base files', async () => {
+    // The suite normally suppresses starters; let this model install as it does for a real update.
+    const addedFile = path.join(dataDir, 'starters.json');
+    const added = JSON.parse(await fs.readFile(addedFile, 'utf8'));
+    delete added['flux-3-klein-base-edit'];
+    await fs.writeFile(addedFile, JSON.stringify(added));
+    const flows = (await fetch(`${APP}/api/workflows`).then(r => r.json())).filter(f => f.modelId === 'flux-3-klein-base-edit');
+    eq(flows.length, 3, 'all precision choices arrive automatically');
+    await goto(`${APP}/#create`);
+    await click('#taskChoices [data-task="edit"]');
+    if (!(await visible('#targetSelect'))) await click('#quickModelChoice summary');
+    await choose('#targetSelect', 'flux-3-klein-base-edit');
+    await waitFor('document.querySelectorAll("#extraSlots .xslot").length === 1', 'first optional reference');
+    eq(await text('#chosenModel'), 'FLUX 3 Klein Base Edit', 'selected model');
+    await setFiles('#imageInput', [fixture]);
+    await waitFor('!document.querySelector(".dz-preview").hidden', 'main picture');
+    await toastText('Image added');
+    assert(!(await visible('#roleBlock')), 'editing needs no Reference/Recreate choice');
+    assert((await text('#roleHint')).includes('Say what should change'), 'the picture has editing guidance');
+    await setFiles('#extraSlots .xslot input[type="file"]', [fixture]);
+    await waitFor('document.querySelector("#extraSlots .xslot.filled")', 'second picture');
+    await toastText('Another picture added');
+    eq(await count('#extraSlots .xslot'), 2, 'another optional slot appears when needed');
+    await click('#varSeg button[data-value="1"]');
+    await type('#theme', 'bring the color from the second picture into the jacket');
+    await click('#generateBtn');
+    await genDone();
+    const sent = lastCall().messages.findLast(m => m.role === 'user' && Array.isArray(m.content));
+    eq(sent.content.filter(p => p.type === 'image_url').length, 2, 'both pictures reach the Brain');
+    assert(sent.content.find(p => p.type === 'text').text.includes('generator WILL receive this picture'), 'the Brain knows it is editing');
+    const before = comfy.prompts.length;
+    await click('.take .rb-go');
+    await waitFor('!document.querySelector(".take .rtile.running") && !!document.querySelector(".take .rtile img")', 'FLUX edit rendered', 15000);
+    assert(comfy.prompts.length > before, 'render was queued');
+    const p = comfy.prompts.at(-1).prompt;
+    eq(p['1'].inputs.unet_name, 'flux3-image-klein-base-int8-convrot.safetensors', 'INT8 is the default');
+    eq(p['7'].inputs.cfg, 3.5, 'Base guidance');
+    eq(p['7'].inputs.steps, 50, 'Base steps');
+    assert(p['10'].inputs.image.startsWith('prompt-maker_') && p['11'].inputs.image.startsWith('prompt-maker_'), 'both inputs uploaded');
+    assert(!p['12'] && !p['13'].inputs['images.image2'], 'empty reference omitted');
+    assert(p['13'].inputs['images.image0'][0] === '10' && p['13'].inputs['images.image1'][0] === '11', 'references feed the edit conditioning');
+    await click('#extraSlots .xslot [data-act="clear"]');
+    await click('#imageClear');
+    await click('#taskChoices [data-task="picture"]');
+    for (const flow of flows) await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
+    await goto(`${APP}/#create`);
+  });
+
+  await test('re-render: all six Make tasks in individual and shared menus, with video settings and missing inputs', async () => {
+    const before = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    await fs.writeFile(path.join(dataDir, 'starters.json'), '{}');
+    const flows = await fetch(`${APP}/api/workflows`).then(r => r.json());
+    const flowFor = id => flows.find(f => f.modelId === id);
+    const base = flowFor('flux-3-klein-base');
+    const edit = flowFor('flux-3-klein-base-edit');
+    // Use the real video graph with the mock's installed file names, so this test needs no downloads.
+    const videoFixture = JSON.parse(await fs.readFile(path.join(ROOT, 'workflows/ltx-2-3-t2v/text-to-video.json'), 'utf8'));
+    for (const n of Object.values(videoFixture.prompt)) {
+      if (n.inputs.ckpt_name) n.inputs.ckpt_name = 'mock_model.safetensors';
+      if (n.inputs.lora_name) n.inputs.lora_name = 'LTX_2.3/motion_boost.safetensors';
+    }
+    const video = await fetch(`${APP}/api/workflows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...videoFixture, modelId: 'ltx-2-3-t2v', name: 'Example video workflow' }) }).then(r => r.json());
+    flows.push(video);
+    const turbo = flowFor('z-image-turbo');
+    await goto(`${APP}/#create`);
+    await click('#taskChoices [data-task="picture"]');
+    await choose('#targetSelect', 'flux-3-klein-base');
+    await click('#varSeg [data-value="2"]');
+    await type('#theme', 'MP4TEST a sunlit mountain lake');
+    await click('#generateBtn');
+    await genDone();
+    const groups = sel => js(`[...document.querySelector(${JSON.stringify(sel)}).querySelectorAll('optgroup')].map(g => g.label)`);
+    const labels = await groups('.take .rb-wf');
+    for (const task of ['Picture', 'Edit', 'Person', 'Animate', 'Movement', 'Video']) assert(labels.some(g => g.startsWith(task + ' · ')), `${task} is listed`);
+    const option = id => js(`(() => { const o = document.querySelector('.take .rb-wf option[value="${id}"]'); return { disabled: o.disabled, text: o.textContent }; })()`);
+    assert((await option(edit.id)).disabled && (await option(edit.id)).text.includes('needs a picture'), 'edit is visible but needs an input picture');
+    assert(!(await option(video.id)).disabled, 'text-to-video is available for a picture prompt');
+    await choose('.take .rb-wf', turbo.id);
+    eq(await value('.take .rb-wf'), turbo.id, 'an unrelated picture model can be chosen');
+    eq(await value('#wfpSelect'), base.id, 'the Create workflow stays on the original model');
+    await click('.shared-toggle');
+    assert(JSON.stringify(await groups('#sharedRender .rb-wf')) === JSON.stringify(labels), 'shared menu lists the same task/model groups');
+    await choose('#sharedRender .rb-wf', video.id);
+    await waitFor('!!document.querySelector("#sharedRender .rb-duration")', 'video duration for the image prompt');
+    const target = JSON.parse(await fs.readFile(path.join(ROOT, 'playbooks', 'ltx-2-3-t2v.json'), 'utf8'));
+    eq(Number(await value('#sharedRender .rb-duration')), Number.parseFloat(target.defaults.duration), 'duration starts from the video model');
+    await type('#sharedRender .rb-duration', '3');
+    await js('document.querySelector("#sharedRender .rb-duration").dispatchEvent(new Event("change", { bubbles: true }))');
+    const queued = comfy.prompts.length;
+    await click('#sharedRender .rb-go');
+    await waitFor('document.querySelectorAll(".take .rtile video").length === 2 && !document.querySelector(".take .rtile.running")', 'both picture prompts rendered as video', 20000);
+    eq(comfy.prompts.length, queued + 2, 'both selected takes use the new workflow');
+    await waitFor('document.querySelector("#creationProgress").textContent.includes("2 videos saved")', 'completion names the actual output kind');
+    const entry = JSON.parse(await fs.readFile(path.join(dataDir, 'history.json'), 'utf8'))[0];
+    assert(entry.variations.every(v => v.renders.at(-1).workflowId === video.id && v.renders.at(-1).duration === '3s'), 'chosen workflow and duration reach rendering and history');
+    // The documentation screenshot contains no prompts, personal files or random seeds.
+    await js(`document.querySelectorAll('.prompt-text, #theme').forEach(e => e.value = ''); document.querySelectorAll('.rb-seedval').forEach(e => e.value = '0'); document.querySelectorAll('.renders').forEach(e => e.hidden = true); document.querySelector('#theme').placeholder = 'Describe your idea…'; document.querySelector('#toast').hidden = true;`);
+    await viewport(1760, 1100);
+    await shot('shared-render');
+    await viewport(1440, 900);
+    // Opening this saved set remembers the other model used for the render.
+    await click('.tabs [data-view="history"]');
+    await waitFor(`!!document.querySelector('.hcard[data-id="${entry.id}"]')`, 'saved set');
+    await click(`.hcard[data-id="${entry.id}"] [data-act="open"]`);
+    eq(await value('.take .rb-wf'), video.id, 'the last re-render model is restored');
+    // A fixed-prompt model still needs its trained words when chosen from a different model's take.
+    await click('#taskChoices [data-task="edit"]');
+    await choose('#targetSelect', 'flux-3-klein-base-edit');
+    await setFiles('#imageInput', [fixture]);
+    await toastText('Image added');
+    await click('#varSeg [data-value="1"]');
+    await type('#theme', 'make the jacket blue');
+    await click('#generateBtn');
+    await genDone();
+    const original = await value('.take .prompt-text');
+    const orbit = flowFor('minimax-h3-orbit');
+    await choose('.take .rb-wf', orbit.id);
+    assert((await option(orbit.id)).text.includes('uses its own prompt'), 'the fixed-prompt exception is visible');
+    await click('.take .rb-go');
+    await waitFor('!!document.querySelector(".take .rtile img") && !document.querySelector(".take .rtile.running")', 'orbit from an edit take', 15000);
+    const fixed = JSON.parse(await fs.readFile(path.join(ROOT, 'playbooks/minimax-h3-orbit.json'), 'utf8')).fixedPrompt;
+    eq(comfy.prompts.at(-1).prompt['8'].inputs.prompt, fixed, 'the renderer gets the orbit model’s required prompt');
+    eq(await value('.take .prompt-text'), original, 'the original prompt stays available');
+    await click('#imageClear');
+    for (const flow of flows.filter(f => !before.some(b => b.id === f.id))) await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
+    await goto(`${APP}/#create`);
+  });
+
   await test('workflows: the ones that come with the app are offered first, set themselves up, and carry nobody\'s prompts', async () => {
     // Every workflow that ships: Prompt Maker's own format, no prompt text, no seed, no picture of anyone's.
     const dir = path.join(ROOT, 'workflows');
@@ -6448,7 +6576,7 @@ esac
     await fetch(`${APP}/api/workflows/${flow.id}`, { method: 'DELETE', headers: { Origin: APP } });
 
     // Every built-in model comes with its workflows, each added by itself, next to the ones you have.
-    for (const id of ['krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'ltx-2-3-t2v', 'minimax-h3', 'minimax-h3-t2v', 'minimax-h3-ref', 'minimax-h3-image', 'minimax-h3-image-edit', 'minimax-h3-orbit', 'wan-animate-2', 'krea-2-character', 'z-image-turbo', 'qwen-image-edit']) {
+    for (const id of ['flux-3-klein-base', 'flux-3-klein-base-edit', 'krea-2-raw-i2i', 'krea2-raw', 'ltx-2-3', 'ltx-2-3-t2v', 'minimax-h3', 'minimax-h3-t2v', 'minimax-h3-ref', 'minimax-h3-image', 'minimax-h3-image-edit', 'minimax-h3-orbit', 'wan-animate-2', 'krea-2-character', 'z-image-turbo', 'qwen-image-edit']) {
       assert((await fs.readdir(path.join(dir, id)).catch(() => [])).length, `${id} ships with a workflow`);
     }
     const startersFile = path.join(dataDir, 'starters.json');

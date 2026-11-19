@@ -2179,11 +2179,12 @@ const PERSON_ROLE_WORDS = { character: ['New scene', 'Same person, somewhere new
 
 function renderRole() {
   const m = currentModel();
+  const editing = m?.task === 'edit';
   const hasImage = Boolean(state.image);
   const role = effectiveRole();
   const offered = rolesFor(m);
   // How the Brain uses the image: with your own prompt it goes into the workflow as it is, so there's nothing to pick.
-  $('#roleBlock').hidden = !hasImage || offered.length < 2 || state.manual || Boolean(m?.noImage); // one way to use it: nothing to pick
+  $('#roleBlock').hidden = !hasImage || editing || offered.length < 2 || state.manual || Boolean(m?.noImage); // one way to use it: nothing to pick
   $('#roleHint').hidden = !hasImage || state.manual || Boolean(m?.noImage);
   // In the model's own order (New scene before Recreate), moved only when it differs: a move drops keyboard focus.
   const shown = $$('#roleBlock .role').filter(b => offered.includes(b.dataset.value)).map(b => b.dataset.value);
@@ -2203,13 +2204,13 @@ function renderRole() {
   $('#dropzone').setAttribute('aria-disabled', String(noImage));
   $('#dropzone').tabIndex = noImage ? -1 : 0;
   $('#dzGallery').disabled = noImage;
-  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another target model.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render: put them somewhere new, or recreate this picture.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it. A picture or video you made brings its recipe.';
+  $('#dzSub').textContent = noImage ? `${m.name} works from your words alone: it takes no picture. To start from a picture, pick another target model.` : motion ? 'JPG · PNG · WebP. This picture is the character who performs the moves.' : m?.characterSheet && !state.manual ? 'JPG · PNG · WebP. The person in it stays the same in every render: put them somewhere new, or recreate this picture.' : state.manual ? 'JPG · PNG · WebP. It goes into your workflow as it is.' : editing ? 'JPG · PNG · WebP. Add the picture to edit, then say what should change.' : 'JPG · PNG · WebP. Use it as a reference, recreate it, or animate it. A picture or video you made brings its recipe.';
   // What to drop, said where you drop it: a person model wants a clear photo of the person.
   $('#dropzone .dz-title').innerHTML = m?.characterSheet && !state.manual && !noImage ? 'Drop a clear photo of the person, paste it, or <u>browse</u>' : 'Drop an image or a video you made, paste it, or <u>browse</u>';
   $('#imageStepTitle').textContent = motion ? 'Character & motion' : noImage ? 'No image' : 'Add an image';
   $('#imageStepOpt').textContent = noImage ? (hasImage ? 'this model works from words: your picture is set aside' : 'this model works from words') : motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
-  $('#roleHint').textContent = (m?.characterSheet ? SHEET_HINT[role] || SHEET_HINT.character : ROLE_HINTS[role])[hasTheme ? 0 : 1];
+  $('#roleHint').textContent = editing ? 'Say what should change in Your idea. The Brain follows this model’s editing guide and keeps the rest of your picture.' : (m?.characterSheet ? SHEET_HINT[role] || SHEET_HINT.character : ROLE_HINTS[role])[hasTheme ? 0 : 1];
   $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual || Boolean(m?.noImage);
   try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of your inputs
   $('#turnaroundBtn').hidden = m?.kind !== 'image';
@@ -3600,11 +3601,11 @@ function renderStageHead(entry, { running = false, totalSecs } = {}) {
   head.style.setProperty('--m', m ? modelColor(m) : 'var(--hot)');
   head.innerHTML = `<span class="tag model">${kindIcon(entry.modelKind)} ${esc(entry.modelName)}</span>${entry.batch ? `<span class="tag batch" title="From the batch “${esc(entry.batch)}”">🎞 ${esc(entry.batch)}</span>` : ''}${entry.source ? `<button type="button" class="tag src-link" id="srcLink" title="Open the take this came from">⬑ from ${esc(takeLabel(entry.source))}</button>` : ''}${tags}
     ${entry.fixed ? `<span class="via">🔒 ${esc(entry.modelName)}'s own prompt, word for word</span>` : entry.manual ? '<span class="via">✍️ your own prompt, word for word</span>' : via ? `<span class="via">${running ? 'rolling on' : 'written by'} ${esc(via)}${totalSecs ? ` in ${totalSecs.toFixed(1)}s` : ''}</span>` : ''}
-    ${takes > 1 && (running || entry.id) && workflowsFor(entry.modelId).length ? `<button type="button" class="btn small" id="renderAllBtn"${off}>🎨 Render all ${takes}</button>` : ''}
+    ${takes > 1 && (running || entry.id) && state.workflows.length ? `<button type="button" class="btn small" id="renderAllBtn"${off}>🎨 Render all ${takes}</button>` : ''}
     ${takes > 1 ? `<button type="button" class="btn small" id="copyAllBtn"${off}>📋 Copy all ${takes} takes</button>` : ''}
     ${takes > 1 && (running || entry.id) ? `<button type="button" class="btn small danger" id="deleteAllTakesBtn" title="Deletes this whole set for good: all ${takes} takes, their renders, picture and videos, here and in ComfyUI. You get 8 seconds to undo"${off}>🗑 Delete all ${takes} takes</button>` : ''}
     ${entry.id && !entry.manual && m && !entry.chain ? `<button type="button" class="btn small" id="addTakeBtn" title="One more take for this set, written from the same idea, picture and settings, different from the ones here"${off}>＋ Add a take</button>` : ''}
-    ${takes > 1 && entry.id && workflowsFor(entry.modelId).length ? '<div id="sharedRender" class="shared-render"></div>' : ''}
+    ${takes > 1 && entry.id && state.workflows.length ? '<div id="sharedRender" class="shared-render"></div>' : ''}
     ${takes > 1 && (running || entry.id) && m && !m.fixedPrompt ? `<form class="refine refine-all" id="refineAllForm"><span class="ra-label" aria-hidden="true">🔁 All ${takes} takes</span><input spellcheck="true" placeholder="Tweak them all at once… e.g. make it golden hour" aria-label="What should change in all ${takes} takes?"><button type="submit" title="Refine every take (Enter)" aria-label="Refine all ${takes} takes">➜</button></form>` : ''}`;
   head.hidden = false;
   renderSharedBar(entry, running);
@@ -3651,7 +3652,7 @@ function renderSharedBar(entry, running) {
       else if (change.param) {
         target.rb.overrides = { ...(target.rb.overrides ?? change.defaults ?? {}), [change.param]: change.value };
       } else if (change.sizeKeys) {
-        const size = target.rb.size || stepSize(target) || { aspectRatio: entry.aspectRatio, resolution: entry.resolution, duration: entry.duration };
+        const size = takeRenderSize(target);
         target.rb.size = { ...size, ...Object.fromEntries(change.sizeKeys.map(key => [key, card.rb.size[key]])) };
       } else if (change.lora) {
         const { section, key, value } = change.lora;
@@ -8244,23 +8245,30 @@ $('#settingsForm').addEventListener('submit', async e => {
 // ---------- ComfyUI: status & workflows ----------
 
 const workflowsFor = modelId => state.workflows.filter(w => w.modelId === modelId);
-// The workflows a take of this model can render with: its own, then those of the models of its family and kind
-// (MiniMax H3 Image's take can render with MiniMax H3 Image Edit's too). [{ model, flows }], its own model first.
+// Re-render the same prompt with any model, grouped in the same task order as Make.
 function renderFlowGroups(model) {
   if (!model) return [];
-  const kin = state.models.filter(x => x.id !== model.id && x.kind === model.kind && model.family && x.family === model.family);
-  return [model, ...kin].map(m => ({ model: m, flows: workflowsFor(m.id) })).filter(g => g.flows.length);
+  const models = state.models.some(m => m.id === model.id) ? state.models : [...state.models, model];
+  return CREATIVE_TASKS.flatMap(task => models.filter(m => modelTask(m) === task.id)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(m => ({ model: m, task, flows: workflowsFor(m.id) })));
 }
 const renderFlowsFor = model => renderFlowGroups(model).flatMap(g => g.flows);
-// The Render picker's options: grouped by model when there are several. A workflow that needs a picture or a motion
-// video the take doesn't have is shown, greyed, with what it needs.
+function renderInputNeed(flow, entry) {
+  if (flow.maps?.image && !entry?.imageFile) return 'needs a picture';
+  if (flow.maps?.video && !entry?.video?.file) return 'needs a motion video';
+  const missing = (flow.imageSlots || []).find((slot, i) => i > 0 && !slot.optional && !entry?.images?.[i - 1]);
+  return missing ? `needs ${missing.label || 'another picture'}` : '';
+}
+// Missing inputs and models without a workflow remain visible, with a reason.
 function renderFlowOptions(model, current, entry = state.entry) {
   const groups = renderFlowGroups(model);
   const opt = f => {
-    const lacks = f.maps?.image && !entry?.imageFile ? 'needs a picture' : f.maps?.video && !entry?.video?.file ? 'needs a motion video' : '';
-    return `<option value="${esc(f.id)}"${f.id === current ? ' selected' : ''}${lacks ? ' disabled' : ''}>${esc(f.name)}${lacks ? ` (${lacks})` : ''}</option>`;
+    const lacks = renderInputNeed(f, entry);
+    const note = lacks || (modelById(f.modelId)?.fixedPrompt ? 'uses its own prompt' : '');
+    return `<option value="${esc(f.id)}"${f.id === current ? ' selected' : ''}${lacks ? ' disabled' : ''}>${esc(f.name)}${note ? ` (${esc(note)})` : ''}</option>`;
   };
-  return groups.length > 1 ? groups.map(g => `<optgroup label="${esc(g.model.name)}">${g.flows.map(opt).join('')}</optgroup>`).join('') : groups.flatMap(g => g.flows).map(opt).join('');
+  return groups.map(g => `<optgroup label="${esc(g.task.short)} · ${esc(g.model.name)}">${g.flows.length ? g.flows.map(opt).join('') : '<option value="" disabled>Add a workflow in Models & workflows</option>'}</optgroup>`).join('');
 }
 
 // The workflow ▶ Render uses for a model: the one picked last, else the first. One choice per model,
@@ -8272,7 +8280,7 @@ function activeWorkflowId(modelId) {
 }
 
 function pickWorkflow(modelId, id) {
-  if (workflowsFor(modelId).some(f => f.id === id)) saved.set(`wf.${modelId}`, id); // (one of a sibling model's: for these takes only)
+  if (workflowsFor(modelId).some(f => f.id === id)) saved.set(`wf.${modelId}`, id); // another model's workflow applies to these takes only
   state.cards.forEach(c => {
     if (c.model?.id !== modelId || !c.rb) return;
     const changed = c.rb.workflowId !== id;
@@ -10030,7 +10038,10 @@ function renderZone(card) {
   let bar = '';
   if (flows.length) {
     card.rb ??= { count: state.chain.renders }; // starts from Renders per take in Fine-tune → Rendering
-    if (!flows.some(f => f.id === card.rb.workflowId)) card.rb.workflowId = activeWorkflowId(model.id);
+    if (!flows.some(f => f.id === card.rb.workflowId)) {
+      const last = takeRenders(card).at(-1)?.workflowId;
+      card.rb.workflowId = flows.find(f => f.id === last)?.id || activeWorkflowId(model.id) || flows.find(f => !renderInputNeed(f, entry))?.id || flows[0].id;
+    }
     const name = card.el.getAttribute('aria-label');
     bar = `<div class="render-bar">
       <span class="rb-title">🎨 Render</span>
@@ -10086,6 +10097,15 @@ function stepSize(card) {
   const resolution = $('#resolution').value;
   if (!resolution || resolution === CUSTOM_RES) return null;
   return { aspectRatio: $('#aspect').value || entry?.aspectRatio, resolution, duration: durationValue() || entry?.duration || '' };
+}
+
+// A picture prompt can be re-rendered as a video: use the chosen model's usual duration when the take has none.
+function takeRenderSize(card) {
+  const entry = state.entry || {};
+  const size = card.rb?.size || stepSize(card) || { aspectRatio: entry.aspectRatio, resolution: entry.resolution, duration: entry.duration };
+  const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
+  const model = modelById(flow?.modelId) || card.model;
+  return { ...size, duration: size.duration || (model?.kind === 'video' ? model.defaults?.duration || '5s' : '') };
 }
 
 // One line under the render bar: what this workflow will actually use.
@@ -10157,7 +10177,7 @@ async function renderTakePanel(card) {
   const panel = $('.rb-panel', card.el);
   const flow = state.workflows.find(f => f.id === card.rb?.workflowId);
   const entry = state.entry;
-  const m = card.model;
+  const m = modelById(flow?.modelId) || card.model;
   if (!panel || !flow || !entry || !m) return;
   if (!panel.children.length) panel.innerHTML = '<p class="muted small">Reading the workflow…</p>';
   let data;
@@ -10166,7 +10186,7 @@ async function renderTakePanel(card) {
   const rb = card.rb;
   const params = (data.candidates?.params || []).filter(p => p.kind !== 'seed');
   const overrides = rb.overrides ?? data.overrides ?? {};
-  const size = rb.size || stepSize(card) || { aspectRatio: entry.aspectRatio, resolution: entry.resolution, duration: entry.duration };
+  const size = takeRenderSize(card);
   const aspects = [...new Set([...(m.aspectRatios || []), size.aspectRatio].filter(Boolean))];
   const shapeSizes = sizeChoices(m, size.aspectRatio);
   const yours = ownSizes(m).filter(r => !shapeSizes.includes(r)); // the sizes you typed in your inputs, in any shape
@@ -10361,6 +10381,8 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   const entry = state.entry; // the stage may show another entry by the time this finishes (chains)
   const flow = state.workflows.find(f => f.id === (setup?.workflowId || card.rb?.workflowId));
   if (!flow || !entry?.id) return;
+  const needs = renderInputNeed(flow, entry);
+  if (needs) return showError(`“${flow.name}” ${needs}. Add the missing input and write a new take, or choose another workflow.`);
   if (cardDirty(card)) await saveEdit(card, { quiet: true });
   if (!state.comfy?.ok) await loadComfyStatus();
   if (!state.comfy?.ok) return showError(state.comfy?.error || 'ComfyUI is not reachable.');
@@ -10368,7 +10390,7 @@ async function startRender(card, { quiet = false, setup = null } = {}) {
   const runId = crypto.randomUUID(); // the page's name for the job, so it can listen for it before the server has it
   // ⚙ The take's own settings (size, seed, sampler, LoRAs) go with it; a queued order's setup wins over them.
   // (A queued order, a batch or a chain keeps the size its prompt was written for.)
-  const size = setup?.size || card.rb?.size || (!setup && !state.chainActive && !state.batchRun ? stepSize(card) : null);
+  const size = setup?.size || (!setup && !state.chainActive && !state.batchRun ? takeRenderSize(card) : card.rb?.size || null);
   const ownSetup = !setup && card.rb && (card.rb.overrides || card.rb.loras) ? { loras: takeLoras(card.rb, flow), overrides: card.rb.overrides ?? flow.overrides ?? {} } : null;
   const body = { runId, historyId: entry.id, index: card.index, versionIndex: card.view, workflowId: flow.id, count: card.rb.count, newSeed: card.rb.newSeed === true || undefined, ...(setup ? { setup: { loras: setup.loras, overrides: setup.overrides } } : ownSetup ? { setup: ownSetup } : {}), ...(size ? { size } : {}), ...(setup?.seed || card.rb?.seed ? { seed: setup?.seed || card.rb.seed } : {}) };
   const start = () => api('/api/render', { method: 'POST', body }).catch(err => {
@@ -10762,9 +10784,10 @@ function renderCreationProgress() {
   const jobs = typeof rendersNow === 'undefined' ? [] : rendersNow.filter(j => j.historyId === entry?.id);
   const rendering = jobs.length || [...state.renderRuns].some(r => r.card && state.cards.includes(r.card));
   const count = entry?.variations?.reduce((n, v) => n + (v.renders?.length || 0), 0) || 0;
-  const kind = entry?.modelKind === 'video' ? 'video' : 'image';
+  const kinds = new Set(entry?.variations?.flatMap(v => (v.renders || []).flatMap(r => (r.files || []).map(f => f.kind))) || []);
+  const kind = kinds.size === 1 && kinds.has('video') ? 'video' : kinds.size === 1 && kinds.has('image') ? 'image' : 'render';
   progress.hidden = !entry && !state.busy;
-  progress.textContent = state.busy ? 'Writing prompt…' : rendering ? `Making ${kind}${jobs.length > 1 ? 's' : ''}…${count ? ` ${count} ready.` : ''}` : count ? `Ready · ${count} ${kind}${count > 1 ? 's' : ''} saved` : entry ? 'Prompt ready · review it, then make your picture or video.' : '';
+  progress.textContent = state.busy ? 'Writing prompt…' : rendering ? `Rendering…${count ? ` ${count} ready.` : ''}` : count ? `Ready · ${count} ${kind}${count > 1 ? 's' : ''} saved` : entry ? 'Prompt ready · review it, then make your picture or video.' : '';
   $('#resultCount').textContent = count ? String(count) : '';
 }
 

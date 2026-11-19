@@ -1,0 +1,221 @@
+{
+  "format": "prompt-maker-workflow",
+  "name": "FLUX 3 Klein Base Edit: edit your picture",
+  "note": "Edit with the same Base files used for text to image: 50 steps, CFG 3.5, euler/simple. INT8 uses less memory. Your Brain supplies a complete caption of the finished picture. The first picture sets the output shape at about one megapixel. Two optional pictures can contribute content or style. Adapted from ComfyUI’s official FLUX 3 edit template; only built-in nodes. Accept BFL’s terms before downloading.",
+  "prompt": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "flux3-image-klein-base-int8-convrot.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen3vl_4b_int8_convrot.safetensors",
+        "type": "flux3",
+        "device": "default"
+      }
+    },
+    "3": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "flux2-vae.safetensors"
+      }
+    },
+    "4": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": [
+          "2",
+          0
+        ]
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "",
+        "clip": [
+          "2",
+          0
+        ]
+      }
+    },
+    "7": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "positive": [
+          "13",
+          0
+        ],
+        "negative": [
+          "13",
+          1
+        ],
+        "latent_image": [
+          "13",
+          2
+        ],
+        "seed": 0,
+        "steps": 50,
+        "cfg": 3.5,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "7",
+          0
+        ],
+        "vae": [
+          "3",
+          0
+        ]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": [
+          "8",
+          0
+        ],
+        "filename_prefix": "PromptMaker/flux3_klein_base_edit"
+      }
+    },
+    "10": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "Picture to edit"
+      }
+    },
+    "11": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "Another picture"
+      }
+    },
+    "12": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "example.png"
+      },
+      "_meta": {
+        "title": "One more picture"
+      }
+    },
+    "13": {
+      "class_type": "ReferenceMultiLatent",
+      "inputs": {
+        "positive": [
+          "4",
+          0
+        ],
+        "negative": [
+          "5",
+          0
+        ],
+        "vae": [
+          "3",
+          0
+        ],
+        "resolution": "resize",
+        "resolution.megapixels": 1,
+        "images.image0": [
+          "10",
+          0
+        ],
+        "images.image1": [
+          "11",
+          0
+        ],
+        "images.image2": [
+          "12",
+          0
+        ]
+      }
+    }
+  },
+  "mapping": {
+    "prompt": [
+      {
+        "node": "4",
+        "input": "text"
+      }
+    ],
+    "seed": [
+      {
+        "node": "7",
+        "input": "seed"
+      }
+    ],
+    "image": {
+      "node": "10",
+      "input": "image"
+    },
+    "images": [
+      {
+        "node": "10",
+        "input": "image",
+        "label": "Picture to edit",
+        "hint": "the main picture; its shape sets the result",
+        "optional": false
+      },
+      {
+        "node": "11",
+        "input": "image",
+        "label": "Another picture",
+        "hint": "a person, product or style to bring into the main picture; say what to use",
+        "optional": true
+      },
+      {
+        "node": "12",
+        "input": "image",
+        "label": "One more picture",
+        "hint": "another reference to bring in; leave empty if you do not need it",
+        "optional": true
+      }
+    ]
+  },
+  "options": {
+    "snap": 16,
+    "frameRule": "exact",
+    "fps": 24,
+    "randomizeSeed": true,
+    "seedMode": "random"
+  },
+  "models": [
+    {
+      "name": "flux3-image-klein-base-int8-convrot.safetensors",
+      "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-base-int8-convrot.safetensors",
+      "directory": "diffusion_models"
+    },
+    {
+      "name": "qwen3vl_4b_int8_convrot.safetensors",
+      "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/text_encoders/qwen3vl_4b_int8_convrot.safetensors",
+      "directory": "text_encoders"
+    },
+    {
+      "name": "flux2-vae.safetensors",
+      "url": "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/vae/flux2-vae.safetensors",
+      "directory": "vae"
+    }
+  ]
+}

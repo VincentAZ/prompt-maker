@@ -1546,9 +1546,10 @@ async function renderTake(req, res) {
   const variation = Number.isInteger(body.index) ? entry.variations[body.index] : null;
   if (!variation) throw store.httpError(400, 'Unknown take.');
   const versionIndex = Number.isInteger(body.versionIndex) && variation.versions[body.versionIndex] ? body.versionIndex : variation.versions.length - 1;
-  const text = variation.versions[versionIndex].text;
   const workflow = wf.withSetup(await wf.getWorkflow(body.workflowId || ''), body.setup);
   if (!workflow) throw store.httpError(400, 'Pick a workflow to render with.');
+  const renderModel = await store.getModel(workflow.modelId);
+  const text = renderModel?.fixedPrompt || variation.versions[versionIndex].text;
   if (workflow.mapping.image && !entry.imageFile) {
     throw store.httpError(400, `"${workflow.name}" needs an input image (it has a Load Image node), but this take has none. Add an image on the Create page, or pick a text-to-image/video workflow.`);
   }
@@ -1661,7 +1662,7 @@ async function renderTake(req, res) {
       if (applied.loras?.length) applied.loras = applied.loras.map(l => (loraFileInfo[l.name] ? { ...l, file: loraFileInfo[l.name] } : l));
       models.applyFixes(prompt, models.checkModels(prompt, info).fixes); // files ComfyUI keeps in a subfolder
       promptId = await comfy.queuePrompt(base, prompt, clientId);
-      await store.noteRendering(promptId, { historyId: entry.id, index: body.index, versionIndex, clientId, comfyUrl: base, workflowId: workflow.id, workflowName: workflow.name, seedMode: workflow.options?.seedMode || 'random', overrides: workflow.overrides || {}, count, i, applied, parts: parts || null, inputs: [imageName, videoName, audioName].filter(Boolean), queuedAt: t0 }).catch(() => {});
+      await store.noteRendering(promptId, { historyId: entry.id, index: body.index, versionIndex, text, clientId, comfyUrl: base, workflowId: workflow.id, workflowName: workflow.name, seedMode: workflow.options?.seedMode || 'random', overrides: workflow.overrides || {}, count, i, applied, parts: parts || null, inputs: [imageName, videoName, audioName].filter(Boolean), queuedAt: t0 }).catch(() => {});
       if (stream.signal.aborted) { // cancelled while ComfyUI was taking it
         await comfy.cancel(base, promptId);
         break;
@@ -1821,7 +1822,7 @@ async function adoptRender(settings, promptId, rec) {
     stream.send({ type: 'queued', i: 0, applied: rec.applied || {} });
     const done = await comfy.watch(base, promptId, rec.clientId, graph, { signal: stream.signal, parts: rec.parts, onEvent: ev => { if (ev.type !== 'preview') stream.send({ ...ev, i: 0 }); } });
     stream.signal.removeEventListener('abort', onAbort);
-    const render = await keepRender({ settings, base, entry, index: rec.index, versionIndex, text: variation.versions[versionIndex].text, workflow: { id: rec.workflowId, name: rec.workflowName, seedMode: rec.seedMode || 'random', overrides: rec.overrides || {} }, applied: { ...(rec.applied || {}) }, parts: rec.parts, done, promptId, count: rec.count || 1, t0: rec.queuedAt || Date.now(), stream, i: 0, inputs: rec.inputs || [] });
+    const render = await keepRender({ settings, base, entry, index: rec.index, versionIndex, text: rec.text ?? variation.versions[versionIndex].text, workflow: { id: rec.workflowId, name: rec.workflowName, seedMode: rec.seedMode || 'random', overrides: rec.overrides || {} }, applied: { ...(rec.applied || {}) }, parts: rec.parts, done, promptId, count: rec.count || 1, t0: rec.queuedAt || Date.now(), stream, i: 0, inputs: rec.inputs || [] });
     stream.send({ type: 'render', i: 0, render });
   } catch (err) {
     stream.signal.removeEventListener('abort', onAbort);
