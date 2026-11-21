@@ -107,10 +107,23 @@ const steps = {
     await sleep(700); await shot('prompt-sets');
   },
   async ['desktop-shortcut']() {
-    await open(`${CLEAN}/#settings`);
-    // Service discovery may see an existing process outside the clean data folder. Hide its personal path.
-    await js("document.querySelector('#svcComfyHow').hidden = true; document.querySelector('#sDataDir').hidden = true; 1");
-    await shot('desktop-shortcut');
+    const configure = body => fetch(CLEAN + '/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const settings = await fetch(CLEAN + '/api/settings').then(r => r.json());
+    try {
+      if (process.env.SHOT_COMFY_DIR) await configure({ comfyDir: process.env.SHOT_COMFY_DIR, lmStudioUrl: process.env.SHOT_LM_URL });
+      await open(`${CLEAN}/#settings`);
+      await js("document.querySelector('[data-settings-tab=services]').click(); document.querySelector('#svcComfyHow').hidden = true; document.querySelector('#sDataDir').hidden = true; 1");
+      if (!await js("document.querySelector('[data-act=comfy-update]').offsetWidth > 0")) throw new Error('Expected the managed ComfyUI update control.');
+      await shot('desktop-shortcut');
+    } finally {
+      if (process.env.SHOT_COMFY_DIR) await configure({ comfyDir: settings.comfyDir, lmStudioUrl: settings.lmStudioUrl });
+    }
+  },
+  async ['system-prompt']() {
+    await open(`${DEMO}/#create`);
+    await js("document.querySelector('#quickModelChoice').open = true; document.querySelector('#modelSystemPrompt').click(); 1");
+    if (!await js("document.querySelector('#systemPromptDialog').open && !document.querySelector('#systemPromptText').value")) throw new Error('Expected an empty system prompt editor.');
+    await shot('system-prompt');
   },
   async ['brain-picker']() {
     await open(`${DEMO}/#create`);
@@ -123,6 +136,28 @@ const steps = {
     await sleep(500); await shot('brains');
   },
   async models() { await open(`${DEMO}/#models`); await sleep(1500); await shot('models'); },
+  async ['workflow-help']() {
+    await open(`${CLEAN}/#create`);
+    await js(`document.querySelector('#taskChoices [data-task=animate]').click(); const select = document.querySelector('#targetSelect'); select.value = 'minimax-h3-orbit'; select.dispatchEvent(new Event('change')); document.querySelector('#createWorkflowHelp').click(); 1`);
+    const clip = await js(`(() => { const dialog = document.querySelector('#workflowHelp'); if (!dialog.open || !dialog.textContent.includes('looping video')) throw Error('Orbit help missing'); const r = dialog.getBoundingClientRect(); return { x: r.x - 8, y: r.y - 8, width: r.width + 16, height: r.height + 16, scale: 1 }; })()`);
+    const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip });
+    await fs.writeFile(`${OUT}/workflow-help.png`, Buffer.from(data, 'base64'));
+  },
+  async ['place-and-person']() {
+    await open(`${CLEAN}/#create`);
+    await js("document.querySelector('#taskChoices [data-task=person]').click(); 1");
+    await js("const sel = document.querySelector('#wfpSelect'); sel.value = [...sel.options].find(o => o.text.includes('into your picture')).value; sel.dispatchEvent(new Event('change')); document.querySelector('#quickModelChoice').open = true; 1");
+    const { root } = await cdp.send('DOM.getDocument');
+    for (const [selector, file] of [['#imageInput', 'mountain-lake.webp'], ['#extraSlots input', 'woman-cafe.webp']]) {
+      const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector });
+      await cdp.send('DOM.setFileInputFiles', { nodeId, files: [new URL('../docs/renders/' + file, import.meta.url).pathname] });
+      await sleep(500);
+    }
+    await js("if (document.querySelector('#imageStepTitle').textContent !== 'Place' || !document.querySelector('#roleBlock').hidden || !document.querySelector('#extraSlots img')) throw Error('Place and Person inputs missing'); document.querySelector('#imageStepTitle').scrollIntoView({block:'start'}); 1");
+    const clip = await js(`(() => { const heading = document.querySelector('#imageStepTitle').getBoundingClientRect(), hint = document.querySelector('#roleHint').getBoundingClientRect(); return { x: hint.left - 12, y: heading.top - 8, width: hint.width + 24, height: hint.bottom - heading.top + 20, scale: 1 }; })()`);
+    const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', clip });
+    await fs.writeFile(`${OUT}/place-and-person.png`, Buffer.from(data, 'base64'));
+  },
   async ['flux-edit']() {
     await open(`${DEMO}/#create`);
     await js(`document.querySelector('#taskChoices [data-task="edit"]').click(); document.querySelector('#quickModelChoice').open = true; const model = document.querySelector('#targetSelect'); model.value = 'flux-3-klein-base-edit'; model.dispatchEvent(new Event('change', { bubbles: true })); 1`);

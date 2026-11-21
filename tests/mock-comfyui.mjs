@@ -189,6 +189,7 @@ function withJob(png) {
 // previews: pictures the fake Civitai shows for its LoRAs ([{ type, body }], in turn), instead of the plain PNG.
 export function startMockComfy(port, { png: plain, root = null, mp4 = null, previews = [] }) {
   const png = withJob(plain);
+  let healthFailed = false;
   let outputDir = null; // where it saves instead of root/output (as if started with --output-directory)
   const prompts = [];
   const uploads = [];
@@ -263,6 +264,7 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null, prev
     for await (const c of req) raw = Buffer.concat([raw, c]);
     const p = url.pathname;
     if (p === '/free' && req.method === 'POST') return json(200, {});
+    if (p === '/system_stats' && healthFailed) return json(500, 'Internal Server Error');
     if (p === '/system_stats') return json(200, { system: { comfyui_version: '0.38.0-mock' }, devices: [{ name: 'cuda:0 Mock GPU : cudaMallocAsync', vram_total: 8 * 2 ** 30, vram_free: 6 * 2 ** 30 }] });
     if (p === '/object_info') {
       const info = structuredClone(OBJECT_INFO);
@@ -408,6 +410,7 @@ export function startMockComfy(port, { png: plain, root = null, mp4 = null, prev
     prompts,
     uploads,
     history,
+    setHealthFailed(value) { healthFailed = value; },
     setOutputDir(dir) { outputDir = dir; },
     editSaved(fn) {
       saved.json = fn(structuredClone(saved.json));

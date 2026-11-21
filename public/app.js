@@ -1,4 +1,6 @@
 // Prompt Maker front end. Plain ES module, no dependencies, talks only to the local server.
+import { workflowGuide } from './workflow-help.js';
+import { usesPlaceAndPerson } from './picture-roles.js';
 import { readRecipe } from './recipe.js';
 import { createVideoEditor } from './video-editor.js';
 import { normalizeSweep, sweepRows, sweepSetup } from './batches.js';
@@ -491,11 +493,15 @@ function sizeChoices(m, aspect) {
 
 // A size in plain words: "Full HD · 1920×1080", "Large · 1248×1248" (Small, Standard, Large, Extra large, Huge, Giant). "768p" and the like stay as they are.
 const VIDEO_SIZES = { '1280×720': 'HD', '1920×1080': 'Full HD', '2560×1440': '2K', '3840×2160': '4K' };
-function sizeName(size) {
+function sizeName(size, model) {
   const [w, h] = (/^(\d+)×(\d+)$/.exec(size) || []).slice(1).map(Number);
   if (!w) return size;
   const named = VIDEO_SIZES[`${w}×${h}`] || VIDEO_SIZES[`${h}×${w}`];
   const mp = (w * h) / (1024 * 1024);
+  if (model?.id === 'minimax-h3-image') {
+    if (mp < 3.8) return `Small preview · ${size}`;
+    if (mp <= 4.2) return `Recommended · ${size}`;
+  }
   const word = named || (mp < 0.75 ? 'Small' : mp < 1.25 ? 'Standard' : mp < 1.75 ? 'Large' : mp < 2.5 ? 'Extra large' : mp < 3.5 ? 'Huge' : 'Giant');
   return `${word} · ${size}`;
 }
@@ -606,7 +612,7 @@ function fillResolution(choices, value) {
     value = resolutionFor({ ...m, resolutions: choices }, $('#aspect').value, isSize(value) ? value : m.defaults.resolution) ?? value;
   }
   fillSelect(sel, [...choices, ...own], value);
-  for (const o of sel.options) o.textContent = own.includes(o.value) ? `Your size: ${o.value}` : sizeName(o.value);
+  for (const o of sel.options) o.textContent = own.includes(o.value) ? `Your size: ${o.value}` : sizeName(o.value, m);
   sel.dataset.last = sel.value;
   sel.insertAdjacentHTML('beforeend', `<option value="${CUSTOM_RES}">✎ Type your own size…</option>`);
   showCustomRes(own.includes(sel.value));
@@ -1359,6 +1365,9 @@ function nextBrainSort(currentSort, currentDirection, chosenSort) {
 function renderLlmPick() {
   const current = state.settings?.llmModel || '';
   const m = llmById(current);
+  const brain = selectedLlm();
+  $('#brainSystemPrompt').hidden = !brain;
+  if (brain) $('#brainSystemPrompt').textContent = `System prompt for ${brainDisplayName(brain)}`;
   $('#llmPickName').textContent = !state.llmOk ? (current ? m?.name || current : state.appDown ? 'Not connected' : 'LM Studio offline')
     : !current ? (selectedLlm() ? `Automatic · ${brainDisplayName(selectedLlm())}` : 'Choose a Brain')
     : m ? `${m.cloud ? '☁️ ' : ''}${brainDisplayName(m)}` : `${current} (missing)`;
@@ -1598,11 +1607,17 @@ $('#llmSearch').addEventListener('keydown', e => {
     e.preventDefault();
     const el = $$('#llmList [role="option"]')[llmActive];
     if (el) pickLlm(el.dataset.id);
-  } else if (e.key === 'Escape') {
+  }
+});
+$('#llmMenu').addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
     e.preventDefault();
     e.stopPropagation(); // don't also stop a run
     closeLlmMenu();
-  } else if (e.key === 'Tab') closeLlmMenu({ focus: false });
+  }
+});
+$('#llmBox').addEventListener('focusout', e => {
+  if (e.relatedTarget && !$('#llmBox').contains(e.relatedTarget)) closeLlmMenu({ focus: false });
 });
 $('#llmList').addEventListener('click', e => {
   const star = e.target.closest('button[data-rate]');
@@ -1863,8 +1878,13 @@ $('#surpriseBtn').addEventListener('click', async () => {
   if (surpriseRun) return surpriseRun.abort();
   const m = currentModel();
   const llm = selectedLlm();
+  const slots = pictureSlots();
+  const paired = usesPlaceAndPerson(m, slots);
+  if (paired && (!state.image || !state.extras[0])) return toast('Add both a Place photo and a Person photo for an idea from your pictures.', true);
+  if (paired && !state.extras[0].file) return toast('The Person photo is still loading. Try again in a moment.');
   if (!state.image || !m || m.noImage) return surpriseFromList();
   if (state.llmOk === false || llm?.vision === false) {
+    if (paired) return toast(state.llmOk === false ? 'Connect LM Studio to get an idea from your two photos.' : 'Choose a Brain that can see pictures to get an idea from your two photos.', true);
     surpriseFromList();
     return toast(state.llmOk === false ? '🎲 LM Studio isn\'t answering, so this idea is from the list, not from your picture' : `🎲 ${llm.name} can't see pictures, so this idea is from the list. Pick a Brain marked 👁 for ideas from your picture.`);
   }
@@ -1878,9 +1898,10 @@ $('#surpriseBtn').addEventListener('click', async () => {
   btn.style.minWidth = `${btn.offsetWidth}px`;
   btn.setAttribute('aria-busy', 'true');
   btn.textContent = '■ Stop';
-  btn.title = 'Looking at your picture… Click to stop';
-  sayWorking('Looking at your picture…');
-  announce('Looking at your picture for an idea.');
+  const looking = paired ? 'Looking at your Place and Person photos…' : 'Looking at your picture…';
+  btn.title = `${looking} Click to stop`;
+  sayWorking(looking);
+  announce(looking);
   let text = '';
   let failed = null;
   try {
@@ -1889,6 +1910,7 @@ $('#surpriseBtn').addEventListener('click', async () => {
       imageRole: effectiveRole(),
       ...(state.look ? { look: state.look } : {}),
       ...(state.image.file ? { imageFile: state.image.file } : { image: state.image.dataUrl }),
+      ...(paired ? { imageSlots: slots, images: [state.extras[0].file] } : {}),
       theme: typed && typed !== lastSurprise ? typed : '', // a surprise isn't built on the one before
       previous: surprised,
     }, ev => {
@@ -1909,6 +1931,7 @@ $('#surpriseBtn').addEventListener('click', async () => {
   $('#themeOpt').hidden = false;
   if (stopped) return;
   if (!text) {
+    if (paired) return toast(`Couldn't get an idea from your two photos. ${failed || 'The Brain returned an empty answer.'}`, true);
     surpriseFromList();
     return toast(`🎲 No idea from your picture this time (${failed || 'the Brain wrote nothing'}), so this one is from the list`, true);
   }
@@ -1943,6 +1966,10 @@ function themePlaceholder() {
   }
   if (state.manual) {
     $('#theme').placeholder = 'Type or paste your prompt. It goes to the model exactly as you write it.';
+    return;
+  }
+  if (currentModel()?.characterSheet && usesPlaceAndPerson(currentModel(), pictureSlots())) {
+    $('#theme').placeholder = 'What should the person do here? For example, sit beside the window.';
     return;
   }
   if (state.image && effectiveRole() === 'recreate') { // nothing to write: what's typed are changes to the picture
@@ -2001,6 +2028,7 @@ function renderCreativeTask() {
   if (box.dataset.key !== html) { box.dataset.key = html; box.innerHTML = html; } // (redrawn only when it changes: a redraw drops keyboard focus)
   $('#chosenModel').textContent = m ? m.name : 'Choose a model';
   $('#quickModelName').textContent = m ? m.name : 'Choose one';
+  $('#modelSystemPrompt').disabled = !m || Boolean(m.fixedPrompt);
   if (!m) $('#modelChoice').open = true;
   // The menu under the task buttons holds the models for the task picked (all of them before one is).
   syncStudioSelect($('#targetSelect'), task ? state.models.filter(x => modelTask(x) === task) : state.models, m?.id);
@@ -2122,6 +2150,10 @@ $('#modelGuide').addEventListener('toggle', e => saved.set('modelGuideOpen', e.t
 
 function selectModel(id, { values } = {}) {
   const m = modelById(id) || modelById('krea2-raw') || state.models[0] || null;
+  if (m?.id !== state.modelId && state.sheet) {
+    const next = state.workflows.find(f => f.id === activeWorkflowId(m?.id));
+    if (usesPlaceAndPerson(currentModel(), pictureSlots()) !== usesPlaceAndPerson(m, next?.imageSlots)) setSheet('');
+  }
   state.modelId = m?.id || null;
   saved.set('modelId', state.modelId);
   renderModelChips();
@@ -2184,7 +2216,8 @@ function renderRole() {
   const role = effectiveRole();
   const offered = rolesFor(m);
   // How the Brain uses the image: with your own prompt it goes into the workflow as it is, so there's nothing to pick.
-  $('#roleBlock').hidden = !hasImage || editing || offered.length < 2 || state.manual || Boolean(m?.noImage); // one way to use it: nothing to pick
+  const paired = usesPlaceAndPerson(m, pictureSlots());
+  $('#roleBlock').hidden = paired || !hasImage || editing || offered.length < 2 || state.manual || Boolean(m?.noImage); // one way to use it: nothing to pick
   $('#roleHint').hidden = !hasImage || state.manual || Boolean(m?.noImage);
   // In the model's own order (New scene before Recreate), moved only when it differs: a move drops keyboard focus.
   const shown = $$('#roleBlock .role').filter(b => offered.includes(b.dataset.value)).map(b => b.dataset.value);
@@ -2211,9 +2244,16 @@ function renderRole() {
   $('#imageStepOpt').textContent = noImage ? (hasImage ? 'this model works from words: your picture is set aside' : 'this model works from words') : motion ? 'both needed to render' : activeFlow()?.maps?.image ? 'needed to render with this workflow' : 'optional';
   const hasTheme = Boolean($('#theme').value.trim());
   $('#roleHint').textContent = editing ? 'Say what should change in Your idea. The Brain follows this model’s editing guide and keeps the rest of your picture.' : (m?.characterSheet ? SHEET_HINT[role] || SHEET_HINT.character : ROLE_HINTS[role])[hasTheme ? 0 : 1];
+  if (paired) {
+    $('#imageStepTitle').textContent = 'Place';
+    $('#imageStepOpt').textContent = 'the setting to keep';
+    $('#dropzone .dz-title').innerHTML = 'Drop a photo of the place, paste it, or <u>browse</u>';
+    $('#dzSub').textContent = 'Use the background you want in the finished picture.';
+    $('#roleHint').textContent = 'Your first photo sets the scene and lighting. The second shows who goes there.';
+  }
   $('#sheetBlock').hidden = !m?.characterSheet || !hasImage || state.manual || Boolean(m?.noImage);
   try { renderLine(); } catch (err) { console.error('line block:', err); } // never in the way of the rest of your inputs
-  $('#turnaroundBtn').hidden = m?.kind !== 'image';
+  $('#turnaroundBtn').hidden = paired || m?.kind !== 'image';
   renderExtraSlots();
   $('#themeOpt').textContent = m?.fixedPrompt ? 'not needed' : state.manual ? 'sent word for word' : hasImage || (motion && state.video) ? 'optional' : '';
   $('#surpriseBtn').hidden = wordForWord(m); // (no Brain writes, so no idea to surprise it with)
@@ -2601,7 +2641,7 @@ async function loadImageFile(file, { source = null, quiet = false } = {}) {
 
 function setImage(img) {
   if (img && $('[data-panel="create-image"]')._btn) setPanel($('[data-panel="create-image"]'), false, false);
-  if (img !== state.image && !(img && state.image && ((img.file && img.file === state.image.file) || (img.dataUrl && img.dataUrl === state.image.dataUrl)))) setSheet(''); // another person
+  if (!usesPlaceAndPerson(currentModel(), pictureSlots()) && img !== state.image && !(img && state.image && ((img.file && img.file === state.image.file) || (img.dataUrl && img.dataUrl === state.image.dataUrl)))) setSheet(''); // another person
   state.image = img;
   if (recipeOffer && img?.dataUrl !== recipeOffer.dataUrl) { recipeOffer = null; $('#dzRecipe').hidden = true; }
   const preview = $('#imagePreview');
@@ -2671,10 +2711,11 @@ function renderExtraSlots() {
     if (i > last + 1) return '';
     const img = state.extras[i];
     const name = sl.label || `Picture ${i + 2}`;
+    const hint = i === 0 && usesPlaceAndPerson(currentModel(), pictureSlots()) ? 'Add a clear photo of the person you want in this place.' : sl.hint;
     const more = !img && sl.optional && slots.length > 2 ? ` · up to ${slots.length + 1} pictures in all` : '';
     return `<div class="xslot${img ? ' filled' : ''}" data-slot="${i}">
       <span class="xslot-label">🖼️ ${esc(name)}<small>${sl.optional ? 'optional' : 'needed'}${more}</small></span>
-      ${sl.hint ? `<span class="xslot-hint">${esc(sl.hint)}</span>` : ''}
+      ${hint ? `<span class="xslot-hint">${esc(hint)}</span>` : ''}
       ${img ? `<img src="${img.dataUrl || `/images/${esc(img.file)}`}" alt="${esc(name)}">` : ''}
       <span class="xslot-acts">${img ? `<button type="button" class="btn small" data-act="replace">Replace</button><button type="button" class="btn small" data-act="gallery">Library</button><button type="button" class="btn small danger" data-act="clear">Remove</button>` : `<button type="button" class="btn small primary" data-act="replace">＋ Add</button><button type="button" class="btn small" data-act="gallery">🖼️ Library</button>`}</span>
       <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp"${img ? '' : ' multiple'} hidden>
@@ -2685,6 +2726,7 @@ async function loadExtraFile(i, file, { source = null } = {}) {
   if (!file || !file.type.startsWith('image/')) return toast('🤔 That file isn\'t an image.', true);
   let dataUrl;
   try { ({ dataUrl } = await readImage(file)); } catch { return toast('Could not read that image.', true); }
+  if (i === 0 && usesPlaceAndPerson(currentModel(), pictureSlots())) setSheet('');
   state.extras[i] = { dataUrl, source };
   renderExtraSlots();
   try {
@@ -2701,6 +2743,7 @@ async function loadExtraFile(i, file, { source = null } = {}) {
   }
 }
 function setExtras(files) {
+  if (usesPlaceAndPerson(currentModel(), pictureSlots()) && state.extras[0]?.file !== files?.[0]) setSheet('');
   state.extras = (files || []).map(f => (f ? { file: f } : null));
   while (state.extras.length && !state.extras.at(-1)) state.extras.pop();
   saved.set('extras', state.extras.map(x => x?.file || null));
@@ -3645,7 +3688,7 @@ function renderSharedBar(entry, running) {
   if (!first) { body.innerHTML = '<p class="muted small">Select a take above to change its render settings.</p>'; return; }
   const card = { model: first.model, el: body, rb: structuredClone(first.rb), shared: true };
   card.rb.panelOpen = true;
-  body.innerHTML = `<p class="muted small">Showing Take ${first.index + 1}’s settings. Each change applies to all selected takes; their other settings stay as they are.</p><div class="render-bar"><span class="rb-title">🎨 Render</span><select class="rb-wf" aria-label="Workflow for selected takes">${renderFlowOptions(first.model, card.rb.workflowId, entry)}</select><div class="seg rb-count" role="radiogroup" aria-label="Renders per selected take">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div><button type="button" class="btn small primary rb-go">▶ Render selected (${targets().length})</button><div class="rb-panel" aria-label="Selected takes’ settings"></div></div>`;
+  body.innerHTML = `<p class="muted small">Showing Take ${first.index + 1}’s settings. Each change applies to all selected takes; their other settings stay as they are.</p><div class="render-bar"><span class="rb-title">🎨 Render</span><select class="rb-wf" aria-label="Workflow for selected takes">${renderFlowOptions(first.model, card.rb.workflowId, entry)}</select><button type="button" class="chip-btn" data-workflow-help aria-haspopup="dialog">Help</button><div class="seg rb-count" role="radiogroup" aria-label="Renders per selected take">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div><button type="button" class="btn small primary rb-go">▶ Render selected (${targets().length})</button><div class="rb-panel" aria-label="Selected takes’ settings"></div></div>`;
   card.changed = change => {
     for (const target of targets()) {
       if (change.reset) target.rb.size = target.rb.seed = target.rb.overrides = target.rb.loras = null;
@@ -3684,6 +3727,7 @@ function renderSharedBar(entry, running) {
   $('.rb-go', body).onclick = () => targets().forEach(c => startRender(c));
   const mixedWorkflows = targets().some(c => c.rb.workflowId !== card.rb.workflowId);
   if (mixedWorkflows) {
+    $('[data-workflow-help]', body).disabled = true;
     const select = $('.rb-wf', body);
     select.insertAdjacentHTML('afterbegin', '<option value="" disabled selected>Choose a shared workflow…</option>');
     $('.rb-panel', body).innerHTML = '<p class="muted small">These takes use different workflows. Choose a workflow above to edit their settings together, or render them with their current settings.</p>';
@@ -4779,12 +4823,12 @@ function createTake(index, count, model) {
         <button type="button" class="icon-btn take-del" title="Delete this take and its renders" aria-label="Delete ${esc(name)}" disabled>🗑</button>
       </div>
     </div>
+    <details class="take-thinking" hidden><summary>Brain thinking</summary><pre class="thinking-text"></pre></details>
     <div class="prompt-well">
       <div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="prompt-view" hidden></div>
       <textarea class="prompt-text" spellcheck="true" aria-label="${esc(name)} text (editable)" hidden></textarea>
     </div>
-    <details class="take-thinking" hidden><summary>Brain thinking</summary><pre class="thinking-text"></pre></details>
     <div class="take-meta"><span class="meter"></span><span class="time"></span><span class="change"></span></div>
     <div class="render-zone" hidden></div>
     <form class="refine${model ? ' writing' : ''}"${model ? '' : ' hidden'}>
@@ -4924,7 +4968,7 @@ function setStatus(card, text, live = true) {
 }
 
 function showStreaming(card, text, thinking, reasoningChars, reasoning) {
-  if (reasoning !== undefined) showThinking(card, reasoning);
+  if (reasoning !== undefined) showThinking(card, reasoning, thinking);
   const view = $('.prompt-view', card.el);
   card.partial = text || card.partial;
   if (!text) {
@@ -4963,10 +5007,18 @@ function markInterrupted(card, text) {
 // What the check against the theme found (kept on each version as `kept`), in plain words.
 const keptLine = k => (!k ? '' : k.fixed?.length ? `✎ Put back: ${k.fixed.join(', ')}` : k.drift?.length ? `⚠ Not as in your idea: ${k.drift.join(', ')}` : k.checked ? '✓ Checked against your idea' : '');
 
-function showThinking(card, text) {
+function showThinking(card, text = '', thinking = false) {
   const fold = $('.take-thinking', card.el);
   fold.hidden = !text;
-  $('.thinking-text', fold).textContent = text || '';
+  const live = Boolean(thinking && text);
+  // Only change the disclosure at a phase boundary. A reader can close or reopen it between updates.
+  if (live !== Boolean(card.liveThinking) || !text) fold.open = live;
+  card.liveThinking = live;
+  const body = $('.thinking-text', fold);
+  if (body.textContent === text) return;
+  const follow = live && fold.open && body.scrollHeight - body.clientHeight - body.scrollTop <= 2;
+  body.textContent = text;
+  if (follow) body.scrollTop = body.scrollHeight;
 }
 
 function showVersion(card, i) {
@@ -5427,7 +5479,10 @@ async function runGeneration(body, m, { rendersNext = false } = {}) {
       } else if (ev.type === 'status' && state.cards[current]) {
         setStatus(state.cards[current], `⏳ ${ev.text}`);
       } else if (ev.type === 'sheet') {
-        if (state.image && !state.sheet.trim()) setSheet(ev.text);
+        const samePerson = usesPlaceAndPerson(m, body.imageSlots)
+          ? usesPlaceAndPerson(currentModel(), pictureSlots()) && state.extras[0]?.file === body.images?.[0]
+          : !usesPlaceAndPerson(currentModel(), pictureSlots()) && (body.imageFile ? state.image?.file === body.imageFile : state.image?.dataUrl === body.image);
+        if (state.image && samePerson && !state.sheet.trim()) setSheet(ev.text);
       } else if (ev.type === 'delta' && card) {
         showStreaming(card, ev.text, ev.thinking, ev.reasoningChars, ev.reasoning);
       } else if (ev.type === 'done' && card) {
@@ -5613,6 +5668,7 @@ async function refineCard(card, instruction) {
   if (vs.hidden) { vs.hidden = false; $('.vlabel', card.el).textContent = `v${card.view + 1}/${versionsOf(card).length}`; }
   setBusy(true);
   setStatus(card, `🔁 ${instruction}`);
+  showThinking(card);
   setTitle('🔁 Refining');
   const t0 = performance.now();
   let savedEntry = null;
@@ -6473,6 +6529,7 @@ function brainCard(m, fit, model, inUse, q = '') {
       ${size ? `<span class="muted small">${esc(size)}</span>` : ''}${(fit => (fit ? `<span class="muted small brain-size"><i class="fit-dot ${fit.level}" aria-hidden="true"></i>${esc(fit.text)}</span>` : ''))(brainCardFit(m))}
       ${lastUsedAt(m) ? `<span class="muted small">· used ${timeAgo(lastUsedAt(m))}</span>` : ''}
       <span class="brain-actions">
+        <button type="button" class="btn small" data-act="system-prompt" aria-haspopup="dialog">System prompt</button>
         ${m.id === inUse ? '' : '<button type="button" class="btn small" data-act="use">▶ Use</button>'}
         ${checking ? '<button type="button" class="btn small" data-act="stop">■ Stop</button>'
           : `<button type="button" class="btn small" data-act="check" title="Loads it in LM Studio (unloading the model there now), writes an image and a video prompt${m.vision !== false ? ' and looks at a test image' : ''}"${state.brainCheck ? ' disabled' : ''}>⚡ Quick check</button>`}
@@ -6526,6 +6583,7 @@ $('#brainsPane').addEventListener('click', e => {
   const id = b?.closest('.brain')?.dataset.id;
   if (!id) return;
   if (b.dataset.act === 'use') setBrain(id);
+  else if (b.dataset.act === 'system-prompt') openSystemPrompt('brain', llmById(id));
   else if (b.dataset.act === 'check') quickCheck(id);
   else if (b.dataset.act === 'stop') stopQuickCheck();
 });
@@ -6580,6 +6638,58 @@ $('#brainsPane').addEventListener('change', async e => {
     toast(err.message, true);
   }
 });
+
+const systemPromptDialog = $('#systemPromptDialog');
+function openSystemPrompt(kind, model) {
+  if (!model) return;
+  systemPromptDialog.dataset.kind = kind;
+  systemPromptDialog.dataset.id = model.id;
+  const brain = kind === 'brain';
+  $('#systemPromptTitle').textContent = `System prompt for ${model.name}`;
+  $('#systemPromptHelp').textContent = brain
+    ? 'Give this Brain extra instructions whenever it answers in Prompt Maker.'
+    : 'Give the Brain extra instructions for writing and refining prompts for this model.';
+  const prompt = brain ? model.systemPrompt : state.settings?.modelSystemPrompts?.[model.id];
+  $('#systemPromptText').value = typeof prompt === 'string' ? prompt : '';
+  $('#systemPromptError').hidden = true;
+  systemPromptDialog.showModal();
+}
+
+$('#modelSystemPrompt').addEventListener('click', () => openSystemPrompt('model', currentModel()));
+$('#brainSystemPrompt').addEventListener('click', () => {
+  closeLlmMenu();
+  openSystemPrompt('brain', selectedLlm());
+});
+$('#systemPromptCancel').addEventListener('click', () => systemPromptDialog.close());
+$('#systemPromptForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const save = $('#systemPromptSave');
+  if (save.disabled) return;
+  const { id, kind } = systemPromptDialog.dataset;
+  const text = $('#systemPromptText').value.trim();
+  save.disabled = true;
+  $('#systemPromptCancel').disabled = true;
+  $('#systemPromptText').readOnly = true;
+  try {
+    if (kind === 'brain') {
+      const notes = await api('/api/brains', { method: 'PUT', body: { id, systemPrompt: text } });
+      const brain = llmById(id);
+      if (brain) Object.assign(brain, notes);
+    } else {
+      state.settings = await api('/api/settings', { method: 'PUT', body: { modelSystemPrompt: { id, text } } });
+    }
+    systemPromptDialog.close();
+    toast(text ? 'System prompt saved' : 'Default instructions restored');
+  } catch (err) {
+    $('#systemPromptError').textContent = err.message;
+    $('#systemPromptError').hidden = false;
+  } finally {
+    save.disabled = false;
+    $('#systemPromptCancel').disabled = false;
+    $('#systemPromptText').readOnly = false;
+  }
+});
+systemPromptDialog.addEventListener('cancel', e => { if ($('#systemPromptSave').disabled) e.preventDefault(); });
 
 async function saveBrainRating(m, rating) {
   Object.assign(m, await api('/api/brains', { method: 'PUT', body: { id: m.id, rating } }));
@@ -7192,20 +7302,25 @@ function renderServices(st) {
         ? { dot: 'bad', text: 'Not on this computer yet. Set it up here: it brings a Brain that can see', start: false, stop: false }
         : { dot: 'bad', text: lms.local ? 'Off' : 'Off (it runs on another computer)', start: lms.local, stop: false });
   $('[data-act="lms-setup"]').hidden = !lmsMissing || lms.setup?.state === 'running';
-  const busy = $('.svc[data-svc="comfy"]').dataset.busy;
+  const busy = comfy.updating ? 'update' : $('.svc[data-svc="comfy"]').dataset.busy;
   row('comfy', busy === 'update'
     ? { dot: 'warn', text: 'Updating… it starts again on its own', start: false, stop: false }
     : comfy.running
     ? { dot: 'ok', text: `Running${comfy.version ? ` · version ${comfy.version}` : ''}${comfy.gpu ? ` · ${comfy.gpu}` : ''}`, start: false, stop: comfy.local && !busy }
+    : comfy.unhealthy && !busy
+      ? { dot: 'bad', text: comfy.error, start: false, stop: false }
     : comfy.starting || busy === 'start'
-      ? { dot: 'warn', text: 'Starting… (up to a minute)', start: false, stop: false }
+      ? { dot: 'warn', text: 'Starting…', start: false, stop: false }
       : comfy.setup?.state === 'running'
         ? { dot: 'warn', text: `Setting up… ${comfy.setup.text}`, start: false, stop: false }
         : { dot: 'bad', text: !comfy.local ? 'Off (it runs on another computer)' : comfy.launch ? 'Off' : 'Not on this computer yet. Set it up here, or enter its folder under ComfyUI below', start: comfy.local && Boolean(comfy.launch), stop: false });
   $('[data-act="comfy-setup"]', $('.svc[data-svc="comfy"]')).hidden = comfy.running || comfy.starting || busy === 'start' || !comfy.local || Boolean(comfy.launch) || comfy.setup?.state === 'running';
   $('[data-act="model-files"]').hidden = !comfy.local || !state.workflows.length;
   if (comfy.running && comfy.local && state.workflows.length) peekModelUpdates();
-  $('[data-act="comfy-update"]').hidden = !comfy.updatable || Boolean(busy) || comfy.starting || comfy.setup?.state === 'running';
+  $('[data-act="comfy-restart"]').hidden = !(comfy.unhealthy && comfy.canRestart) || Boolean(busy);
+  const updateButton = $('[data-act="comfy-update"]');
+  updateButton.hidden = !comfy.updatable;
+  updateButton.disabled = Boolean(busy) || comfy.setup?.state === 'running';
   const ff = st.ffmpeg; // (missing from an older server still running: see svcStale)
   row('ffmpeg', !ff
     ? { dot: '', text: 'Known once Prompt Maker restarts' }
@@ -7226,7 +7341,7 @@ function renderServices(st) {
   $('#sComfyFolder').placeholder = comfy.launch?.from && comfy.launch.from !== 'set' ? `found: ${comfy.launch.dir}` : 'found automatically';
   // Keep watching while ComfyUI is on its way up.
   clearTimeout(servicesPoll);
-  if ((comfy.starting || busy === 'start' || comfy.setup?.state === 'running' || lms.setup?.state === 'running' || st.ffmpeg?.setup?.state === 'running') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
+  if ((comfy.updating || comfy.starting || busy === 'start' || comfy.setup?.state === 'running' || lms.setup?.state === 'running' || st.ffmpeg?.setup?.state === 'running') && isView('settings')) servicesPoll = setTimeout(loadServices, 2000);
 }
 
 // With Prompt Maker's server stopped, nothing here can be checked or pressed: say so instead of showing stale states.
@@ -7248,18 +7363,11 @@ async function startComfyUi() {
   try {
     await api('/api/services/comfy/start', { method: 'POST' });
     toast('🎨 Starting ComfyUI… (up to a minute)');
-    for (let i = 0; i < 90; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      const st = await loadComfyStatus();
-      if (st?.ok) {
-        toast('🎨 ComfyUI is running');
-        break;
-      }
-      if (i === 89) toast("ComfyUI didn't answer within three minutes. Check its window or log.", true);
-    }
+    delete row.dataset.busy;
+    await loadServices();
+    await startComfyWatch();
   } catch (err) {
     toast(err.message, true);
-  } finally {
     delete row.dataset.busy;
     await loadServices();
   }
@@ -7279,30 +7387,40 @@ const installNodePack = (btn, name) => comfyJob(btn, '/api/comfy/nodes/install',
   clears: /node packs?, which/,
 });
 async function comfyJob(btn, url, body, { start, done, clears }) {
+  const row = $('.svc[data-svc="comfy"]');
+  if (row.dataset.busy === 'update') return;
+  ++comfyWatchId;
+  const message = $('#comfyJobMessage');
+  message.hidden = true;
   const label = btn?.textContent;
   if (btn) btn.disabled = true;
-  const row = $('.svc[data-svc="comfy"]');
   row.dataset.busy = 'update';
   if (state.services) renderServices(state.services);
   toast(start);
-  let result = null, failed = '';
+  let result = null, failed = '', detail = '';
   try {
     await streamApi(url, body, ev => {
       if (ev.type === 'status') { if (btn?.isConnected) btn.textContent = `⏳ ${ev.text}`; $('.svc-state', row).textContent = ev.text; }
       else if (ev.type === 'done') result = ev;
-      else if (ev.type === 'error') failed = ev.message;
+      else if (ev.type === 'error') { failed = ev.message; detail = ev.detail || ''; }
     });
   } catch (err) { failed = friendly(err); }
   if (!failed && result) {
-    for (let i = 0; i < 90; i++) { // ComfyUI loads its nodes before it answers
-      if ((await loadComfyStatus())?.ok) break;
-      await new Promise(r => setTimeout(r, 2000));
-    }
+    const st = await waitForComfy();
+    if (!st?.ok) failed = st?.error || "ComfyUI hasn't answered yet. Check Settings → Services.";
   }
   delete row.dataset.busy;
   if (btn?.isConnected) { btn.disabled = false; btn.textContent = label; }
   await loadServices();
-  if (failed || !result) return toast(`⚠️ ${failed || "That didn't finish."}`, true);
+  if (failed || !result) {
+    const reason = failed || "That didn't finish. Try again.";
+    $('p', message).textContent = reason;
+    $('details p', message).textContent = detail;
+    $('details', message).hidden = !detail;
+    $('details', message).open = false;
+    message.hidden = false;
+    return toast(reason, true);
+  }
   toast(done(result));
   if (clears.test($('#stageError').textContent)) showError('');
   checkedModels.clear();
@@ -7414,6 +7532,11 @@ async function serviceAction(btn) {
   if (act === 'comfy-start') return startComfyUi();
   if (act === 'app-restart') return restartApp();
   if (act === 'comfy-setup') return openComfySetup();
+  if (act === 'comfy-restart') return confirmClick(btn, 'Restart and clear the render queue?', async () => {
+    btn.disabled = true;
+    try { await restartComfyUi(); } finally { btn.disabled = false; }
+  });
+  if (act === 'comfy-stop') ++comfyWatchId;
   if (act === 'comfy-update') return updateComfyUi(btn);
   if (act === 'lms-setup') return openLmsSetup();
   if (act === 'ffmpeg-setup') return openFfmpegSetup();
@@ -7457,6 +7580,7 @@ $('#servicesCard').addEventListener('click', e => {
 // Create's "ComfyUI offline" has a Start link too.
 $('#comfyState').addEventListener('click', e => {
   if (e.target.closest('.comfy-setup')) openComfySetup();
+  else if (e.target.closest('.comfy-services')) { showSettingsSection('services'); showView('settings'); }
   else if (e.target.closest('.comfy-start')) startComfyUi();
 });
 
@@ -7616,13 +7740,23 @@ function pollComfySetup() {
 }
 
 // After the set-up started ComfyUI: watch until it answers, like ▶ Start does.
-async function startComfyWatch() {
-  for (let i = 0; i < 90; i++) {
+let comfyWatchId = 0;
+async function waitForComfy(id = comfyWatchId) {
+  for (let i = 0; i < 90 && id === comfyWatchId; i++) {
     await new Promise(r => setTimeout(r, 2000));
+    if (id !== comfyWatchId) return;
     const st = await loadComfyStatus();
-    if (st?.ok) { toast('🎨 ComfyUI is running'); loadServices(); return; }
+    if (st?.ok || st?.unhealthy) return st;
+    if (st?.local && st.starting === false) return { error: 'ComfyUI stopped during startup. Check comfyui.log in your data folder.' };
   }
-  toast("ComfyUI didn't answer within three minutes. Check its log (comfyui.log in the data folder).", true);
+}
+
+async function startComfyWatch() {
+  const id = ++comfyWatchId;
+  const st = await waitForComfy(id);
+  if (id !== comfyWatchId) return;
+  toast(st?.ok ? '🎨 ComfyUI is running' : st?.error || "ComfyUI hasn't answered yet. Check comfyui.log in your data folder.", !st?.ok);
+  await loadServices();
 }
 
 $('#csGo').addEventListener('click', async () => {
@@ -8280,7 +8414,11 @@ function activeWorkflowId(modelId) {
 }
 
 function pickWorkflow(modelId, id) {
-  if (workflowsFor(modelId).some(f => f.id === id)) saved.set(`wf.${modelId}`, id); // another model's workflow applies to these takes only
+  const flows = workflowsFor(modelId);
+  const picked = flows.find(f => f.id === id);
+  const previous = flows.find(f => f.id === activeWorkflowId(modelId));
+  if (modelId === state.modelId && picked && usesPlaceAndPerson(currentModel(), previous?.imageSlots) !== usesPlaceAndPerson(currentModel(), picked.imageSlots)) setSheet('');
+  if (picked) saved.set(`wf.${modelId}`, id); // another model's workflow applies to these takes only
   state.cards.forEach(c => {
     if (c.model?.id !== modelId || !c.rb) return;
     const changed = c.rb.workflowId !== id;
@@ -9261,9 +9399,35 @@ $('#wfpLoras').addEventListener('keydown', e => {
 
 const autoRenderKey = modelId => `autoRender.${modelId}`;
 
+document.addEventListener('click', e => {
+  const button = e.target.closest('[data-workflow-help]');
+  if (!button) return;
+  const bar = button.closest('.render-bar');
+  const id = button.dataset.workflowHelp || (bar ? $('.rb-wf', bar).value : $('#wfpSelect').value);
+  const flow = state.workflows.find(f => f.id === id);
+  if (!flow) return;
+  const model = modelById(flow.modelId);
+  const guide = workflowGuide(flow, model);
+  if (button.closest('#wfList') || (bar && activeFlow()?.id !== flow.id)) {
+    const task = CREATIVE_TASKS.find(t => t.id === modelTask(model));
+    guide.steps.unshift(`On Create, choose ${task?.short || 'the task'} under Make and select ${model.name}. In Fine-tune → Rendering, select ${flow.name}.`);
+  }
+  $('#workflowHelpTitle').textContent = flow.name;
+  $('#workflowHelpBody').innerHTML = `
+    <p class="help-purpose">${esc(guide.purpose)}</p>
+    <section><h3>What you need</h3>${guide.inputs.length ? `<ul class="help-inputs">${guide.inputs.map(input => `<li><strong>${esc(input.label)}</strong> <small>${input.optional ? 'Optional' : 'Required'}</small><p>${esc(input.detail)}</p></li>`).join('')}</ul>` : '<p>Your idea in words. This workflow renders from text alone.</p>'}</section>
+    <section><h3>How to use it</h3><ol>${guide.steps.map(step => `<li>${esc(step)}</li>`).join('')}</ol></section>
+    ${guide.example ? `<section><h3>Example idea</h3><p>${esc(guide.example)}</p></section>` : ''}
+    ${guide.tip ? `<p class="help-tip">${esc(guide.tip)}</p>` : ''}
+    ${bar ? '<p class="help-tip">Rendering an existing take uses its saved prompt and inputs. To use different pictures or write a new prompt, start from Create.</p>' : ''}`;
+  $('#workflowHelp').showModal();
+  $('#workflowHelpBody').scrollTop = 0;
+});
+
 function renderWorkflowPicker() {
   const m = currentModel();
   const flows = m ? workflowsFor(m.id) : [];
+  $('#createWorkflowHelp').hidden = !flows.length;
   $('#wfpEmpty').hidden = !m || !state.workflowsLoaded || flows.length > 0;
   $('#wfpBox').hidden = !flows.length;
   $('#wfpKind').textContent = m?.kind === 'video' ? 'videos' : 'images';
@@ -9282,8 +9446,7 @@ function renderWorkflowPicker() {
   }
   renderBackground(); // in your inputs, so it follows the picked workflow even when there is none
   renderBatch();
-  renderWorkflowWarning();
-  renderExtraSlots(); // (another workflow may have other picture slots)
+  renderRole(); // Picture labels and role choices follow the picked workflow.
   renderStaleNotice();
   renderModelNotice();
   if (flows.length) checkWorkflowModels(activeWorkflowId(m.id));
@@ -9407,6 +9570,7 @@ $('#sComfyRecheck').addEventListener('click', async () => {
 // Stops ComfyUI and starts it again (a node pack fixed in ComfyUI loads at its next start).
 async function restartComfyUi() {
   try {
+    ++comfyWatchId;
     toast('🎨 Restarting ComfyUI…');
     await api('/api/services/comfy/stop', { method: 'POST' });
   } catch (err) {
@@ -9536,8 +9700,8 @@ function renderComfyState() {
   if (el.hidden) return;
   const settingUp = !c.ok && c.setup?.state === 'running';
   const missing = !c.ok && c.local && c.found === false && !settingUp; // not on this computer: one click sets it up
-  const startable = !c.ok && !missing && !settingUp && c.local !== false;
-  el.innerHTML = `<span class="dot ${c.ok ? 'ok' : settingUp ? 'warn' : 'bad'}"></span>${c.ok ? 'ComfyUI ready' : settingUp ? 'Setting up ComfyUI…' : missing ? 'ComfyUI isn\'t set up' : 'ComfyUI offline'}${startable ? '<button type="button" class="comfy-start">▶ Start it</button>' : ''}${missing || settingUp ? `<button type="button" class="comfy-start comfy-setup">${settingUp ? 'Show progress' : '⬇ Set it up'}</button>` : ''}`;
+  const startable = !c.ok && !c.starting && !c.unhealthy && !missing && !settingUp && c.local !== false;
+  el.innerHTML = `<span class="dot ${c.ok ? 'ok' : settingUp ? 'warn' : 'bad'}"></span>${c.ok ? 'ComfyUI ready' : settingUp ? 'Setting up ComfyUI…' : missing ? 'ComfyUI isn\'t set up' : c.unhealthy ? 'ComfyUI needs attention' : c.starting ? 'ComfyUI is starting…' : 'ComfyUI offline'}${c.unhealthy ? '<button type="button" class="comfy-start comfy-services">Open Services</button>' : ''}${startable ? '<button type="button" class="comfy-start">▶ Start it</button>' : ''}${missing || settingUp ? `<button type="button" class="comfy-start comfy-setup">${settingUp ? 'Show progress' : '⬇ Set it up'}</button>` : ''}`;
   el.title = c.ok ? `ComfyUI ${c.version || ''}${c.gpu ? ` on ${c.gpu}` : ''}`.trim() : c.error || '';
 }
 
@@ -9871,7 +10035,10 @@ function loadComfyStatus() {
       comfyLoading = null;
       state.cards.forEach(updateRenderStatus);
       renderComfyState();
-      if (cameBack) toast('🎨 ComfyUI is connected');
+      if (cameBack) {
+        toast('🎨 ComfyUI is connected');
+        if (isView('settings')) loadServices();
+      }
       // However it came back (this card's Start, Settings → Services, or by hand), "Can't reach ComfyUI" is no longer true.
       if (st.ok && $('#stageError').dataset.comfyDown) showError('');
       if (st.ok) {
@@ -10046,6 +10213,7 @@ function renderZone(card) {
     bar = `<div class="render-bar">
       <span class="rb-title">🎨 Render</span>
       <select class="rb-wf" aria-label="Workflow for ${esc(name)}">${renderFlowOptions(model, card.rb.workflowId, entry)}</select>
+      <button type="button" class="chip-btn" data-workflow-help aria-haspopup="dialog">Help</button>
       <button type="button" class="icon-btn rb-tune" title="This take's settings: shape, size, duration, seed, steps, CFG, sampler and LoRA strengths, for its renders only" aria-label="This take's settings" aria-expanded="${card.rb.panelOpen ? 'true' : 'false'}">⚙</button>
       <div class="seg rb-count" role="radiogroup" aria-label="How many renders">${[1, 2, 3, 4].map(n => `<button type="button" role="radio" data-value="${n}">×${n}</button>`).join('')}</div>
       <button type="button" class="chip-btn rb-seed" aria-pressed="${card.rb.lockSeed}"></button>
@@ -10217,7 +10385,7 @@ async function renderTakePanel(card) {
     </div>
     <div class="rb-row rb-size-row">
       ${flow.maps?.size ? `<label>Shape<select class="rb-aspect" aria-label="Shape for this take">${aspects.map(a => opt(a, a, size.aspectRatio)).join('')}</select></label>
-      <label>Size<select class="rb-size" aria-label="Size for this take">${sizes.map(r => opt(r, yours.includes(r) ? `Your size: ${r}` : sizeName(r), size.resolution)).join('')}</select></label>` : ''}
+      <label>Size<select class="rb-size" aria-label="Size for this take">${sizes.map(r => opt(r, yours.includes(r) ? `Your size: ${r}` : sizeName(r, m), size.resolution)).join('')}</select></label>` : ''}
       ${m.kind === 'video' && flow.maps?.duration ? `<label>Duration<span class="rb-dur"><input type="number" class="rb-duration" min="1" max="20" step="1" value="${Number.parseFloat(size.duration) || 5}" aria-label="Seconds for this take"> s</span></label>` : ''}
       ${seedInputs ? `<label>Seed<span class="rb-seedwrap"><span class="seg rb-seedmode" role="radiogroup" aria-label="Seed for this take"><button type="button" role="radio" data-value="random" aria-checked="${seed.mode === 'random'}" class="${seed.mode === 'random' ? 'active' : ''}">🎲 New each render</button><button type="button" role="radio" data-value="fixed" aria-checked="${seed.mode === 'fixed'}" class="${seed.mode === 'fixed' ? 'active' : ''}">🔒 Fixed</button></span><input type="number" class="rb-seedval" min="0" step="1" value="${seed.value ?? 0}" aria-label="Seed number for this take"${seed.mode === 'fixed' ? '' : ' disabled'}></span></label>` : ''}
     </div>
@@ -11803,6 +11971,7 @@ function renderWorkflowList() {
       <div><div class="wf-name">${esc(f.name)}${state.wfStale.has(f.id) ? ' <span class="tag warn">↻ changed in ComfyUI</span>' : ''}</div><div class="wf-src">${sourceLabel(f.source)} · ${f.nodes} nodes</div></div>
       <div class="wf-maps">${mapChips(m).map(([k, label]) => `<span class="${f.maps[k] ? 'on' : ''}" title="${f.maps[k] ? 'Set by Prompt Maker' : 'Left as the workflow has it'}">${label}</span>`).join('')}</div>
       <div class="wf-actions">
+        <button type="button" class="btn small" data-workflow-help="${esc(f.id)}" aria-haspopup="dialog">Help</button>
         ${state.wfStale.has(f.id) ? '<button type="button" class="btn small primary" data-act="refresh">↻ Update</button>' : ''}
         <button type="button" class="btn small" data-act="setup">⚙ Edit</button>
         <button type="button" class="btn small" data-act="export">Export</button>
@@ -15394,15 +15563,14 @@ async function loadModels() {
     const sheet = saved.get('sheet', '');
     if (img && (await api(`/api/images/${encodeURIComponent(img)}`).catch(() => ({}))).exists) {
       setImage({ file: img, source: saved.get('imageSource', null) });
-      setSheet(sheet); // (a new picture clears it: this one is the same)
-    }
-    else saved.set('image', null);
+    } else saved.set('image', null);
     const extras = saved.get('extras', []);
     if (Array.isArray(extras) && extras.some(Boolean)) {
       const kept = [];
       for (const f of extras) kept.push(f && (await api(`/api/images/${encodeURIComponent(f)}`).catch(() => ({}))).exists ? f : null);
       setExtras(kept);
     }
+    if (state.image) setSheet(sheet); // Restore after both picture slots.
     const vid = saved.get('video', null);
     if (vid?.file && (await api(`/api/videos/${encodeURIComponent(vid.file)}`).catch(() => ({}))).exists) restoreVideo(vid);
     else saved.set('video', null);

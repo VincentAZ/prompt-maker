@@ -55,6 +55,8 @@ const startApp = (port, data) => new Promise((resolve, reject) => {
   setTimeout(() => reject(new Error(`no start on ${port}:\n${log}`)), 20000);
 });
 await startApp(5320, demo);
+// Even the empty copy runs startup cleanup. Keep it away from the creator's live services.
+await fs.writeFile(path.join(BASE, 'data/settings.json'), JSON.stringify({ lmStudioUrl: 'http://127.0.0.1:1', comfyUrl: 'http://127.0.0.1:1' }));
 await startApp(5321, path.join(BASE, 'data'));
 // Demonstrate the wider rendering controls with a scrubbed, synthetic workflow.
 const sampleFlow = structuredClone(SAVED_WORKFLOW);
@@ -73,7 +75,13 @@ const updated = await fetch(`http://127.0.0.1:5320/api/workflows/${workflow.id}`
 if (!updated.ok) throw new Error(`Screenshot workflow settings failed (${updated.status})`);
 
 await sleep(1500);
-const shots = spawn(process.execPath, ['tests/screenshots.mjs', ...names], { cwd: ROOT, env: { ...process.env, OUT: path.join(BASE, 'shots'), CDP_PORT: '9445', CHROME_DIR: path.join(BASE, 'chrome') }, stdio: 'inherit' });
+// A clean managed installation lets the Services screenshot show Update ComfyUI.
+const shotComfy = path.join(BASE, 'data', 'ComfyUI');
+if (names.includes('desktop-shortcut')) {
+  for (const folder of ['comfy', 'venv/bin']) await fs.mkdir(path.join(shotComfy, folder), { recursive: true });
+  for (const file of ['main.py', 'venv/bin/python', '.prompt-maker-setup']) await fs.writeFile(path.join(shotComfy, file), '');
+}
+const shots = spawn(process.execPath, ['tests/screenshots.mjs', ...names], { cwd: ROOT, env: { ...process.env, OUT: path.join(BASE, 'shots'), CDP_PORT: '9445', SHOT_COMFY_DIR: shotComfy, SHOT_LM_URL: `http://127.0.0.1:${MOCK}`, CHROME_DIR: path.join(BASE, 'chrome') }, stdio: 'inherit' });
 const code = await new Promise(r => shots.on('close', r));
 for (const p of servers) p.kill('SIGTERM');
 await mock.stop?.(); await comfy.stop?.();

@@ -136,3 +136,20 @@ test('editing prompts acknowledge the supplied picture and keep unrelated detail
   assert(textOnly.includes('will NOT receive'), 'text-to-image reference behavior is unchanged');
 });
 test.after(async () => { await fs.rm(scratch,{recursive:true,force:true}); });
+
+test('MiniMax small exports use a full generation canvas and retain the requested output size', async () => {
+  const { buildPrompt } = await import('../lib/workflows.js');
+  const path = 'minimax-h3-image/text-to-image.json';
+  const workflow = JSON.parse(await fs.readFile(new URL('../workflows/' + path, import.meta.url)));
+  workflow.source = 'starter:' + path;
+  const build = resolution => buildPrompt(workflow, { text: '', resolution });
+  const { prompt, applied } = build('896×1184');
+  assert.equal(applied.size, '896×1184');
+  assert.ok(prompt['5'].inputs.width * prompt['5'].inputs.height >= 2048 ** 2);
+  const resize = prompt[prompt['9'].inputs.images[0]];
+  assert.equal(resize.class_type, 'ImageScale');
+  assert.deepEqual(resize.inputs, { image: ['8', 0], width: 896, height: 1184, upscale_method: 'lanczos', crop: 'disabled' });
+  assert.deepEqual(build('2048×2048').prompt['9'].inputs.images, ['8', 0]);
+  workflow.source = 'upload';
+  assert.equal(build('896×1184').prompt['5'].inputs.width, 896);
+});

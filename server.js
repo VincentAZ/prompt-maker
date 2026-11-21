@@ -23,6 +23,7 @@ import * as update from './lib/update.js';
 import { spawn } from 'node:child_process';
 import * as videotools from './lib/videotools.js';
 import { brainRecords, looksRefused, countWords, wordRange, CHECK_THEMES, testImageDataUrl } from './lib/brains.js';
+import { usesPlaceAndPerson } from './public/picture-roles.js';
 import { buildGenerateMessages, buildRefineMessages, buildDraftGuideMessages, cleanPrompt, masterFor, modelFor, setsStatus, fitToRoom, estimateTokens, tooBigMessage, ANSWER_ROOM, OVERFLOW, DEFAULT_MASTER_PROMPT, LOOKS, NO_LOOK, CUSTOM_LOOK_ID, buildCheckMessages, parseDrift, putBackInstruction, buildSheetMessages, cleanSheet, withSheet, buildSurpriseMessages, cleanSurprise, lookOf } from './lib/prompt.js';
 import * as comfy from './lib/comfy.js';
 import * as wf from './lib/workflows.js';
@@ -184,7 +185,7 @@ async function prepareLlm(settings, requested, needsVision) {
     throw store.httpError(400, `"${info.name}" is text-only and can't see images. Pick a vision model (👁) in the top bar.`);
   }
   const notes = brainNotes[info.id] || {};
-  return { ...info, thinking: notes.thinking || settings.thinking, thinkOff: notes.thinkOff || null };
+  return { ...info, systemPrompt: notes.systemPrompt || '', thinking: notes.thinking || settings.thinking, thinkOff: notes.thinkOff || null };
 }
 
 // Opens the event stream and tells the UI which LLM is working and whether it still has to load.
@@ -246,6 +247,14 @@ async function ensureAlone(settings, llm, onStatus = () => {}) {
 // recognizes (llm.thinkSwitch). Other Brains are watched when Thinking is Off: one that starts thinking anyway is
 // stopped and asked again with its thinking already over (EMPTY_THINK), and the app remembers which Brains need that.
 async function complete(settings, llm, body, options) {
+  if (llm.systemPrompt) {
+    // Keep a single system message for chat templates that only accept one.
+    const [first, ...rest] = body.messages;
+    const messages = first?.role === 'system'
+      ? [{ ...first, content: llm.systemPrompt + '\n\n' + first.content }, ...rest]
+      : [{ role: 'system', content: llm.systemPrompt }, ...body.messages];
+    body = { ...body, messages };
+  }
   if (llm.cloud) return completeNow(settings, llm, body, options);
   return withGpu('brain', settings, options, async () => {
     await ensureAlone(settings, llm, options.onStatus);
@@ -337,16 +346,19 @@ const brainFailure = (outcome, message) => Object.assign(store.httpError(502, me
 // The room a local Brain was loaded with (null when unknown, or for a cloud Brain, which has plenty).
 const brainRoom = llm => (llm.cloud ? null : llm.contextLoaded || llm.context || null);
 
+const brainPromptTokens = llm => llm.systemPrompt ? Math.ceil((llm.systemPrompt.length + 2) / 3.5) : 0;
+
 // Builds a request that fits the Brain's room, or throws the plain-words error when it can't fit at all.
 // build(model) makes the messages. A local Brain loaded with less room than it can take is first loaded again with
 // enough (said in the status line), so nobody has to go to the Brains page for it; only when that can't be done
 // do fewer example prompts go along.
 async function fitRequest(settings, llm, model, build, onStatus) {
   if (!brainRoom(llm)) return build(model);
-  const grew = await growRoom(settings, llm, estimateTokens(build(model)) + ANSWER_ROOM, onStatus);
+  const promptTokens = brainPromptTokens(llm);
+  const grew = await growRoom(settings, llm, estimateTokens(build(model)) + promptTokens + ANSWER_ROOM, onStatus);
   const room = brainRoom(llm);
-  const fit = fitToRoom(model, room, build);
-  if (!fit.fits) throw brainFailure('room', tooBigMessage(llm, room, estimateTokens(fit.messages), { couldntGrow: grew === false }));
+  const fit = fitToRoom(model, room - promptTokens, build);
+  if (!fit.fits) throw brainFailure('room', tooBigMessage(llm, room, estimateTokens(fit.messages) + promptTokens, { couldntGrow: grew === false }));
   if (fit.dropped) onStatus?.(`${llm.name} has room for ${room.toLocaleString('en-US')} tokens: fewer example prompts go along, so the request fits.`);
   return fit.messages;
 }
@@ -372,7 +384,7 @@ async function growRoom(settings, llm, need, onStatus) {
 
 // LM Studio said the request didn't fit after all: the same plain words, with the numbers.
 const explainOverflow = (err, llm, messages) => {
-  if (OVERFLOW.test(err.message || '') && !llm.cloud && messages) err.message = tooBigMessage(llm, brainRoom(llm) || 'an unknown number of', estimateTokens(messages));
+  if (OVERFLOW.test(err.message || '') && !llm.cloud && messages) err.message = tooBigMessage(llm, brainRoom(llm) || 'an unknown number of', estimateTokens(messages) + brainPromptTokens(llm));
   return err;
 };
 const EMPTY_HINT = 'The Brain returned an empty prompt. If it is a "thinking" model it may have used all its room thinking. Raise Max tokens in Settings or pick a non-thinking Brain.';
@@ -535,6 +547,7 @@ async function generate(req, res) {
   }
   // The other picture slots of step ③ (a second person, a place…): stored files, with what each slot is for.
   const { images, imageSlots, imageDataUrls } = await extraPictures(body, imageFile);
+  if (!body.manual && usesPlaceAndPerson(model, imageSlots) && (!imageFile || !images[0])) throw store.httpError(400, 'Add both pictures first. Place is the setting and Person is who goes there.');
   if (imageSlots.length) params.imageSlots = imageSlots;
   const video = await motionVideo(body.video, model);
   const brainVideo = await videoForBrain(video);
@@ -688,12 +701,12 @@ async function refine(req, res) {
   const seesImages = Boolean(imageDataUrl || brainVideo?.sheetDataUrl);
   const llmModel = llm.id;
   const opts = sampling(settings, body.temperature ?? entry.temperature, llm);
-  const params = pickParams(entry, model, await store.listLooks());
+  const params = { ...pickParams(entry, model, await store.listLooks()), imageSlots: entry.imageSlots, extraImages };
 
   const stream = await startStream(res, settings, llm, 1, seesImages);
   let messages = null;
   try {
-    messages = await fitRequest(settings, llm, modelFor(model, settings), m => buildRefineMessages(masterFor(settings), m, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo, extraImages }, imageDataUrl, current, instruction), text => stream.send({ type: 'status', text }));
+    messages = await fitRequest(settings, llm, modelFor(model, settings), m => buildRefineMessages(masterFor(settings), m, { ...params, sourcePrompt: imageDataUrl ? entry.source?.text : '', video: brainVideo }, imageDataUrl, current, instruction), text => stream.send({ type: 'status', text }));
     const t0 = Date.now();
     let reasoning = '';
     const raw = await writeText(settings, llm, { model: llmModel, messages, ...opts }, {
@@ -755,12 +768,18 @@ async function surprise(req, res) {
   if (!model) throw store.httpError(400, 'Pick a target model first.');
   const imageDataUrl = body.imageFile ? await store.readImageDataUrl(String(body.imageFile)) : /^data:image\/[\w.+-]+;base64,/.test(body.image || '') ? body.image : null;
   if (!imageDataUrl) throw store.httpError(400, 'Add a picture first.');
+  let personDataUrl = null;
+  if (usesPlaceAndPerson(model, body.imageSlots)) {
+    const pictures = await extraPictures(body, imageDataUrl);
+    personDataUrl = pictures.imageDataUrls[0];
+    if (!personDataUrl) throw store.httpError(400, 'Add the Person photo for an idea from both pictures.');
+  }
   const params = pickParams(body, model, await store.listLooks());
   const llm = await prepareLlm(settings, body.llmModel, true);
   const stream = await startStream(res, settings, llm, 1, true);
   try {
     const previous = (Array.isArray(body.previous) ? body.previous : []).map(t => String(t).trim().slice(0, 300)).filter(Boolean).slice(-5);
-    const messages = buildSurpriseMessages({ model, role: params.imageRole, staging: Boolean(model.motionVideo), look: lookOf(params), theme: params.theme.slice(0, 300), previous, imageDataUrl });
+    const messages = buildSurpriseMessages({ model, role: params.imageRole, staging: Boolean(model.motionVideo), look: lookOf(params), theme: params.theme.slice(0, 300), previous, imageDataUrl, personDataUrl });
     const raw = await writeText(settings, llm, { model: llm.id, messages, ...sampling(settings, 1, llm) }, { signal: stream.signal, onStatus: text => stream.send({ type: 'status', text }) });
     const text = cleanSurprise(raw);
     if (!text) throw brainFailure('empty', EMPTY_HINT);
@@ -852,15 +871,36 @@ async function assistantFold(req, res) {
 
 const comfyUp = settings => comfy.status(settings.comfyUrl).then(() => true, () => false);
 
+async function comfyState(base, processLookup) {
+  try {
+    return await comfy.status(base);
+  } catch (err) {
+    const local = services.isLocalUrl(base);
+    const age = local ? await services.comfyAgeMs() : null;
+    const proc = local && age === null && await (processLookup ?? services.comfyProcess(base));
+    const answered = 'comfy' in err; // an HTTP error from /system_stats, including a failed GPU check
+    const starting = !answered && age !== null && age < 60000;
+    const unhealthy = !starting && (answered || Boolean(proc) || age !== null);
+    const canRestart = local && (age !== null || Boolean(proc));
+    let error = err.message;
+    if (unhealthy) error = canRestart ? 'ComfyUI is open but could not report that it is ready to render. Try Restart ComfyUI.' : 'ComfyUI could not report that it is ready to render. Check it on the computer where it runs.';
+    return { ok: false, starting, unhealthy, canRestart, error };
+  }
+}
+
+let comfyUpdating = false;
+// A failed health check can still come from a live server. Wait for it to go away before restarting.
+const comfyPresent = settings => comfy.status(settings.comfyUrl).then(() => true, err => 'comfy' in err || err.timedOut);
+
 // What's running, and whether each can be started or stopped from here. Seeing ComfyUI run also teaches the app
 // how you start it (folder, Python, options), so its Start button does the same.
 async function servicesStatus() {
   const settings = await store.getSettings();
-  const [llms, comfyStatus, proc, unitActive, app, onService, lmsInstalled, ffmpeg] = await Promise.all([
+  const procTask = services.comfyProcess(settings.comfyUrl);
+  const [llms, comfyStatus, proc, app, onService, lmsInstalled, ffmpeg] = await Promise.all([
     listLlms(settings.lmStudioUrl).catch(() => null),
-    comfy.status(settings.comfyUrl).catch(() => null),
-    services.comfyProcess(settings.comfyUrl),
-    services.comfyUnitActive(),
+    comfyState(settings.comfyUrl, procTask),
+    procTask,
     autostart.status(),
     services.underService(),
     firstSetup.lmsReady(),
@@ -883,8 +923,12 @@ async function servicesStatus() {
       setup: firstSetup.currentLms(), // LM Studio's set-up, while it runs (or how it ended)
     },
     comfy: {
-      running: Boolean(comfyStatus),
-      starting: !comfyStatus && unitActive,
+      running: comfyStatus.ok,
+      updating: comfyUpdating,
+      starting: Boolean(comfyStatus.starting),
+      unhealthy: Boolean(comfyStatus.unhealthy),
+      canRestart: Boolean(comfyStatus.canRestart),
+      error: comfyStatus.error,
       gpu: comfyStatus?.gpu || '',
       local: services.isLocalUrl(settings.comfyUrl),
       autostart: settings.comfyAutostart,
@@ -900,7 +944,7 @@ async function servicesStatus() {
 // ---------- Brains ----------
 
 // What the app knows about a Brain beyond LM Studio's facts (see store.getBrainNotes).
-const brainView = (n = {}) => ({ memoryReleasedAt: n.memoryReleasedAt || null, rating: n.rating || 0, thinking: n.thinking || null, thinkOff: n.thinkOff || null, stats: n.stats || null, check: n.check || null });
+const brainView = (n = {}) => ({ systemPrompt: n.systemPrompt || '', memoryReleasedAt: n.memoryReleasedAt || null, rating: n.rating || 0, thinking: n.thinking || null, thinkOff: n.thinkOff || null, stats: n.stats || null, check: n.check || null });
 
 // Quick check: a short test of one Brain on this machine. It writes an image prompt and a video prompt, and looks
 // at a test image if it's a vision model. It uses the Brain's own Thinking level, so the times match Create.
@@ -2044,8 +2088,8 @@ async function route(req, res) {
       return sendJson(res, 200, { ok: true, startedAt: STARTED_AT, url: base, gpuMemory, models: [...models, ...clouds].map(m => ({ ...m, ...brainView(notes[m.id]), record: records[m.id] || null })) });
     } catch (err) {
       // LM Studio is down, but cloud Brains still work.
-      const clouds = await cloud.listModels().catch(() => []);
-      return sendJson(res, 200, { ok: false, startedAt: STARTED_AT, url: base, error: err.message, models: clouds });
+      const [clouds, notes] = await Promise.all([cloud.listModels().catch(() => []), store.getBrainNotes()]);
+      return sendJson(res, 200, { ok: false, startedAt: STARTED_AT, url: base, error: err.message, models: clouds.map(m => ({ ...m, ...brainView(notes[m.id]) })) });
     }
   }
 
@@ -2091,20 +2135,30 @@ async function route(req, res) {
   if (p === '/api/comfy/update' && m === 'POST') {
     const settings = await store.getSettings();
     const stream = openStream(res);
+    if (comfyUpdating) {
+      stream.send({ type: 'error', message: 'ComfyUI is already updating. Give it a moment to finish.' });
+      return stream.end();
+    }
+    comfyUpdating = true;
     try {
       if (!services.isLocalUrl(settings.comfyUrl)) throw store.httpError(400, 'ComfyUI runs on another computer: update it there.');
-      const queue = await fetch(`${settings.comfyUrl.replace(/\/+$/, '')}/queue`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => null);
-      if (queue && (queue.queue_running?.length || queue.queue_pending?.length)) throw store.httpError(409, 'ComfyUI is rendering right now. Update it once that\'s done.');
+      const busy = await comfy.busy(settings.comfyUrl).catch(async () => {
+        if (await comfyPresent(settings)) throw store.httpError(409, "Couldn't check the render queue. Check ComfyUI in Services before updating.");
+        return false;
+      });
+      if (busy) throw store.httpError(409, 'ComfyUI has a render running or waiting. Finish or cancel the queued renders before updating.');
       const launch = await services.comfyLaunch(settings);
       const r = await comfySetup.update(launch.dir || comfySetup.comfyDirOf(settings), {
-        stop: () => services.stopComfy(settings, () => comfyUp(settings)),
+        stop: () => services.stopComfy(settings, () => comfyPresent(settings)),
         start: () => services.startComfy(settings),
         say: text => stream.send({ type: 'status', text }),
       });
       nodePacks.at = 0; // a new ComfyUI: its log and nodes are asked again
       stream.send({ type: 'done', ...r });
     } catch (err) {
-      stream.send({ type: 'error', message: err.message });
+      stream.send({ type: 'error', message: err.message, detail: err.detail });
+    } finally {
+      comfyUpdating = false;
     }
     return stream.end();
   }
@@ -2121,7 +2175,7 @@ async function route(req, res) {
       if (queue && (queue.queue_running?.length || queue.queue_pending?.length)) throw store.httpError(409, 'ComfyUI is rendering right now. Install it once that\'s done.');
       const launch = await services.comfyLaunch(settings);
       const r = await comfySetup.installPack(launch.dir || comfySetup.comfyDirOf(settings), pack, {
-        stop: () => services.stopComfy(settings, () => comfyUp(settings)),
+        stop: () => services.stopComfy(settings, () => comfyPresent(settings)),
         start: () => services.startComfy(settings),
         say: text => stream.send({ type: 'status', text }),
       });
@@ -2162,15 +2216,16 @@ async function route(req, res) {
   }
   if ((match = p.match(/^\/api\/services\/(comfy|lms|app|all)\/(start|stop)$/)) && m === 'POST') {
     const [, what, action] = match;
+    if (what === 'comfy' && comfyUpdating) throw store.httpError(409, 'ComfyUI is updating. Wait for the update to finish.');
     const settings = await store.getSettings();
     if (what === 'comfy' && action === 'start') return sendJson(res, 200, { ok: true, launch: await services.startComfy(settings) });
-    if (what === 'comfy') await services.stopComfy(settings, () => comfyUp(settings));
+    if (what === 'comfy') await services.stopComfy(settings, () => comfyPresent(settings));
     else if (what === 'lms' && action === 'start') await startServer(settings.lmStudioUrl);
     else if (what === 'lms') await services.stopLmStudio();
     else if (what === 'all' && action === 'stop') {
       // Everything, then this server: frees the GPU. What fails to stop (e.g. a ComfyUI started elsewhere) doesn't block the rest.
       const left = [];
-      await services.stopComfy(settings, () => comfyUp(settings)).catch(err => left.push(err.message));
+      await services.stopComfy(settings, () => comfyPresent(settings)).catch(err => left.push(err.message));
       if (services.isLocalUrl(settings.lmStudioUrl)) await services.stopLmStudio().catch(err => left.push(err.message));
       await services.stopApp();
       return sendJson(res, 200, { ok: true, left }); // what couldn't be stopped, so the page doesn't say everything did
@@ -2198,6 +2253,7 @@ async function route(req, res) {
   if (p === '/api/brains' && m === 'PUT') {
     const body = await readBody(req);
     if (!body.id) throw store.httpError(400, 'Which Brain?');
+    if (Object.hasOwn(body, 'systemPrompt')) return sendJson(res, 200, brainView(await store.setBrainSystemPrompt(String(body.id), body.systemPrompt)));
     if (Object.hasOwn(body, 'rating')) return sendJson(res, 200, brainView(await store.setBrainRating(String(body.id), body.rating)));
     return sendJson(res, 200, brainView(await store.setBrainThinking(String(body.id), body.thinking || '')));
   }
@@ -2395,17 +2451,12 @@ async function route(req, res) {
   if (p === '/api/comfy/status' && m === 'GET') {
     const settings = await store.getSettings();
     const base = url.searchParams.get('url') || settings.comfyUrl;
-    try {
-      const st = await comfy.status(base);
-      if (base === settings.comfyUrl) comfyAnswered(settings, true);
-      return sendJson(res, 200, { ...st, url: base });
-    } catch (err) {
-      if (base === settings.comfyUrl) comfyAnswered(settings, false);
-      // Off: say whether it's on this computer at all (found, or being set up), so Create can offer ▶ Start or ⬇ Set it up.
-      const local = services.isLocalUrl(base);
-      const launch = local ? await services.comfyLaunch(settings).catch(() => ({ dir: null })) : { dir: null };
-      return sendJson(res, 200, { ok: false, url: base, error: err.message, local, found: Boolean(launch.dir) && (await services.isComfyDir(launch.dir)), setup: comfySetup.current() });
-    }
+    const st = await comfyState(base);
+    if (base === settings.comfyUrl) comfyAnswered(settings, st.ok);
+    if (st.ok) return sendJson(res, 200, { ...st, url: base });
+    const local = services.isLocalUrl(base);
+    const launch = local ? await services.comfyLaunch(settings).catch(() => ({ dir: null })) : { dir: null };
+    return sendJson(res, 200, { ...st, url: base, local, found: Boolean(launch.dir) && (await services.isComfyDir(launch.dir)), setup: comfySetup.current() });
   }
   // What can't render right now, over every workflow (see checkAllWorkflows). fresh: check again now.
   if (p === '/api/comfy/health' && m === 'GET') {
@@ -2770,7 +2821,7 @@ server.listen(PORT, HOST, async () => {
   const settings = await store.getSettings().catch(() => null);
   // The start-with-the-computer setup written by an older version, or for this copy's Node that's gone: rewrite it.
   autostart.status().then(st => (st.missing || st.old) && !st.elsewhere && autostart.repair()).catch(() => {});
-  if (settings?.comfyAutostart && !(await comfyUp(settings))) {
+  if (settings?.comfyAutostart && !(await comfyPresent(settings))) {
     services.startComfy(settings).then(() => console.log('Starting ComfyUI…'), err => console.warn(`Couldn't start ComfyUI: ${err.message}`));
   } else if (settings && (await comfyUp(settings))) {
     comfyAnswered(settings, true); // every workflow checked in the background, so Fine-tune → Rendering can say what can't render

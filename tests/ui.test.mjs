@@ -396,6 +396,13 @@ esac
   await fs.writeFile(fakeSystemctl, `#!/bin/sh
 echo "$@" >> ${JSON.stringify(systemctlLog)}
 case "$*" in
+  *ActiveEnterTimestampMonotonic*prompt-maker-comfyui*)
+    marker=${JSON.stringify(path.join(tmp, 'comfy-active'))}
+    if [ -f "$marker" ]; then
+      echo ActiveState=active
+      if [ -s "$marker" ]; then stamp=$(cat "$marker"); else stamp=$(awk '{printf "%.0f", $1*1000000}' /proc/uptime); fi
+      echo "ActiveEnterTimestampMonotonic=$stamp"
+    fi ;;
   *is-active*prompt-maker-comfyui*) if [ -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ]; then echo active; else echo inactive; exit 3; fi ;;
   *"stop prompt-maker-comfyui"*) rm -f ${JSON.stringify(path.join(tmp, 'comfy-active'))} ;;
   *--version*) echo "systemd 255" ;;
@@ -512,6 +519,7 @@ esac
   await fs.writeFile(fakeGit, `#!/bin/sh
 echo "$@" >> ${JSON.stringify(gitLog)}
 [ "$1" = --version ] && { echo "git version 2.43.0"; exit 0; }
+if [ "$1" = -C ]; then exec git "$@"; fi
 if [ "$1" = clone ]; then for a in "$@"; do d="$a"; done; mkdir -p "$d/comfy" "$d/models/checkpoints"; echo 'print("comfy")' > "$d/main.py"; echo 'torch' > "$d/requirements.txt"; echo "Cloning into '$d'..."; exit 0; fi
 exit 1
 `, { mode: 0o755 });
@@ -1042,13 +1050,23 @@ esac
     await toastText('Settings saved');
     await click('.tabs button[data-view="create"]');
     await choose('#llmSelect', 'mock/thinker');
+    await click('#varSeg button[data-value="1"]');
     await type('#theme', 'a tiny dragon napping in a teacup');
     await click('#generateBtn');
     await waitFor('[...document.querySelectorAll(".take .status")].some(s => s.textContent.includes("Loading Mock Thinker"))', 'model loading status');
     await waitFor('[...document.querySelectorAll(".take .status")].some(s => s.textContent.includes("Thinking"))', 'thinking status');
+    assert(await visible('.take-thinking[open] .thinking-text'), 'thinking opens before the prompt arrives');
+    const firstThought = await text('.thinking-text');
+    assert(firstThought.includes('framing'), 'the panel shows what the Brain streamed');
     await shot('05-thinking');
+    await click('.take-thinking summary');
+    await waitFor(`document.querySelector(".thinking-text").textContent.length > ${firstThought.length} && !document.querySelector(".take-thinking").open`, 'thinking continues while folded');
+    await click('.take-thinking summary');
+    await waitFor('!document.querySelector(".prompt-view").hidden && !document.querySelector(".take-thinking").open', 'thinking folds when writing starts');
     await genDone();
     eq(await count('.take .prompt-text:not([hidden])'), 1, 'thinking model finished');
+    await click('.take-thinking summary');
+    assert((await text('.thinking-text')).includes(firstThought), 'thinking can be read again on the saved take');
     await click('.tabs button[data-view="settings"]');
     await choose('#sThinking', 'off');
     await click('#settingsForm button[type="submit"]');
@@ -1499,7 +1517,8 @@ esac
   await test('services: see what runs; start and stop ComfyUI and LM Studio from Settings', async () => {
     await click('.tabs button[data-view="settings"]');
     await waitFor('document.querySelector(\'.svc[data-svc="comfy"] .svc-state\').textContent.startsWith("Running")', 'ComfyUI shown running');
-    assert((await text('.svc[data-svc="lms"] .svc-state')).includes('1 model loaded'), 'LM Studio running, with what it has loaded (one Brain: the app unloads the others before asking one)');
+    const count = mock.loadedKeys().length;
+    assert((await text('.svc[data-svc="lms"] .svc-state')).includes(count ? `${count} model${count > 1 ? 's' : ''} loaded` : 'no model loaded'), 'LM Studio shows the current number of loaded Brains');
 
     // ComfyUI's folder (normally found on its own)
     const comfyDir = path.join(tmp, 'ComfyUI');
@@ -1551,6 +1570,75 @@ esac
     await click('.tabs button[data-view="create"]');
   });
 
+  await test('Services offers recovery and updates a managed ComfyUI after its health check fails', async () => {
+    const dir = path.join(tmp, 'managed-comfy'), upstream = path.join(tmp, 'upstream');
+    const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-C', cwd, ...args], { stdio: 'pipe' });
+    await fs.mkdir(upstream);
+    git(upstream, 'init');
+    for (const folder of ['input', 'output']) await fs.mkdir(path.join(upstream, folder));
+    const examples = ['input/example.png', 'output/_output_images_will_be_put_here'];
+    for (const file of ['main.py', ...examples]) await fs.writeFile(path.join(upstream, file), '');
+    const versionFile = path.join(upstream, 'comfyui_version.py');
+    await fs.writeFile(versionFile, '__version__ = "1.0"');
+    git(upstream, 'add', '.');
+    git(upstream, 'commit', '-m', 'First version');
+    git(tmp, 'clone', upstream, dir);
+    await fs.mkdir(path.join(dir, 'comfy'));
+    await fs.mkdir(path.join(dir, 'venv/bin'), { recursive: true });
+    await fs.copyFile(fakePython, path.join(dir, 'venv/bin/python'));
+    await fs.writeFile(path.join(dir, '.prompt-maker-setup'), '');
+    for (const file of examples) await fs.unlink(path.join(dir, file));
+    await fs.writeFile(versionFile, '__version__ = "2.0"');
+    git(upstream, 'commit', '-am', 'New version');
+    const marker = path.join(tmp, 'comfy-active');
+    const original = await fetch(APP + '/api/settings').then(r => r.json());
+    const folder = comfyDir => fetch(APP + '/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comfyDir }) });
+    const update = '[data-act="comfy-update"]';
+    try {
+      await folder(dir);
+      await comfy.stop();
+      await fs.writeFile(marker, '');
+      await goto(APP + '/#settings');
+      await click('[data-settings-tab="services"]');
+      await waitFor('document.querySelector(".svc[data-svc=comfy] .svc-state").textContent.startsWith("Starting")', 'new launches show Starting');
+      assert(await visible(update) && !await js('document.querySelector("[data-act=comfy-update]").disabled'), 'can update during startup');
+      await fs.writeFile(marker, '1'); // still alive long after its startup window, with no listening port
+      const { comfy: stalled } = await fetch(APP + '/api/services').then(r => r.json());
+      assert(stalled.unhealthy && !stalled.starting && stalled.canRestart, 'stalled launches also offer recovery');
+      comfy.setHealthFailed(true);
+      await comfy.start();
+      await goto(APP + '/#settings');
+      await click('[data-settings-tab="services"]');
+      await waitFor('!document.querySelector("[data-act=comfy-restart]").hidden', 'offers a restart');
+      assert(await visible(update), 'update is available despite the failed health check');
+      assert((await text('.svc[data-svc="comfy"] .svc-state')).includes('ready to render'), 'no indefinite Starting state');
+      await fs.writeFile(path.join(dir, 'main.py'), '# customized');
+      await click(update);
+      await waitFor('!document.querySelector("#comfyJobMessage").hidden', 'the reason stays in Services');
+      assert((await text('#comfyJobMessage')).includes('edited'), 'explains local edits');
+      assert(await fileExists(marker), 'the preflight left the service running');
+      await fs.writeFile(path.join(dir, 'main.py'), '');
+      await click(update);
+      // Let the mock release its port once the updater has asked the service to stop.
+      for (let i = 0; i < 80 && await fileExists(marker); i++) await sleep(50);
+      assert(!await fileExists(marker), 'the updater stopped the unhealthy service');
+      await comfy.stop();
+      await waitFor('document.querySelector("[data-act=comfy-update]").textContent.includes("Installing")', 'new version downloaded');
+      comfy.setHealthFailed(false);
+      await comfy.start();
+      await toastText('ComfyUI 2.0 is running');
+      assert((await fs.readFile(path.join(dir, 'comfyui_version.py'), 'utf8')).includes('2.0'), 'one click fast-forwarded the local installation');
+      assert((await fs.readFile(pipLog, 'utf8')).includes('-r requirements.txt'), 'installed the updated requirements');
+      assert(!await visible('#comfyJobMessage'), 'successful retry clears the earlier failure');
+    } finally {
+      comfy.setHealthFailed(false);
+      if (!await fetch(`http://127.0.0.1:${COMFY_PORT}/system_stats`).then(r => r.ok, () => false)) await comfy.start();
+      await folder(original.comfyDir || '');
+      await fs.rm(marker, { force: true });
+      await goto(APP);
+    }
+  });
+
   await test('🎨 one-click ComfyUI set-up: not on this computer → Set up: fetched, its Python, PyTorch for the card, its packages, started', async () => {
     // Point ComfyUI's folder at a place with nothing in it: as on a fresh computer, there's no ComfyUI to start.
     const fresh = path.join(tmp, 'fresh', 'ComfyUI');
@@ -1561,6 +1649,7 @@ esac
     await comfy.stop();
     await fs.rm(path.join(tmp, 'comfy-active'), { force: true });
     await fs.writeFile(systemdRunLog, '');
+    await fs.writeFile(pipLog, '');
     await click('.tabs button[data-view="create"]');
     await waitFor('document.querySelector("#comfyState").hidden || document.querySelector("#comfyState").textContent.includes("isn\'t set up")', 'Create says ComfyUI isn\'t set up (when it has something to render with)', 15000);
     await click('.tabs button[data-view="settings"]');
@@ -6487,10 +6576,16 @@ esac
     assert(!(await option(video.id)).disabled, 'text-to-video is available for a picture prompt');
     await choose('.take .rb-wf', turbo.id);
     eq(await value('.take .rb-wf'), turbo.id, 'an unrelated picture model can be chosen');
+    await click('.take [data-workflow-help]');
+    eq(await text('#workflowHelpTitle'), turbo.name, 'take help follows the re-render workflow');
+    await press('Escape');
     eq(await value('#wfpSelect'), base.id, 'the Create workflow stays on the original model');
     await click('.shared-toggle');
     assert(JSON.stringify(await groups('#sharedRender .rb-wf')) === JSON.stringify(labels), 'shared menu lists the same task/model groups');
     await choose('#sharedRender .rb-wf', video.id);
+    await click('#sharedRender [data-workflow-help]');
+    eq(await text('#workflowHelpTitle'), video.name, 'shared help follows the selected workflow');
+    await press('Escape');
     await waitFor('!!document.querySelector("#sharedRender .rb-duration")', 'video duration for the image prompt');
     const target = JSON.parse(await fs.readFile(path.join(ROOT, 'playbooks', 'ltx-2-3-t2v.json'), 'utf8'));
     eq(Number(await value('#sharedRender .rb-duration')), Number.parseFloat(target.defaults.duration), 'duration starts from the video model');
@@ -7403,6 +7498,15 @@ esac
     eq(mockCalls() - calls, 1, 'only the take is written');
     const t = ev.find(e => e.type === 'done').text;
     assert(t.includes('violet, round') && t.includes('platinum pixie cut') && !t.includes('copper'), 'your traits, not the old ones');
+    const person = (await (await send('/api/images', { image: `data:image/png;base64,${makePng(40, 30).toString('base64')}` })).json()).file;
+    const pair = { modelId: 'krea-2-character', imageFile: img, images: [person], imageSlots: [{ label: 'Place' }, { label: 'Person' }] };
+    ev = await events({ ...pair, variations: 2 });
+    const places = mock.log.at(-1).messages;
+    const request = places[1].content;
+    assert(places[0].content.includes('Two-picture workflow') && request.at(-1).text.includes('Match picture 1') && !request.at(-1).text.includes('pick a setting'), 'both takes use the photographed place');
+    eq(request.filter(x => x.type === 'image_url').length, 2, 'the Brain sees both pictures');
+    eq(mock.log.at(-3).messages[1].content[0].image_url.url, request[1].image_url.url, 'the person supplies the sheet');
+    eq((await send('/api/generate', { ...pair, images: [] })).status, 400, 'missing Person is reported');
     // 🪞 Recreate: the same picture again, the person kept (the generator still gets the picture).
     ev = await events({ modelId: 'krea-2-character', variations: 1, theme: '', imageFile: img, imageRole: 'recreate', characterSheet: 'Eyes: violet, round' });
     const ask = JSON.stringify(mock.log.at(-1).messages);
@@ -7418,6 +7522,7 @@ esac
     if (await visible('#lightbox')) await press('Escape');
     await click('.tabs button[data-view="create"]');
     await click('.model-card[data-id="krea-2-character"]');
+    await js(`const picker = document.querySelector('#wfpSelect'); const single = [...picker.options].find(o => o.text.includes('same person, new picture')); if (single) { picker.value = single.value; picker.dispatchEvent(new Event('change')); } 1`);
     await setFiles('#imageInput', [fixture]);
     await waitFor('!document.querySelector(".dz-preview").hidden', 'image preview');
     assert(await visible('#sheetBlock'), 'the sheet box shows');
@@ -7902,6 +8007,129 @@ esac
     await genDone();
     eq([lastCall().top_k, lastCall().min_p, lastCall().repeat_penalty, lastCall().seed].join(), ',,,', 'emptied: none of them is sent');
     for (const id of (await history()).filter(id => !before.has(id))) await fetch(`${APP}/api/history/${id}`, { method: 'DELETE' }); // (leaves History as it was)
+  });
+
+  await test('Surprise me uses the Place and Person photos together', async () => {
+    const post = (url, body) => fetch(APP + url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+    const prepared = await post('/api/workflows/prepare', { starter: 'krea-2-character/into-your-picture.json' });
+    const flow = await post('/api/workflows', { ...prepared, modelId: 'krea-2-character' });
+    await goto(`${APP}/#create`);
+    assert(flow.id, 'the two-photo workflow is installed');
+    await click('#taskChoices [data-task=person]');
+    await choose('#targetSelect', 'krea-2-character');
+    await choose('#wfpSelect', flow.id);
+    await setFiles('#imageInput', [fixture]);
+    await toastText('Image added');
+    await setFiles('#extraSlots input', [portrait]);
+    await waitFor('JSON.parse(localStorage.getItem("pm.extras"))?.[0] && document.querySelector("#extraSlots img")?.src.startsWith("data:")', 'both inputs loaded');
+    const expected = await js('[document.querySelector("#imagePreview").src, document.querySelector("#extraSlots img").src]');
+    await click('#surpriseBtn');
+    await waitFor('document.querySelector("#theme").value === "she spins and laughs as the camera floats around her"', 'the suggestion arrives');
+    const content = lastCall().messages.at(-1).content;
+    const pictures = content.filter(x => x.type === 'image_url').map(x => x.image_url.url);
+    assert(expected[0] !== expected[1] && JSON.stringify(pictures) === JSON.stringify(expected), 'the Brain receives the place first and the person second');
+    assert(content.at(-1).text.includes('Picture 2 shows the Person') && !content.at(-1).text.includes('suggest a new scene'), 'the idea uses the person in the photographed place');
+  });
+
+  await test('workflow help follows the selected workflow and lists each mapped input', async () => {
+    const post = (url, body) => fetch(APP + url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+    const installed = [];
+    for (const [modelId, starters] of Object.entries(starterKeys)) {
+      for (const starter of starters) {
+        const prep = await post('/api/workflows/prepare', { starter });
+        const flow = await post('/api/workflows', { ...prep, modelId });
+        assert(flow.id, `installed ${starter}`);
+        installed.push(flow);
+      }
+    }
+    const custom = await post('/api/workflows/prepare', { starter: 'qwen-image-edit/image-edit.json' });
+    custom.mapping.images[1].label = 'Fabric swatch';
+    custom.mapping.images[1].hint = 'Use the pattern on this fabric.';
+    installed.push(await post('/api/workflows', { ...custom, name: 'Custom wardrobe edit', source: 'upload', modelId: 'qwen-image-edit' }));
+    await goto(`${APP}/#create`);
+    for (const flow of installed) {
+      await js(`(() => { document.querySelector('.model-card[data-id="${flow.modelId}"]').click(); const select = document.querySelector('#wfpSelect'); select.value = ${q(flow.id)}; select.dispatchEvent(new Event('change')); document.querySelector('#createWorkflowHelp').click(); })()`);
+      eq(await text('#workflowHelpTitle'), flow.name, 'guide is for the exact workflow');
+      assert(await visible('#workflowHelp[open]') && await count('#workflowHelpBody ol li') >= 3, 'the guide has actionable steps');
+      const body = await text('#workflowHelpBody');
+      if (flow.modelId === 'minimax-h3-image') {
+        assert(body.includes('6 steps and CFG 1'), 'the guide gives a quality baseline');
+        const options = await text('#resolution');
+        assert(options.includes('Recommended') && options.includes('Small preview'), 'the size menu distinguishes preview and recommended sizes');
+      }
+      if (flow.source === 'upload') assert(body.includes('Fabric swatch') && body.includes('Use the pattern on this fabric.'), 'custom labels and instructions are preserved');
+      if (flow.source.includes('into-your-picture')) assert(body.includes('Picture 1 · Place') && body.includes('Picture 2 · Person') && body.includes('Surprise me'), 'the place and the person have distinct instructions');
+      if (flow.source.includes('identity-edit.json')) assert(body.includes('Choose New scene') && !body.includes('Picture 2'), 'the single-person workflow explains Recreate');
+      if (flow.maps.audio) assert(body.includes('Spoken line') && body.includes('Says a line'), 'voice instructions match a sound input');
+      if (flow.maps.video) assert(body.includes('Motion video') && body.includes('Trim'), 'motion clip instructions');
+      if (flow.source.includes('minimax-h3-image-edit')) assert(body.includes('2–16'), 'all optional edit pictures are covered');
+      await js(`document.querySelector('#workflowHelp button').click(); 1`);
+    }
+    await click('#openCreateOptions');
+    await click('#wfpBox [data-workflow-help]');
+    await press('Escape');
+    assert(await visible('#createOptions[open]') && !(await visible('#workflowHelp')), 'Escape returns to Rendering');
+    await click('#closeCreateOptions');
+  });
+
+  await test('system prompts follow the selected model and Brain', async () => {
+    const brainId = 'mock/vision-8b';
+    const targetId = 'krea2-raw';
+    const brainText = 'Brain instruction fixture.';
+    const modelText = 'Model instruction fixture.';
+    const edit = async text => {
+      await type('#systemPromptText', text);
+      await click('#systemPromptSave');
+      await waitFor('!document.querySelector("#systemPromptDialog").open', 'prompt saved');
+    };
+    await goto(`${APP}/#create`);
+    await choose('#llmSelect', brainId);
+    await click(`.model-card[data-id="${targetId}"]`);
+    await js('document.querySelector("#quickModelChoice").open = true');
+    await click('#modelSystemPrompt');
+    assert((await text('#systemPromptTitle')).includes('Krea 2 RAW'), 'names the target model');
+    await edit(modelText);
+    await click('#llmPick');
+    await click('#brainSystemPrompt');
+    assert((await text('#systemPromptTitle')).includes('Mock Vision 8B'), 'names the selected Brain');
+    await edit(brainText);
+
+    await goto(`${APP}/#brains`);
+    const card = `.brain[data-id="${brainId}"] [data-act="system-prompt"]`;
+    await click(card);
+    eq(await value('#systemPromptText'), brainText, 'both Brain entry points share a saved prompt');
+    await click('#systemPromptCancel');
+    const generate = async (modelId, llmModel) => {
+      const before = mockCalls();
+      const response = await fetch(`${APP}/api/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId, llmModel, theme: 'A test picture', variations: 1 }) });
+      const stream = await response.text();
+      assert(response.ok && mockCalls() > before, `Brain wrote a take: ${stream.slice(-200)}`);
+      return mock.log[before].messages[0].content;
+    };
+    const both = await generate(targetId, brainId);
+    assert(both.includes(modelText) && both.includes(brainText) && both.includes('# TARGET MODEL'), 'both custom instructions reach the system message alongside the playbook');
+    const [entry] = await fetch(`${APP}/api/history`).then(r => r.json());
+    const beforeRefine = mockCalls();
+    const refine = await fetch(`${APP}/api/refine`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ historyId: entry.id, index: 0, llmModel: brainId, instruction: 'Shorten it.' }) });
+    const refined = await refine.text();
+    assert(refine.ok && refined.includes('"type":"saved"'), 'the refinement was saved');
+    const refineSystem = mock.log[beforeRefine].messages[0].content;
+    assert(refineSystem.includes(modelText) && refineSystem.includes(brainText), 'both instructions also guide refinement');
+    const otherModel = await generate('ltx-2-3', brainId);
+    assert(!otherModel.includes(modelText) && otherModel.includes(brainText), 'switching the target changes only its instructions');
+    const otherBrain = await generate(targetId, 'mock/fable');
+    assert(otherBrain.includes(modelText) && !otherBrain.includes(brainText), 'switching the Brain changes only its instructions');
+    await click(card);
+    await edit('');
+    await goto(`${APP}/#create`);
+    await js('document.querySelector("#quickModelChoice").open = true');
+    await click('#modelSystemPrompt');
+    eq(await value('#systemPromptText'), modelText, 'the target prompt persisted');
+    await edit('');
+    const cleared = await generate(targetId, brainId);
+    assert(!cleared.includes(modelText) && !cleared.includes(brainText), 'clearing both restores defaults');
   });
 
   await test('no console errors', async () => {

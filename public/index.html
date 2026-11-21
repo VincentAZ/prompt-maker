@@ -65,6 +65,7 @@
       <button type="button" id="llmPick" class="llm-pick" aria-haspopup="dialog" aria-expanded="false" aria-controls="llmMenu"><span id="llmPickName"></span></button>
       <div id="llmMenu" class="llm-menu" role="dialog" aria-label="Pick the Brain" hidden>
         <input id="llmSearch" type="search" placeholder="Search Brains or creators…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="llmList">
+        <button type="button" id="brainSystemPrompt" class="btn small" aria-haspopup="dialog">System prompt</button>
         <div id="llmFilters" class="brain-filters"></div>
         <div class="llm-sort">
           <label for="llmSort"><span>Sort by</span><select id="llmSort">
@@ -147,11 +148,12 @@
         <form id="createForm" class="director" autocomplete="off" novalidate>
           <div class="director-steps">
           <section class="step" data-panel="create-model" data-fixed>
-            <header class="step-head"><span class="num">1</span><h2>Make</h2></header>
+            <header class="step-head"><span class="num">1</span><h2>Make</h2><button type="button" id="createWorkflowHelp" class="chip-btn" data-workflow-help aria-haspopup="dialog" hidden>Workflow help</button></header>
             <div id="taskChoices" class="task-choices" role="group" aria-label="What would you like to make?"></div>
             <details id="quickModelChoice" class="quick-model-choice">
               <summary><span>Model</span><span id="quickModelName"></span></summary>
               <label class="field"><span class="sr-only">Model</span><select id="targetSelect" aria-label="Target model"></select></label>
+              <button type="button" id="modelSystemPrompt" class="btn small" aria-haspopup="dialog">System prompt</button>
             </details>
           </section>
 
@@ -361,6 +363,7 @@
             <div id="wfpBox" class="wfp" hidden>
               <div class="wfp-row">
                 <select id="wfpSelect" aria-label="Workflow that renders your takes"></select>
+                <button type="button" class="btn small" data-workflow-help aria-haspopup="dialog">Help</button>
                 <button type="button" id="wfpEdit" class="btn small" title="Change this workflow's name, inputs and sampler settings">⚙ Edit</button>
                 <button type="button" id="wfpAdd" class="btn small" title="Add another workflow" aria-label="Add another workflow">＋</button>
               </div>
@@ -759,7 +762,7 @@
             <li class="svc" data-svc="comfy">
               <span class="dot"></span>
               <span class="svc-text"><b>ComfyUI</b><span class="svc-state">…</span></span>
-              <span class="svc-acts"><button type="button" class="btn small primary" data-act="comfy-setup" hidden>⬇ Set up ComfyUI</button><button type="button" class="btn small primary" data-act="comfy-start" hidden>▶ Start</button><button type="button" class="btn small" data-act="comfy-stop" hidden>■ Stop</button><button type="button" class="btn small" data-act="comfy-update" hidden title="Brings the ComfyUI Prompt Maker set up to its newest version: new models often need it. ComfyUI stops, updates and starts again">⬆ Update</button><button type="button" class="btn small" data-act="model-files" hidden title="The big files each model needs in ComfyUI: see which are here, get the rest">⬇ Model files</button></span>
+              <span class="svc-acts"><button type="button" class="btn small primary" data-act="comfy-setup" hidden>⬇ Set up ComfyUI</button><button type="button" class="btn small primary" data-act="comfy-start" hidden>▶ Start</button><button type="button" class="btn small" data-act="comfy-stop" hidden>■ Stop</button><button type="button" class="btn small" data-act="comfy-restart" hidden>↻ Restart ComfyUI</button><button type="button" class="btn small" data-act="comfy-update" hidden title="Brings the ComfyUI Prompt Maker set up to its newest version: new models often need it. ComfyUI stops, updates and starts again">⬆ Update ComfyUI</button><button type="button" class="btn small" data-act="model-files" hidden title="The big files each model needs in ComfyUI: see which are here, get the rest">⬇ Model files</button></span>
             </li>
             <li class="svc" data-svc="ffmpeg">
               <span class="dot"></span>
@@ -768,6 +771,7 @@
             </li>
           </ul>
           <p class="hint" id="svcStale" hidden>⚠️ <span></span> <button type="button" class="btn small primary" data-act="app-restart">↻ Restart Prompt Maker</button></p>
+          <div class="notice" id="comfyJobMessage" role="status" hidden><p class="hint"></p><details hidden><summary>Technical details</summary><p class="hint"></p></details></div>
           <p class="hint" id="svcComfyHow"></p>
           <div id="startupOpts">
             <label class="check-row"><input type="checkbox" id="sAutostart"> <span>Start Prompt Maker with my computer, and keep it running</span></label>
@@ -948,6 +952,26 @@
     </section>
   </main>
 
+  <dialog id="systemPromptDialog" class="modal cloud-dialog" aria-labelledby="systemPromptTitle">
+    <form class="modal-body" id="systemPromptForm">
+      <h2 id="systemPromptTitle"></h2>
+      <p class="muted" id="systemPromptHelp"></p>
+      <label class="field"><span>Your instructions</span><textarea id="systemPromptText" rows="6" aria-describedby="systemPromptHelp" autofocus></textarea></label>
+      <p class="hint">Clear the text and save to use the default instructions.</p>
+      <p id="systemPromptError" role="alert" class="warn-text" hidden></p>
+      <div class="row cloud-dialog-acts">
+        <button type="button" id="systemPromptCancel" class="btn">Cancel</button>
+        <button type="submit" class="btn primary" id="systemPromptSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="workflowHelp" class="modal" aria-labelledby="workflowHelpTitle">
+    <form method="dialog" class="modal-body">
+      <header class="modal-head"><h2 id="workflowHelpTitle"></h2><button autofocus class="btn small" aria-label="Close workflow help">Close</button></header>
+      <div id="workflowHelpBody"></div>
+    </form>
+  </dialog>
   <dialog id="wfDialog" class="modal" aria-labelledby="wfDialogTitle">
     <form method="dialog" class="modal-body" id="wfForm" novalidate>
       <header class="modal-head">
