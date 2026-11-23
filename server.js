@@ -2116,7 +2116,7 @@ async function route(req, res) {
   }
   // LM Studio's set-up: LM Studio itself (its headless service on Linux, its installer on Windows), its server and
   // a Brain that can see; what's there, start it, watch it, stop it, and the root fix (libatomic on Linux).
-  if (p === '/api/lms/setup' && m === 'GET') return sendJson(res, 200, await firstSetup.lmsStatus(await store.getSettings()));
+  if (p === '/api/lms/setup' && m === 'GET') return sendJson(res, 200, await firstSetup.lmsStatus(await store.getSettings(), { brief: url.searchParams.has('brief') }));
   if (p === '/api/lms/setup' && m === 'POST') return sendJson(res, 200, await firstSetup.startLms(await store.getSettings()));
   if (p === '/api/lms/setup/job' && m === 'GET') return sendJson(res, 200, firstSetup.currentLms() || { state: 'none' });
   if (p === '/api/lms/setup/cancel' && m === 'POST') return sendJson(res, 200, firstSetup.cancelLms() || { state: 'none' });

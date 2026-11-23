@@ -1013,6 +1013,12 @@ The Brain was loaded in LM Studio with too little room for the assistant, which 
 </details>
 
 <details>
+<summary><b>"LM Studio error (400): Failed to load model …" and nothing more</b></summary>
+
+LM Studio couldn't open that Brain's file, and it doesn't say why. Most often the file is newer than the engine LM Studio loads it with (a Brain made or downloaded in the last few days, with an engine from weeks ago). In the LM Studio app, open **Settings → Runtime**, update the **llama.cpp** engine and pick the newest one for your graphics card (on an NVIDIA card, the one with *CUDA* in its name; the plain one runs on the processor only and is very slow). Without the app, `lms runtime update` and `lms runtime select` do the same. Then load the Brain again. The exact reason is in LM Studio's log (**Developer → Logs**).
+</details>
+
+<details>
 <summary><b>"LM Studio error (400): Failed to load model … ENOENT … mkdtemp '…/.internal/temp/…'"</b></summary>
 
 LM Studio keeps a scratch folder inside its own data and writes a small file there each time it loads a model. The folder goes missing when LM Studio's background server is closed while the LM Studio app is open: the app then can't load any model until it is restarted. Prompt Maker puts the folder back on its own and asks LM Studio once more, so you shouldn't see this; if you still do, restart LM Studio.

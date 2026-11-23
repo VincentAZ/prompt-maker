@@ -1394,10 +1394,18 @@ esac
   });
 
   await test('LM Studio offline → banner, error, recovery', async () => {
+    const lmsCalls = async () => (await fs.readFile(lmsLog, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean);
+    const callsBefore = (await lmsCalls()).length;
     await mock.stop();
     await click('#llmRefresh');
     await waitFor('!document.querySelector("#banner").hidden', 'offline banner');
     assert(await js('document.querySelector("#llmDot").classList.contains("bad")'), 'red dot');
+    // The banner asks whether LM Studio is on this computer. That must not run lms: any lms command wakes LM
+    // Studio's background service, which takes LM Studio from the LM Studio app while it opens (the app closes).
+    const brief = await (await fetch(`${APP}/api/lms/setup?brief=1`)).json();
+    assert(brief.installed === true && brief.brain === undefined, `the brief answer says it's here, and nothing of the Brain: ${JSON.stringify(brief)}`);
+    await sleep(800); // the banner's own question has been answered by now
+    eq((await lmsCalls()).length, callsBefore, `LM Studio going off runs no lms command: ${(await lmsCalls()).slice(callsBefore)}`);
     await click('#generateBtn');
     await waitFor('document.querySelector("#stageError") && !document.querySelector("#stageError").hidden', 'error card');
     assert((await text('#stageError')).includes('LM Studio'), 'offline error');

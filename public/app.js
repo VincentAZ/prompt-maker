@@ -1196,11 +1196,12 @@ function renderBanner() {
   // the app has set it up (remembered from when the server was up).
   const canLaunch = Boolean(state.appDown && saved.get('launcher', false));
   // LM Studio not on this computer at all (its lms tool isn't there): offer to set it up rather than to start it.
-  // Asked once each time LM Studio goes off (its set-up may have run, or been undone, in between).
+  // Asked once each time LM Studio goes off (its set-up may have run, or been undone, in between). The brief
+  // answer only: the full one looks for a Brain through lms, which would wake LM Studio's background service.
   if (!down) bannerAsked = false;
   if (down && !state.appDown && !bannerAsked) {
     bannerAsked = true;
-    api('/api/lms/setup').then(st => { state.lmsInstalled = st.supported ? st.installed : null; renderBanner(); }, () => {});
+    api('/api/lms/setup?brief=1').then(st => { state.lmsInstalled = st.supported ? st.installed : null; renderBanner(); }, () => {});
   }
   const notHere = down && !state.appDown && state.lmsInstalled === false && (!state.settings || isLocalLmsUrl(state.settings.lmStudioUrl));
   $('#bannerStart').hidden = Boolean(state.appDown) || notHere;
